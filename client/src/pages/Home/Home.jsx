@@ -1,10 +1,33 @@
+// client/src/pages/Home/Home.jsx
 import React from "react";
 import { NAV_SECTIONS } from "../../config/navConfig";
 import { useNavigate } from "react-router-dom";
 import { api, setAuthToken } from "../../lib/api";
 import { useAuth0 } from "@auth0/auth0-react";
-import { DoorOpen, Footprints, AlertTriangle, Users, NotebookPen, ClipboardList, BarChart3 } from "lucide-react";
+import {
+  DoorOpen,
+  Footprints,
+  AlertTriangle,
+  Users,
+  NotebookPen,
+  ClipboardList,
+  BarChart3,
+} from "lucide-react";
+import { io } from "socket.io-client";
 
+// ---------- Normaliza API y SOCKET_URL ----------
+const RAW_API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
+const API_BASE =
+  typeof RAW_API === "string" && RAW_API.trim()
+    ? RAW_API.trim()
+    : "http://localhost:4000/api";
+const API_NORM = /\/api\/?$/.test(API_BASE)
+  ? API_BASE
+  : API_BASE.replace(/\/+$/, "") + "/api";
+// Base para socket (sin /api al final)
+const SOCKET_URL = API_NORM.replace(/\/api\/?$/, "");
+
+// ---------- Mapa de íconos ----------
 const ICONS = {
   accesos: DoorOpen,
   rondas: Footprints,
@@ -21,7 +44,37 @@ export default function Home() {
   const { getAccessTokenSilently } = useAuth0();
   const [incStats, setIncStats] = React.useState({ total: 0, abiertos: 0, alta: 0 });
 
+  // Ref para mantener una sola instancia de socket (evita duplicados con HMR)
+  const socketRef = React.useRef(null);
+
+  // -------- Socket.IO (solo 1 vez) --------
   React.useEffect(() => {
+    // crea socket si no existe
+    if (!socketRef.current) {
+      socketRef.current = io(SOCKET_URL, {
+        transports: ["websocket", "polling"],
+      });
+    }
+    const socket = socketRef.current;
+
+    function onCheck(evt) {
+      // Aquí puedes actualizar KPIs en caliente si quieres
+      // console.log("[rondas:check]", evt);
+    }
+
+    socket.on("rondas:check", onCheck);
+
+    return () => {
+      socket.off("rondas:check", onCheck);
+      // No cerramos el socket en HMR para no reconectar de más.
+      // Si quieres cerrarlo al desmontar por navegación:
+      // socket.close();
+    };
+  }, []);
+
+  // -------- Token para axios --------
+  React.useEffect(() => {
+    // setAuthToken acepta una función async para obtener el token en cada request
     setAuthToken(() =>
       getAccessTokenSilently({
         authorizationParams: {
@@ -32,23 +85,27 @@ export default function Home() {
     );
   }, [getAccessTokenSilently]);
 
+  // -------- KPIs de incidentes --------
   React.useEffect(() => {
     (async () => {
       try {
         const r = await api.get("/incidentes", { params: { limit: 100 } });
-        const items = Array.isArray(r.data) ? r.data : (r.data.items || []);
+        const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
         setIncStats({
           total: items.length,
-          abiertos: items.filter(i => i.estado !== "cerrado").length,
-          alta: items.filter(i => i.prioridad === "alta").length,
+          abiertos: items.filter((i) => i.estado !== "cerrado").length,
+          alta: items.filter((i) => i.prioridad === "alta").length,
         });
-      } catch {}
+      } catch (e) {
+        // Silencioso en Home; si quieres, loguea:
+        // console.warn("[home] no se pudieron cargar KPIs de incidentes:", e?.message);
+      }
     })();
   }, []);
 
   return (
     <div className="space-y-6">
-      {/* KPIs con efecto suave y legible */}
+      {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-3">
         <div className="fx-kpi">
           <div className="text-sm opacity-75">Incidentes</div>
@@ -64,7 +121,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Secciones con borde FX (sólo esta tarjeta) */}
+      {/* Secciones */}
       <div className="card fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -89,4 +146,3 @@ export default function Home() {
     </div>
   );
 }
-// Página de inicio con KPIs y accesos rápidos a seccione

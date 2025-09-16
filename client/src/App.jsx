@@ -16,7 +16,10 @@ const Supervision    = React.lazy(() => import("./pages/Supervision/Supervision.
 const Evaluacion     = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Reportes       = React.lazy(() => import("./pages/Reportes/Reportes.jsx"));
 const Chat           = React.lazy(() => import("./pages/Chat/Chat.jsx"));
-
+// arriba de export default function App()...
+const RoutesAdminList = React.lazy(() => import("./pages/RutasAdmin/RoutesList.jsx"));
+const RouteForm      = React.lazy(() => import("./pages/RutasAdmin/RouteForm.jsx"));
+const SLAReports     = React.lazy(() => import("./pages/Reportes/SLA.jsx"));
 // Página pública de login (respaldo por si navegan a /login manualmente)
 const LoginRedirect  = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 
@@ -36,20 +39,43 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="/incidentes"        element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>} />
-        <Route path="/incidentes/nuevo"  element={<ProtectedRoute><Layout><IncidenteForm  /></Layout></ProtectedRoute>} />
-        <Route path="/rondas"            element={<ProtectedRoute><Layout><Rondas         /></Layout></ProtectedRoute>} />
-        <Route path="/accesos"           element={<ProtectedRoute><Layout><Accesos        /></Layout></ProtectedRoute>} />
-        <Route path="/visitas"           element={<ProtectedRoute><Layout><Visitas        /></Layout></ProtectedRoute>} />
-        <Route path="/bitacora"          element={<ProtectedRoute><Layout><Bitacora       /></Layout></ProtectedRoute>} />
-        <Route path="/supervision"       element={<ProtectedRoute><Layout><Supervision    /></Layout></ProtectedRoute>} />
-        <Route path="/evaluacion"        element={<ProtectedRoute><Layout><Evaluacion     /></Layout></ProtectedRoute>} />
-        <Route path="/reportes"          element={<ProtectedRoute><Layout><Reportes       /></Layout></ProtectedRoute>} />
-        <Route path="/chat"              element={<ProtectedRoute><Layout><Chat           /></Layout></ProtectedRoute>} />
+
+        <Route
+          path="/incidentes"
+          element={
+            <ProtectedRoute>
+              <Layout><IncidentesList /></Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/incidentes/nuevo"
+          element={
+            <ProtectedRoute>
+              <Layout><IncidenteForm /></Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="/rondas"       element={<ProtectedRoute><Layout><Rondas      /></Layout></ProtectedRoute>} />
+        <Route path="/accesos"      element={<ProtectedRoute><Layout><Accesos     /></Layout></ProtectedRoute>} />
+        <Route path="/visitas"      element={<ProtectedRoute><Layout><Visitas     /></Layout></ProtectedRoute>} />
+        <Route path="/bitacora"     element={<ProtectedRoute><Layout><Bitacora    /></Layout></ProtectedRoute>} />
+        <Route path="/supervision"  element={<ProtectedRoute><Layout><Supervision /></Layout></ProtectedRoute>} />
+        <Route path="/evaluacion"   element={<ProtectedRoute><Layout><Evaluacion  /></Layout></ProtectedRoute>} />
+        <Route path="/reportes"     element={<ProtectedRoute><Layout><Reportes    /></Layout></ProtectedRoute>} />
+        <Route path="/chat"         element={<ProtectedRoute><Layout><Chat        /></Layout></ProtectedRoute>} />
+        <Route path="/rutas-admin"           element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
+        <Route path="/rutas-admin/nueva"     element={<ProtectedRoute><Layout><RouteForm /></Layout></ProtectedRoute>} />
+        <Route path="/rutas-admin/:id"       element={<ProtectedRoute><Layout><RouteForm /></Layout></ProtectedRoute>} />
+
+<Route path="/reportes/sla"          element={<ProtectedRoute><Layout><SLAReports /></Layout></ProtectedRoute>} />
 
         <Route path="*" element={<div className="p-6">No encontrado</div>} />
+
+
+        
       </Routes>
     </Suspense>
   );
 }
-// Componente principal con las rutas de la aplicación

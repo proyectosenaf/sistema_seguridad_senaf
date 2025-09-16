@@ -1,4 +1,4 @@
-import Bitacora from '../models/Bitacora.js';
+import Bitacora from '../models/bitacoraEntry.model.js';
 import { pick } from '../utils/pick.js';
 
 

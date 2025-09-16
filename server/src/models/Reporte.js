@@ -1,18 +1,36 @@
-import mongoose from 'mongoose';
+// src/models/Reporte.js
+import mongoose from "mongoose";
 
+const { Schema } = mongoose;
 
-const reporteSchema = new mongoose.Schema({
-nombre: { type: String, required: true },
-descripcion: { type: String },
-tipo: { type: String, enum: ['incidentes','accesos','visitas','rondas','bitacora','evaluacion','otro'], default: 'otro' },
-rango: { desde: Date, hasta: Date },
-filtros: { type: Object },
-generadoPor: { type: String },
-creadoPor: { type: String, required: true },
-}, { timestamps: true });
+const RangoSchema = new Schema(
+  {
+    desde: { type: Date },
+    hasta: { type: Date },
+  },
+  { _id: false }
+);
 
+const ReporteSchema = new Schema(
+  {
+    nombre:      { type: String, required: true, trim: true },
+    descripcion: { type: String, default: "" },
+    tipo: {
+      type: String,
+      enum: ["incidentes", "accesos", "visitas", "rondas", "bitacora", "evaluacion", "otro"],
+      default: "otro",
+      index: true,
+    },
+    rango:   { type: RangoSchema, default: {} },            // { desde, hasta }
+    filtros: { type: Schema.Types.Mixed, default: {} },     // criterios dinámicos
+    generadoPor: { type: String },                          // p.ej. "sla", "custom"
+    creadoPor:   { type: String, required: true },          // sub del usuario o correo
+  },
+  { timestamps: true }
+);
 
-reporteSchema.index({ nombre: 'text', descripcion: 'text', tipo: 1 });
+// Índices
+ReporteSchema.index({ nombre: "text", descripcion: "text" }); // índice de texto
+ReporteSchema.index({ tipo: 1, createdAt: -1 });              // navegación común
 
-
-export default mongoose.model('Reporte', reporteSchema);
+export default mongoose.model("Reporte", ReporteSchema);

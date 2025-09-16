@@ -11,6 +11,13 @@ import {
   ClipboardList, ClipboardCheck, Award, BarChart3
 } from "lucide-react";
 
+// === NUEVO: cliente socket + axios para notificaciones ===
+import { io } from "socket.io-client";
+import axios from "axios";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+const SOCKET_URL = API_BASE.replace(/\/api\/?$/, ""); // mismo host de la API
+
 const PATH_LABELS = {
   "/": "Panel principal",
   "/accesos": "Control de Acceso",
@@ -152,11 +159,56 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   }, [quickOpen]);
   useDismissOnOutside(quickOpen, [quickBtnRef, quickMenuRef], () => setQuickOpen(false));
 
-  // -------- campana (mismo patrón) --------
+  // -------- campana (fixed + notificaciones) --------
   const bellBtnRef = React.useRef(null);
   const bellMenuRef = React.useRef(null);
   const [bellOpen, setBellOpen] = React.useState(false);
   const [bellPos, setBellPos] = React.useState({ left: 0, top: 0 });
+
+  // Conteos de notificaciones
+  const [counts, setCounts] = React.useState({ email: 0, message: 0, appointment: 0, total: 0 });
+  const hasNew = (counts?.total || 0) > 0;
+
+  const api = React.useMemo(() => axios.create({ baseURL: API_BASE }), []);
+  const fetchCounts = React.useCallback(async () => {
+    try {
+      const { data } = await api.get("/notifications/counts");
+      setCounts(data);
+    } catch (e) {
+      // silencioso para no molestar la UI si el backend aún no tiene el endpoint
+    }
+  }, [api]);
+
+  const clearCounts = React.useCallback(async () => {
+    try {
+      const { data } = await api.post("/notifications/clear");
+      setCounts(data);
+    } catch (e) {
+      // silencioso
+    }
+  }, [api]);
+
+  // Socket: escucha eventos del servidor
+  React.useEffect(() => {
+    fetchCounts();
+    const s = io(SOCKET_URL, { transports: ["websocket"] });
+    const update = () => fetchCounts();
+
+    s.on("notifications:count-updated", (data) => setCounts(data));
+    s.on("email:new", update);
+    s.on("message:new", update);
+    s.on("appointment:new", update);
+
+    return () => {
+      s.off("notifications:count-updated");
+      s.off("email:new", update);
+      s.off("message:new", update);
+      s.off("appointment:new", update);
+      s.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggleBell = () => {
     setBellOpen(next => {
       const willOpen = !next;
@@ -251,7 +303,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       </div>
 
       {/* Botón campana */}
-      <div ref={bellBtnRef}>
+      <div ref={bellBtnRef} className="relative">
         <button
           onClick={toggleBell}
           className="relative inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -259,8 +311,13 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
           aria-haspopup="menu"
           aria-expanded={bellOpen}
         >
-          <Bell className="w-5 h-5" />
-          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-neutral-950" />
+          <Bell className={"w-5 h-5 " + (hasNew ? "text-rose-500" : "")} />
+          {/* Punto rojo y badge si hay novedades */}
+          {hasNew && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center ring-2 ring-white dark:ring-neutral-950">
+              {Math.min(counts.total, 99)}
+            </span>
+          )}
         </button>
       </div>
 
@@ -308,7 +365,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         </div>
       )}
 
-      {/* Campana */}
+      {/* Campana: panel de notificaciones */}
       {bellOpen && (
         <div
           ref={bellMenuRef}
@@ -317,7 +374,30 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
           role="menu"
         >
           <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
-          <div className="p-2 text-sm opacity-70">Sin notificaciones por ahora.</div>
+
+          <div className="p-2 text-sm space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="opacity-80">Correos</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.email || 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="opacity-80">Mensajes internos</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.message || 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="opacity-80">Citas de visitantes</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.appointment || 0}</span>
+            </div>
+          </div>
+
+          <div className="p-2 pt-1">
+            <button
+              onClick={() => { clearCounts(); setBellOpen(false); }}
+              className="w-full px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+            >
+              Marcar como visto
+            </button>
+          </div>
         </div>
       )}
 
