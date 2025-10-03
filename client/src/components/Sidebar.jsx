@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { to: "/bitacora",    label: "Bitácora Digital",       Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",            Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",             Icon: IconEval },
-  { to: "/reportes",    label: "Reportes",               Icon: BarChart3 },
+  
 ];
 
 function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {

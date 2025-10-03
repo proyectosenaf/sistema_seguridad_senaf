@@ -8,7 +8,7 @@ export const NAV_ORDER = [
   { key: "bitacora",   label: "Bitácora Digital",      path: "/bitacora" },
   { key: 'supervision', label: 'Supervisión',          path: '/supervision' },
   { key: "evaluacion", label: "Evaluación",            path: "/evaluacion" },
-  { key: "reportes",   label: "Reportes",              path: "/reportes" },
+  
 ];
 
 // Secciones que deben aparecer en el Panel principal (omitimos "home")

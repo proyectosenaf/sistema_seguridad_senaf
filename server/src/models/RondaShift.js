@@ -88,7 +88,7 @@ const rondaShiftSchema = new Schema(
     // Identidad guardia: usa uno u otro (o ambos si migras)
     guardId: { type: Schema.Types.ObjectId, ref: "Guard", index: true }, // opcional
     guardExternalId: { type: String, index: true }, // ej. Auth0 sub
-    guardName: { type: String }, // cache para reportes
+    guardName: { type: String }, // cache visible en UI
 
     startedAt: { type: Date, default: now, index: true },
     finishedAt: { type: Date },

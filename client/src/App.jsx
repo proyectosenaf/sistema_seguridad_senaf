@@ -17,11 +17,11 @@ const Visitas         = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora        = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
 const Supervision     = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
 const Evaluacion      = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
-const Reportes        = React.lazy(() => import("./pages/Reportes/Reportes.jsx"));
+
 const Chat            = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const RoutesAdminList = React.lazy(() => import("./pages/RutasAdmin/RoutesList.jsx"));
 const RouteForm       = React.lazy(() => import("./pages/RutasAdmin/RouteForm.jsx"));
-const SLAReports      = React.lazy(() => import("./pages/Reportes/SLA.jsx"));
+
 const LoginRedirect   = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 
 // NUEVO: Asignaciones (RutasAdmin)
@@ -105,7 +105,8 @@ export default function App() {
           <Route path="/bitacora"     element={<ProtectedRoute><Layout><Bitacora     /></Layout></ProtectedRoute>} />
           <Route path="/supervision"  element={<ProtectedRoute><Layout><Supervision  /></Layout></ProtectedRoute>} />
           <Route path="/evaluacion"   element={<ProtectedRoute><Layout><Evaluacion   /></Layout></ProtectedRoute>} />
-          <Route path="/reportes"     element={<ProtectedRoute><Layout><Reportes     /></Layout></ProtectedRoute>} />
+          
+          
           <Route path="/chat"         element={<ProtectedRoute><Layout><Chat         /></Layout></ProtectedRoute>} />
 
           <Route path="/rutas-admin"         element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
@@ -115,7 +116,7 @@ export default function App() {
           {/* NUEVA: asignaciones */}
           <Route path="/rutas-admin/asignaciones" element={<ProtectedRoute><Layout><Assignments /></Layout></ProtectedRoute>} />
 
-          <Route path="/reportes/sla" element={<ProtectedRoute><Layout><SLAReports /></Layout></ProtectedRoute>} />
+         
 
           <Route path="*" element={<div className="p-6">No encontrado</div>} />
         </Routes>
@@ -123,3 +124,4 @@ export default function App() {
     </AuthTokenBridge>
   );
 }
+// client/src/config/navConfig.js

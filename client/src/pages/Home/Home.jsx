@@ -35,7 +35,7 @@ const ICONS = {
   visitas: Users,
   bitacora: NotebookPen,
   evaluacion: ClipboardList,
-  reportes: BarChart3,
+
   supervision: ClipboardList,
 };
 

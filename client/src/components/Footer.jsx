@@ -46,15 +46,20 @@ export default function Footer() {
 
       {/* Tarjeta del footer: overflow-hidden para que los glows NO se salgan */}
       <div className="relative overflow-hidden rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/70 backdrop-blur p-6 lg:p-8 mx-4 md:mx-6 mb-2">
-        {/* Glows (quedan recortados por overflow-hidden) */}
+        {/* Glows */}
         <div className="pointer-events-none absolute -z-10 inset-0">
-          <div className="absolute w-[28rem] h-[28rem] left-[-10%] bottom-[-35%] rounded-full blur-3xl opacity-25"
-               style={{ background:"radial-gradient(closest-side, var(--fx1), transparent 70%)" }} />
-          <div className="absolute w-[24rem] h-[24rem] right-[-10%] top-[-30%] rounded-full blur-3xl opacity-20"
-               style={{ background:"radial-gradient(closest-side, var(--fx2), transparent 70%)" }} />
+          <div
+            className="absolute w-[28rem] h-[28rem] left-[-10%] bottom-[-35%] rounded-full blur-3xl opacity-25"
+            style={{ background: "radial-gradient(closest-side, var(--fx1), transparent 70%)" }}
+          />
+          <div
+            className="absolute w-[24rem] h-[24rem] right-[-10%] top-[-30%] rounded-full blur-3xl opacity-20"
+            style={{ background: "radial-gradient(closest-side, var(--fx2), transparent 70%)" }}
+          />
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Columna 1 */}
           <div>
             <div className="text-2xl font-bold fx-title">SENAF</div>
             <p className="mt-2 text-sm opacity-70">
@@ -65,6 +70,7 @@ export default function Footer() {
             </div>
           </div>
 
+          
           <div>
             <div className="font-semibold mb-2">Secciones</div>
             <ul className="space-y-1 text-sm">
@@ -75,10 +81,10 @@ export default function Footer() {
               <li><Link className="hover:underline" to="/bitacora">Bitácora Digital</Link></li>
               <li><Link className="hover:underline" to="/supervision">Supervisión</Link></li>
               <li><Link className="hover:underline" to="/evaluacion">Evaluación</Link></li>
-              <li><Link className="hover:underline" to="/reportes">Reportes</Link></li>
             </ul>
           </div>
 
+          {/* Columna 3 - Soporte */}
           <div>
             <div className="font-semibold mb-2">Soporte</div>
             <ul className="space-y-2 text-sm">
@@ -103,13 +109,16 @@ export default function Footer() {
             </ul>
           </div>
 
+          {/* Columna 4 - Estado */}
           <div>
             <div className="font-semibold mb-2">Estado del sistema</div>
             <div className="text-sm space-y-1">
               <div className="flex items-center gap-2">
-                <span className={`inline-block w-2.5 h-2.5 rounded-full ${
-                  apiUp === null ? "bg-neutral-400" : apiUp ? "bg-emerald-500" : "bg-rose-500"
-                }`} />
+                <span
+                  className={`inline-block w-2.5 h-2.5 rounded-full ${
+                    apiUp === null ? "bg-neutral-400" : apiUp ? "bg-emerald-500" : "bg-rose-500"
+                  }`}
+                />
                 <span className="opacity-80">API</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-70 break-all">{apiShown}</span>
@@ -130,6 +139,7 @@ export default function Footer() {
           </div>
         </div>
 
+        {/* Línea inferior */}
         <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs opacity-70">
           <div>© {new Date().getFullYear()} SENAF · Todos los derechos reservados</div>
           <div className="flex items-center gap-4">

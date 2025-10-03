@@ -31,7 +31,7 @@ const PATH_LABELS = {
   "/bitacora": "Bitácora Digital",
   "/supervision": "Supervisión",
   "/evaluacion": "Evaluación",
-  "/reportes": "Reportes",
+  
 };
 
 // Íconos alineados con “Secciones”
@@ -48,7 +48,7 @@ const MODULES = [
   { to: "/bitacora",    label: "Bitácora Digital",      Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",           Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",            Icon: IconEval },
-  { to: "/reportes",    label: "Reportes",              Icon: BarChart3 },
+  
 ];
 
 // ---------- Breadcrumbs ----------
@@ -121,7 +121,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       pathname.startsWith("/visitas") ? "/visitas" :
       pathname.startsWith("/supervision") ? "/supervision" :
       pathname.startsWith("/bitacora") ? "/bitacora" :
-      pathname.startsWith("/reportes") ? "/reportes" :
+      
       "/incidentes";
     if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`); else nav(base);
     setSearchOpen(false);

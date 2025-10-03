@@ -175,53 +175,7 @@ AlertSchema.methods.slaMetrics = function () {
   };
 };
 
-/** =========================
- * Estáticos (consultas/reportes)
- * ========================= */
 
-/** Conteo por kind en rango/estado */
-AlertSchema.statics.countByKind = async function ({ siteId, from, to, status } = {}) {
-  const $match = {};
-  if (siteId) $match.siteId = siteId;
-  if (status) $match.status = status;
-  if (from || to) {
-    $match.createdAt = {};
-    if (from) $match.createdAt.$gte = new Date(from);
-    if (to)   $match.createdAt.$lte = new Date(to);
-  }
-
-  const rows = await this.aggregate([
-    { $match },
-    { $group: { _id: "$kind", count: { $sum: 1 } } },
-    { $sort: { count: -1 } },
-  ]);
-
-  const base = Object.fromEntries(ALERT_KINDS.map(k => [k, 0]));
-  for (const r of rows) base[r._id] = r.count;
-  return base;
-};
-
-/** Listado para dashboard (abiertas/ack recientes) */
-AlertSchema.statics.recentForDashboard = function ({ siteId, limit = 100, status } = {}) {
-  const q = {};
-  if (siteId) q.siteId = siteId;
-  if (status) q.status = status;
-  else q.status = { $in: ["open", "ack"] };
-  return this.find(q).sort({ createdAt: -1 }).limit(limit).lean();
-};
-
-/** Abiertas por severidad */
-AlertSchema.statics.openBySeverity = async function ({ siteId } = {}) {
-  const $match = { status: "open" };
-  if (siteId) $match.siteId = siteId;
-  const rows = await this.aggregate([
-    { $match },
-    { $group: { _id: "$severity", count: { $sum: 1 } } },
-  ]);
-  const base = Object.fromEntries(SEVERITY.map(s => [s, 0]));
-  for (const r of rows) base[r._id] = r.count;
-  return base;
-};
 
 const Alert = model("Alert", AlertSchema);
 export default Alert;

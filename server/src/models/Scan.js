@@ -206,44 +206,7 @@ ScanSchema.methods.markLateIfNeeded = function (lateThresholdMs = 180000) {
   return this;
 };
 
-/** =========================
- * Estáticos (reportes)
- * ========================= */
 
-/**
- * countByResult({ from, to, routeId, guardExternalId })
- * Devuelve conteos por result en el rango.
- */
-ScanSchema.statics.countByResult = async function ({ from, to, routeId, guardExternalId } = {}) {
-  const m = this;
-  const $match = {};
-  if (from || to) {
-    $match.scannedAt = {};
-    if (from) $match.scannedAt.$gte = new Date(from);
-    if (to)   $match.scannedAt.$lte = new Date(to);
-  }
-  if (routeId) $match.routeId = routeId;
-  if (guardExternalId) $match.guardExternalId = guardExternalId;
-
-  const agg = await m.aggregate([
-    { $match },
-    { $group: { _id: "$result", count: { $sum: 1 } } },
-  ]);
-
-  return SCAN_RESULT.reduce((acc, r) => {
-    const found = agg.find((x) => x._id === r);
-    acc[r] = found ? found.count : 0;
-    return acc;
-  }, {});
-};
-
-/**
- * latestByCheckpoint({ routeId, limit })
- * Últimos scans por cpCode para una ruta.
- */
-ScanSchema.statics.latestByCheckpoint = function ({ routeId, limit = 100 } = {}) {
-  return this.find({ routeId }).sort({ scannedAt: -1 }).limit(limit).lean();
-};
 
 const Scan = model("Scan", ScanSchema);
 export default Scan;

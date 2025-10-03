@@ -8,7 +8,6 @@ const SEVERITY = ["bajo", "medio", "alto", "critico"];
 const STATUS   = ["abierto", "en_proceso", "cerrado"];
 
 const CATEGORY = [
-  // ajusta a tu catálogo
   "intrusion",
   "hurto",
   "vandalismo",
@@ -72,7 +71,7 @@ const IncidentSchema = new Schema(
     // Guardia (dos modos, como en tus otros modelos)
     guardId:         { type: Schema.Types.ObjectId, ref: "Guard", index: true },
     guardExternalId: { type: String, index: true }, // Auth0 sub
-    guardName:       { type: String },              // cache visible en reportes
+    guardName:       { type: String },              // cache visible
 
     // Ubicación y área
     areaFisica: { type: String },      // texto libre (ej. "Bodega 3")
@@ -242,62 +241,7 @@ IncidentSchema.methods.slaMetrics = function () {
   };
 };
 
-/** =========================
- * Estáticos (consultas/reportes)
- * ========================= */
 
-/** Conteo por estado en un rango */
-IncidentSchema.statics.countByStatus = async function ({ from, to, siteId } = {}) {
-  const $match = {};
-  if (siteId) $match.siteId = siteId;
-  if (from || to) {
-    $match.occurredAt = {};
-    if (from) $match.occurredAt.$gte = new Date(from);
-    if (to)   $match.occurredAt.$lte = new Date(to);
-  }
-
-  const rows = await this.aggregate([
-    { $match },
-    { $group: { _id: "$estado", count: { $sum: 1 } } },
-  ]);
-
-  const base = Object.fromEntries(STATUS.map(s => [s, 0]));
-  for (const r of rows) base[r._id] = r.count;
-  return base;
-};
-
-/** Top tipos por frecuencia en rango */
-IncidentSchema.statics.topTypes = function ({ from, to, siteId, limit = 10 } = {}) {
-  const $match = {};
-  if (siteId) $match.siteId = siteId;
-  if (from || to) {
-    $match.occurredAt = {};
-    if (from) $match.occurredAt.$gte = new Date(from);
-    if (to)   $match.occurredAt.$lte = new Date(to);
-  }
-  return this.aggregate([
-    { $match },
-    { $group: { _id: "$tipo", count: { $sum: 1 } } },
-    { $sort: { count: -1 } },
-    { $limit: limit },
-  ]);
-};
-
-/** Filtro rápido (dashboard admin) */
-IncidentSchema.statics.listForDashboard = function ({
-  siteId, status = "abierto", severity, from, to, limit = 100,
-} = {}) {
-  const q = {};
-  if (siteId) q.siteId = siteId;
-  if (status) q.estado = status;
-  if (severity) q.nivelRiesgo = severity;
-  if (from || to) {
-    q.occurredAt = {};
-    if (from) q.occurredAt.$gte = new Date(from);
-    if (to)   q.occurredAt.$lte = new Date(to);
-  }
-  return this.find(q).sort({ occurredAt: -1 }).limit(limit);
-};
 
 const Incident = model("Incident", IncidentSchema);
 export default Incident;
