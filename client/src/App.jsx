@@ -17,37 +17,25 @@ const Visitas         = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora        = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
 const Supervision     = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
 const Evaluacion      = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
-
 const Chat            = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const RoutesAdminList = React.lazy(() => import("./pages/RutasAdmin/RoutesList.jsx"));
 const RouteForm       = React.lazy(() => import("./pages/RutasAdmin/RouteForm.jsx"));
-
+const Assignments     = React.lazy(() => import("./pages/RutasAdmin/Assignments.jsx"));
 const LoginRedirect   = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 
-// NUEVO: Asignaciones (RutasAdmin)
-const Assignments     = React.lazy(() => import("./pages/RutasAdmin/Assignments.jsx"));
-// (Opcional QA de rondas) Kiosk para marcajes desde PC
-// const Kiosk        = React.lazy(() => import("./pages/Rondas/Kiosk.jsx"));
-
-/**
- * Bridge: engancha getAccessTokenSilently() a tu axios (api.js),
- * para que TODAS las requests lleven Authorization: Bearer <token>.
- */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
     const setProvider = async () => {
       if (!isAuthenticated) {
-        attachAuth0(null); // limpia token en axios
+        attachAuth0(null);
         return;
       }
       attachAuth0(async () => {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: {
-              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-            },
+            authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
           });
           return token || null;
         } catch (err) {
@@ -67,10 +55,10 @@ export default function App() {
     <AuthTokenBridge>
       <Suspense fallback={<div className="p-6">Cargando…</div>}>
         <Routes>
-          {/* ===== Ruta PÚBLICA para iniciar sesión ===== */}
+          {/* Pública */}
           <Route path="/login" element={<LoginRedirect />} />
 
-          {/* ===== Rutas PROTEGIDAS (con layout) ===== */}
+          {/* Protegidas */}
           <Route
             path="/"
             element={
@@ -80,48 +68,27 @@ export default function App() {
             }
           />
 
-          <Route
-            path="/incidentes"
-            element={
-              <ProtectedRoute>
-                <Layout><IncidentesList /></Layout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/incidentes/nuevo"
-            element={
-              <ProtectedRoute>
-                <Layout><IncidenteForm /></Layout>
-              </ProtectedRoute>
-            }
-          />
+          {/* Módulos (cada uno es un placeholder propio) */}
+          <Route path="/incidentes"        element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>} />
+          <Route path="/incidentes/nuevo"  element={<ProtectedRoute><Layout><IncidenteForm  /></Layout></ProtectedRoute>} />
+          <Route path="/rondas"            element={<ProtectedRoute><Layout><Rondas         /></Layout></ProtectedRoute>} />
+          <Route path="/accesos"           element={<ProtectedRoute><Layout><Accesos        /></Layout></ProtectedRoute>} />
+          <Route path="/visitas"           element={<ProtectedRoute><Layout><Visitas        /></Layout></ProtectedRoute>} />
+          <Route path="/bitacora"          element={<ProtectedRoute><Layout><Bitacora       /></Layout></ProtectedRoute>} />
+          <Route path="/supervision"       element={<ProtectedRoute><Layout><Supervision    /></Layout></ProtectedRoute>} />
+          <Route path="/evaluacion"        element={<ProtectedRoute><Layout><Evaluacion     /></Layout></ProtectedRoute>} />
+          <Route path="/chat"              element={<ProtectedRoute><Layout><Chat           /></Layout></ProtectedRoute>} />
 
-          <Route path="/rondas"       element={<ProtectedRoute><Layout><Rondas       /></Layout></ProtectedRoute>} />
-          {/* <Route path="/rondas/kiosk" element={<ProtectedRoute><Layout><Kiosk        /></Layout></ProtectedRoute>} /> */}
+          {/* Admin */}
+          <Route path="/rutas-admin"             element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
+          <Route path="/rutas-admin/nueva"       element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
+          <Route path="/rutas-admin/:id"         element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
+          <Route path="/rutas-admin/asignaciones"element={<ProtectedRoute><Layout><Assignments     /></Layout></ProtectedRoute>} />
 
-          <Route path="/accesos"      element={<ProtectedRoute><Layout><Accesos      /></Layout></ProtectedRoute>} />
-          <Route path="/visitas"      element={<ProtectedRoute><Layout><Visitas      /></Layout></ProtectedRoute>} />
-          <Route path="/bitacora"     element={<ProtectedRoute><Layout><Bitacora     /></Layout></ProtectedRoute>} />
-          <Route path="/supervision"  element={<ProtectedRoute><Layout><Supervision  /></Layout></ProtectedRoute>} />
-          <Route path="/evaluacion"   element={<ProtectedRoute><Layout><Evaluacion   /></Layout></ProtectedRoute>} />
-          
-          
-          <Route path="/chat"         element={<ProtectedRoute><Layout><Chat         /></Layout></ProtectedRoute>} />
-
-          <Route path="/rutas-admin"         element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
-          <Route path="/rutas-admin/nueva"   element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
-          <Route path="/rutas-admin/:id"     element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
-
-          {/* NUEVA: asignaciones */}
-          <Route path="/rutas-admin/asignaciones" element={<ProtectedRoute><Layout><Assignments /></Layout></ProtectedRoute>} />
-
-         
-
+          {/* 404 */}
           <Route path="*" element={<div className="p-6">No encontrado</div>} />
         </Routes>
       </Suspense>
     </AuthTokenBridge>
   );
 }
-// client/src/config/navConfig.js
