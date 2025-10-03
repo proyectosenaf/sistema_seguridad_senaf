@@ -16,10 +16,14 @@ import { apiLimiter } from './middleware/rateLimiter.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import 'express-async-errors';
 
+// ⬇️ NUEVO: cron que marca “missed” y crea/cierra alertas
+import { startMissedCheckCron } from './jobs/missedCheck.js';
+
 // ----------------------------------------------------------------------------
 // App + middlewares HTTP
 // ----------------------------------------------------------------------------
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(helmet());
 if (env.node !== 'production') app.use(morgan('dev'));
@@ -28,39 +32,54 @@ app.use(express.json({ limit: '2mb' }));
 app.use(corsMw);
 app.use('/api', apiLimiter);
 
-// Healthcheck muy útil para monitoreo/load balancers
+// Healthchecks
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // ----------------------------------------------------------------------------
 // Tiempo real (Socket.IO) + EventBus interno
 // ----------------------------------------------------------------------------
-export const bus = new EventEmitter(); // otros módulos emiten aquí
+export const bus = new EventEmitter();
 
 const server = http.createServer(app);
 
-// Permite origenes definidos en tu CORS; fallback a localhost en dev
-const allowedOrigins =
-  (env.corsOrigins && env.corsOrigins.length) ?
-    env.corsOrigins :
-    ['http://localhost:3000','http://localhost:5173'];
+function normalizeOrigins() {
+  if (Array.isArray(env.corsOrigins) && env.corsOrigins.length) return env.corsOrigins;
+  if (Array.isArray(env.corsOrigin) && env.corsOrigin.length) return env.corsOrigin;
+  if (typeof env.corsOrigin === 'string' && env.corsOrigin.trim() !== '') {
+    return env.corsOrigin.split(',').map(s => s.trim());
+  }
+  if (env.node !== 'production') return ['http://localhost:3000', 'http://localhost:5173'];
+  return [];
+}
+
+const allowedOrigins = normalizeOrigins();
 
 export const io = new SocketIOServer(server, {
-  cors: { origin: allowedOrigins, methods: ['GET','POST','PATCH','DELETE'] },
+  cors: {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+  },
 });
 
-// Conexión básica de sockets
+// ✅ io disponible desde controllers como req.app.get("io") y req.io
+app.set('io', io);
+app.use((req, _res, next) => { req.io = io; next(); });
+
+// Conexión sockets
 io.on('connection', (socket) => {
-  // aquí podrías autenticar sockets si lo necesitas
   socket.emit('hello', { ok: true, ts: Date.now() });
 });
 
-// Reemite eventos del bus a todos los sockets
+// Reemite eventos del bus a sockets (compatibilidad)
 [
   'email:new',
   'message:new',
   'appointment:new',
   'bitacora:new',
   'notifications:count-updated',
+  'ronda:iniciada',
 ].forEach((evt) => {
   bus.on(evt, (payload) => io.emit(evt, payload));
 });
@@ -74,28 +93,47 @@ app.use('/api', apiRoutes);
 // Errores
 // ----------------------------------------------------------------------------
 app.use(notFound);          // 404
-app.use(celebrateErrors()); // errores de celebrate (400 con detalle)
+app.use(celebrateErrors()); // 400 de celebrate
 app.use(errorHandler);      // handler global
 
 // ----------------------------------------------------------------------------
 // Inicio + apagado elegante
 // ----------------------------------------------------------------------------
 const start = async () => {
+  if (!env?.port) {
+    console.warn('[api] WARN: env.port no está definido. Usando 4000 por defecto.');
+    env.port = 4000;
+  }
+
   await connectDB();
 
-  server.listen(env.port, () => {
+  server.listen(env.port, async () => {
     console.log(`[api] http://localhost:${env.port}`);
+    console.log(`[io] CORS origins: ${allowedOrigins.length ? allowedOrigins.join(', ') : '(ninguno)'}`);
+
+    // (Opcional) monitor legacy si lo tienes
+    try {
+      const mod = await import('./jobs/rondas.monitor.js');
+      if (typeof mod.startRondasMonitor === 'function') {
+        mod.startRondasMonitor({ io });
+        console.log('[monitor] Rondas monitor iniciado.');
+      }
+    } catch {
+      // Silencioso
+    }
+
+    // ⏱️ Arranca el cron de “missed checks” (cada 2 min)
+    startMissedCheckCron({ cron: '*/2 * * * *', logger: console });
   });
 
   const shutdown = (signal) => async () => {
     try {
       console.log(`\n[api] ${signal} recibido. Cerrando…`);
-      io.close();          // cierra sockets
-      server.close(() => { // cierra HTTP
+      io.close();
+      server.close(() => {
         console.log('[api] HTTP detenido.');
         process.exit(0);
       });
-      // Si en 5s no cerró, fuerza salida
       setTimeout(() => process.exit(0), 5000).unref();
     } catch (e) {
       console.error('[api] Error al cerrar:', e);

@@ -1,9 +1,6 @@
-import { io } from 'socket.io-client';
-let socket;
+import api from "./api"; // axios preconfigurado con baseURL = http://localhost:4000
 
-export function getSocket() {
-  if (!socket) {
-    socket = io(import.meta.env.VITE_API_BASE_URL.replace('/api',''), { transports: ['websocket'] });
-  }
-  return socket;
+export async function getNotificationCounts() {
+  const { data } = await api.get("/api/notifications/counts");
+  return data;
 }

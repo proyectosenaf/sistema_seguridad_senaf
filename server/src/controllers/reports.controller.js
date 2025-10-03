@@ -2,13 +2,12 @@
 import dayjs from "dayjs";
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
-import RondaShift from "../models/RondaShift.js";
 import RondaEvent from "../models/RondaEvent.js";
 import Route from "../models/Route.js";
 
-/** KPIs por rango */
-export async function slaSummary(req, res) {
-  const { from, to, routeId } = req.query;
+// Función auxiliar para obtener el resumen de SLA
+async function getSlaSummaryData(query) {
+  const { from, to, routeId } = query;
   const $match = {
     ts: { $gte: new Date(from), $lte: new Date(to) }
   };
@@ -24,7 +23,6 @@ export async function slaSummary(req, res) {
     }
   ]);
 
-  // Remodelamos a forma útil
   const byRoute = {};
   for (const r of agg) {
     const key = String(r._id.routeId);
@@ -33,7 +31,6 @@ export async function slaSummary(req, res) {
     byRoute[key].total += r.count;
   }
 
-  // Resolvemos nombres de rutas
   const ids = Object.keys(byRoute);
   const routes = await Route.find({ _id: { $in: ids } }).select("name").lean();
   const nameMap = Object.fromEntries(routes.map(r => [String(r._id), r.name]));
@@ -45,21 +42,24 @@ export async function slaSummary(req, res) {
     score: byRoute[k].total ? Math.round((byRoute[k].ok/byRoute[k].total)*100) : 0
   }));
 
-  res.json({
-    range: { from, to },
-    items,
-    totals: items.reduce((acc, it) => {
-      acc.ok += it.ok; acc.late += it.late; acc.invalid += it.invalid; acc.total += it.total;
-      return acc;
-    }, { ok:0, late:0, invalid:0, total:0 })
-  });
+  const totals = items.reduce((acc, it) => {
+    acc.ok += it.ok; acc.late += it.late; acc.invalid += it.invalid; acc.total += it.total;
+    return acc;
+  }, { ok:0, late:0, invalid:0, total:0 });
+  
+  return { range: { from, to }, items, totals };
+}
+
+
+/** KPIs por rango (API) */
+export async function slaSummary(req, res) {
+  const data = await getSlaSummaryData(req.query);
+  res.json(data);
 }
 
 /** Excel */
 export async function slaExcel(req, res) {
-  const dataRes = await (await import("./reports.controller.js")).slaSummary({ query: req.query }, { json: x => x });
-  const data = await dataRes; // hack para reutilizar lógica
-
+  const data = await getSlaSummaryData(req.query);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("SLA");
   ws.columns = [
@@ -80,9 +80,7 @@ export async function slaExcel(req, res) {
 
 /** PDF */
 export async function slaPdf(req, res) {
-  const dataRes = await (await import("./reports.controller.js")).slaSummary({ query: req.query }, { json: x => x });
-  const data = await dataRes;
-
+  const data = await getSlaSummaryData(req.query);
   const doc = new PDFDocument({ size: "A4", margin: 36 });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="sla_${dayjs().format("YYYYMMDD_HHmm")}.pdf"`);

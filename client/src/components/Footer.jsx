@@ -1,21 +1,27 @@
+// client/src/components/Footer.jsx
 import React from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api.js";
+import api from "/src/lib/api.js"; // usa el default export para evitar confusiones
 import { MessageCircle, Mail, ExternalLink, ShieldCheck, Server, Clock, Github } from "lucide-react";
 
 export default function Footer() {
   const [apiUp, setApiUp] = React.useState(null);
   const [ping, setPing]   = React.useState(null);
 
+  // Versión tomada de env (si no existe, fallback)
   const version = import.meta.env.VITE_APP_VERSION || "1.0.0";
-  const apiBase = import.meta.env.VITE_API_BASE || "http://localhost:4000/api";
+
+  // Base real que está usando axios (más confiable que leer otra var env aquí)
+  const apiBaseUrl = (api?.defaults?.baseURL || "http://localhost:4000").replace(/\/$/, "");
+  const apiShown   = `${apiBaseUrl}/api`;
 
   React.useEffect(() => {
     let cancel = false;
     const pingApi = async () => {
       try {
         const t0 = performance.now();
-        const r  = await api.get("/health");
+        // 👇 siempre ping a /api/health (endpoint público de salud)
+        const r  = await api.get("/api/health", { timeout: 5000 });
         const t1 = performance.now();
         if (cancel) return;
         setPing(Math.round(t1 - t0));
@@ -106,7 +112,7 @@ export default function Footer() {
                 }`} />
                 <span className="opacity-80">API</span>
                 <span className="opacity-60">·</span>
-                <span className="opacity-70 break-all">{apiBase}</span>
+                <span className="opacity-70 break-all">{apiShown}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 opacity-70" />
@@ -118,7 +124,7 @@ export default function Footer() {
                 <Server className="w-4 h-4 opacity-70" />
                 <span className="opacity-80">Versión</span>
                 <span className="opacity-60">·</span>
-                <span className="opacity-80">v{import.meta.env.VITE_APP_VERSION || "1.0.0"}</span>
+                <span className="opacity-80">v{version}</span>
               </div>
             </div>
           </div>

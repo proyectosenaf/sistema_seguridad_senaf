@@ -1,6 +1,6 @@
 // client/src/components/ChatDock.jsx
 import React from "react";
-import { api, attachAuth0 } from "../lib/api.js";
+import api, { attachAuth0 } from "/src/lib/api.js";
 import { useAuth0 } from "@auth0/auth0-react";
 
 /* === Iconos (SVG) === */
@@ -40,9 +40,7 @@ export default function ChatDock() {
       if (!isAuthenticated) return null;
       try {
         const token = await getAccessTokenSilently({
-          authorizationParams: {
-            audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-          },
+          authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
         });
         return token || null;
       } catch {
@@ -84,6 +82,13 @@ export default function ChatDock() {
     return () => window.removeEventListener("resize", onResize);
   }, [clampToViewport]);
 
+  // Permite abrir el dock desde el footer (evento global)
+  React.useEffect(() => {
+    const openHandler = () => setOpen(true);
+    window.addEventListener("chat:open", openHandler);
+    return () => window.removeEventListener("chat:open", openHandler);
+  }, []);
+
   // Drag
   const onPointerDown = (e) => {
     e.preventDefault();
@@ -116,19 +121,20 @@ export default function ChatDock() {
     setDragging(false);
   };
 
-  // Cargar historial
+  // Cargar historial (solo si autenticado)
   React.useEffect(() => {
+    if (!isAuthenticated) return;
     let alive = true;
     (async () => {
       try {
-        const { data } = await api.get("/chat/messages");
+        const { data } = await api.get("/api/chat/messages");
         if (alive && Array.isArray(data)) setMessages(data);
       } catch (err) {
-        console.error("[chat] GET /chat/messages", err?.response?.data || err.message);
+        console.error("[chat] GET /api/chat/messages", err?.response?.data || err.message);
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [isAuthenticated]);
 
   // Enviar con optimista y “replace” por el mensaje real
   const send = async () => {
@@ -148,8 +154,8 @@ export default function ChatDock() {
     setText("");
 
     try {
-      // 👇 Mandamos también los datos del usuario (por si el token no trae name/email)
-      const { data } = await api.post("/chat/messages", {
+      // Mandamos también datos del usuario (por si el token no trae name/email)
+      const { data } = await api.post("/api/chat/messages", {
         text: txt,
         room: "global",
         userName: user?.name || user?.nickname || user?.email,
@@ -158,7 +164,7 @@ export default function ChatDock() {
       });
       setMessages((m) => m.map((msg) => (msg._id === tempId ? data : msg)));
     } catch (err) {
-      console.error("[chat] POST /chat/messages", err?.response?.data || err.message);
+      console.error("[chat] POST /api/chat/messages", err?.response?.data || err.message);
       setMessages((m) => m.map((msg) => (msg._id === tempId ? { ...msg, error: true } : msg)));
     }
   };

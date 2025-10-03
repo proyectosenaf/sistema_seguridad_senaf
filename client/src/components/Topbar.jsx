@@ -6,17 +6,21 @@ import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
 import {
   Menu, LogOut, Search, Bell, Plus, X, ArrowLeft,
-  Home, DoorOpen, KeyRound, Footprints, Route,
+  DoorOpen, KeyRound, Footprints, Route,
   AlertTriangle, UsersRound, Users, NotebookPen,
   ClipboardList, ClipboardCheck, Award, BarChart3
 } from "lucide-react";
 
-// === NUEVO: cliente socket + axios para notificaciones ===
+// === Socket para eventos en vivo ===
 import { io } from "socket.io-client";
-import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-const SOCKET_URL = API_BASE.replace(/\/api\/?$/, ""); // mismo host de la API
+// === API (con token) y cliente de notificaciones ===
+import api from "/src/lib/api.js";
+import NotificationsAPI from "/src/lib/notificationsApi.js";
+
+// Raíz del backend (sin /api) para sockets y para construir rutas absolutas si hace falta
+const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const SOCKET_URL = API_ROOT;
 
 const PATH_LABELS = {
   "/": "Panel principal",
@@ -165,42 +169,48 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   const [bellOpen, setBellOpen] = React.useState(false);
   const [bellPos, setBellPos] = React.useState({ left: 0, top: 0 });
 
-  // Conteos de notificaciones
-  const [counts, setCounts] = React.useState({ email: 0, message: 0, appointment: 0, total: 0 });
-  const hasNew = (counts?.total || 0) > 0;
+  // Conteos de notificaciones del backend nuevo
+  // { unread, alerts, total }
+  const [counts, setCounts] = React.useState({ unread: 0, alerts: 0, total: 0 });
+  const hasNew = (counts?.unread || 0) > 0 || (counts?.alerts || 0) > 0;
 
-  const api = React.useMemo(() => axios.create({ baseURL: API_BASE }), []);
   const fetchCounts = React.useCallback(async () => {
     try {
-      const { data } = await api.get("/notifications/counts");
-      setCounts(data);
-    } catch (e) {
-      // silencioso para no molestar la UI si el backend aún no tiene el endpoint
+      const data = await NotificationsAPI.getNotificationCounts();
+      setCounts({
+        unread: Number(data?.unread || 0),
+        alerts: Number(data?.alerts || 0),
+        total:  Number(data?.total  || 0),
+      });
+    } catch {
+      // Silencioso para no molestar la UI si el backend aún no tiene el endpoint
     }
-  }, [api]);
+  }, []);
 
   const clearCounts = React.useCallback(async () => {
     try {
-      const { data } = await api.post("/notifications/clear");
-      setCounts(data);
-    } catch (e) {
-      // silencioso
+      // Endpoint correcto en el backend
+      await api.post("/api/notifications/clear");
+      await fetchCounts();
+    } catch {
+      // Silencioso
     }
-  }, [api]);
+  }, [fetchCounts]);
 
   // Socket: escucha eventos del servidor
   React.useEffect(() => {
     fetchCounts();
-    const s = io(SOCKET_URL, { transports: ["websocket"] });
+    const s = io(SOCKET_URL, { transports: ["websocket"], withCredentials: true });
     const update = () => fetchCounts();
 
-    s.on("notifications:count-updated", (data) => setCounts(data));
+    s.on("notifications:count-updated", update);
+    // otros eventos genéricos que podrían disparar nuevas notificaciones
     s.on("email:new", update);
     s.on("message:new", update);
     s.on("appointment:new", update);
 
     return () => {
-      s.off("notifications:count-updated");
+      s.off("notifications:count-updated", update);
       s.off("email:new", update);
       s.off("message:new", update);
       s.off("appointment:new", update);
@@ -208,34 +218,6 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const toggleBell = () => {
-    setBellOpen(next => {
-      const willOpen = !next;
-      if (willOpen && bellBtnRef.current) {
-        const r = bellBtnRef.current.getBoundingClientRect();
-        const menuW = 320; const gap = 8;
-        setBellPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
-      }
-      return willOpen;
-    });
-  };
-  React.useEffect(() => {
-    if (!bellOpen) return;
-    const recalc = () => {
-      if (!bellBtnRef.current) return;
-      const r = bellBtnRef.current.getBoundingClientRect();
-      const menuW = 320; const gap = 8;
-      setBellPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
-    };
-    window.addEventListener("resize", recalc);
-    window.addEventListener("scroll", recalc, true);
-    return () => {
-      window.removeEventListener("resize", recalc);
-      window.removeEventListener("scroll", recalc, true);
-    };
-  }, [bellOpen]);
-  useDismissOnOutside(bellOpen, [bellBtnRef, bellMenuRef], () => setBellOpen(false));
 
   return (
     <div className="flex items-center gap-3 px-4 md:px-6 h-14">
@@ -290,35 +272,36 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       </div>
 
       {/* Botón + */}
-      <div ref={quickBtnRef}>
-        <button
-          onClick={toggleQuick}
-          className="inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-          title="Abrir módulo"
-          aria-haspopup="menu"
-          aria-expanded={quickOpen}
-        >
-          <Plus className="w-5 h-5" />
-        </button>
-      </div>
+      <TopbarQuickMenu nav={nav} />
 
       {/* Botón campana */}
       <div ref={bellBtnRef} className="relative">
         <button
-          onClick={toggleBell}
+          onClick={() => setBellOpen(v => !v)}
           className="relative inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           aria-label="Notificaciones"
           aria-haspopup="menu"
           aria-expanded={bellOpen}
         >
           <Bell className={"w-5 h-5 " + (hasNew ? "text-rose-500" : "")} />
-          {/* Punto rojo y badge si hay novedades */}
           {hasNew && (
             <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center ring-2 ring-white dark:ring-neutral-950">
-              {Math.min(counts.total, 99)}
+              {Math.min((counts.unread || 0) + (counts.alerts || 0), 99)}
             </span>
           )}
         </button>
+
+        {/* Panel de notificaciones */}
+        {bellOpen && (
+          <BellMenu
+            anchorRef={bellBtnRef}
+            counts={counts}
+            onClear={() => { clearCounts(); setBellOpen(false); }}
+            onClose={() => setBellOpen(false)}
+            setPosFn={setBellPos}
+            pos={bellPos}
+          />
+        )}
       </div>
 
       {/* Paleta + tema */}
@@ -339,67 +322,6 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         <LogOut className="w-4 h-4" />
         <span className="hidden sm:inline">Salir</span>
       </button>
-
-      {/* ======= MENÚS FLOTANTES (FIXED) ======= */}
-
-      {/* +: lista de módulos */}
-      {quickOpen && (
-        <div
-          ref={quickMenuRef}
-          className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1"
-          style={{ left: `${quickPos.left}px`, top: `${quickPos.top}px` }}
-          role="menu"
-        >
-          <div className="px-3 py-2 text-xs font-semibold opacity-70">Abrir módulo</div>
-          {MODULES.map(({ to, label, Icon }) => (
-            <button
-              key={to}
-              onClick={() => { setQuickOpen(false); nav(to); }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-left"
-              role="menuitem"
-            >
-              <Icon className="w-4 h-4 opacity-80" />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Campana: panel de notificaciones */}
-      {bellOpen && (
-        <div
-          ref={bellMenuRef}
-          className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-2"
-          style={{ left: `${bellPos.left}px`, top: `${bellPos.top}px` }}
-          role="menu"
-        >
-          <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
-
-          <div className="p-2 text-sm space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="opacity-80">Correos</span>
-              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.email || 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="opacity-80">Mensajes internos</span>
-              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.message || 0}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="opacity-80">Citas de visitantes</span>
-              <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">{counts.appointment || 0}</span>
-            </div>
-          </div>
-
-          <div className="p-2 pt-1">
-            <button
-              onClick={() => { clearCounts(); setBellOpen(false); }}
-              className="w-full px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
-            >
-              Marcar como visto
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Modal búsqueda */}
       {searchOpen && (
@@ -441,6 +363,138 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------- Subcomponentes pequeños para limpiar el JSX principal ---------- */
+
+function TopbarQuickMenu({ nav }) {
+  const btnRef = React.useRef(null);
+  const menuRef = React.useRef(null);
+  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState({ left: 0, top: 0 });
+
+  const toggle = () => {
+    setOpen(next => {
+      const willOpen = !next;
+      if (willOpen && btnRef.current) {
+        const r = btnRef.current.getBoundingClientRect();
+        const menuW = 320, gap = 8;
+        setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
+      }
+      return willOpen;
+    });
+  };
+
+  React.useEffect(() => {
+    if (!open) return;
+    const recalc = () => {
+      if (!btnRef.current) return;
+      const r = btnRef.current.getBoundingClientRect();
+      const menuW = 320, gap = 8;
+      setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
+    };
+    window.addEventListener("resize", recalc);
+    window.addEventListener("scroll", recalc, true);
+    return () => {
+      window.removeEventListener("resize", recalc);
+      window.removeEventListener("scroll", recalc, true);
+    };
+  }, [open]);
+
+  useDismissOnOutside(open, [btnRef, menuRef], () => setOpen(false));
+
+  return (
+    <>
+      <div ref={btnRef}>
+        <button
+          onClick={toggle}
+          className="inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          title="Abrir módulo"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      </div>
+
+      {open && (
+        <div
+          ref={menuRef}
+          className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1"
+          style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
+          role="menu"
+        >
+          <div className="px-3 py-2 text-xs font-semibold opacity-70">Abrir módulo</div>
+          {MODULES.map(({ to, label, Icon }) => (
+            <button
+              key={to}
+              onClick={() => { setOpen(false); nav(to); }}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-left"
+              role="menuitem"
+            >
+              <Icon className="w-4 h-4 opacity-80" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
+  React.useEffect(() => {
+    if (!anchorRef.current) return;
+    const r = anchorRef.current.getBoundingClientRect();
+    const menuW = 320, gap = 8;
+    setPosFn({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
+  }, [anchorRef, setPosFn]);
+
+  return (
+    <div
+      className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-2"
+      style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
+      role="menu"
+    >
+      <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
+
+      <div className="p-2 text-sm space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="opacity-80">Sin leer</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+            {counts.unread || 0}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="opacity-80">Alertas</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+            {counts.alerts || 0}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="opacity-80">Total</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+            {counts.total || 0}
+          </span>
+        </div>
+      </div>
+
+      <div className="p-2 pt-1 flex gap-2">
+        <button
+          onClick={onClear}
+          className="flex-1 px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+        >
+          Marcar todo como leído
+        </button>
+        <button
+          onClick={onClose}
+          className="px-3 py-2 rounded-lg border dark:border-neutral-700"
+        >
+          Cerrar
+        </button>
+      </div>
     </div>
   );
 }

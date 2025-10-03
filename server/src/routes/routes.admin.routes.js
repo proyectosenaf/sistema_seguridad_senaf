@@ -1,91 +1,75 @@
-// src/routes/routes.admin.routes.js
 import { Router } from "express";
 import { celebrate, Joi, Segments } from "celebrate";
-import { RoutesController } from "../controllers/routes.controller.js";
-
-// --- Validadores coherentes con src/models/Route.js ---
-const checkpointJoi = Joi.object({
-  code: Joi.string().max(120).required(),
-  name: Joi.string().min(3).required(),
-  order: Joi.number().integer().min(0).required(),
-
-  allowedMethods: Joi.array()
-    .items(Joi.string().valid("qr","nfc","finger"))
-    .default([]),
-
-  geofence: Joi.object({
-    type: Joi.string().valid("circle","polygon"),
-    center: Joi.object({ lat: Joi.number(), lng: Joi.number() }),
-    radiusMeters: Joi.number().min(1),
-    points: Joi.array().items(Joi.object({ lat: Joi.number(), lng: Joi.number() }))
-  }).optional(),
-
-  expectedSecondsFromStart: Joi.number().integer().min(0).default(0),
-  graceSeconds: Joi.number().integer().min(0).max(600).default(120),
-
-  requirePhoto: Joi.boolean().default(false),
-  requireNote: Joi.boolean().default(false),
-
-  tags: Joi.array().items(Joi.string()).default([])
-});
-
-const routeCreateJoi = Joi.object({
-  siteId: Joi.string().optional(),
-  name: Joi.string().min(3).required(),
-  code: Joi.string().optional(),               // único si lo usas
-  active: Joi.boolean().default(true),
-  sla: Joi.object({
-    lateThresholdSeconds: Joi.number().integer().min(0).default(180),
-    missingThresholdSeconds: Joi.number().integer().min(0).default(600)
-  }).default(),
-  windows: Joi.array().items(Joi.object({
-    dow: Joi.array().items(Joi.number().integer().min(0).max(6)).default([]),
-    start: Joi.string().optional(),
-    end: Joi.string().optional()
-  })).default([]),
-  checkpoints: Joi.array().items(checkpointJoi).min(1).required()
-});
-
-const routeUpdateJoi = Joi.object({
-  name: Joi.string().min(3).optional(),
-  code: Joi.string().optional(),
-  active: Joi.boolean().optional(),
-  sla: Joi.object({
-    lateThresholdSeconds: Joi.number().integer().min(0),
-    missingThresholdSeconds: Joi.number().integer().min(0)
-  }).optional(),
-  windows: Joi.array().items(Joi.object({
-    dow: Joi.array().items(Joi.number().integer().min(0).max(6)).default([]),
-    start: Joi.string().optional(),
-    end: Joi.string().optional()
-  })).optional(),
-  checkpoints: Joi.array().items(checkpointJoi).min(1).optional()
-});
-
-const upsertCheckpointJoi = checkpointJoi; // mismo esquema para upsert
+import Route from "../models/Route.js";
+import { requireAuth } from "../middleware/auth.js"; // tu guard de Auth0
 
 const router = Router();
+router.use(requireAuth);
 
-// Lista / Detalle
-router.get("/", RoutesController.list);
-router.get("/:id", RoutesController.get);
+// LIST
+router.get("/", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  const find = q
+    ? { $or: [{ name: { $regex: q, $options: "i" } }, { code: { $regex: q, $options: "i" } }] }
+    : {};
+  const list = await Route.find(find).sort({ createdAt: -1 }).lean();
+  res.json(list);
+});
 
-// Crear / Actualizar / Eliminar ruta
-router.post("/", celebrate({ [Segments.BODY]: routeCreateJoi }), RoutesController.create);
-router.patch("/:id", celebrate({ [Segments.BODY]: routeUpdateJoi }), RoutesController.update);
-router.delete("/:id", RoutesController.remove);
+// ONE
+router.get("/:id", async (req, res) => {
+  const doc = await Route.findById(req.params.id).lean();
+  if (!doc) return res.status(404).json({ error: "Ruta no encontrada" });
+  res.json(doc);
+});
 
-// Checkpoints de una ruta (upsert / delete)
-router.put(
-  "/:id/checkpoints",
-  celebrate({ [Segments.BODY]: upsertCheckpointJoi }),
-  RoutesController.upsertCheckpoint
+// CREATE
+router.post(
+  "/",
+  celebrate({
+    [Segments.BODY]: Joi.object({
+      siteId: Joi.string().allow(null, "").optional(),
+      name: Joi.string().required(),
+      code: Joi.string().allow("", null).optional(),
+      active: Joi.boolean().optional(),
+      sla: Joi.object({
+        lateThresholdSeconds: Joi.number().min(0).required(),
+        missingThresholdSeconds: Joi.number().min(0).required(),
+      }).required(),
+      checkpoints: Joi.array().items(
+        Joi.object({
+          code: Joi.string().required(),
+          name: Joi.string().required(),
+          order: Joi.number().min(0).required(),
+          expectedSecondsFromStart: Joi.number().min(0).required(),
+          graceSeconds: Joi.number().min(0).required(),
+          allowedMethods: Joi.array().items(Joi.string().valid("qr", "nfc", "finger")).default([]),
+          requirePhoto: Joi.boolean().default(false),
+          requireNote: Joi.boolean().default(false),
+          tags: Joi.array().items(Joi.string()).default([]),
+        })
+      ).min(1).required(),
+      windows: Joi.array().default([]),
+    }),
+  }),
+  async (req, res) => {
+    const doc = await Route.create(req.body);
+    res.status(201).json(doc);
+  }
 );
 
-router.delete(
-  "/:id/checkpoints",
-  celebrate({ [Segments.QUERY]: Joi.object({ code: Joi.string().required() }) }),
-  RoutesController.deleteCheckpoint
-);
+// UPDATE
+router.put("/:id", async (req, res) => {
+  const doc = await Route.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  if (!doc) return res.status(404).json({ error: "Ruta no encontrada" });
+  res.json(doc);
+});
+
+// DELETE
+router.delete("/:id", async (req, res) => {
+  const ok = await Route.findByIdAndDelete(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Ruta no encontrada" });
+  res.json({ ok: true });
+});
 
 export default router;

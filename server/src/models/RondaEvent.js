@@ -1,52 +1,67 @@
 // src/models/RondaEvent.js
-import mongoose from "mongoose";
+import { Schema, model } from "mongoose";
 
-const EvidenceSchema = new mongoose.Schema({
-  type: { type: String, enum: ["photo","audio","video","file","note"], required: true },
-  url:  { type: String },
-  size: { type: Number },        // bytes
-  mime: { type: String },
-  text: { type: String },        // para notas
-}, { _id: false });
+const LocationSchema = new Schema(
+  { lat: Number, lng: Number },
+  { _id: false }
+);
 
-const RondaEventSchema = new mongoose.Schema({
-  type: { type: String, enum: ["check","exception","note"], default: "check", index: true },
-
-  shiftId: { type: mongoose.Schema.Types.ObjectId, ref: "RondaShift", required: true, index: true },
-  routeId: { type: mongoose.Schema.Types.ObjectId, ref: "Route", required: true, index: true },
-  guardId: { type: mongoose.Schema.Types.ObjectId, ref: "Guard", required: true, index: true },
-
-  checkpointCode: { type: String, index: true },
-  checkpointName: { type: String },
-  order: { type: Number }, // order del checkpoint cuando se creó
-
-  method: { type: String, enum: ["qr","nfc","finger"], required: true },
-  methodMeta: { type: Object }, // UID NFC, hash verificación biométrica (no template)
-
-  ts: { type: Date, default: Date.now, index: true },
-
-  // Resultado SLA
-  result: { type: String, enum: ["ok","late","invalid","out_of_order","missed"], default: "ok" },
-  latencySec: { type: Number, default: 0 },
-
-  // Ubicación del check (si el dispositivo la comparte)
-  location: {
-    lat: Number,
-    lng: Number,
-    accuracy: Number, // metros
+const EvidenceSchema = new Schema(
+  {
+    kind: { type: String }, // 'photo', 'note', 'audio', ...
+    url: { type: String },
+    meta: { type: Object },
   },
+  { _id: false }
+);
 
-  // Dispositivo
-  deviceId: { type: mongoose.Schema.Types.ObjectId, ref: "Device" },
-  appVersion: { type: String },
+const rondaEventSchema = new Schema(
+  {
+    type: { type: String, enum: ["check", "alert", "incident"], required: true },
 
-  // Evidencias
-  evidences: { type: [EvidenceSchema], default: [] },
+    shiftId: {
+      type: Schema.Types.ObjectId,
+      ref: "RondaShift",
+      required: true,
+      index: true,
+    },
+    routeId: {
+      type: Schema.Types.ObjectId,
+      ref: "Route",
+      required: true,
+      index: true,
+    },
 
-  // Auditoría
-  createdBy: { type: String },
-}, { timestamps: true });
+    // haz guardId opcional, y guarda también el externo si lo tienes
+    guardId: { type: Schema.Types.ObjectId, ref: "Guard", index: true },
+    guardExternalId: { type: String },
 
-RondaEventSchema.index({ routeId: 1, ts: -1 });
-RondaEventSchema.index({ guardId: 1, ts: -1 });
-export default mongoose.model("RondaEvent", RondaEventSchema);
+    checkpointCode: String,
+    checkpointName: String,
+    order: Number,
+
+    method: String,
+    methodMeta: { type: Object },
+
+    ts: { type: Date, default: Date.now, index: true },
+    result: { type: String, enum: ["ok", "late", "invalid"], default: "ok" },
+    latencySec: Number,
+
+    location: LocationSchema,
+    evidences: [EvidenceSchema],
+
+    deviceId: String,
+    appVersion: String,
+  },
+  { timestamps: true }
+);
+
+rondaEventSchema.index({ shiftId: 1, ts: -1 });
+
+rondaEventSchema.set("toJSON", {
+  versionKey: false,
+  transform: (_doc, ret) => ret,
+});
+
+const RondaEvent = model("RondaEvent", rondaEventSchema);
+export default RondaEvent;
