@@ -1,23 +1,34 @@
+// client/src/components/AuthBridge.jsx
 import React from "react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { setAuthToken } from "../lib/api.js";
+import { attachAuth0 } from "../lib/api.js";
 
 export default function AuthBridge() {
   const { getAccessTokenSilently, isAuthenticated } = useAuth0();
 
   React.useEffect(() => {
-    // Registra la función que devolverá el token para todas las peticiones axios
-    setAuthToken(() =>
-      getAccessTokenSilently({
-        authorizationParams: {
-          audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-          scope: "openid profile email", // agrega aquí tus scopes RBAC si usas: "visitas:read visitas:write chat:read chat:write"
-        },
-      })
-    );
-  }, [getAccessTokenSilently, isAuthenticated]);
+    if (!isAuthenticated) {
+      // si el usuario salió, limpiamos el provider de token
+      attachAuth0(null);
+      return;
+    }
 
-  return null;
+    // registra el proveedor de token para axios
+    attachAuth0(async () => {
+      try {
+        const token = await getAccessTokenSilently({
+          authorizationParams: {
+            audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+            scope: "openid profile email", // agrega scopes RBAC aquí si los usas
+          },
+        });
+        return token || null;
+      } catch (err) {
+        console.warn("[AuthBridge] no se pudo obtener token:", err?.message || err);
+        return null;
+      }
+    });
+  }, [isAuthenticated, getAccessTokenSilently]);
+
+  return null; // no renderiza UI, solo configura el token
 }
-
-// Este componente no renderiza nada, solo configura el token para las llamadas API

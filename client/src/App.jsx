@@ -2,7 +2,7 @@
 import React, { Suspense, useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
-import { attachAuth0 } from "/src/lib/api.js";
+import { attachAuth0 } from "./lib/api.js"; // <- corregido (antes: /src/lib/api.js)
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
@@ -29,7 +29,7 @@ function AuthTokenBridge({ children }) {
   useEffect(() => {
     const setProvider = async () => {
       if (!isAuthenticated) {
-        attachAuth0(null);
+        attachAuth0(null); // limpia el provider si no está autenticado
         return;
       }
       attachAuth0(async () => {
@@ -68,7 +68,7 @@ export default function App() {
             }
           />
 
-          {/* Módulos (cada uno es un placeholder propio) */}
+          {/* Módulos (placeholders propios) */}
           <Route path="/incidentes"        element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>} />
           <Route path="/incidentes/nuevo"  element={<ProtectedRoute><Layout><IncidenteForm  /></Layout></ProtectedRoute>} />
           <Route path="/rondas"            element={<ProtectedRoute><Layout><Rondas         /></Layout></ProtectedRoute>} />

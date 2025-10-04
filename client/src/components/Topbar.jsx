@@ -14,11 +14,10 @@ import {
 // === Socket para eventos en vivo ===
 import { io } from "socket.io-client";
 
-// === API (con token) y cliente de notificaciones ===
-import api from "/src/lib/api.js";
-import NotificationsAPI from "/src/lib/notificationsApi.js";
+// === API de notificaciones (stub seguro) ===
+import NotificationsAPI from "../lib/notificationsApi.js";
 
-// Raíz del backend (sin /api) para sockets y para construir rutas absolutas si hace falta
+// Raíz del backend (sin /api) para sockets
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 const SOCKET_URL = API_ROOT;
 
@@ -31,7 +30,6 @@ const PATH_LABELS = {
   "/bitacora": "Bitácora Digital",
   "/supervision": "Supervisión",
   "/evaluacion": "Evaluación",
-  
 };
 
 // Íconos alineados con “Secciones”
@@ -48,7 +46,6 @@ const MODULES = [
   { to: "/bitacora",    label: "Bitácora Digital",      Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",           Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",            Icon: IconEval },
-  
 ];
 
 // ---------- Breadcrumbs ----------
@@ -121,7 +118,6 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       pathname.startsWith("/visitas") ? "/visitas" :
       pathname.startsWith("/supervision") ? "/supervision" :
       pathname.startsWith("/bitacora") ? "/bitacora" :
-      
       "/incidentes";
     if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`); else nav(base);
     setSearchOpen(false);
@@ -169,19 +165,15 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   const [bellOpen, setBellOpen] = React.useState(false);
   const [bellPos, setBellPos] = React.useState({ left: 0, top: 0 });
 
-  // Conteos de notificaciones del backend nuevo
-  // { unread, alerts, total }
+  // Conteos de notificaciones
   const [counts, setCounts] = React.useState({ unread: 0, alerts: 0, total: 0 });
   const hasNew = (counts?.unread || 0) > 0 || (counts?.alerts || 0) > 0;
 
   const fetchCounts = React.useCallback(async () => {
     try {
-      const data = await NotificationsAPI.getNotificationCounts();
-      setCounts({
-        unread: Number(data?.unread || 0),
-        alerts: Number(data?.alerts || 0),
-        total:  Number(data?.total  || 0),
-      });
+      // notificationsApi.js debe exponer getCount() (retorna número)
+      const n = await NotificationsAPI.getCount();
+      setCounts({ unread: Number(n || 0), alerts: 0, total: Number(n || 0) });
     } catch {
       // Silencioso para no molestar la UI si el backend aún no tiene el endpoint
     }
@@ -189,8 +181,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
 
   const clearCounts = React.useCallback(async () => {
     try {
-      // Endpoint correcto en el backend
-      await api.post("/api/notifications/clear");
+      await NotificationsAPI.markAllRead();
       await fetchCounts();
     } catch {
       // Silencioso

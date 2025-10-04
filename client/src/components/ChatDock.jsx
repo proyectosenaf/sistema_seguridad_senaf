@@ -1,6 +1,6 @@
 // client/src/components/ChatDock.jsx
 import React from "react";
-import api, { attachAuth0 } from "/src/lib/api.js";
+import api, { attachAuth0 } from "../lib/api.js";
 import { useAuth0 } from "@auth0/auth0-react";
 
 /* === Iconos (SVG) === */
@@ -34,10 +34,13 @@ export default function ChatDock() {
   const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
   const myId = user?.sub || null;
 
-  // Adjuntar token automáticamente a axios
+  // Adjuntar/limpiar token automáticamente en axios
   React.useEffect(() => {
+    if (!isAuthenticated) {
+      attachAuth0(null); // limpia el provider si no hay sesión
+      return;
+    }
     attachAuth0(async () => {
-      if (!isAuthenticated) return null;
       try {
         const token = await getAccessTokenSilently({
           authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
@@ -141,7 +144,8 @@ export default function ChatDock() {
     const txt = text.trim();
     if (!txt) return;
 
-    const tempId = crypto.randomUUID();
+    const tempId = (crypto?.randomUUID && crypto.randomUUID()) || String(Date.now());
+
     const optimistic = {
       _id: tempId,
       text: txt,

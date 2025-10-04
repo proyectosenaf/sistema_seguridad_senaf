@@ -1,7 +1,7 @@
 // client/src/components/Footer.jsx
 import React from "react";
 import { Link } from "react-router-dom";
-import api from "/src/lib/api.js"; // usa el default export para evitar confusiones
+import api from "../lib/api.js"; // ✅ import relativo (default export)
 import { MessageCircle, Mail, ExternalLink, ShieldCheck, Server, Clock, Github } from "lucide-react";
 
 export default function Footer() {
@@ -70,7 +70,7 @@ export default function Footer() {
             </div>
           </div>
 
-          
+          {/* Columna 2 - Secciones */}
           <div>
             <div className="font-semibold mb-2">Secciones</div>
             <ul className="space-y-1 text-sm">
@@ -109,7 +109,7 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Columna 4 - Estado */}
+            {/* Columna 4 - Estado */}
           <div>
             <div className="font-semibold mb-2">Estado del sistema</div>
             <div className="text-sm space-y-1">

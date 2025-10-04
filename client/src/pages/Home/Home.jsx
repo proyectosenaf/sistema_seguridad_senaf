@@ -1,9 +1,11 @@
 // client/src/pages/Home/Home.jsx
 import React from "react";
-import { NAV_SECTIONS } from "../../config/navConfig";
 import { useNavigate } from "react-router-dom";
-import { api, setAuthToken } from "../../lib/api";
 import { useAuth0 } from "@auth0/auth0-react";
+import { io } from "socket.io-client";
+import { NAV_SECTIONS } from "../../config/navConfig.js";
+import api, { setAuthToken } from "../../lib/api.js";
+
 import {
   DoorOpen,
   Footprints,
@@ -11,9 +13,8 @@ import {
   Users,
   NotebookPen,
   ClipboardList,
-  BarChart3,
+  // BarChart3, // no se usa
 } from "lucide-react";
-import { io } from "socket.io-client";
 
 // ---------- Normaliza API y SOCKET_URL ----------
 const RAW_API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
@@ -35,7 +36,6 @@ const ICONS = {
   visitas: Users,
   bitacora: NotebookPen,
   evaluacion: ClipboardList,
-
   supervision: ClipboardList,
 };
 
@@ -49,32 +49,30 @@ export default function Home() {
 
   // -------- Socket.IO (solo 1 vez) --------
   React.useEffect(() => {
-    // crea socket si no existe
     if (!socketRef.current) {
       socketRef.current = io(SOCKET_URL, {
         transports: ["websocket", "polling"],
+        withCredentials: true,
       });
     }
     const socket = socketRef.current;
 
-    function onCheck(evt) {
+    const onCheck = (evt) => {
       // Aquí puedes actualizar KPIs en caliente si quieres
       // console.log("[rondas:check]", evt);
-    }
+    };
 
     socket.on("rondas:check", onCheck);
 
     return () => {
       socket.off("rondas:check", onCheck);
-      // No cerramos el socket en HMR para no reconectar de más.
-      // Si quieres cerrarlo al desmontar por navegación:
+      // Si quieres cerrar el socket al desmontar, descomenta:
       // socket.close();
     };
   }, []);
 
   // -------- Token para axios --------
   React.useEffect(() => {
-    // setAuthToken acepta una función async para obtener el token en cada request
     setAuthToken(() =>
       getAccessTokenSilently({
         authorizationParams: {
@@ -89,16 +87,16 @@ export default function Home() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await api.get("/incidentes", { params: { limit: 100 } });
+        // ✅ tu API corre bajo /api
+        const r = await api.get("/api/incidentes", { params: { limit: 100 } });
         const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
         setIncStats({
           total: items.length,
           abiertos: items.filter((i) => i.estado !== "cerrado").length,
           alta: items.filter((i) => i.prioridad === "alta").length,
         });
-      } catch (e) {
-        // Silencioso en Home; si quieres, loguea:
-        // console.warn("[home] no se pudieron cargar KPIs de incidentes:", e?.message);
+      } catch {
+        // Silencioso en Home
       }
     })();
   }, []);
