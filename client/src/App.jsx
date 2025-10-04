@@ -1,8 +1,8 @@
 // client/src/App.jsx
 import React, { Suspense, useEffect } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
-import { attachAuth0 } from "./lib/api.js"; // <- corregido (antes: /src/lib/api.js)
+import { attachAuth0 } from "./lib/api.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
@@ -11,7 +11,12 @@ import Layout from "./components/Layout.jsx";
 const Home            = React.lazy(() => import("./pages/Home/Home.jsx"));
 const IncidentesList  = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
 const IncidenteForm   = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
-const Rondas          = React.lazy(() => import("./pages/Rondas/Rondas.jsx"));
+
+// ✅ Páginas reales del módulo Rondas
+const RondasAdminPage = React.lazy(() => import("./pages/Rondas/RondasAdminPage.jsx"));
+const RondasGuardPage = React.lazy(() => import("./pages/Rondas/RondasGuardPage.jsx"));
+const RondasDashboard = React.lazy(() => import("./pages/Rondas/RondasDashboard.jsx"));
+
 const Accesos         = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Visitas         = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora        = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
@@ -29,7 +34,7 @@ function AuthTokenBridge({ children }) {
   useEffect(() => {
     const setProvider = async () => {
       if (!isAuthenticated) {
-        attachAuth0(null); // limpia el provider si no está autenticado
+        attachAuth0(null);
         return;
       }
       attachAuth0(async () => {
@@ -68,18 +73,43 @@ export default function App() {
             }
           />
 
-          {/* Módulos (placeholders propios) */}
-          <Route path="/incidentes"        element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>} />
-          <Route path="/incidentes/nuevo"  element={<ProtectedRoute><Layout><IncidenteForm  /></Layout></ProtectedRoute>} />
-          <Route path="/rondas"            element={<ProtectedRoute><Layout><Rondas         /></Layout></ProtectedRoute>} />
-          <Route path="/accesos"           element={<ProtectedRoute><Layout><Accesos        /></Layout></ProtectedRoute>} />
-          <Route path="/visitas"           element={<ProtectedRoute><Layout><Visitas        /></Layout></ProtectedRoute>} />
-          <Route path="/bitacora"          element={<ProtectedRoute><Layout><Bitacora       /></Layout></ProtectedRoute>} />
-          <Route path="/supervision"       element={<ProtectedRoute><Layout><Supervision    /></Layout></ProtectedRoute>} />
-          <Route path="/evaluacion"        element={<ProtectedRoute><Layout><Evaluacion     /></Layout></ProtectedRoute>} />
-          <Route path="/chat"              element={<ProtectedRoute><Layout><Chat           /></Layout></ProtectedRoute>} />
+          {/* Incidentes */}
+          <Route
+            path="/incidentes"
+            element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>}
+          />
+          <Route
+            path="/incidentes/nuevo"
+            element={<ProtectedRoute><Layout><IncidenteForm /></Layout></ProtectedRoute>}
+          />
 
-          {/* Admin */}
+          {/* ---- Rondas de Vigilancia ---- */}
+          {/* Redirige /rondas a /rondas/admin sin montar el Layout durante el redirect */}
+          <Route
+            path="/rondas"
+            element={<ProtectedRoute><Navigate to="/rondas/admin" replace /></ProtectedRoute>}
+          />
+          <Route
+            path="/rondas/admin"
+            element={<ProtectedRoute><Layout><RondasAdminPage /></Layout></ProtectedRoute>}
+          />
+          <Route
+            path="/rondas/guard"
+            element={<ProtectedRoute><Layout><RondasGuardPage /></Layout></ProtectedRoute>}
+          />
+
+          <Route path="/rondas/dashboard" element={<ProtectedRoute><Layout><RondasDashboard /></Layout></ProtectedRoute>} />
+          {/* -------------------------------- */}
+
+          {/* Otros módulos */}
+          <Route path="/accesos"     element={<ProtectedRoute><Layout><Accesos /></Layout></ProtectedRoute>} />
+          <Route path="/visitas"     element={<ProtectedRoute><Layout><Visitas /></Layout></ProtectedRoute>} />
+          <Route path="/bitacora"    element={<ProtectedRoute><Layout><Bitacora /></Layout></ProtectedRoute>} />
+          <Route path="/supervision" element={<ProtectedRoute><Layout><Supervision /></Layout></ProtectedRoute>} />
+          <Route path="/evaluacion"  element={<ProtectedRoute><Layout><Evaluacion /></Layout></ProtectedRoute>} />
+          <Route path="/chat"        element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
+
+          {/* Admin de Rutas */}
           <Route path="/rutas-admin"             element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
           <Route path="/rutas-admin/nueva"       element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
           <Route path="/rutas-admin/:id"         element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
