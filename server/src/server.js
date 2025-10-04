@@ -4,6 +4,8 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import compression from "compression";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -11,52 +13,52 @@ app.set("trust proxy", 1);
 // -------- CORS --------
 function parseOrigins(str) {
   if (!str) return null;
-  return String(str)
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
+  return String(str).split(",").map(s => s.trim()).filter(Boolean);
 }
 const devDefaults = ["http://localhost:5173", "http://localhost:3000"];
 const origins =
   parseOrigins(process.env.CORS_ORIGINS) ||
   (process.env.NODE_ENV !== "production" ? devDefaults : null);
 
-app.use(
-  cors({
-    origin: origins || true, // en prod: define CORS_ORIGINS; aquí true permite todo
-    credentials: true,
-  })
-);
-
-// -------- Middlewares --------
+app.use(cors({ origin: origins || true, credentials: true }));
 app.use(helmet());
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 
-// -------- Healthchecks --------
+// -------- Health --------
 app.get("/api/health", (_req, res) =>
   res.json({ ok: true, service: "senaf-api", ts: Date.now() })
 );
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// -------- 404 genérico --------
+// -------- HTTP + Socket.IO --------
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: { origin: origins || true, methods: ["GET", "POST"], credentials: true },
+  // path: "/socket.io", // (default)
+});
+
+io.on("connection", (socket) => {
+  console.log("[io] client connected:", socket.id);
+  socket.emit("hello", { ok: true, ts: Date.now() });
+  socket.on("disconnect", () => console.log("[io] client disconnected:", socket.id));
+});
+
+// -------- 404 --------
 app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
 
-// -------- Start / Shutdown --------
+// -------- Start/Shutdown --------
 const PORT = Number(process.env.PORT) || 4000;
-const server = app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
-  console.log(
-    `[cors] origins: ${
-      origins ? origins.join(", ") : "(allow all)"
-    }`
-  );
+  console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
 });
 
 ["SIGINT", "SIGTERM"].forEach(sig =>
   process.on(sig, () => {
     console.log(`\n[api] ${sig} recibido. Cerrando…`);
+    io.close();
     server.close(() => {
       console.log("[api] HTTP detenido.");
       process.exit(0);
