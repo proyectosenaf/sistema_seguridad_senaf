@@ -1,3 +1,4 @@
+// client/src/pages/Rondas/RondasAdminPage.jsx
 import React, { useEffect, useState } from "react";
 import { useRondasApi } from "../../hooks/useRondasApi";
 
@@ -8,6 +9,13 @@ import RondasCheckpointCard from "../../components/RondasCheckpointCard";
 import RondasPlansPanel from "./RondasPlansPanel";
 import RondasPlanForm from "./RondasPlanForm";
 
+function getApiBase() {
+  // Usa VITE_API_BASE_URL (recomendado: http://localhost:4000/api)
+  // Aseguramos remover trailing slash para concatenar bien.
+  const base = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").replace(/\/+$/, "");
+  return base;
+}
+
 export default function RondasAdminPage() {
   const api = useRondasApi();
 
@@ -15,6 +23,7 @@ export default function RondasAdminPage() {
   const [activeZone, setActiveZone] = useState(null);
   const [cps, setCps] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
   // estado del modal (crear/editar plan)
   const [formState, setFormState] = useState({
@@ -27,14 +36,22 @@ export default function RondasAdminPage() {
   useEffect(() => {
     (async () => {
       setLoading(true);
+      setErr("");
       try {
         const z = await api.listZones();
         setZones(z || []);
         if (z?.length) {
-          setActiveZone(z[0]);
-          const c = await api.zoneCheckpoints(z[0]._id);
+          const first = z[0];
+          setActiveZone(first);
+          const c = await api.zoneCheckpoints(first._id);
           setCps(c || []);
+        } else {
+          setActiveZone(null);
+          setCps([]);
         }
+      } catch (e) {
+        console.error("[AdminPage] listZones error:", e);
+        setErr(e?.response?.data?.message || e?.message || "No se pudieron cargar las zonas");
       } finally {
         setLoading(false);
       }
@@ -44,8 +61,15 @@ export default function RondasAdminPage() {
 
   async function openZone(z) {
     setActiveZone(z);
-    const c = await api.zoneCheckpoints(z._id);
-    setCps(c || []);
+    setErr("");
+    try {
+      const c = await api.zoneCheckpoints(z._id);
+      setCps(c || []);
+    } catch (e) {
+      console.error("[AdminPage] zoneCheckpoints error:", e);
+      setErr(e?.response?.data?.message || e?.message || "No se pudieron cargar los puntos de control");
+      setCps([]);
+    }
   }
 
   function onOpenForm({ mode, zone, plan }) {
@@ -61,6 +85,17 @@ export default function RondasAdminPage() {
     setFormState((s) => ({ ...s, open: false }));
   }
 
+  // Abre QR en nueva pestaña (PNG) sin duplicar /api
+  function openCheckpointQR(idOrCp, maybeCp) {
+    // Soporta dos contratos: (id, cp) ó (cp)
+    const cpId = typeof idOrCp === "string" ? idOrCp : idOrCp?._id;
+    if (!cpId) return;
+
+    const base = getApiBase();               // ej: http://localhost:4000/api
+    const url = `${base}/rondas/v1/checkpoints/${cpId}/qr?format=png`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   return (
     <section className="space-y-6">
       <header>
@@ -69,6 +104,12 @@ export default function RondasAdminPage() {
           Configura zonas, puntos de control (QR) y planes de ronda.
         </p>
       </header>
+
+      {err && (
+        <div className="rounded-xl border border-red-800/40 bg-red-900/10 px-3 py-2 text-sm text-red-300">
+          {err}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-3 gap-4">
         {/* Zonas */}
@@ -92,6 +133,9 @@ export default function RondasAdminPage() {
             {loading && (
               <div className="text-sm text-neutral-400">Cargando…</div>
             )}
+            {!loading && zones.length === 0 && (
+              <div className="text-sm text-neutral-500">No hay zonas registradas.</div>
+            )}
           </div>
         </aside>
 
@@ -104,22 +148,22 @@ export default function RondasAdminPage() {
                 : "Selecciona una zona"}
             </div>
             <div className="grid gap-2">
-              {cps.map((cp) => (
+              {activeZone && cps.map((cp) => (
                 <RondasCheckpointCard
                   key={cp._id}
                   cp={cp}
-                  onOpenQR={(cp) => {
-                    const url = `${
-                      import.meta.env.VITE_API_BASE_URL ||
-                      "http://localhost:4000"
-                    }/api/rondas/v1/checkpoints/${cp._id}/qr?format=png`;
-                    window.open(url, "_blank");
-                  }}
+                  // Soporta ambos formatos del child: onOpenQR(id, cp) ó onOpenQR(cp)
+                  onOpenQR={openCheckpointQR}
                 />
               ))}
               {!activeZone && (
                 <div className="text-neutral-500 text-sm">
                   No hay zona seleccionada.
+                </div>
+              )}
+              {activeZone && !loading && cps.length === 0 && (
+                <div className="text-neutral-500 text-sm">
+                  Esta zona no tiene puntos de control.
                 </div>
               )}
             </div>
@@ -151,8 +195,9 @@ export default function RondasAdminPage() {
         }}
         onClose={closeForm}
         onSaved={() => {
-          // Si quieres forzar refresco del panel al guardar,
-          // puedes manejar un "key" o levantar un estado para que RondasPlansPanel recargue.
+          // Si quieres refrescar planes tras guardar, puedes:
+          //  - agregar una "key" al RondasPlansPanel,
+          //  - o levantar un estado/flag que dispare su recarga.
         }}
       />
     </section>

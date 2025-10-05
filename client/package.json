@@ -27,6 +27,7 @@
     "axios": "^1.7.2",
     "dayjs": "^1.11.18",
     "framer-motion": "^12.23.12",
+    "html5-qrcode": "^2.3.8",
     "jspdf": "^3.0.2",
     "jspdf-autotable": "^5.0.2",
     "leaflet": "^1.9.4",
