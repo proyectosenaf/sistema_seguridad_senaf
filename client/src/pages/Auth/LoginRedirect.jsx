@@ -5,7 +5,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 
 /**
  * Página pública que dispara el login de Auth0.
- * Si ya estás autenticado y entras a /login, te devuelve a la app.
+ * Si ya estás autenticado y entras a /login, te devuelve al panel principal (/).
  */
 export default function LoginRedirect() {
   const { loginWithRedirect, isAuthenticated } = useAuth0();
@@ -21,7 +21,8 @@ export default function LoginRedirect() {
       try {
         await loginWithRedirect({
           authorizationParams: {
-            redirect_uri: window.location.origin, // vuelve a la app tras loguear
+            // ✅ Al volver del login, caemos en /start (ahí se redirige por rol)
+            redirect_uri: `${window.location.origin}/start`,
             prompt: "login",
             screen_hint: "login",
           },
@@ -42,4 +43,3 @@ export default function LoginRedirect() {
     </div>
   );
 }
-// Página que inicia el proceso de login con Auth0 o redirige si ya está logueado

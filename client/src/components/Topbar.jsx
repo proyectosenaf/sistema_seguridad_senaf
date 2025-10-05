@@ -1,4 +1,3 @@
-// client/src/components/Topbar.jsx
 import React from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
@@ -8,7 +7,8 @@ import {
   Menu, LogOut, Search, Bell, Plus, X, ArrowLeft,
   DoorOpen, KeyRound, Footprints, Route,
   AlertTriangle, UsersRound, Users, NotebookPen,
-  ClipboardList, ClipboardCheck, Award, BarChart3
+  ClipboardList, ClipboardCheck, Award, BarChart3,
+  ShieldCheck,                  // 👈 nuevo icono para IAM
 } from "lucide-react";
 
 // === Socket para eventos en vivo ===
@@ -30,6 +30,8 @@ const PATH_LABELS = {
   "/bitacora": "Bitácora Digital",
   "/supervision": "Supervisión",
   "/evaluacion": "Evaluación",
+  "/iam": "Usuarios y Permisos",        // 👈 para breadcrumb
+  "/iam/admin": "Usuarios y Permisos",  // 👈 para breadcrumb
 };
 
 // Íconos alineados con “Secciones”
@@ -37,6 +39,7 @@ const IconDoor       = DoorOpen || KeyRound;
 const IconFootprints = Footprints || Route;
 const IconVisitors   = UsersRound || Users;
 const IconEval       = ClipboardCheck || Award;
+const IconIAM        = ShieldCheck || Users;   // 👈 fallback
 
 const MODULES = [
   { to: "/accesos",     label: "Control de Acceso",     Icon: IconDoor },
@@ -46,6 +49,8 @@ const MODULES = [
   { to: "/bitacora",    label: "Bitácora Digital",      Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",           Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",            Icon: IconEval },
+  // 👇 NUEVO: aparece en el menú rápido del topbar
+  { to: "/iam/admin",   label: "Usuarios y Permisos",   Icon: IconIAM },
 ];
 
 // ---------- Breadcrumbs ----------
@@ -171,31 +176,24 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
 
   const fetchCounts = React.useCallback(async () => {
     try {
-      // notificationsApi.js debe exponer getCount() (retorna número)
       const n = await NotificationsAPI.getCount();
       setCounts({ unread: Number(n || 0), alerts: 0, total: Number(n || 0) });
-    } catch {
-      // Silencioso para no molestar la UI si el backend aún no tiene el endpoint
-    }
+    } catch {}
   }, []);
 
   const clearCounts = React.useCallback(async () => {
     try {
       await NotificationsAPI.markAllRead();
       await fetchCounts();
-    } catch {
-      // Silencioso
-    }
+    } catch {}
   }, [fetchCounts]);
 
-  // Socket: escucha eventos del servidor
   React.useEffect(() => {
     fetchCounts();
     const s = io(SOCKET_URL, { transports: ["websocket"], withCredentials: true });
     const update = () => fetchCounts();
 
     s.on("notifications:count-updated", update);
-    // otros eventos genéricos que podrían disparar nuevas notificaciones
     s.on("email:new", update);
     s.on("message:new", update);
     s.on("appointment:new", update);

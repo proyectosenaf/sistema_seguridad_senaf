@@ -3,7 +3,8 @@ import { NavLink } from "react-router-dom";
 import {
   Home, DoorOpen, KeyRound, Footprints, Route,
   AlertTriangle, UsersRound, Users, NotebookPen,
-  ClipboardList, ClipboardCheck, Award, BarChart3, LogIn
+  ClipboardList, ClipboardCheck, Award, BarChart3, LogIn,
+  ShieldCheck,              // 👈 nuevo icono para IAM
 } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -12,6 +13,7 @@ const IconDoor       = DoorOpen || KeyRound;
 const IconFootprints = Footprints || Route;
 const IconVisitors   = UsersRound || Users;
 const IconEval       = ClipboardCheck || Award;
+const IconIAM        = ShieldCheck || Users;   // 👈 fallback si faltara ShieldCheck
 
 const NAV_ITEMS = [
   { to: "/",            label: "Panel principal",        Icon: Home, emphasizeDark: true },
@@ -22,7 +24,9 @@ const NAV_ITEMS = [
   { to: "/bitacora",    label: "Bitácora Digital",       Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",            Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",             Icon: IconEval },
-  
+
+  // 👇 NUEVO: aparece siempre en la barra lateral
+  { to: "/iam/admin",   label: "Usuarios y Permisos",    Icon: IconIAM },
 ];
 
 function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
@@ -70,7 +74,6 @@ export default function Sidebar({ onNavigate }) {
   return (
     <div
       className={[
-        // ⬇️ Contenedor del sidebar: ocupa todo el alto disponible del aside fijo
         "w-full h-full flex flex-col overflow-y-auto overscroll-contain",
         "border-r border-white/10 p-4 sidebar-aurora",
       ].join(" ")}

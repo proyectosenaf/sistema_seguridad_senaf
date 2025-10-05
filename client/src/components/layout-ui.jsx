@@ -12,13 +12,25 @@ export function LayoutUIProvider({ children }) {
     () => ({ hideSidebar, setHideSidebar, back, setBack }),
     [hideSidebar, back]
   );
-  return <LayoutUIContext.Provider value={value}>{children}</LayoutUIContext.Provider>;
+
+  return (
+    <LayoutUIContext.Provider value={value}>
+      {children}
+    </LayoutUIContext.Provider>
+  );
 }
 
+// ✅ Seguro: si no hay provider, devuelve funciones no-op y estados por default.
+// Así no rompe cuando Layout se usa fuera del provider.
 export function useLayoutUI() {
   const ctx = React.useContext(LayoutUIContext);
-  if (!ctx) throw new Error("useLayoutUI must be used within LayoutUIProvider");
-  return ctx;
+  if (ctx) return ctx;
+  return {
+    hideSidebar: false,
+    setHideSidebar: () => {},
+    back: null,
+    setBack: () => {},
+  };
 }
 
 /**

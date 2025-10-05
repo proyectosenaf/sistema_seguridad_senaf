@@ -1,15 +1,28 @@
-// Orden ÚNICO para toda la app (sidebar y panel principal)
-export const NAV_ORDER = [
-  { key: "home",       label: "Panel principal",       path: "/" },
-  { key: "accesos",    label: "Control de Acceso",     path: "/accesos" },
-  { key: "rondas",     label: "Rondas de Vigilancia",  path: "/rondas" },
-  { key: "incidentes", label: "Gestión de Incidentes", path: "/incidentes" },
-  { key: "visitas",    label: "Control de Visitas",    path: "/visitas" },
-  { key: "bitacora",   label: "Bitácora Digital",      path: "/bitacora" },
-  { key: 'supervision', label: 'Supervisión',          path: '/supervision' },
-  { key: "evaluacion", label: "Evaluación",            path: "/evaluacion" },
-  
-];
+// client/src/config/navConfig.js
+import {
+  DoorOpen,
+  Footprints,
+  AlertTriangle,
+  Users,
+  NotebookPen,
+  ClipboardList,
+  ShieldCheck,
+} from "lucide-react";
 
-// Secciones que deben aparecer en el Panel principal (omitimos "home")
-export const NAV_SECTIONS = NAV_ORDER.filter(i => i.key !== "home");
+/**
+ * Secciones visibles en Home/Sidebar y menú rápido del Topbar.
+ * Si alguna vista usa solo {key,label,path} también funciona;
+ * el icon es opcional y se ignora si no se usa.
+ */
+export const NAV_SECTIONS = [
+  { key: "accesos",     label: "Control de Acceso",  path: "/accesos",     icon: DoorOpen },
+  { key: "rondas",      label: "Rondas de Vigilancia", path: "/rondas/admin", icon: Footprints },
+  { key: "incidentes",  label: "Gestión de Incidentes", path: "/incidentes",  icon: AlertTriangle },
+  { key: "visitas",     label: "Control de Visitas", path: "/visitas",     icon: Users },
+  { key: "bitacora",    label: "Bitácora Digital",   path: "/bitacora",    icon: NotebookPen },
+  { key: "supervision", label: "Supervisión",        path: "/supervision", icon: ClipboardList },
+  { key: "evaluacion",  label: "Evaluación",         path: "/evaluacion",  icon: ClipboardList },
+
+  // 👇 NUEVO: módulo IAM en todos los menús
+  { key: "iam",         label: "Usuarios y Permisos", path: "/iam/admin",   icon: ShieldCheck },
+];

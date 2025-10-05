@@ -13,7 +13,7 @@ import {
   Users,
   NotebookPen,
   ClipboardList,
-  // BarChart3, // no se usa
+  ShieldCheck, // 👈 icono para IAM
 } from "lucide-react";
 
 // ---------- Normaliza API y SOCKET_URL ----------
@@ -37,6 +37,7 @@ const ICONS = {
   bitacora: NotebookPen,
   evaluacion: ClipboardList,
   supervision: ClipboardList,
+  iam: ShieldCheck, // 👈 mapeo para el nuevo tile
 };
 
 export default function Home() {
@@ -57,17 +58,15 @@ export default function Home() {
     }
     const socket = socketRef.current;
 
-    const onCheck = (evt) => {
-      // Aquí puedes actualizar KPIs en caliente si quieres
-      // console.log("[rondas:check]", evt);
+    const onCheck = () => {
+      // puedes actualizar KPIs si quieres
     };
 
     socket.on("rondas:check", onCheck);
 
     return () => {
       socket.off("rondas:check", onCheck);
-      // Si quieres cerrar el socket al desmontar, descomenta:
-      // socket.close();
+      // socket.close(); // si prefieres cerrar al desmontar
     };
   }, []);
 
@@ -87,7 +86,6 @@ export default function Home() {
   React.useEffect(() => {
     (async () => {
       try {
-        // ✅ tu API corre bajo /api
         const r = await api.get("/api/incidentes", { params: { limit: 100 } });
         const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
         setIncStats({
@@ -99,6 +97,21 @@ export default function Home() {
         // Silencioso en Home
       }
     })();
+  }, []);
+
+  // -------- Secciones con fallback para IAM --------
+  const SECTIONS = React.useMemo(() => {
+    const hasIAM = NAV_SECTIONS.some((s) => s.key === "iam");
+    return hasIAM
+      ? NAV_SECTIONS
+      : [
+          ...NAV_SECTIONS,
+          {
+            key: "iam",
+            label: "Usuarios y Permisos",
+            path: "/iam/admin", // 👈 ruta del módulo IAM
+          },
+        ];
   }, []);
 
   return (
@@ -123,7 +136,7 @@ export default function Home() {
       <div className="card fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {NAV_SECTIONS.map((s) => {
+          {SECTIONS.map((s) => {
             const Icon = ICONS[s.key];
             return (
               <button

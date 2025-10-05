@@ -1,19 +1,50 @@
-// client/src/components/Layout.jsx
 import React from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
 import ChatDock from "./ChatDock.jsx";
 import Footer from "./Footer.jsx";
+import { useLayoutUI } from "./layout-ui.jsx";
 
 export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { pathname } = useLocation();
+  const navigate = useNavigate();
 
-  // Sidebar sólo en el home
-  const showSidebar = pathname === "/";
+  // Estado global opcional del layout (si no hay provider, devuelve dummies)
+  const { hideSidebar, back } = useLayoutUI();
+
+  // Sidebar sólo en el home, a menos que algún módulo lo oculte
+  const showSidebar = pathname === "/" && !hideSidebar;
+
   // Mostrar botón "Regresar" en cualquier ruta que no sea "/"
-  const showBack = pathname !== "/";
+  // o si un módulo definió un back custom.
+  const showBack = pathname !== "/" || !!back;
+
+  // Back inteligente: usa el custom si existe; si no, evita el bucle /login
+  const smartBack = React.useCallback(() => {
+    if (back?.onClick) {
+      back.onClick();
+      return;
+    }
+    const ref = document.referrer || "";
+    const cameFromLogin = ref.includes("/login");
+    const shallowHistory = window.history.length <= 2;
+    if (cameFromLogin || shallowHistory) {
+      navigate("/", { replace: true });
+    } else {
+      navigate(-1);
+    }
+  }, [back, navigate]);
+
+  // Objeto back que pasamos al Topbar (con label y handler)
+  const backProp = React.useMemo(
+    () => ({
+      label: back?.label || "Regresar",
+      onClick: smartBack,
+    }),
+    [back?.label, smartBack]
+  );
 
   React.useEffect(() => {
     const onKey = (e) => e.key === "Escape" && setMobileOpen(false);
@@ -28,7 +59,11 @@ export default function Layout({ children }) {
 
       {/* Topbar fijo */}
       <header className="sticky top-0 z-40 h-14 bg-white/80 dark:bg-neutral-950/80 backdrop-blur border-b border-neutral-200 dark:border-neutral-800">
-        <Topbar onToggleMenu={() => setMobileOpen(true)} showBack={showBack} />
+        <Topbar
+          onToggleMenu={() => setMobileOpen(true)}
+          showBack={showBack}
+          back={backProp}
+        />
       </header>
 
       {/* Carril fijo del sidebar (md+) solo en home */}
@@ -42,39 +77,33 @@ export default function Layout({ children }) {
             overflow-hidden
           "
         >
-          {/* El Sidebar pinta su contenido; el contenedor le provee fondo y anclaje */}
           <Sidebar />
         </aside>
       )}
 
-      {/* Columna principal (flex para sticky footer) */}
+      {/* Columna principal */}
       <div
         className={[
           "relative z-10",
-          showSidebar ? "md:pl-64" : "", // evitar que el contenido se meta debajo del sidebar fijo
-          "min-h-[calc(100vh-3.5rem)] flex flex-col", // 3.5rem = h-14 del topbar
+          showSidebar ? "md:pl-64" : "",
+          "min-h-[calc(100vh-3.5rem)] flex flex-col",
         ].join(" ")}
       >
         <main id="app-main" className="flex-1">
           <div
-            className={`${
-              showSidebar ? "max-w-7xl" : "max-w-[1600px]"
-            } w-full mx-auto px-4 md:px-6 py-6 space-y-6`}
+            className={`${showSidebar ? "max-w-7xl" : "max-w-[1600px]"} w-full mx-auto px-4 md:px-6 py-6 space-y-6`}
           >
             {children}
           </div>
         </main>
 
-        {/* Footer en flujo normal (no fijo), sin solaparse con el sidebar */}
         <Footer />
       </div>
 
       {/* Drawer móvil para el sidebar */}
       <div
         className={`fixed inset-0 z-50 md:hidden transition-opacity ${
-          mobileOpen
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
+          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         aria-hidden={!mobileOpen}
       >
