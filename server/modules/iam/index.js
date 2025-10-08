@@ -12,6 +12,10 @@ import { iamEnrich } from "./utils/rbac.util.js";
 // ---------- Helpers de Express: capturar errores async ----------
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// ---- DEV bypass de permisos ----
+const DEV_ALLOW_ALL = process.env.IAM_DEV_ALLOW_ALL === "1" || process.env.NODE_ENV !== "production";
+const devOr = (mw) => (req, res, next) => (DEV_ALLOW_ALL ? next() : mw(req, res, next));
+
 // ---- JWT on/off según variables ----
 const JWT_ENABLED = !!(process.env.AUTH0_AUDIENCE && process.env.AUTH0_ISSUER_BASE_URL);
 const authMw = JWT_ENABLED
@@ -339,7 +343,7 @@ function buildRouter() {
   router.get(
     "/audit",
     authMw,
-    requirePerm("iam.roles.manage"),
+    devOr(requirePerm("iam.roles.manage")),
     ah(async (_req, res) => {
       const limit = Math.min(500, Math.max(1, Number(_req.query.limit || 50)));
       const items = await IamAudit.find().sort({ createdAt: -1 }).limit(limit).lean();
@@ -351,7 +355,7 @@ function buildRouter() {
   router.get(
     "/permissions",
     authMw,
-    requirePerm("iam.roles.manage"),
+    devOr(requirePerm("iam.roles.manage")),
     ah(async (_req, res) => {
       const docs = await IamPermission.find().sort({ group: 1, order: 1, key: 1 }).lean();
       res.json({ groups: groupPermissions(docs) });
@@ -361,7 +365,7 @@ function buildRouter() {
   router.post(
     "/permissions",
     authMw,
-    requirePerm("iam.roles.manage"),
+    devOr(requirePerm("iam.roles.manage")),
     ah(async (req, res) => {
       const { key, label, group, order = 0 } = req.body || {};
       if (!key || !label || !group)
@@ -376,7 +380,7 @@ function buildRouter() {
   router.patch(
     "/permissions/:id",
     authMw,
-    requirePerm("iam.roles.manage"),
+    devOr(requirePerm("iam.roles.manage")),
     ah(async (req, res) => {
       const { id } = req.params;
       const before = await IamPermission.findById(id).lean();
@@ -409,7 +413,7 @@ function buildRouter() {
   router.delete(
     "/permissions/:id",
     authMw,
-    requirePerm("iam.roles.manage"),
+    devOr(requirePerm("iam.roles.manage")),
     ah(async (req, res) => {
       const { id } = req.params;
       const p = await IamPermission.findById(id).lean();
@@ -425,19 +429,19 @@ function buildRouter() {
   );
 
   // --- roles
-  router.get("/roles", authMw, requirePerm("iam.roles.manage"), ah(async (_req, res) => {
+  router.get("/roles", authMw, devOr(requirePerm("iam.roles.manage")), ah(async (_req, res) => {
     const items = await IamRole.find().sort({ name: 1 }).lean();
     res.json({ items });
   }));
 
-  router.post("/roles", authMw, requirePerm("iam.roles.manage"), ah(async (req, res) => {
+  router.post("/roles", authMw, devOr(requirePerm("iam.roles.manage")), ah(async (req, res) => {
     const { code: rawCode, name, description, permissions = [] } = req.body || {};
     const code = rawCode ? String(rawCode).trim().toLowerCase() : toCode(name);
     const role = await IamRole.create({ code, name, description, permissions });
     res.status(201).json(role);
   }));
 
-  router.patch("/roles/:id", authMw, requirePerm("iam.roles.manage"), ah(async (req, res) => {
+  router.patch("/roles/:id", authMw, devOr(requirePerm("iam.roles.manage")), ah(async (req, res) => {
     const { id } = req.params;
     const { name, description, permissions } = req.body || {};
     const role = await IamRole.findByIdAndUpdate(
@@ -448,7 +452,7 @@ function buildRouter() {
     res.json(role);
   }));
 
-  router.delete("/roles/:id", authMw, requirePerm("iam.roles.manage"), ah(async (req, res) => {
+  router.delete("/roles/:id", authMw, devOr(requirePerm("iam.roles.manage")), ah(async (req, res) => {
     const { id } = req.params;
     const role = await IamRole.findById(id).lean();
     if (!role) return res.status(404).json({ message: "Rol no encontrado" });
@@ -462,20 +466,23 @@ function buildRouter() {
   }));
 
   // --- USERS (y ACCOUNTS alias v1)
-  router.get("/users", authMw, requirePerm("iam.users.manage"), ah(handleListUsers));
-  router.post("/users", authMw, requirePerm("iam.users.manage"), ah(handleCreateUser));
-  router.patch("/users/:id", authMw, requirePerm("iam.users.manage"), ah(handleUpdateUser));
-  router.post("/users/:id/roles", authMw, requirePerm("iam.users.manage"), ah(handleSetRoles));
-  router.post("/users/:id/disable", authMw, requirePerm("iam.users.manage"), ah(handleDisable));
-  router.post("/users/:id/enable", authMw, requirePerm("iam.users.manage"), ah(handleEnable));
+  router.get("/users", authMw, devOr(requirePerm("iam.users.manage")), ah(handleListUsers));
+  router.post("/users", authMw, devOr(requirePerm("iam.users.manage")), ah(handleCreateUser));
+  router.patch("/users/:id", authMw, devOr(requirePerm("iam.users.manage")), ah(handleUpdateUser));
+  router.post("/users/:id/roles", authMw, devOr(requirePerm("iam.users.manage")), ah(handleSetRoles));
+  router.post("/users/:id/disable", authMw, devOr(requirePerm("iam.users.manage")), ah(handleDisable));
+  router.post("/users/:id/enable", authMw, devOr(requirePerm("iam.users.manage")), ah(handleEnable));
 
   // Alias v1
-  router.get("/accounts", authMw, requirePerm("iam.users.manage"), ah(handleListUsers));
-  router.post("/accounts", authMw, requirePerm("iam.users.manage"), ah(handleCreateUser));
-  router.patch("/accounts/:id", authMw, requirePerm("iam.users.manage"), ah(handleUpdateUser));
-  router.post("/accounts/:id/roles", authMw, requirePerm("iam.users.manage"), ah(handleSetRoles));
-  router.post("/accounts/:id/disable", authMw, requirePerm("iam.users.manage"), ah(handleDisable));
-  router.post("/accounts/:id/enable", authMw, requirePerm("iam.users.manage"), ah(handleEnable));
+  router.get("/accounts", authMw, devOr(requirePerm("iam.users.manage")), ah(handleListUsers));
+  router.post("/accounts", authMw, devOr(requirePerm("iam.users.manage")), ah(handleCreateUser));
+  router.patch("/accounts/:id", authMw, devOr(requirePerm("iam.users.manage")), ah(handleUpdateUser));
+  router.post("/accounts/:id/roles", authMw, devOr(requirePerm("iam.users.manage")), ah(handleSetRoles));
+  router.post("/accounts/:id/disable", authMw, devOr(requirePerm("iam.users.manage")), ah(handleDisable));
+  router.post("/accounts/:id/enable", authMw, devOr(requirePerm("iam.users.manage")), ah(handleEnable));
+
+  // Rutas auth simples (compatibilidad)
+  router.use("/auth", authRoutes);
 
   return router;
 }
@@ -505,5 +512,5 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   app.use(basePath, errorMw);
   app.use("/api/iam", errorMw);
 
-  console.log(`[IAM] módulo listo en ${basePath} (+ alias /api/iam)`);
+  console.log(`[IAM] módulo listo en ${basePath} (+ alias /api/iam) — DEV_ALLOW_ALL=${DEV_ALLOW_ALL ? "ON" : "OFF"}`);
 }
