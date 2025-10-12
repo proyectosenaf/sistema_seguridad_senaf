@@ -1,26 +1,12 @@
-// server/modules/iam/routes/auth.routes.js
 import { Router } from "express";
-
-/**
- * Esta ruta lee lo que haya puesto el enriquecedor (req.iam)
- * para entregar un /auth/me sencillo y que no dependa de JWT.
- * El módulo principal también expone /me y /auth/me más completo;
- * mantenemos este endpoint para compatibilidad.
- */
+import { buildContextFrom } from "../utils/rbac.util.js";
 const r = Router();
 
-r.get("/me", (req, res) => {
-  const iam = req.iam || {};
-  res.json({
-    ok: true,
-    user: {
-      email: iam.email || null,
-      id: iam.userId || null,
-      name: iam.name || null,
-    },
-    roles: iam.roles || [],
-    permissions: iam.permissions || [],
-  });
+r.get("/me", async (req,res,next)=>{
+  try {
+    const ctx = await buildContextFrom(req);
+    res.json({ user: ctx.user, roles: ctx.roles, permissions: ctx.permissions });
+  } catch (e) { next(e); }
 });
 
 export default r;
