@@ -11,9 +11,10 @@ import mongoose from "mongoose";
 
 import { registerRondasModule } from "../modules/rondas/index.js";
 import { registerIAMModule } from "../modules/iam/index.js";
-import { iamEnrich } from "../modules/iam/utils/rbac.util.js";
+// ⛔️ No usamos iamEnrich a nivel global
+// import { iamEnrich } from "../modules/iam/utils/rbac.util.js";
 
-// ⬇️ IMPORTA requireAuth para validar JWT cuando venga Authorization
+// JWT opcional (si viene Authorization)
 import { requireAuth } from "./middleware/auth.js";
 
 const app = express();
@@ -22,7 +23,7 @@ app.set("trust proxy", 1);
 // -------- CORS --------
 function parseOrigins(str) {
   if (!str) return null;
-  return String(str).split(",").map(s => s.trim()).filter(Boolean);
+  return String(str).split(",").map((s) => s.trim()).filter(Boolean);
 }
 const devDefaults = ["http://localhost:5173", "http://localhost:3000"];
 const origins =
@@ -46,7 +47,10 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: origins || true, methods: ["GET", "POST"], credentials: true },
 });
-app.use((req, _res, next) => { req.io = io; next(); });
+app.use((req, _res, next) => {
+  req.io = io;
+  next();
+});
 
 // -------- MongoDB --------
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -65,10 +69,14 @@ function iamDevMerge(req, _res, next) {
   if (!allow) return next();
 
   const devEmail = req.headers["x-user-email"];
-  const devRoles = (req.headers["x-roles"] || "")
-    .split(",").map(s => s.trim()).filter(Boolean);
-  const devPerms = (req.headers["x-perms"] || "")
-    .split(",").map(s => s.trim()).filter(Boolean);
+  const devRoles = String(req.headers["x-roles"] || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const devPerms = String(req.headers["x-perms"] || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   // Asegura estructura
   req.auth = req.auth || { payload: {} };
@@ -116,9 +124,11 @@ function pickMe(req) {
     p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
     null;
 
-  const roles = Array.isArray(p[NS]) ? p[NS]
-              : Array.isArray(p.roles) ? p.roles
-              : [];
+  const roles = Array.isArray(p[NS])
+    ? p[NS]
+    : Array.isArray(p.roles)
+    ? p.roles
+    : [];
 
   const permissions = Array.isArray(p.permissions) ? p.permissions : [];
 
@@ -127,11 +137,14 @@ function pickMe(req) {
     user: { email, name: p.name || null, sub: p.sub || null },
     roles,
     permissions,
-    _debug: process.env.NODE_ENV !== "production" ? {
-      NS,
-      hasAuthHeader: !!req.headers.authorization,
-      fromDevHeaders: process.env.IAM_ALLOW_DEV_HEADERS === "1",
-    } : undefined,
+    _debug:
+      process.env.NODE_ENV !== "production"
+        ? {
+            NS,
+            hasAuthHeader: !!req.headers.authorization,
+            fromDevHeaders: process.env.IAM_ALLOW_DEV_HEADERS === "1",
+          }
+        : undefined,
   };
 }
 
@@ -139,20 +152,49 @@ function pickMe(req) {
 // Rondas
 registerRondasModule({ app, io, basePath: "/api/rondas/v1" });
 
-// Enriquecer req con headers DEV (si los mandas)
-app.use(iamEnrich);      // tu enriquecedor actual
-app.use(iamDevMerge);    // <-- añade este merge para DEV
+// En DEV, fusiona headers x-user-email/x-roles/x-perms al payload
+app.use(iamDevMerge);
+
+// =======================
+// ALIAS de INCIDENCIAS
+// =======================
+// Intentamos montar el router de incidentes (dos rutas) si existe el archivo.
+// Esto evita el 404 en /api/incidentes que usa tu Home.jsx.
+try {
+  const maybe = await import("../modules/rondas/incidentes.routes.js").catch(() => ({}));
+  if (maybe?.mountIncidentes) {
+    // forma recomendada si exportaste mountIncidentes(app)
+    maybe.mountIncidentes(app);
+    console.log("[incidentes] montado en /api/incidentes y /api/rondas/v1/incidents");
+  } else if (maybe?.default) {
+    // fallback: si exportaste el router por default
+    const incidentesRouter = maybe.default;
+    app.use("/api/incidentes", incidentesRouter);
+    app.use("/api/rondas/v1/incidents", incidentesRouter);
+    console.log("[incidentes] router montado (default) en ambas rutas");
+  } else {
+    console.warn("[incidentes] no se encontró el router. Si ves 404 en /api/incidentes, crea modules/rondas/incidentes.routes.js");
+  }
+} catch (e) {
+  console.warn("[incidentes] import falló (se omite):", e?.message || e);
+}
 
 // IAM (usuarios/roles/permisos)
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
 
 // Endpoints /me robustos (funcionan con y sin JWT en DEV)
 app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) => res.json(pickMe(req)));
-app.get("/api/iam/v1/me",       optionalAuth, (req, res) => res.json(pickMe(req)));
+app.get("/api/iam/v1/me", optionalAuth, (req, res) => res.json(pickMe(req)));
+
+// --- Audit (stub): evita 404 y devuelve lista vacía hasta que implementes persistencia ---
+app.get("/api/iam/v1/audit", (req, res) => {
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+  res.json({ ok: true, items: [], limit });
+});
 
 // --- Stubs para quitar 404 del UI (opcionales) ---
 app.get("/api/notifications/count", (_req, res) => res.json(0));
-app.get("/api/chat/messages",      (_req, res) => res.json([]));
+app.get("/api/chat/messages", (_req, res) => res.json([]));
 
 // -------- 404: SIEMPRE al final --------
 app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
@@ -161,7 +203,9 @@ app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented
 const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
 server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
-  console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
+  console.log(
+    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
+  );
 });
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
@@ -170,5 +214,9 @@ io.on("connection", (s) => {
 });
 
 // Manejo de errores
-process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException",  (err) => console.error("[api] UncaughtException:", err));
+process.on("unhandledRejection", (err) =>
+  console.error("[api] UnhandledRejection:", err)
+);
+process.on("uncaughtException", (err) =>
+  console.error("[api] UncaughtException:", err)
+);

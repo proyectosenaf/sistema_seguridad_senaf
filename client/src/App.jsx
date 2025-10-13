@@ -1,4 +1,3 @@
-// client/src/App.jsx
 import React, { Suspense, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -10,20 +9,21 @@ import Layout from "./components/Layout.jsx";
 // ✅ Layout global (back inteligente / ocultar sidebar)
 import { LayoutUIProvider } from "./components/layout-ui.jsx";
 
-// ✅ IAM
-import IamGuard from "./iam/IamGuard.jsx";
-const IamAdminPage   = React.lazy(() => import("./pages/IAM/IamAdminPage.jsx"));
+// ✅ IAM (este import asume el archivo en client/src/iam/api/IamGuard.jsx)
+import IamGuard from "./iam/api/IamGuard.jsx";
 
-// Páginas (lazy)
-const Home            = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList  = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
-const IncidenteForm   = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+// ---- Páginas (lazy)
+const IamAdminPage   = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
+const Home           = React.lazy(() => import("./pages/Home/Home.jsx"));
+const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
+const IncidenteForm  = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
 // ✅ Rondas
-const RondasAdminPage = React.lazy(() => import("./pages/Rondas/RondasAdminPage.jsx"));
-const RondasGuardPage = React.lazy(() => import("./pages/Rondas/RondasGuardPage.jsx"));
-const RondasDashboard = React.lazy(() => import("./pages/Rondas/RondasDashboard.jsx"));
+const RondasAdminPage   = React.lazy(() => import("./pages/Rondas/RondasAdminPage.jsx"));
+const RondasGuardPage   = React.lazy(() => import("./pages/Rondas/RondasGuardPage.jsx"));
+const RondasDashboard   = React.lazy(() => import("./pages/Rondas/RondasDashboard.jsx"));
 
+// Otros módulos
 const Accesos         = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Visitas         = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora        = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
@@ -35,12 +35,13 @@ const RouteForm       = React.lazy(() => import("./pages/RutasAdmin/RouteForm.js
 const Assignments     = React.lazy(() => import("./pages/RutasAdmin/Assignments.jsx"));
 const LoginRedirect   = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 
-// ---- Redirección automática por rol/permisos
+/** Redirección automática por rol/permisos a la “home” correcta */
 function pickHome({ roles = [], perms = [] }) {
-  const R = new Set(roles);
+  const R = new Set(roles.map((r) => String(r).toLowerCase()));
   const P = new Set(perms);
 
-  if (R.has("admin") || P.has("iam.users.manage")) return "/iam/admin";
+  // comodín de permisos o admin → IAM
+  if (P.has("*") || R.has("admin") || P.has("iam.users.manage")) return "/iam/admin";
   if (R.has("supervisor")) return "/rondas/admin";
   if (R.has("guardia"))    return "/rondas/guard";
   if (R.has("recepcion"))  return "/accesos";
@@ -50,6 +51,7 @@ function pickHome({ roles = [], perms = [] }) {
   return "/"; // fallback a Home si no matchea
 }
 
+/** Página interna que decide a dónde mandarte según lo que diga /me */
 function RoleRedirectInline() {
   const navigate = useNavigate();
   const { user } = useAuth0(); // usamos email real si existe
@@ -57,10 +59,10 @@ function RoleRedirectInline() {
   useEffect(() => {
     let alive = true;
 
-    const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
-    const V1 = `${ROOT}/api/iam/v1`;
+    const ROOT   = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+    const V1     = `${ROOT}/api/iam/v1`;
     const LEGACY = `${ROOT}/api/iam`;
-    const DEV = !import.meta.env.PROD;
+    const DEV    = import.meta.env.DEV;
 
     const candidates = [
       `${V1}/me`,
@@ -74,24 +76,24 @@ function RoleRedirectInline() {
         try {
           const res = await fetch(url, { credentials: "include", headers });
           if (!res.ok) continue;
-          const data = (await res.json().catch(() => ({}))) || {};
+          const data  = (await res.json().catch(() => ({}))) || {};
           const roles = data?.roles || data?.user?.roles || [];
           const perms = data?.permissions || data?.perms || [];
           if ((roles?.length || 0) + (perms?.length || 0) > 0) {
             return { roles, perms };
           }
         } catch {
-          // continuar
+          // continuar con la siguiente
         }
       }
       return null;
     }
 
     (async () => {
-      // 1) JWT real sin headers
+      // 1) JWT real (sin headers dev)
       let me = await tryFetch();
 
-      // 2) En DEV si vino vacío, reintentar con SOLO x-user-email (sin x-roles/x-perms)
+      // 2) En DEV, si vino vacío, reintentar con SOLO x-user-email (sin x-roles/x-perms)
       if (!me && DEV) {
         const devEmail =
           user?.email ||
@@ -111,6 +113,7 @@ function RoleRedirectInline() {
   return <div className="p-6">Redirigiendo…</div>;
 }
 
+/** Puente para inyectar el token de Auth0 en tu lib/api */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
@@ -158,7 +161,7 @@ export default function App() {
               }
             />
 
-            {/* ✅ Nueva ruta que solo redirige según rol; usada después del login */}
+            {/* ✅ Redirige según rol/permisos después del login */}
             <Route
               path="/start"
               element={
@@ -168,14 +171,30 @@ export default function App() {
               }
             />
 
-            {/* Incidentes */}
+            {/* ---- Incidentes ---- */}
             <Route
               path="/incidentes"
-              element={<ProtectedRoute><Layout><IncidentesList /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
+                      <IncidentesList />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/incidentes/nuevo"
-              element={<ProtectedRoute><Layout><IncidenteForm /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["incidentes.create", "*"]}>
+                      <IncidenteForm />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             {/* ---- Rondas de Vigilancia ---- */}
@@ -185,19 +204,42 @@ export default function App() {
             />
             <Route
               path="/rondas/admin"
-              element={<ProtectedRoute><Layout><RondasAdminPage /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["rondas.read", "rondas.create", "rondas.edit", "rondas.reports", "*"]}>
+                      <RondasAdminPage />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/rondas/guard"
-              element={<ProtectedRoute><Layout><RondasGuardPage /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["rondas.read", "rondas.create", "rondas.edit", "*"]}>
+                      <RondasGuardPage />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
             <Route
               path="/rondas/dashboard"
-              element={<ProtectedRoute><Layout><RondasDashboard /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["rondas.reports", "rondas.read", "*"]}>
+                      <RondasDashboard />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
-            {/* -------------------------------- */}
 
-            {/* ✅ IAM (Gestión de usuarios/roles/permisos) */}
+            {/* ---- IAM (Gestión de usuarios/roles/permisos) ---- */}
             <Route
               path="/iam"
               element={<ProtectedRoute><Navigate to="/iam/admin" replace /></ProtectedRoute>}
@@ -207,28 +249,97 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard requirePerm="iam.users.manage">
+                    <IamGuard anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
                       <IamAdminPage />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>
               }
             />
-            {/* -------------------------------- */}
 
-            {/* Otros módulos */}
-            <Route path="/accesos"     element={<ProtectedRoute><Layout><Accesos /></Layout></ProtectedRoute>} />
-            <Route path="/visitas"     element={<ProtectedRoute><Layout><Visitas /></Layout></ProtectedRoute>} />
-            <Route path="/bitacora"    element={<ProtectedRoute><Layout><Bitacora /></Layout></ProtectedRoute>} />
-            <Route path="/supervision" element={<ProtectedRoute><Layout><Supervision /></Layout></ProtectedRoute>} />
-            <Route path="/evaluacion"  element={<ProtectedRoute><Layout><Evaluacion /></Layout></ProtectedRoute>} />
-            <Route path="/chat"        element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
+            {/* ---- Otros módulos ---- */}
+            <Route
+              path="/accesos"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
+                      <Accesos />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/visitas"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                      <Visitas />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/bitacora"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
+                      <Bitacora />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/supervision"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                      <Supervision />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluacion"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
+                      <Evaluacion />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chat"
+              element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>}
+            />
 
             {/* Admin de Rutas */}
-            <Route path="/rutas-admin"              element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>} />
-            <Route path="/rutas-admin/nueva"        element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
-            <Route path="/rutas-admin/:id"          element={<ProtectedRoute><Layout><RouteForm       /></Layout></ProtectedRoute>} />
-            <Route path="/rutas-admin/asignaciones" element={<ProtectedRoute><Layout><Assignments     /></Layout></ProtectedRoute>} />
+            <Route
+              path="/rutas-admin"
+              element={<ProtectedRoute><Layout><RoutesAdminList /></Layout></ProtectedRoute>}
+            />
+            <Route
+              path="/rutas-admin/nueva"
+              element={<ProtectedRoute><Layout><RouteForm /></Layout></ProtectedRoute>}
+            />
+            <Route
+              path="/rutas-admin/:id"
+              element={<ProtectedRoute><Layout><RouteForm /></Layout></ProtectedRoute>}
+            />
+            <Route
+              path="/rutas-admin/asignaciones"
+              element={<ProtectedRoute><Layout><Assignments /></Layout></ProtectedRoute>}
+            />
 
             {/* 404 */}
             <Route path="*" element={<div className="p-6">No encontrado</div>} />

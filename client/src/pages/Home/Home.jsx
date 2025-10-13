@@ -1,10 +1,10 @@
-// client/src/pages/Home/Home.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 import { io } from "socket.io-client";
 import { NAV_SECTIONS } from "../../config/navConfig.js";
 import api, { setAuthToken } from "../../lib/api.js";
+import IamGuard from "../../iam/api/IamGuard.jsx";
 
 import {
   DoorOpen,
@@ -40,6 +40,37 @@ const ICONS = {
   iam: ShieldCheck, // 👈 mapeo para el nuevo tile
 };
 
+// ---------- Permisos requeridos por sección (anyOf) ----------
+const PERMS_BY_SECTION = {
+  accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
+  rondas: ["rondas.read", "rondas.create", "rondas.edit", "rondas.reports", "*"],
+  incidentes: [
+    "incidentes.read",
+    "incidentes.create",
+    "incidentes.edit",
+    "incidentes.reports",
+    "*",
+  ],
+  visitas: ["visitas.read", "visitas.write", "visitas.close", "*"],
+  bitacora: ["bitacora.read", "bitacora.write", "bitacora.export", "*"],
+  supervision: [
+    "supervision.read",
+    "supervision.create",
+    "supervision.edit",
+    "supervision.reports",
+    "*",
+  ],
+  evaluacion: [
+    "evaluacion.list",
+    "evaluacion.create",
+    "evaluacion.edit",
+    "evaluacion.reports",
+    "evaluacion.kpi",
+    "*",
+  ],
+  iam: ["iam.users.manage", "iam.roles.manage", "*"],
+};
+
 export default function Home() {
   const nav = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
@@ -59,7 +90,7 @@ export default function Home() {
     const socket = socketRef.current;
 
     const onCheck = () => {
-      // puedes actualizar KPIs si quieres
+      // aquí puedes actualizar KPIs en vivo si quieres
     };
 
     socket.on("rondas:check", onCheck);
@@ -132,24 +163,23 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Secciones */}
+      {/* Secciones (visibles solo si el usuario tiene permisos) */}
       <div className="card fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SECTIONS.map((s) => {
             const Icon = ICONS[s.key];
+            const anyOf = PERMS_BY_SECTION[s.key] || ["*"]; // por si faltara mapeo
             return (
-              <button
-                key={s.key}
-                onClick={() => nav(s.path)}
-                className="fx-tile text-left p-4"
-              >
-                <div className="flex items-center gap-3">
-                  {Icon && <Icon className="w-5 h-5 opacity-80" />}
-                  <div className="font-medium">{s.label}</div>
-                </div>
-                <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
-              </button>
+              <IamGuard key={s.key} anyOf={anyOf} fallback={null}>
+                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
+                  <div className="flex items-center gap-3">
+                    {Icon && <Icon className="w-5 h-5 opacity-80" />}
+                    <div className="font-medium">{s.label}</div>
+                  </div>
+                  <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
+                </button>
+              </IamGuard>
             );
           })}
         </div>
