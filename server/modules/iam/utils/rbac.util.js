@@ -14,42 +14,80 @@ function parseList(v) {
   if (!v) return [];
   return String(v)
     .split(/[,\s]+/)
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 }
 
 /**
  * Enriquecedor de request:
  * - Detecta identidad desde JWT (si existe) o desde headers DEV (x-user-*)
- * - Autoprovisiona un IamUser (activo) si no existe, opcionalmente con rol por defecto
- * - Vincula externalId si faltaba
- * - Calcula roles/permisos efectivos (roles de BD + x-roles/x-perms DEV)
+ * - Busca usuario primero en IamUser y si no existe en colección "usuarios"
+ * - Autoprovisiona IamUser (activo) si no existía y tenemos email/uid (opcional)
+ * - Calcula roles/permisos efectivos:
+ *    * roles de BD + x-roles DEV
+ *    * permisos directos en el doc (perms) + x-perms DEV + permisos de roles
  *
- * No lanza errores: siempre hace next().
+ * Nunca bloquea la request; siempre hace next().
  */
 export async function iamEnrich(req, _res, next) {
   try {
     // Identidad desde JWT (si existe) o desde headers de desarrollo
-    const uid   = req.user?._id || req.user?.id || req.user?.sub || req.headers["x-user-id"] || null;
-    const email = req.user?.email || req.headers["x-user-email"] || null;
-    const name  = req.user?.name  || req.headers["x-user-name"]  || null;
+    const uid =
+      req.auth?.payload?.sub ||
+      req.user?._id ||
+      req.user?.id ||
+      req.user?.sub ||
+      req.headers["x-user-id"] ||
+      null;
+
+    const email =
+      req.auth?.payload?.email ||
+      req.user?.email ||
+      req.headers["x-user-email"] ||
+      null;
+
+    const name = req.user?.name || req.headers["x-user-name"] || null;
 
     // Roles/permisos inyectados por headers DEV (útiles en entorno sin Auth0)
     const devRoles = parseList(req.headers["x-roles"]);
     const devPerms = parseList(req.headers["x-perms"]);
 
-    // Estado base en req.iam
-    req.iam = { userId: uid, email, roles: [], permissions: [] };
+    // Estado base
+    req.iam = { userId: uid, email, name, roles: [], permissions: [] };
 
-    // 1) Buscar/crear usuario
+    // 1) Buscar usuario en IamUser
     let user =
       (uid && (await IamUser.findOne({ externalId: uid }).lean())) ||
       (email && (await IamUser.findOne({ email }).lean())) ||
       null;
 
+    // 2) Si no está en IamUser, intentar en colección "usuarios"
+    if (!user && email) {
+      try {
+        const raw = await req.app
+          .get("mongoose")
+          ?.connection.collection("usuarios")
+          .findOne({ email });
+        if (raw) {
+          user = {
+            _id: raw._id,
+            externalId: raw.externalId,
+            email: raw.email,
+            name: raw.name,
+            roles: Array.isArray(raw.roles) ? raw.roles : [],
+            perms: Array.isArray(raw.perms) ? raw.perms : [],
+            active: raw.active !== false,
+            _source: "usuarios",
+          };
+        }
+      } catch {
+        // Ignorar si la colección no existe
+      }
+    }
+
+    // 3) Autoprovisión en IamUser si tenemos identidad y no existe
     if (!user && (uid || email)) {
-      // Autoprovisión con rol por defecto si existe
-      let roles = [];
+      const roles = [];
       if (DEFAULT_ROLE_NAME) {
         const def = await IamRole.findOne({ name: DEFAULT_ROLE_NAME }).lean();
         if (def) roles.push(DEFAULT_ROLE_NAME);
@@ -64,29 +102,32 @@ export async function iamEnrich(req, _res, next) {
       user = created.toObject();
     }
 
-    // 2) Vincular externalId si el usuario existía sin link
-    if (user && uid && !user.externalId) {
+    // 4) Vincular externalId si faltaba
+    if (user && uid && !user.externalId && user._source !== "usuarios") {
       await IamUser.updateOne({ _id: user._id }, { $set: { externalId: uid } });
       user.externalId = uid;
     }
 
-    // 3) Construir roles/permisos efectivos
+    // 5) Construir roles/permisos efectivos
     const roleNames = new Set([
       ...(Array.isArray(user?.roles) ? user.roles : []),
-      ...devRoles, // headers DEV suman
+      ...devRoles,
+    ]);
+    const permSet = new Set([
+      ...(Array.isArray(user?.perms) ? user.perms : []),
+      ...devPerms,
     ]);
 
-    const permSet = new Set(devPerms); // headers DEV también suman permisos directos
-
+    // Expandir permisos por roles (si existen en IamRole)
     if (roleNames.size) {
       const roleDocs = await IamRole.find({ name: { $in: [...roleNames] } }).lean();
-      roleDocs.forEach(r => (r.permissions || []).forEach(p => permSet.add(p)));
+      roleDocs.forEach((r) => (r.permissions || []).forEach((p) => permSet.add(p)));
     }
 
+    // Guardar en req.iam
     req.iam.roles = [...roleNames];
     req.iam.permissions = [...permSet];
   } catch (e) {
-    // No bloquear la request por errores de enriquecimiento
     console.warn("[iamEnrich] fallo no crítico:", e?.message || e);
     req.iam = req.iam || { roles: [], permissions: [] };
   }
@@ -94,8 +135,7 @@ export async function iamEnrich(req, _res, next) {
 }
 
 /**
- * Cerrojo “decorativo”: ahora mismo dejas pasar todo porque ya usas tu auth propio.
- * Déjalo así para no romper flujos.
+ * “Cerrojo” neutro: no bloquea (usa tu auth propio en otros módulos).
  */
 export function iamRequireAuth(_req, _res, next) {
   next();
@@ -103,7 +143,6 @@ export function iamRequireAuth(_req, _res, next) {
 
 /**
  * Middleware de permiso simple basado en req.iam.permissions.
- * Úsalo en rutas internas si quieres un chequeo rápido.
  */
 export function iamAllowPerm(perm) {
   return (req, res, next) => {

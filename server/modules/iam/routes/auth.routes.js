@@ -1,18 +1,25 @@
 // server/modules/iam/routes/auth.routes.js
 import { Router } from "express";
-import { requireAuth } from "../utils/auth.util.js";
 
+/**
+ * Esta ruta lee lo que haya puesto el enriquecedor (req.iam)
+ * para entregar un /auth/me sencillo y que no dependa de JWT.
+ * El módulo principal también expone /me y /auth/me más completo;
+ * mantenemos este endpoint para compatibilidad.
+ */
 const r = Router();
 
-// /api/iam/v1/auth/me
-r.get("/me", requireAuth, (req, res) => {
+r.get("/me", (req, res) => {
+  const iam = req.iam || {};
   res.json({
     ok: true,
     user: {
-      id: req.user.id,
-      roles: req.user.roles || [],
-      perms: req.user.perms || [],
+      email: iam.email || null,
+      id: iam.userId || null,
+      name: iam.name || null,
     },
+    roles: iam.roles || [],
+    permissions: iam.permissions || [],
   });
 });
 
