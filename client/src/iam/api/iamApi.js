@@ -256,6 +256,9 @@ export const iamApi = {
   enableUser:  (id, t)    => rawFetch(PATHS.users.enable(id),  { method: "POST", token: t }),
   disableUser: (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
+  // ⚠️ “Eliminar” usando desactivar (soft delete) porque DELETE /users/:id no existe en tu backend
+  deleteUser:  (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+
   // Auditoría (tolerante a 404)
   async listAudit(limit = 100, token) {
     try {

@@ -25,10 +25,12 @@ const ROLE_MAP_DB_TO_UI = Object.fromEntries(
 );
 
 function RoleBadges({ roles = [] }) {
-  const uiNames = roles.map(r => ROLE_MAP_DB_TO_UI[r] || r);
+  const uiNames = roles.map((r) => ROLE_MAP_DB_TO_UI[r] || r);
   return (
     <div className="flex flex-wrap gap-1">
-      {uiNames.length === 0 ? <span className="text-neutral-500">—</span> :
+      {uiNames.length === 0 ? (
+        <span className="text-neutral-500">—</span>
+      ) : (
         uiNames.map((r, i) => (
           <span
             key={`${r}-${i}`}
@@ -37,20 +39,20 @@ function RoleBadges({ roles = [] }) {
             {r}
           </span>
         ))
-      }
+      )}
     </div>
   );
 }
 
 function RoleSelect({ value = [], onChange }) {
   const [open, setOpen] = useState(false);
-  const selected = new Set(value.map(v => ROLE_MAP_DB_TO_UI[v] || v));
+  const selected = new Set(value.map((v) => ROLE_MAP_DB_TO_UI[v] || v));
 
   const toggle = (uiName) => {
     const copy = new Set(selected);
     if (copy.has(uiName)) copy.delete(uiName);
     else copy.add(uiName);
-    const dbList = Array.from(copy).map(ui => ROLE_MAP_UI_TO_DB[ui] || ui);
+    const dbList = Array.from(copy).map((ui) => ROLE_MAP_UI_TO_DB[ui] || ui);
     onChange(dbList);
   };
 
@@ -58,17 +60,18 @@ function RoleSelect({ value = [], onChange }) {
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-left"
       >
-        {selected.size === 0 ? "Seleccionar rol(es)" :
-          Array.from(selected).join(", ")
-        }
+        {selected.size === 0 ? "Seleccionar rol(es)" : Array.from(selected).join(", ")}
       </button>
       {open && (
         <div className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 shadow">
           {DISPLAY_ROLES.map((ui) => (
-            <label key={ui} className="flex items-center gap-2 px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-700">
+            <label
+              key={ui}
+              className="flex items-center gap-2 px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-700"
+            >
               <input
                 type="checkbox"
                 className="scale-110"
@@ -89,6 +92,7 @@ const ESTADOS_CIVILES = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Un
 export default function UsersPage() {
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
+  const [onlyActive, setOnlyActive] = useState(true); // filtro “Solo activos”
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -128,21 +132,33 @@ export default function UsersPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return items;
-    return items.filter(u =>
-      (u.nombreCompleto || u.name || "").toLowerCase().includes(t) ||
-      (u.correoPersona || "").toLowerCase().includes(t) ||
-      (u.dni || "").toLowerCase().includes(t) ||
-      String(u.id_persona || "").toLowerCase().includes(t)
-    );
-  }, [items, q]);
+    let res = items;
+
+    if (t) {
+      res = res.filter(
+        (u) =>
+          (u.nombreCompleto || u.name || "").toLowerCase().includes(t) ||
+          (u.correoPersona || "").toLowerCase().includes(t) ||
+          (u.dni || "").toLowerCase().includes(t) ||
+          String(u.id_persona || "").toLowerCase().includes(t)
+      );
+    }
+
+    if (onlyActive) {
+      res = res.filter((u) => u.active !== false);
+    }
+
+    return res;
+  }, [items, q, onlyActive]);
 
   function setField(name, value) {
-    setForm(prev => ({ ...prev, [name]: value }));
+    setForm((prev) => ({ ...prev, [name]: value }));
   }
 
   function validate() {
@@ -212,16 +228,46 @@ export default function UsersPage() {
     setErrors({});
   }
 
+  // eliminar usuario (soft delete)
+  async function handleDelete(u) {
+    const nombre = u?.nombreCompleto || u?.name || "este usuario";
+    const ok = window.confirm(`¿Seguro que deseas eliminar a ${nombre}? Esta acción no se puede deshacer.`);
+    if (!ok) return;
+
+    // Optimista: quitar de la lista al instante
+    const prev = items;
+    setItems((curr) => curr.filter((x) => x._id !== u._id));
+
+    try {
+      await iamApi.deleteUser(u._id); // apunta a /disable en iamApi actual
+      if (editing === u._id) cancelEdit();
+      // NO hacemos load() para que no reaparezca como inactivo
+      alert("Usuario eliminado correctamente.");
+    } catch (e) {
+      // Revertir si falló
+      setItems(prev);
+      alert(e?.message || "No se pudo eliminar el usuario");
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Formulario */}
-      <form onSubmit={handleSubmit}
-            className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3"
+      >
         <h3 className="font-semibold text-lg">{editing ? "Editar usuario" : "Crear usuario"}</h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* PERSONALES */}
-          <Field label="Nombre completo" name="nombreCompleto" value={form.nombreCompleto} onChange={setField} error={errors.nombreCompleto} />
+          <Field
+            label="Nombre completo"
+            name="nombreCompleto"
+            value={form.nombreCompleto}
+            onChange={setField}
+            error={errors.nombreCompleto}
+          />
 
           <div className="md:col-span-2">
             <span className="text-sm">Documento</span>
@@ -229,7 +275,7 @@ export default function UsersPage() {
               <select
                 className="px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
                 value={form.tipoDni}
-                onChange={(e)=>setField("tipoDni", e.target.value)}
+                onChange={(e) => setField("tipoDni", e.target.value)}
               >
                 <option>Identidad</option>
                 <option>Pasaporte</option>
@@ -237,24 +283,54 @@ export default function UsersPage() {
               <input
                 className="flex-1 px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
                 value={form.dni}
-                onChange={(e)=>setField("dni", e.target.value)}
+                onChange={(e) => setField("dni", e.target.value)}
                 placeholder="0801-0000-00000"
               />
             </div>
             {errors.dni && <p className="text-red-500 text-sm mt-1">{errors.dni}</p>}
           </div>
 
-          <Select label="Estado civil" name="estadoCivil" value={form.estadoCivil} onChange={setField} options={ESTADOS_CIVILES} />
-          <Field type="date" label="Fecha de nacimiento" name="fechaNacimiento" value={form.fechaNacimiento} onChange={setField} />
+          <Select
+            label="Estado civil"
+            name="estadoCivil"
+            value={form.estadoCivil}
+            onChange={setField}
+            options={ESTADOS_CIVILES}
+          />
+          <Field
+            type="date"
+            label="Fecha de nacimiento"
+            name="fechaNacimiento"
+            value={form.fechaNacimiento}
+            onChange={setField}
+          />
 
           <Field label="País nacimiento" name="paisNacimiento" value={form.paisNacimiento} onChange={setField} />
           <Field label="Ciudad nacimiento" name="ciudadNacimiento" value={form.ciudadNacimiento} onChange={setField} />
-          <Field label="Municipio nacimiento" name="municipioNacimiento" value={form.municipioNacimiento} onChange={setField} />
+          <Field
+            label="Municipio nacimiento"
+            name="municipioNacimiento"
+            value={form.municipioNacimiento}
+            onChange={setField}
+          />
 
-          <Field label="Correo de la persona" name="correoPersona" value={form.correoPersona} onChange={setField} error={errors.correoPersona} />
+          <Field
+            label="Correo de la persona"
+            name="correoPersona"
+            value={form.correoPersona}
+            onChange={setField}
+            error={errors.correoPersona}
+          />
           <Field label="Profesión u oficio" name="profesion" value={form.profesion} onChange={setField} />
           <Field label="Dónde labora" name="lugarTrabajo" value={form.lugarTrabajo} onChange={setField} />
-          <Field label="Teléfono" name="telefono" value={form.telefono} onChange={setField} placeholder="+504 9999-9999" error={errors.telefono} />
+          <Field
+            label="Teléfono"
+            name="telefono"
+            value={form.telefono}
+            onChange={setField}
+            placeholder="+504 9999-9999"
+            error={errors.telefono}
+          />
           <Field className="md:col-span-2" label="Domicilio actual" name="domicilio" value={form.domicilio} onChange={setField} />
 
           {/* IAM: solo roles */}
@@ -266,25 +342,21 @@ export default function UsersPage() {
 
         <div className="flex items-center justify-between flex-wrap gap-3">
           <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!form.active}
-              onChange={(e) => setField("active", e.target.checked)}
-            />
+            <input type="checkbox" checked={!!form.active} onChange={(e) => setField("active", e.target.checked)} />
             <span>Activo</span>
           </label>
 
           <div className="flex gap-2">
             {editing && (
-              <button type="button" onClick={cancelEdit}
-                      className="px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600">
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600"
+              >
                 Cancelar
               </button>
             )}
-            <button
-              type="submit"
-              className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black"
-            >
+            <button type="submit" className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black">
               {editing ? "Guardar cambios" : "Crear"}
             </button>
           </div>
@@ -299,6 +371,11 @@ export default function UsersPage() {
           placeholder="Buscar por ID, nombre, correo personal o DNI…"
           className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         />
+        {/* Toggle Solo activos */}
+        <label className="flex items-center gap-2 text-sm select-none">
+          <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
+          Solo activos
+        </label>
       </div>
 
       {/* Lista / Resumen de usuarios creados */}
@@ -318,7 +395,10 @@ export default function UsersPage() {
           <div className="p-4 text-neutral-500">Sin usuarios.</div>
         ) : (
           filtered.map((u) => (
-            <div key={u._id} className="grid grid-cols-12 gap-2 px-3 py-3 border-t border-neutral-200 dark:border-neutral-700">
+            <div
+              key={u._id}
+              className="grid grid-cols-12 gap-2 px-3 py-3 border-t border-neutral-200 dark:border-neutral-700"
+            >
               <div className="col-span-4">
                 <div className="font-medium">{u.nombreCompleto || u.name || "—"}</div>
 
@@ -331,9 +411,7 @@ export default function UsersPage() {
                   </div>
                 )}
 
-                <div className="text-sm text-neutral-500 mt-1">
-                  {u.correoPersona || "—"}
-                </div>
+                <div className="text-sm text-neutral-500 mt-1">{u.correoPersona || "—"}</div>
                 {u.dni && <div className="text-xs text-neutral-500">DNI: {u.dni}</div>}
               </div>
 
@@ -343,9 +421,13 @@ export default function UsersPage() {
 
               <div className="col-span-2">
                 {u.active === false ? (
-                  <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200">Inactivo</span>
+                  <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200">
+                    Inactivo
+                  </span>
                 ) : (
-                  <span className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">Activo</span>
+                  <span className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+                    Activo
+                  </span>
                 )}
               </div>
 
@@ -358,12 +440,26 @@ export default function UsersPage() {
                 </button>
                 <button
                   onClick={() => toggleActive(u)}
-                  className={`px-3 py-1 rounded ${u.active === false
-                    ? "bg-emerald-600 text-white"
-                    : "bg-neutral-800 text-white dark:bg-neutral-200 dark:text-black"}`}
+                  className={`px-3 py-1 rounded ${
+                    u.active === false
+                      ? "bg-emerald-600 text-white"
+                      : "bg-neutral-800 text-white dark:bg-neutral-200 dark:text-black"
+                  }`}
                 >
                   {u.active === false ? "Activar" : "Desactivar"}
                 </button>
+
+                {/* Botón Eliminar con ícono */}
+                <button
+                  onClick={() => handleDelete(u)}
+                  className="p-2 rounded bg-red-600 text-white hover:bg-red-700"
+                  title="Eliminar usuario"
+                  aria-label="Eliminar usuario"
+                >
+                  <span aria-hidden="true">🗑️</span>
+                  <span className="sr-only">Eliminar</span>
+                </button>
+                {/* FIN botón */}
               </div>
             </div>
           ))
@@ -373,7 +469,7 @@ export default function UsersPage() {
   );
 }
 
-function Field({ label, name, value, onChange, type="text", className="", error, placeholder }) {
+function Field({ label, name, value, onChange, type = "text", className = "", error, placeholder }) {
   return (
     <label className={`space-y-1 ${className}`}>
       <span className="text-sm">{label}</span>
@@ -382,24 +478,28 @@ function Field({ label, name, value, onChange, type="text", className="", error,
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         value={value}
         placeholder={placeholder}
-        onChange={(e)=>onChange(name, e.target.value)}
+        onChange={(e) => onChange(name, e.target.value)}
       />
       {error && <span className="text-xs text-red-500">{error}</span>}
     </label>
   );
 }
 
-function Select({ label, name, value, onChange, options=[] }) {
+function Select({ label, name, value, onChange, options = [] }) {
   return (
     <label className="space-y-1">
       <span className="text-sm">{label}</span>
       <select
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         value={value}
-        onChange={(e)=>onChange(name, e.target.value)}
+        onChange={(e) => onChange(name, e.target.value)}
       >
         <option value="">Seleccionar</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
       </select>
     </label>
   );
