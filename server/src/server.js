@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -36,6 +35,14 @@ if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 
+// 🔹 No cache en DEV para que el front siempre vea la última lista
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+}
+
 // -------- Health --------
 app.get("/api/health", (_req, res) =>
   res.json({ ok: true, service: "senaf-api", ts: Date.now() })
@@ -60,6 +67,20 @@ if (!mongoUri) {
 }
 await mongoose.connect(mongoUri, { autoIndex: true });
 console.log("[db] MongoDB conectado");
+
+
+// 🔧 Fix índice conflictivo en iamusers: username_1 unique con valores null
+try {
+  const col = mongoose.connection.collection("iamusers");
+  const idx = await col.indexes();
+  if (idx.some(i => i.name === "username_1" && i.unique)) {
+    await col.dropIndex("username_1");
+    console.warn("[iamusers] index username_1 (unique) eliminado (permitirá crear sin username)");
+  }
+} catch (e) {
+  console.warn("[iamusers] no se pudo revisar/eliminar username_1:", e.message);
+}
+
 
 // =====================================================================================
 // IAM DEV MERGE: fusiona cabeceras DEV a req.auth.payload (si IAM_ALLOW_DEV_HEADERS=1)
@@ -159,24 +180,110 @@ app.use(iamDevMerge);
 // ALIAS de INCIDENCIAS
 // =======================
 // Intentamos montar el router de incidentes (dos rutas) si existe el archivo.
-// Esto evita el 404 en /api/incidentes que usa tu Home.jsx.
+// Si no existe, montamos un fallback mínimo para evitar 404 en /api/incidentes.
+let incidentesMontado = false;
 try {
   const maybe = await import("../modules/rondas/incidentes.routes.js").catch(() => ({}));
   if (maybe?.mountIncidentes) {
-    // forma recomendada si exportaste mountIncidentes(app)
     maybe.mountIncidentes(app);
+    incidentesMontado = true;
     console.log("[incidentes] montado en /api/incidentes y /api/rondas/v1/incidents");
   } else if (maybe?.default) {
-    // fallback: si exportaste el router por default
     const incidentesRouter = maybe.default;
     app.use("/api/incidentes", incidentesRouter);
     app.use("/api/rondas/v1/incidents", incidentesRouter);
+    incidentesMontado = true;
     console.log("[incidentes] router montado (default) en ambas rutas");
-  } else {
-    console.warn("[incidentes] no se encontró el router. Si ves 404 en /api/incidentes, crea modules/rondas/incidentes.routes.js");
   }
 } catch (e) {
   console.warn("[incidentes] import falló (se omite):", e?.message || e);
+}
+
+if (!incidentesMontado) {
+  // Fallback: lista vacía y 201 vacío para no romper UI mientras implementas
+  app.get("/api/incidentes", (_req, res) => res.json({ items: [], total: 0 }));
+  app.post("/api/incidentes", (_req, res) => res.status(201).json({ ok: true }));
+  console.warn("[incidentes] Fallback activo en /api/incidentes (lista vacía)");
+}
+
+// ----------------------------------------------
+// 🔸 DEV hardening para /api/iam/v1/users (GET/POST)
+//     - Debe ir ANTES de registerIAMModule para tomar precedencia.
+//     - Usa el mismo modelo/colección que tu app: "iamusers".
+// ----------------------------------------------
+if (process.env.NODE_ENV !== "production") {
+  const COLLECTION = process.env.IAM_USERS_COLLECTION || "iamusers";
+
+  // GET canónico: { items: [...] }
+  app.get("/api/iam/v1/users", async (req, res, next) => {
+    try {
+      // Si existe el modelo, úsalo
+      let IamUser = null;
+      try {
+        ({ default: IamUser } = await import("../modules/iam/models/IamUser.model.js"));
+      } catch {}
+      if (IamUser?.find) {
+        const users = await IamUser.find(
+          {},
+          { name:1, email:1, roles:1, active:1, perms:1, createdAt:1, updatedAt:1 }
+        ).sort({ createdAt: -1 }).lean();
+        return res.json({ items: users });
+      }
+      // Fallback: colección cruda
+      const users = await mongoose.connection.collection(COLLECTION)
+        .find({}, { projection: { name:1, email:1, roles:1, active:1, perms:1, createdAt:1, updatedAt:1 } })
+        .sort({ _id: -1 })
+        .toArray();
+      res.json({ items: users });
+    } catch (e) { next(e); }
+  });
+
+  // POST canónico: crea si no existe (email único)
+  app.post("/api/iam/v1/users", async (req, res, next) => {
+    try {
+      const norm = (e) => String(e || "").trim().toLowerCase();
+      let { name, email, roles = [], active = true, perms = [] } = req.body || {};
+      email = norm(email);
+      if (!email) return res.status(400).json({ error: "email requerido" });
+
+      let IamUser = null;
+      try {
+        ({ default: IamUser } = await import("../modules/iam/models/IamUser.model.js"));
+      } catch {}
+
+      if (IamUser?.create) {
+        const exists = await IamUser.findOne({ email }).lean();
+        if (exists) return res.status(409).json({ error: "ya existe", item: exists });
+
+        const created = await IamUser.create({
+          name: (name || "").trim() || null,
+          email,
+          roles: Array.isArray(roles) ? roles : [],
+          perms: Array.isArray(perms) ? perms : [],
+          active: !!active,
+        });
+        return res.status(201).json({ item: created });
+      }
+
+      // Fallback con colección cruda
+      const col = mongoose.connection.collection(COLLECTION);
+      const exists = await col.findOne({ email });
+      if (exists) return res.status(409).json({ error: "ya existe", item: exists });
+
+      const now = new Date();
+      const ins = await col.insertOne({
+        name: (name || "").trim() || null,
+        email,
+        roles: Array.isArray(roles) ? roles : [],
+        perms: Array.isArray(perms) ? perms : [],
+        active: !!active,
+        createdAt: now,
+        updatedAt: now
+      });
+      const saved = await col.findOne({ _id: ins.insertedId });
+      res.status(201).json({ item: saved });
+    } catch (e) { next(e); }
+  });
 }
 
 // IAM (usuarios/roles/permisos)
@@ -203,9 +310,7 @@ app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented
 const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
 server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
-  console.log(
-    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
-  );
+  console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
 });
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
