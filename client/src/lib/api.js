@@ -1,10 +1,14 @@
 // client/src/lib/api.js
 import axios from "axios";
 
+// Base URL SIN "/api" (el código de cada módulo añade /api en sus rutas)
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 
+// Prefijo común de API, útil para módulos que usan fetch
+export const API = `${API_ROOT}/api`;
+
 const api = axios.create({
-  baseURL: API_ROOT,
+  baseURL: API_ROOT, // mantenemos para compatibilidad
   withCredentials: true,
 });
 

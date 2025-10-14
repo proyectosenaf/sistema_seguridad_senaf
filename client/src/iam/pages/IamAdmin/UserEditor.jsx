@@ -121,9 +121,36 @@ export default function UserEditor({ value, onClose, onSaved }) {
           </label>
         </div>
 
+        {/* Pie del modal: AQUÍ debe ir el botón Eliminar */}
         <div className="flex justify-end gap-2">
-          <button className="px-3 py-2 rounded bg-gray-200 dark:bg-neutral-800" onClick={onClose}>Cancelar</button>
-          <button className="px-3 py-2 rounded bg-blue-600 text-white" onClick={save}>Guardar</button>
+          {value?._id && (
+            <button
+              data-testid="btn-eliminar-usuario"
+              className="px-3 py-2 rounded bg-red-600 text-white"
+              onClick={async () => {
+                const ok = window.confirm("¿Estás seguro de eliminar este usuario?");
+                if (!ok) return;
+                try {
+                  await iamApi.deleteUser(value._id);
+                  alert("Usuario eliminado correctamente.");
+                  onSaved?.();
+                  onClose?.();
+                } catch (err) {
+                  console.error(err);
+                  alert("Error al eliminar el usuario.");
+                }
+              }}
+            >
+              Eliminar
+            </button>
+          )}
+
+          <button className="px-3 py-2 rounded bg-gray-200 dark:bg-neutral-800" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="px-3 py-2 rounded bg-blue-600 text-white" onClick={save}>
+            Guardar
+          </button>
         </div>
       </div>
     </div>
