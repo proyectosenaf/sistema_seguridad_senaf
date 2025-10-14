@@ -2,3 +2,12 @@
 client/node_modules/
 server/node_modules/
 client/.vite/
+
+# dependencias y builds
+node_modules/
+dist/
+build/
+.vite/
+client/node_modules/
+client/dist/
+client/.vite/
