@@ -1,0 +1,4 @@
+# dependencias y cachés (NUNCA versionar)
+client/node_modules/
+server/node_modules/
+client/.vite/
