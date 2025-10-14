@@ -1,5 +1,5 @@
 // client/src/iam/pages/IamAdmin/UsersPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { iamApi } from "../../api/iamApi.js";
 
 const DISPLAY_ROLES = [
@@ -44,7 +44,9 @@ function RoleBadges({ roles = [] }) {
   );
 }
 
+/* Roles como <select> con flecha (selección simple para mantener compatibilidad) */
 function RoleSelect({ value = [], onChange }) {
+<<<<<<< HEAD
   const [open, setOpen] = useState(false);
   const selected = new Set(value.map((v) => ROLE_MAP_DB_TO_UI[v] || v));
 
@@ -84,10 +86,39 @@ function RoleSelect({ value = [], onChange }) {
         </div>
       )}
     </div>
+=======
+  const selected = value[0] ? (ROLE_MAP_DB_TO_UI[value[0]] || value[0]) : "";
+
+  return (
+    <select
+      className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
+      value={selected}
+      onChange={(e) => {
+        const ui = e.target.value;
+        const db = ROLE_MAP_UI_TO_DB[ui] || ui;
+        onChange(ui ? [db] : []); // mantiene estructura de arreglo
+      }}
+    >
+      <option value="">Seleccionar</option>
+      {DISPLAY_ROLES.map((ui) => (
+        <option key={ui} value={ui}>{ui}</option>
+      ))}
+    </select>
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
   );
 }
 
 const ESTADOS_CIVILES = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Unión libre"];
+
+/** Reglas de contraseña */
+function passwordRules(p = "") {
+  return {
+    length: p.length >= 8,
+    upper: /[A-Z]/.test(p),
+    lower: /[a-z]/.test(p),
+    digit: /\d/.test(p),
+  };
+}
 
 export default function UsersPage() {
   const [items, setItems] = useState([]);
@@ -117,7 +148,25 @@ export default function UsersPage() {
     active: true,
   };
   const [form, setForm] = useState(empty);
-  const [editing, setEditing] = useState(null); // _id del que edito
+  const [editing, setEditing] = useState(null); // guarda el _id del usuario en edición
+
+  /** Credenciales */
+  const [creds, setCreds] = useState({
+    password: "",
+    confirm: "",
+    sendVerification: false,
+  });
+  const [showPwd, setShowPwd] = useState(false);
+
+  const [pwdFocused, setPwdFocused] = useState(false);
+  const pwdR = passwordRules(creds.password);
+  const match = creds.password && creds.confirm && creds.password === creds.confirm;
+  const showPwdRules = (creds.password && creds.password.length > 0);
+
+  /** Ref del formulario + ref del primer campo y estado de envío */
+  const formRef = useRef(null);
+  const firstFieldRef = useRef(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function load() {
     try {
@@ -167,26 +216,71 @@ export default function UsersPage() {
     if (!form.dni) e.dni = "Documento requerido";
     if (form.correoPersona && !/^\S+@\S+\.\S+$/.test(form.correoPersona)) e.correoPersona = "Correo inválido";
     if (form.telefono && !/^[\d\+\-\s]{7,20}$/.test(form.telefono)) e.telefono = "Teléfono inválido";
+
+    const wantsPassword = !!(creds.password || creds.confirm || creds.sendVerification);
+    if (wantsPassword) {
+      const r = passwordRules(creds.password);
+      if (!r.length || !r.upper || !r.lower || !r.digit) {
+        e.password = "Debe tener 8+ caracteres, mayúscula, minúscula y número.";
+      }
+      if (!creds.password || creds.password !== creds.confirm) {
+        e.confirm = "La confirmación no coincide.";
+      }
+      if (creds.sendVerification && !/^\S+@\S+\.\S+$/.test(form.correoPersona || "")) {
+        e.correoPersona = "Correo requerido/válido para enviar verificación.";
+      }
+    }
+
     return e;
   }
   const [errors, setErrors] = useState({});
 
   async function handleSubmit(e) {
     e.preventDefault();
+    console.log("[UsersPage] submit clicked");
+
     const v = validate();
     setErrors(v);
-    if (Object.keys(v).length) return;
+    if (Object.keys(v).length) {
+      console.warn("[UsersPage] validation blocked submit:", v);
+      const firstKey = Object.keys(v)[0];
+      if (firstKey) {
+        const el = document.querySelector(`[name="${firstKey}"]`);
+        el?.focus?.();
+      }
+      return;
+    }
 
     try {
-      const payload = { ...form }; // no se envía id_persona
-      if (editing) await iamApi.updateUser(editing, payload);
-      else await iamApi.createUser(payload);
+      setSubmitting(true);
+      const payload = { ...form };
+
+      // Adjuntar credenciales si se proporcionaron
+      if (creds.password) payload.password = creds.password;
+      payload.sendVerification = !!creds.sendVerification;
+
+      let res;
+      if (editing) {
+        console.log("[UsersPage] updating user:", editing, payload);
+        res = await iamApi.updateUser(editing, payload);
+        alert("Usuario actualizado correctamente");
+      } else {
+        console.log("[UsersPage] creating user:", payload);
+        res = await iamApi.createUser(payload);
+        alert("Usuario creado correctamente ✅");
+      }
+
+      console.log("[UsersPage] respuesta backend:", res);
 
       setForm(empty);
       setEditing(null);
+      setCreds({ password: "", confirm: "", sendVerification: false });
       await load();
     } catch (e) {
-      alert(e?.message || "Error al guardar");
+      console.error("[UsersPage] submit error:", e);
+      alert("⚠️ Error al guardar: " + (e?.message || "Revisa la consola para más detalles"));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -201,6 +295,7 @@ export default function UsersPage() {
   }
 
   function startEdit(u) {
+    console.log("[UsersPage] entrar a edición:", u);
     setEditing(u._id);
     setForm({
       nombreCompleto: u.nombreCompleto || "",
@@ -219,12 +314,16 @@ export default function UsersPage() {
       active: u.active !== false,
       roles: Array.isArray(u.roles) ? u.roles : [],
     });
+    setCreds({ password: "", confirm: "", sendVerification: false });
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // foco en el primer campo para que sea evidente el modo edición
+    setTimeout(() => firstFieldRef.current?.focus?.(), 100);
   }
 
   function cancelEdit() {
     setEditing(null);
     setForm(empty);
+    setCreds({ password: "", confirm: "", sendVerification: false });
     setErrors({});
   }
 
@@ -252,8 +351,36 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
+      {/* Aviso de validación (solo tras intento fallido) */}
+      {Object.keys(errors).length > 0 && (
+        <div className="rounded-md border border-amber-400 bg-amber-50 text-amber-800 dark:border-amber-600 dark:bg-amber-900/20 dark:text-amber-200 px-3 py-2">
+          Revisa los campos marcados en rojo.
+        </div>
+      )}
+
+      {/* Banner de MODO EDICIÓN (solo cuando editing != null) */}
+      {editing && (
+        <div className="flex items-center justify-between rounded-md border border-sky-400 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-900/20 dark:text-sky-200 px-3 py-2">
+          <div className="text-sm">
+            <span className="font-semibold">Editando usuario</span>
+            {form?.nombreCompleto ? `: ${form.nombreCompleto}` : ""} {form?.id_persona ? `(ID: ${form.id_persona})` : ""}
+          </div>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            className="px-3 py-1 rounded border border-sky-300 dark:border-sky-600"
+          >
+            Salir del modo edición
+          </button>
+        </div>
+      )}
+
       {/* Formulario */}
       <form
+<<<<<<< HEAD
+=======
+        ref={formRef}
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
         onSubmit={handleSubmit}
         className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3"
       >
@@ -267,6 +394,11 @@ export default function UsersPage() {
             value={form.nombreCompleto}
             onChange={setField}
             error={errors.nombreCompleto}
+<<<<<<< HEAD
+=======
+            required
+            inputRef={firstFieldRef} // foco al entrar a editar
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
           />
 
           <div className="md:col-span-2">
@@ -281,10 +413,12 @@ export default function UsersPage() {
                 <option>Pasaporte</option>
               </select>
               <input
+                name="dni"
                 className="flex-1 px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
                 value={form.dni}
                 onChange={(e) => setField("dni", e.target.value)}
                 placeholder="0801-0000-00000"
+                required
               />
             </div>
             {errors.dni && <p className="text-red-500 text-sm mt-1">{errors.dni}</p>}
@@ -307,6 +441,7 @@ export default function UsersPage() {
 
           <Field label="País nacimiento" name="paisNacimiento" value={form.paisNacimiento} onChange={setField} />
           <Field label="Ciudad nacimiento" name="ciudadNacimiento" value={form.ciudadNacimiento} onChange={setField} />
+<<<<<<< HEAD
           <Field
             label="Municipio nacimiento"
             name="municipioNacimiento"
@@ -331,14 +466,82 @@ export default function UsersPage() {
             placeholder="+504 9999-9999"
             error={errors.telefono}
           />
+=======
+          <Field label="Municipio" name="municipioNacimiento" value={form.municipioNacimiento} onChange={setField} />
+
+          <Field label="Correo electrónico" name="correoPersona" value={form.correoPersona} onChange={setField} error={errors.correoPersona} />
+          <Field label="Profesión u oficio" name="profesion" value={form.profesion} onChange={setField} />
+          <Field label="Lugar de trabajo" name="lugarTrabajo" value={form.lugarTrabajo} onChange={setField} />
+          <Field label="Teléfono" name="telefono" value={form.telefono} onChange={setField} placeholder="+504 9999-9999" error={errors.telefono} />
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
           <Field className="md:col-span-2" label="Domicilio actual" name="domicilio" value={form.domicilio} onChange={setField} />
 
-          {/* IAM: solo roles */}
+          {/* IAM: Rol del usuario */}
           <label className="space-y-1 md:col-span-2">
             <span className="text-sm">Rol del usuario</span>
             <RoleSelect value={form.roles} onChange={(rolesDb) => setField("roles", rolesDb)} />
           </label>
         </div>
+
+        {/* Credenciales de acceso */}
+        <section className="mt-3 space-y-2">
+          <h4 className="font-semibold">Credenciales de acceso</h4>
+
+          <label className="space-y-1">
+            <span className="text-sm">Contraseña</span>
+            <div className="relative">
+              <input
+                type={showPwd ? "text" : "password"}
+                className="w-full px-3 py-2 pr-24 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
+                value={creds.password}
+                onChange={(e)=>setCreds(c=>({...c, password: e.target.value}))}
+                onFocus={()=>setPwdFocused(true)}
+                onBlur={()=>setPwdFocused(!!(creds.password && creds.password.length > 0))}
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={()=>setShowPwd(s=>!s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-sm px-2 py-1 rounded bg-neutral-200 dark:bg-neutral-700"
+              >
+                {showPwd ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+            {errors.password && <span className="text-xs text-red-500">{errors.password}</span>}
+            {showPwdRules && (
+              <ul className="text-xs opacity-80 mt-1 grid grid-cols-2 gap-x-4">
+                <li>{pwdR.length ? "✅" : "❌"} Mínimo 8 caracteres</li>
+                <li>{pwdR.upper ? "✅" : "❌"} Una mayúscula</li>
+                <li>{pwdR.lower ? "✅" : "❌"} Una minúscula</li>
+                <li>{pwdR.digit ? "✅" : "❌"} Un número</li>
+              </ul>
+            )}
+          </label>
+
+          <label className="space-y-1">
+            <span className="text-sm">Confirmar contraseña</span>
+            <input
+              type={showPwd ? "text" : "password"}
+              className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
+              value={creds.confirm}
+              onChange={(e)=>setCreds(c=>({...c, confirm: e.target.value}))}
+              placeholder="••••••••"
+            />
+            {errors.confirm && <span className="text-xs text-red-500">{errors.confirm}</span>}
+            {!errors.confirm && creds.confirm && !match && (
+              <span className="text-xs text-red-500">No coincide con la contraseña.</span>
+            )}
+          </label>
+
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={!!creds.sendVerification}
+              onChange={(e)=>setCreds(c=>({...c, sendVerification: e.target.checked}))}
+            />
+            <span>Enviar correo de verificación</span>
+          </label>
+        </section>
 
         <div className="flex items-center justify-between flex-wrap gap-3">
           <label className="flex items-center gap-2">
@@ -356,8 +559,19 @@ export default function UsersPage() {
                 Cancelar
               </button>
             )}
+<<<<<<< HEAD
             <button type="submit" className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black">
               {editing ? "Guardar cambios" : "Crear"}
+=======
+            {/* Enviar explícito usando handleSubmit directamente */}
+            <button
+              type="button"
+              onClick={(e) => handleSubmit(e)}  // ← CAMBIO ÚNICO para asegurar el submit
+              disabled={submitting}
+              className={`px-4 py-2 rounded ${submitting ? "opacity-60 cursor-not-allowed" : "bg-black text-white dark:bg-white dark:text-black"}`}
+            >
+              {submitting ? (editing ? "Guardando..." : "Creando...") : (editing ? "Guardar cambios" : "Crear")}
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
             </button>
           </div>
         </div>
@@ -469,16 +683,28 @@ export default function UsersPage() {
   );
 }
 
+<<<<<<< HEAD
 function Field({ label, name, value, onChange, type = "text", className = "", error, placeholder }) {
+=======
+/** Field: acepta 'required' y 'inputRef' para foco controlado */
+function Field({ label, name, value, onChange, type="text", className="", error, placeholder, required=false, inputRef }) {
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
   return (
     <label className={`space-y-1 ${className}`}>
       <span className="text-sm">{label}</span>
       <input
+        ref={inputRef}
+        name={name}
         type={type}
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         value={value}
         placeholder={placeholder}
+<<<<<<< HEAD
         onChange={(e) => onChange(name, e.target.value)}
+=======
+        onChange={(e)=>onChange(name, e.target.value)}
+        required={required}
+>>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
       />
       {error && <span className="text-xs text-red-500">{error}</span>}
     </label>
@@ -490,6 +716,7 @@ function Select({ label, name, value, onChange, options = [] }) {
     <label className="space-y-1">
       <span className="text-sm">{label}</span>
       <select
+        name={name}
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         value={value}
         onChange={(e) => onChange(name, e.target.value)}
