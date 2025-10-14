@@ -44,9 +44,8 @@ function RoleBadges({ roles = [] }) {
   );
 }
 
-/* Roles como <select> con flecha (selección simple para mantener compatibilidad) */
+/* Roles como selector de checkboxes (multi-selección) */
 function RoleSelect({ value = [], onChange }) {
-<<<<<<< HEAD
   const [open, setOpen] = useState(false);
   const selected = new Set(value.map((v) => ROLE_MAP_DB_TO_UI[v] || v));
 
@@ -86,25 +85,6 @@ function RoleSelect({ value = [], onChange }) {
         </div>
       )}
     </div>
-=======
-  const selected = value[0] ? (ROLE_MAP_DB_TO_UI[value[0]] || value[0]) : "";
-
-  return (
-    <select
-      className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
-      value={selected}
-      onChange={(e) => {
-        const ui = e.target.value;
-        const db = ROLE_MAP_UI_TO_DB[ui] || ui;
-        onChange(ui ? [db] : []); // mantiene estructura de arreglo
-      }}
-    >
-      <option value="">Seleccionar</option>
-      {DISPLAY_ROLES.map((ui) => (
-        <option key={ui} value={ui}>{ui}</option>
-      ))}
-    </select>
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
   );
 }
 
@@ -338,9 +318,8 @@ export default function UsersPage() {
     setItems((curr) => curr.filter((x) => x._id !== u._id));
 
     try {
-      await iamApi.deleteUser(u._id); // apunta a /disable en iamApi actual
+      await iamApi.deleteUser(u._id); // si tu iamApi no tiene delete real, que apunte a /disable
       if (editing === u._id) cancelEdit();
-      // NO hacemos load() para que no reaparezca como inactivo
       alert("Usuario eliminado correctamente.");
     } catch (e) {
       // Revertir si falló
@@ -377,10 +356,7 @@ export default function UsersPage() {
 
       {/* Formulario */}
       <form
-<<<<<<< HEAD
-=======
         ref={formRef}
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
         onSubmit={handleSubmit}
         className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3"
       >
@@ -394,11 +370,8 @@ export default function UsersPage() {
             value={form.nombreCompleto}
             onChange={setField}
             error={errors.nombreCompleto}
-<<<<<<< HEAD
-=======
             required
             inputRef={firstFieldRef} // foco al entrar a editar
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
           />
 
           <div className="md:col-span-2">
@@ -441,7 +414,6 @@ export default function UsersPage() {
 
           <Field label="País nacimiento" name="paisNacimiento" value={form.paisNacimiento} onChange={setField} />
           <Field label="Ciudad nacimiento" name="ciudadNacimiento" value={form.ciudadNacimiento} onChange={setField} />
-<<<<<<< HEAD
           <Field
             label="Municipio nacimiento"
             name="municipioNacimiento"
@@ -466,14 +438,6 @@ export default function UsersPage() {
             placeholder="+504 9999-9999"
             error={errors.telefono}
           />
-=======
-          <Field label="Municipio" name="municipioNacimiento" value={form.municipioNacimiento} onChange={setField} />
-
-          <Field label="Correo electrónico" name="correoPersona" value={form.correoPersona} onChange={setField} error={errors.correoPersona} />
-          <Field label="Profesión u oficio" name="profesion" value={form.profesion} onChange={setField} />
-          <Field label="Lugar de trabajo" name="lugarTrabajo" value={form.lugarTrabajo} onChange={setField} />
-          <Field label="Teléfono" name="telefono" value={form.telefono} onChange={setField} placeholder="+504 9999-9999" error={errors.telefono} />
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
           <Field className="md:col-span-2" label="Domicilio actual" name="domicilio" value={form.domicilio} onChange={setField} />
 
           {/* IAM: Rol del usuario */}
@@ -559,19 +523,12 @@ export default function UsersPage() {
                 Cancelar
               </button>
             )}
-<<<<<<< HEAD
-            <button type="submit" className="px-4 py-2 rounded bg-black text-white dark:bg-white dark:text-black">
-              {editing ? "Guardar cambios" : "Crear"}
-=======
-            {/* Enviar explícito usando handleSubmit directamente */}
             <button
-              type="button"
-              onClick={(e) => handleSubmit(e)}  // ← CAMBIO ÚNICO para asegurar el submit
+              type="submit"
               disabled={submitting}
               className={`px-4 py-2 rounded ${submitting ? "opacity-60 cursor-not-allowed" : "bg-black text-white dark:bg-white dark:text-black"}`}
             >
               {submitting ? (editing ? "Guardando..." : "Creando...") : (editing ? "Guardar cambios" : "Crear")}
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
             </button>
           </div>
         </div>
@@ -683,12 +640,8 @@ export default function UsersPage() {
   );
 }
 
-<<<<<<< HEAD
-function Field({ label, name, value, onChange, type = "text", className = "", error, placeholder }) {
-=======
 /** Field: acepta 'required' y 'inputRef' para foco controlado */
-function Field({ label, name, value, onChange, type="text", className="", error, placeholder, required=false, inputRef }) {
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
+function Field({ label, name, value, onChange, type = "text", className = "", error, placeholder, required = false, inputRef }) {
   return (
     <label className={`space-y-1 ${className}`}>
       <span className="text-sm">{label}</span>
@@ -699,12 +652,8 @@ function Field({ label, name, value, onChange, type="text", className="", error,
         className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
         value={value}
         placeholder={placeholder}
-<<<<<<< HEAD
         onChange={(e) => onChange(name, e.target.value)}
-=======
-        onChange={(e)=>onChange(name, e.target.value)}
         required={required}
->>>>>>> c92648ee3f5a66fdc180f956f99882d154e2c46c
       />
       {error && <span className="text-xs text-red-500">{error}</span>}
     </label>
