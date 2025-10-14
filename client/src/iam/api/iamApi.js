@@ -1,16 +1,10 @@
 // client/src/iam/api/iamApi.js
+import { API } from "../../lib/api";
 
-// Si NO defines VITE_API_BASE_URL, usará rutas relativas -> ideal con proxy de Vite.
-const ROOT = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-
-// Bases en orden de preferencia
-const V1         = `${ROOT}/api/iam/v1`;
-const LEGACY_IAM = `${ROOT}/api/iam`;
-const LEGACY_API = `${ROOT}/api`;
-
+const V1 = `${API}/iam/v1`;
 const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 
-/** Lee identidad DEV desde localStorage o .env */
+/** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
     (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
@@ -27,23 +21,6 @@ function getDevIdentity() {
   return { email: email.trim(), roles: roles.trim(), perms: perms.trim() };
 }
 
-function isCrossOrigin(urlStr) {
-  try {
-    // Si ROOT es vacío (proxy), url será relativa => mismo origen
-    const u = new URL(urlStr, window.location.href);
-    return u.origin !== window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Construye headers:
- * - Si hay token → Authorization
- * - Si el body es FormData → no fijar Content-Type
- * - En dev: añade x-user-* cuando no haya token o cuando VITE_FORCE_DEV_IAM=1
- *   PERO los omite en escrituras cross-origin (POST/PATCH/PUT/DELETE) para evitar CORS.
- */
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
@@ -51,11 +28,7 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
 
   const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
   const shouldSendDev = FORCE_DEV || !token;
-
-  const write = ["POST", "PATCH", "PUT", "DELETE"].includes((method || "GET").toUpperCase());
-  const cross = isCrossOrigin(urlForCors || V1);
-
-  if (shouldSendDev && !(write && cross)) {
+  if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
     if (email) h["x-user-email"] = email;
     if (roles) h["x-roles"] = roles;
@@ -74,7 +47,6 @@ async function toJson(resp) {
   try { return await resp.json(); } catch { return {}; }
 }
 
-/** fetch con manejo de errores de red/CORS más claro */
 async function rawFetch(url, { method = "GET", body, token, formData = false } = {}) {
   const isFD = formData || (typeof FormData !== "undefined" && body instanceof FormData);
   try {
@@ -85,116 +57,209 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
       body: body ? (isFD ? body : JSON.stringify(body)) : undefined,
     });
     if (!r.ok) {
+      const ct = r.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const j = await toJson(r);
+        const msg = j?.error || j?.detail || `${r.status} ${r.statusText}`;
+        throw new Error(msg);
+      }
       const text = await r.text().catch(() => "");
-      const msg = text || `${r.status} ${r.statusText}`;
-      throw new Error(msg);
+      throw new Error(text || `${r.status} ${r.statusText}`);
     }
     return toJson(r);
   } catch (e) {
-    // TypeError casi siempre = CORS / red
     if (e?.name === "TypeError") {
-      throw new Error(
-        "No se pudo conectar con la API. Revisa que el servidor esté arriba, " +
-        "el CORS permita este método y cabeceras, y que la URL VITE_API_BASE_URL sea correcta."
-      );
+      throw new Error("No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL.");
     }
     throw e;
   }
 }
 
-/** Intenta varias rutas candidatas hasta que una responda OK */
-async function reqAny(paths, opts) {
-  let lastErr;
-  for (const p of paths) {
-    try {
-      if (DEBUG) console.log("[iamApi] try:", p, opts?.method || "GET");
-      return await rawFetch(p, opts);
-    } catch (e) {
-      lastErr = e;
-      if (DEBUG) console.warn("[iamApi] fail:", p, e?.message || e);
-    }
-  }
-  throw lastErr || new Error("No se pudo completar la solicitud");
-}
-
-/** Helpers de caminos por recurso */
+/* ---------- RUTAS SOLO v1 ---------- */
 const PATHS = {
-  perms: {
-    list:     () => [`${V1}/permissions`, `${LEGACY_IAM}/permissions`, `${LEGACY_API}/permissions`],
-    create:   () => [`${V1}/permissions`, `${LEGACY_IAM}/permissions`, `${LEGACY_API}/permissions`],
-    byId: (id)=> [`${V1}/permissions/${id}`, `${LEGACY_IAM}/permissions/${id}`, `${LEGACY_API}/permissions/${id}`],
+  users: {
+    list:   (q) => `${V1}/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    create: () => `${V1}/users`,
+    byId:   (id) => `${V1}/users/${id}`,
+    enable: (id) => `${V1}/users/${id}/enable`,
+    disable:(id) => `${V1}/users/${id}/disable`,
   },
   roles: {
-    list:     () => [`${V1}/roles`, `${LEGACY_IAM}/roles`, `${LEGACY_API}/roles`],
-    create:   () => [`${V1}/roles`, `${LEGACY_IAM}/roles`, `${LEGACY_API}/roles`],
-    byId: (id)=> [`${V1}/roles/${id}`, `${LEGACY_IAM}/roles/${id}`, `${LEGACY_API}/roles/${id}`],
+    list:   () => `${V1}/roles`,
+    create: () => `${V1}/roles`,
+    byId:   (id) => `${V1}/roles/${id}`,
   },
-  users: {
-    list:   (q) => {
-      const search = q ? `?q=${encodeURIComponent(q)}` : "";
-      return [
-        `${V1}/users${search}`,
-        `${LEGACY_IAM}/users${search}`,
-        `${LEGACY_API}/users${search}`,
-      ];
-    },
-    create:   () => [`${V1}/users`, `${LEGACY_IAM}/users`, `${LEGACY_API}/users`],
-    byId: (id)=> [`${V1}/users/${id}`, `${LEGACY_IAM}/users/${id}`, `${LEGACY_API}/users/${id}`],
-    enable: (id)=> [`${V1}/users/${id}/enable`, `${LEGACY_IAM}/users/${id}/enable`, `${LEGACY_API}/users/${id}/enable`],
-    disable:(id)=> [`${V1}/users/${id}/disable`,`${LEGACY_IAM}/users/${id}/disable`,`${LEGACY_API}/users/${id}/disable`],
+  perms: {
+    list:   () => `${V1}/permissions`,
+    create: () => `${V1}/permissions`,
+    byId:   (id) => `${V1}/permissions/${id}`,
+  },
+  auth: {
+    me:     () => `${V1}/me`,
+    login:  () => `${V1}/auth/login`, // login local opcional
   },
 };
 
+/* ---------- helpers de nombre/email ---------- */
+function nameFromEmail(email) {
+  const local = String(email || "").split("@")[0];
+  if (!local) return "";
+  return local
+    .replace(/[._-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Busca cualquier clave con "email" o "correo" (plano o 1 nivel)
+function findEmailAny(obj) {
+  const rx = /(email|correo)/i;
+  const scan = (o) => {
+    for (const [k, v] of Object.entries(o || {})) {
+      if (rx.test(k) && typeof v === "string" && v.trim()) return v;
+    }
+    for (const [, v] of Object.entries(o || {})) {
+      if (v && typeof v === "object") {
+        for (const [kk, vv] of Object.entries(v)) {
+          if (rx.test(kk) && typeof vv === "string" && vv.trim()) return vv;
+        }
+      }
+    }
+    return "";
+  };
+  return scan(obj);
+}
+
+function findNameAny(obj) {
+  const direct =
+    obj?.name ??
+    obj?.nombre ??
+    obj?.displayName ??
+    obj?.fullName ??
+    obj?.razonSocial ??
+    obj?.contactName ??
+    "";
+
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const first =
+    obj?.firstName ?? obj?.firstname ?? obj?.nombres ?? obj?.primerNombre ??
+    obj?.persona?.nombres ?? obj?.persona?.firstName;
+  const last  =
+    obj?.lastName  ?? obj?.lastname  ?? obj?.apellidos ?? obj?.segundoNombre ??
+    obj?.persona?.apellidos ?? obj?.persona?.lastName;
+
+  const combo = `${first || ""} ${last || ""}`.trim();
+  if (combo) return combo;
+
+  if (obj?.persona?.nombre || obj?.persona?.name) {
+    return (obj?.persona?.nombre || obj?.persona?.name || "").trim();
+  }
+  return "";
+}
+
+function fromFormData(fd) {
+  const toObj = {};
+  fd.forEach((v, k) => { toObj[k] = v; });
+  return toObj;
+}
+
+/* ---------- API ---------- */
 export const iamApi = {
-  /** /auth/me con fallback a /me (v1 y legacy) */
+  // Identidad
   async me(token) {
     const headers = buildHeaders({ token, isFormData: false, method: "GET" });
-    const candidates = [
-      `${V1}/auth/me`, `${V1}/me`,
-      `${LEGACY_IAM}/auth/me`, `${LEGACY_IAM}/me`,
-      `${LEGACY_API}/auth/me`, `${LEGACY_API}/me`,
-    ];
-    for (const url of candidates) {
-      try {
-        const r = await fetch(url, { headers, credentials: "include" });
-        if (r.ok) return toJson(r);
-      } catch (e) {
-        if (DEBUG) console.warn("[iamApi.me] fallo:", url, e?.message || e);
-      }
+    try {
+      const r = await fetch(PATHS.auth.me(), { headers, credentials: "include" });
+      if (r.ok) return toJson(r);
+    } catch (e) {
+      if (DEBUG) console.warn("[iamApi.me] fallo:", e?.message || e);
     }
     throw new Error("No se pudo obtener /me");
   },
 
-  // ---- Permisos
-  listPerms:   (t)        => reqAny(PATHS.perms.list(),   { token: t }),
-  createPerm:  (p, t)     => reqAny(PATHS.perms.create(), { method: "POST", body: p, token: t }),
-  updatePerm:  (id, p, t) => reqAny(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
-  deletePerm:  (id, t)    => reqAny(PATHS.perms.byId(id), { method: "DELETE", token: t }),
+  // Login local (opcional, si usas auth propio además de Auth0)
+  async loginLocal({ email, password }) {
+    const body = {
+      email: String(email || "").trim().toLowerCase(),
+      password: String(password || ""),
+    };
+    return rawFetch(PATHS.auth.login(), { method: "POST", body });
+  },
 
-  // ---- Roles
-  listRoles:   (t)        => reqAny(PATHS.roles.list(),   { token: t }),
-  createRole:  (p, t)     => reqAny(PATHS.roles.create(), { method: "POST", body: p, token: t }),
-  updateRole:  (id, p, t) => reqAny(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
-  deleteRole:  (id, t)    => reqAny(PATHS.roles.byId(id), { method: "DELETE", token: t }),
+  // Roles/Permisos
+  listRoles:   (t)        => rawFetch(PATHS.roles.list(),   { token: t }),
+  createRole:  (p, t)     => rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
+  updateRole:  (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
+  deleteRole:  (id, t)    => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
-  // ---- Usuarios
-  listUsers:   (q = "", t)=> reqAny(PATHS.users.list(q),   { token: t }),
-  createUser:  (p, t)     => reqAny(PATHS.users.create(),  { method: "POST", body: p, token: t }),
-  updateUser:  (id, p, t) => reqAny(PATHS.users.byId(id),  { method: "PATCH", body: p, token: t }),
-  enableUser:  (id, t)    => reqAny(PATHS.users.enable(id),  { method: "POST", token: t }),
-  disableUser: (id, t)    => reqAny(PATHS.users.disable(id), { method: "POST", token: t }),
+  listPerms:   (t)        => rawFetch(PATHS.perms.list(),   { token: t }),
+  createPerm:  (p, t)     => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
+  updatePerm:  (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
+  deletePerm:  (id, t)    => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
-  // ---- Auditoría (tolerante a 404)
+  // Usuarios
+  listUsers:   (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
+
+  createUser:  (payload, t) => {
+    let email = "", name = "", roles = [], active = true, perms, password;
+
+    if (typeof FormData !== "undefined" && payload instanceof FormData) {
+      const obj = fromFormData(payload);
+      email = findEmailAny(obj);
+      name  = findNameAny(obj);
+      roles = obj.roles
+        ? (Array.isArray(obj.roles) ? obj.roles : String(obj.roles).split(",").map(s => s.trim()).filter(Boolean))
+        : [];
+      active = obj.active !== undefined ? (obj.active === true || obj.active === "true") : true;
+      if (obj.perms)    perms = Array.isArray(obj.perms) ? obj.perms : String(obj.perms).split(",").map(s=>s.trim()).filter(Boolean);
+      // soporta alias de password
+      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
+    } else {
+      const obj = payload || {};
+      email = findEmailAny(obj) ||
+        String(
+          obj.email ?? obj.correo ?? obj.correoPersonal ?? obj.personalEmail ?? obj.mail ??
+          obj?.persona?.email ?? obj?.persona?.correo ?? ""
+        );
+      name  = findNameAny(obj);
+      roles = Array.isArray(obj.roles) ? obj.roles
+        : (typeof obj.roles === "string" ? obj.roles.split(",").map(s=>s.trim()).filter(Boolean) : []);
+      active = obj.active === undefined ? true : !!obj.active;
+      if (obj.perms)    perms = Array.isArray(obj.perms) ? obj.perms : String(obj.perms).split(",").map(s=>s.trim()).filter(Boolean);
+      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
+    }
+
+    email = String(email || "").trim().toLowerCase();
+    name  = (String(name || "").trim()) || nameFromEmail(email);
+
+    if (!email) {
+      if (DEBUG) {
+        console.warn("[iamApi.createUser] payload sin email. Keys:", payload instanceof FormData
+          ? Array.from(payload.keys())
+          : Object.keys(payload || {}));
+      }
+      return Promise.reject(new Error("email requerido"));
+    }
+
+    const body = {
+      name, email, roles, active,
+      ...(perms ? { perms } : {}),
+      ...(password ? { password: String(password) } : {}), // opcional: crea hash en backend si viene
+    };
+
+    return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
+  },
+
+  updateUser:  (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
+  enableUser:  (id, t)    => rawFetch(PATHS.users.enable(id),  { method: "POST", token: t }),
+  disableUser: (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+
+  // Auditoría (tolerante a 404)
   async listAudit(limit = 100, token) {
     try {
-      return await reqAny(
-        [
-          `${V1}/audit?limit=${encodeURIComponent(limit)}`,
-          `${LEGACY_IAM}/audit?limit=${encodeURIComponent(limit)}`,
-          `${LEGACY_API}/audit?limit=${encodeURIComponent(limit)}`,
-        ],
-        { token }
-      );
+      return await rawFetch(`${V1}/audit?limit=${encodeURIComponent(limit)}`, { token });
     } catch (e) {
       const msg = (e.message || "").toLowerCase();
       if (msg.includes("not found") || msg.includes("404")) return { ok: false, items: [] };
@@ -202,14 +267,11 @@ export const iamApi = {
     }
   },
 
-  // ---- Import Excel (FormData)
+  // Import Excel (FormData)
   importExcel(file, token) {
     const fd = new FormData();
     fd.append("file", file);
-    return reqAny(
-      [`${V1}/import/excel`, `${LEGACY_IAM}/import/excel`, `${LEGACY_API}/import/excel`],
-      { method: "POST", body: fd, token, formData: true }
-    );
+    return rawFetch(`${V1}/import/excel`, { method: "POST", body: fd, token, formData: true });
   },
 };
 
