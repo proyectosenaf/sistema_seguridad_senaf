@@ -2,14 +2,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { iamApi } from "../../api/iamApi";
 import RoleCloneDialog from "./RoleCloneDialog";
-import AuditPanel from "./AuditPanel";
-import { PlusCircle, Edit3, Trash2, Save } from "lucide-react"; // íconos modernos
+import { PlusCircle, Edit3, Trash2, Save, RefreshCw, ShieldCheck, ChevronDown } from "lucide-react";
+import { fallbackGroupsFromLocal } from "../../lib/permUtils.js";
 
-import {
-  normalizePermsResponse,
-  fallbackGroupsFromLocal,
-} from "../../lib/permUtils.js";
-
+/* ──────────────────────────────────────────────────────────────
+   Config inicial (tus roles)
+   ────────────────────────────────────────────────────────────── */
 const DISPLAY_ROLES = [
   { code: "admin", name: "Administrador" },
   { code: "supervisor", name: "Supervisor" },
@@ -18,48 +16,66 @@ const DISPLAY_ROLES = [
   { code: "visita_externa", name: "Visita Externa" },
 ];
 
-const EXCLUDED_GROUPS = new Set(["accesos", "reportes"]);
 const CODE_TO_LABEL = Object.fromEntries(DISPLAY_ROLES.map(r => [r.code, r.name]));
-
 function roleLabel(r) {
   const code = String(r.code || "").toLowerCase();
   return CODE_TO_LABEL[code] || r.name || r.code || "(sin nombre)";
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Enlace con PermissionCatalog.jsx
+   ────────────────────────────────────────────────────────────── */
+const LS_KEY = "iam_perm_catalog";
+function mapRoleCodeToPermKey(codeOrName = "") {
+  const k = String(codeOrName).toLowerCase();
+  if (k === "guardia") return "guard";
+  if (k === "ti") return "admin_it";
+  if (k === "visita_externa") return "visitor";
+  return k; // admin, supervisor
+}
+function readPermCatalogFromLS() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!Array.isArray(parsed.groups) || typeof parsed.roleMatrix !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function getCatalogFallback() {
+  const groups = fallbackGroupsFromLocal();
+  const roleMatrix = {};
+  const empty = { admin: false, supervisor: false, guard: false, admin_it: false, visitor: false };
+  for (const g of groups) {
+    for (const it of g.items || []) {
+      roleMatrix[it.key] = { ...empty, ...(it.roles || {}) };
+    }
+  }
+  return { groups, roleMatrix };
+}
+
 export default function RolesPage() {
   const [roles, setRoles] = useState([]);
-  const [groups, setGroups] = useState([]);
   const [roleId, setRoleId] = useState(null);
   const [working, setWorking] = useState(false);
   const [msg, setMsg] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
-  const [query, setQuery] = useState("");
+
+  // Permisos compartidos con PermissionCatalog
+  const [permCatalog, setPermCatalog] = useState(() => readPermCatalogFromLS() || getCatalogFallback());
 
   async function loadAll() {
-    const [rPerms, rRoles] = await Promise.all([
-      iamApi.listPerms(),
-      iamApi.listRoles(),
-    ]);
-
-    let gs = normalizePermsResponse(rPerms);
-    const totalPerms = gs.reduce((acc, g) => acc + (g.items?.length || 0), 0);
-    if (totalPerms === 0) gs = fallbackGroupsFromLocal();
-
-    gs = gs
-      .map(g => ({ ...g, group: g.group || "General" }))
-      .filter(g => !EXCLUDED_GROUPS.has(String(g.group).toLowerCase()));
-
-    setGroups(gs);
-
+    const rRoles = await iamApi.listRoles();
     const items = rRoles?.items || rRoles?.roles || [];
     setRoles(items);
-
     const adminId =
       items.find(x => (String(x.code || "").toLowerCase() === "admin"))?._id ||
       items.find(x => String(x.name || "").toLowerCase() === "administrador")?._id ||
       items[0]?._id ||
       null;
-
     setRoleId(v => v || adminId);
   }
 
@@ -67,19 +83,60 @@ export default function RolesPage() {
     loadAll().catch(e => setMsg(e?.message || "Error al cargar"));
   }, []);
 
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === LS_KEY) {
+        const fromLs = readPermCatalogFromLS();
+        setPermCatalog(fromLs || getCatalogFallback());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const refreshPermCatalog = () => {
+    const fromLs = readPermCatalogFromLS();
+    setPermCatalog(fromLs || getCatalogFallback());
+  };
+
   const selected = roles.find(r => r._id === roleId) || null;
-  const selectedPerms = useMemo(() => new Set(selected?.permissions || []), [selected]);
 
-  function togglePerm(key, on) {
-    if (!selected) return;
-    const next = new Set(selected.permissions || []);
-    if (on) next.add(key); else next.delete(key);
-    setRoles(rs => rs.map(r => (r._id === selected._id ? { ...r, permissions: [...next] } : r)));
-  }
+  /* ──────────────────────────────────────────────────────────────
+     Derivado: permisos del rol seleccionado
+     ────────────────────────────────────────────────────────────── */
+  const rolePermSummary = useMemo(() => {
+    if (!selected || !permCatalog?.groups || !permCatalog?.roleMatrix) {
+      return { count: 0, byGroup: [] };
+    }
+    const permKey = mapRoleCodeToPermKey(selected.code || selected.name);
+    const { groups, roleMatrix } = permCatalog;
 
+    const grouped = [];
+    let total = 0;
+
+    for (const g of groups) {
+      const items = [];
+      for (const it of g.items || []) {
+        const r = roleMatrix[it.key] || {};
+        if (r[permKey]) items.push({ key: it.key, label: it.label, group: g.group });
+      }
+      if (items.length > 0) {
+        items.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+        grouped.push({ group: g.group, items });
+        total += items.length;
+      }
+    }
+    grouped.sort((a, b) => String(a.group).localeCompare(String(b.group)));
+    return { count: total, byGroup: grouped };
+  }, [selected, permCatalog]);
+
+  /* ──────────────────────────────────────────────────────────────
+     Acciones (sin cambios funcionales)
+     ────────────────────────────────────────────────────────────── */
   async function save() {
     if (!selected) return;
-    setWorking(true); setMsg("");
+    setWorking(true);
+    setMsg("");
     try {
       await iamApi.updateRole(selected._id, {
         name: selected.name,
@@ -92,7 +149,7 @@ export default function RolesPage() {
       setMsg(e?.message || "Error al guardar");
     } finally {
       setWorking(false);
-      setTimeout(() => setMsg(""), 2500);
+      setTimeout(() => setMsg(""), 2200);
     }
   }
 
@@ -100,16 +157,16 @@ export default function RolesPage() {
     try {
       const name = window.prompt("Nombre del nuevo rol:");
       if (!name) return;
-
-      const code = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-
+      const code = name.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
       await iamApi.createRole({ code: code || undefined, name, description: name, permissions: [] });
       await loadAll();
       setMsg("Rol creado.");
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
       setMsg(e?.message || "No se pudo crear el rol");
-      setTimeout(() => setMsg(""), 2500);
+      setTimeout(() => setMsg(""), 2200);
     }
   }
 
@@ -119,19 +176,17 @@ export default function RolesPage() {
       const newName = window.prompt("Nuevo nombre del rol:", selected.name || "");
       if (!newName) return;
       const newDesc = window.prompt("Nueva descripción:", selected.description || newName) ?? selected.description;
-
       await iamApi.updateRole(selected._id, {
         name: newName,
         description: newDesc,
         permissions: selected.permissions || [],
       });
-
       await loadAll();
       setMsg("Rol actualizado.");
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
       setMsg(e?.message || "No se pudo editar el rol");
-      setTimeout(() => setMsg(""), 2500);
+      setTimeout(() => setMsg(""), 2200);
     }
   }
 
@@ -145,111 +200,190 @@ export default function RolesPage() {
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
       setMsg(e?.message || "No se pudo eliminar el rol");
-      setTimeout(() => setMsg(""), 2500);
+      setTimeout(() => setMsg(""), 2200);
     }
   }
 
-  const filteredGroups = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return groups;
-    return groups.map(g => ({
-      ...g,
-      items: (g.items || []).filter(it =>
-        String(it.key).toLowerCase().includes(q) ||
-        String(it.label || "").toLowerCase().includes(q)
-      )
-    })).filter(g => (g.items?.length || 0) > 0);
-  }, [groups, query]);
-
+  /* ──────────────────────────────────────────────────────────────
+     UI
+     ────────────────────────────────────────────────────────────── */
   return (
     <section className="space-y-6">
-      <div className="bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-gray-900 dark:to-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm p-5">
-        <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
-          <div className="flex-1">
-            <label className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Rol</label>
-            <select
-              value={roleId || ""}
-              onChange={(e) => setRoleId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border bg-white/90 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <option value="" disabled>Selecciona un rol…</option>
-              {roles.map(r => (
-                <option key={r._id} value={r._id}>{roleLabel(r)}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button onClick={createRole} title="Crear nuevo rol" className="p-2.5 rounded-full bg-green-100 hover:bg-green-200 dark:bg-green-800 dark:hover:bg-green-700 text-green-700 dark:text-green-200 transition">
-              <PlusCircle size={20} />
-            </button>
-            <button onClick={editRole} title="Editar rol" className="p-2.5 rounded-full bg-blue-100 hover:bg-blue-200 dark:bg-blue-800 dark:hover:bg-blue-700 text-blue-700 dark:text-blue-200 transition" disabled={!selected || working}>
-              <Edit3 size={20} />
-            </button>
-            <button onClick={deleteRole} title="Eliminar rol" className="p-2.5 rounded-full bg-rose-100 hover:bg-rose-200 dark:bg-rose-800 dark:hover:bg-rose-700 text-rose-700 dark:text-rose-200 transition" disabled={!selected || working}>
-              <Trash2 size={20} />
-            </button>
-            <button onClick={save} title="Guardar cambios" className="p-2.5 rounded-full bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-800 dark:hover:bg-indigo-700 text-indigo-700 dark:text-indigo-200 transition" disabled={!selected || working}>
-              <Save size={20} />
-            </button>
-          </div>
-        </div>
-
-        {msg && <div className="mt-3 text-sm text-green-700 dark:text-green-400">{msg}</div>}
-
-        <div className="mt-3">
-          <div className="relative">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar permisos por clave o etiqueta…"
-              className="w-full px-3 py-2 pl-10 rounded-xl border bg-white/90 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-          </div>
-        </div>
-      </div>
-
-      {!selected ? (
-        <div className="p-6 text-gray-500 dark:text-gray-400 border border-dashed rounded-2xl">Selecciona un rol para editar sus permisos.</div>
-      ) : (
-        <div className="rounded-2xl border dark:border-gray-800 overflow-hidden bg-white/70 dark:bg-gray-900/60">
-          {filteredGroups.map((g, idx) => (
-            <details key={g.group || idx} open className="group">
-              <summary className="flex items-center justify-between px-5 py-4 bg-gray-50/80 dark:bg-gray-800/70 text-gray-900 dark:text-gray-100 cursor-pointer select-none">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
-                  <span className="font-semibold">{g.group}</span>
-                </div>
-                <span className="text-xs px-2 py-1 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">{g.items?.length || 0}</span>
-              </summary>
-              <div className="p-4 lg:p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {(g.items || []).map(it => {
-                  const checked = selectedPerms.has("*") || selectedPerms.has(it.key);
-                  return (
-                    <label key={it._id || it.key} className={`flex items-start gap-3 p-3 rounded-xl border transition hover:shadow-sm hover:bg-gray-50/70 dark:hover:bg-gray-800/60 ${checked ? "border-indigo-400/60 dark:border-indigo-600/60" : "border-gray-200 dark:border-gray-800"}`}>
-                      <input type="checkbox" className="h-4 w-4 mt-1 accent-indigo-500" checked={checked} onChange={e => togglePerm(it.key, e.target.checked)} />
-                      <div className="min-w-0">
-                        <div className="font-mono text-xs text-gray-800 dark:text-gray-200 break-all">{it.key}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400 truncate">{it.label}</div>
-                      </div>
-                    </label>
-                  );
-                })}
+      {/* Header bonito */}
+      <div className="
+        relative overflow-hidden rounded-3xl border border-indigo-200/50 dark:border-indigo-900/40
+        bg-gradient-to-tr from-indigo-50 via-sky-50 to-teal-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900
+        shadow-sm
+      ">
+        {/* glow decorativo */}
+        <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-sky-400/20 blur-3xl" />
+        <div className="relative p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
+                <ShieldCheck className="h-5 w-5" />
+                <span className="text-xs uppercase tracking-wider font-semibold">Gestión de roles</span>
               </div>
-            </details>
-          ))}
-        </div>
-      )}
+              <div className="mt-2">
+                <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Rol</label>
+                <div className="relative">
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <select
+                    value={roleId || ""}
+                    onChange={(e) => setRoleId(e.target.value)}
+                    className="
+                      w-full appearance-none rounded-2xl border border-slate-200 bg-white/90 pl-3 pr-9 py-2
+                      shadow-inner outline-none transition focus:ring-2 focus:ring-indigo-400
+                      dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-100
+                    "
+                  >
+                    <option value="" disabled>Selecciona un rol…</option>
+                    {roles.map(r => (
+                      <option key={r._id} value={r._id}>{roleLabel(r)}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
 
-      <div className="space-y-2">
-        <h4 className="font-semibold text-gray-900 dark:text-gray-100">Histórico (auditoría)</h4>
-        <div className="rounded-2xl border dark:border-gray-800 p-3 bg-white/70 dark:bg-gray-900/60">
-          <AuditPanel />
+            {/* Botonera con estilo pill */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={createRole}
+                title="Crear nuevo rol"
+                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 active:scale-[.99]"
+              >
+                <PlusCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">Crear</span>
+              </button>
+
+              <button
+                onClick={editRole}
+                title="Editar rol"
+                disabled={!selected || working}
+                className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
+              >
+                <Edit3 className="h-4 w-4" />
+                <span className="text-sm font-medium">Editar</span>
+              </button>
+
+              <button
+                onClick={deleteRole}
+                title="Eliminar rol"
+                disabled={!selected || working}
+                className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span className="text-sm font-medium">Eliminar</span>
+              </button>
+
+              <button
+                onClick={save}
+                title="Guardar cambios"
+                disabled={!selected || working}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99] dark:bg-slate-700"
+              >
+                <Save className="h-4 w-4" />
+                <span className="text-sm font-medium">Guardar</span>
+              </button>
+            </div>
+          </div>
+
+          {msg && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-sm">{msg}</span>
+            </div>
+          )}
         </div>
       </div>
 
-      <RoleCloneDialog open={cloneOpen} onClose={() => setCloneOpen(false)} roles={roles} onCloned={() => loadAll()} />
+      {/* Panel: permisos del rol */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            Permisos del rol seleccionado
+          </h4>
+          <button
+            onClick={refreshPermCatalog}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:shadow dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700"
+            title="Volver a leer permisos guardados"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refrescar
+          </button>
+        </div>
+
+        <div className="
+          overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-sm
+          dark:bg-slate-900/60 dark:border-slate-800
+        ">
+          {!selected ? (
+            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
+              Selecciona un rol para ver sus permisos.
+            </div>
+          ) : rolePermSummary.count === 0 ? (
+            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
+              Este rol no tiene permisos asignados en el catálogo local.
+            </div>
+          ) : (
+            <>
+              {/* Encabezado suave */}
+              <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-50 to-indigo-50 dark:from-slate-900/50 dark:to-slate-900/80 border-b border-slate-200 dark:border-slate-800">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  Total permisos
+                </div>
+                <div className="rounded-full bg-indigo-600/90 px-3 py-1 text-xs font-bold text-white shadow">
+                  {rolePermSummary.count}
+                </div>
+              </div>
+
+              {/* Lista de grupos y permisos */}
+              <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                {rolePermSummary.byGroup.map((g) => (
+                  <div key={g.group} className="p-4 sm:p-5">
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                        <ChevronDown className="h-4 w-4" />
+                      </span>
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">{g.group}</span>
+                      <span className="rounded-full bg-indigo-600/10 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                        {g.items.length}
+                      </span>
+                    </div>
+
+                    {/* Chips de permisos */}
+                    <ul className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      {g.items.map(it => (
+                        <li
+                          key={it.key}
+                          className="
+                            group flex items-center gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-white to-slate-50/60 px-3 py-2
+                            shadow-sm transition hover:shadow-md
+                            dark:from-slate-900/60 dark:to-slate-900/20 dark:border-slate-800
+                          "
+                        >
+                          <span className="inline-block h-1.5 w-1.5 flex-none rounded-full bg-indigo-500 group-hover:scale-125 transition" />
+                          <span className="font-mono text-[11px] leading-5 text-slate-500 dark:text-slate-400 truncate">{it.key}</span>
+                          <span className="text-sm text-slate-800 dark:text-slate-200">— {it.label}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <RoleCloneDialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        roles={roles}
+        onCloned={() => loadAll()}
+      />
     </section>
   );
 }
