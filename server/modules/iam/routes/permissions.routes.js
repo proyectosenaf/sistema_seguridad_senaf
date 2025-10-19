@@ -1,6 +1,7 @@
 // server/modules/iam/routes/permissions.routes.js
 import { Router } from "express";
 import IamPermission from "../models/IamPermission.model.js";
+import IamRole from "../models/IamRole.model.js";
 import { requirePerm, devOr } from "../utils/rbac.util.js";
 
 const r = Router();
@@ -48,12 +49,12 @@ function pickUpdatable(body = {}) {
 
 /**
  * GET /api/iam/v1/permissions
- * Lista permisos. Soporta filtros básicos (?group=, ?q=).
- * Devuelve items y groups estructurados.
+ * Lista permisos. Soporta filtros básicos (?group=, ?q=) y anotación por rol (?role=<roleId>).
+ * Devuelve items y groups estructurados. Si se pasa role, incluye {selected}.
  */
 r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
-    const { group, q } = req.query;
+    const { group, q, role: roleId } = req.query;
 
     const filter = {};
     if (group) filter.group = String(group);
@@ -66,18 +67,28 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       .sort({ group: 1, order: 1, key: 1 })
       .lean();
 
+    // Si viene rol, anotar selected comparando por KEY
+    let selectedSet = null;
+    if (roleId) {
+      const role = await IamRole.findById(roleId).select("permissions").lean();
+      if (role?.permissions?.length) selectedSet = new Set(role.permissions);
+    }
+    const annotated = selectedSet
+      ? docs.map(d => ({ ...d, selected: selectedSet.has(d.key) }))
+      : docs;
+
     // Estructura por grupo: [{ group: 'bitacora', items: [...] }, ...]
     const groupMap = new Map();
-    for (const d of docs) {
+    for (const d of annotated) {
       if (!groupMap.has(d.group)) groupMap.set(d.group, []);
       groupMap.get(d.group).push(d);
     }
     const groups = [...groupMap.entries()].map(([g, items]) => ({ group: g, items }));
 
     res.json({
-      count: docs.length,
+      count: annotated.length,
       groupsCount: groups.length,
-      items: docs,
+      items: annotated,
       groups,
     });
   } catch (err) {
@@ -102,14 +113,13 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const doc = await IamPermission.create(input);
     res.status(201).json(doc);
   } catch (err) {
-    // índice único o validación de mongoose
     res.status(500).json({ message: "Error creando permiso", error: err.message });
   }
 });
 
 /**
  * PATCH /api/iam/v1/permissions/:id
- * Actualiza campos permitidos.
+ * Actualiza campos permitidos. Si cambia la key, la sincroniza en los roles.
  */
 r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
@@ -121,13 +131,25 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       return res.status(400).json({ message: "key solo puede contener letras, números, . _ -" });
     }
 
+    // Obtener doc previo para saber si cambia la key
+    const prev = await IamPermission.findById(id).lean();
+    if (!prev) return res.status(404).json({ message: "No encontrado" });
+
     const doc = await IamPermission.findByIdAndUpdate(
       id,
       { $set: update },
       { new: true, runValidators: true }
     );
 
-    if (!doc) return res.status(404).json({ message: "No encontrado" });
+    // Si la key cambió, actualizarla en los roles (permissions: [String])
+    if (update.key && update.key !== prev.key) {
+      await IamRole.updateMany(
+        { permissions: prev.key },
+        { $set: { "permissions.$[elem]": update.key } },
+        { arrayFilters: [{ elem: prev.key }] }
+      );
+    }
+
     res.json(doc);
   } catch (err) {
     res.status(500).json({ message: "Error actualizando permiso", error: err.message });
@@ -136,13 +158,22 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
 /**
  * DELETE /api/iam/v1/permissions/:id
- * Elimina un permiso por id.
+ * Elimina un permiso por id y lo quita de los roles que lo tengan.
  */
 r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Obtener key para limpiar roles
+    const perm = await IamPermission.findById(id).lean();
+    if (!perm) return res.status(404).json({ message: "No encontrado" });
+
     const del = await IamPermission.deleteOne({ _id: id });
     if (del.deletedCount === 0) return res.status(404).json({ message: "No encontrado" });
+
+    // Remover la key de todos los roles que la tengan
+    await IamRole.updateMany({ permissions: perm.key }, { $pull: { permissions: perm.key } });
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ message: "Error eliminando permiso", error: err.message });
@@ -181,7 +212,7 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const list = [...map.values()];
 
     if (dryRun) {
-      // Reporta qué se crearía
+      // Reporta qué se crearía/actualizaría
       const existing = await IamPermission.find(
         { key: { $in: list.map(p => p.key) } },
         { key: 1 }

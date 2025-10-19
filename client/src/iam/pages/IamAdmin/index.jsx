@@ -1,15 +1,18 @@
 // client/src/iam/pages/IamAdmin/index.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 
-// Mantengo tu ubicación actual de IamGuard en /iam/api
+// Asegúrate de que el archivo existe exactamente con ese nombre
 import IamGuard from "../../api/IamGuard.jsx";
 
+// Páginas
 import UsersPage from "./UsersPage.jsx";
 import RolesPage from "./RolesPage.jsx";
-import PermissionCatalog from "./PermissionCatalog.jsx";
+// PermissionCatalog es una CARPETA con su propio index.jsx
+import PermissionCatalog from "./PermissionCatalog";
 
 import { iamApi } from "../../api/iamApi";
-import { permisosKeys, rolesKeys } from "../../catolog/perms.js"; // <-- corregido
+// Carpeta correcta: "catalog"
+import { permisosKeys, rolesKeys } from "../../catalog/perms.js";
 
 /** Si BD está vacía, crea permisos/roles desde el catálogo local */
 async function seedFromLocalCatalog(token) {
@@ -21,7 +24,10 @@ async function seedFromLocalCatalog(token) {
   } catch {
     existingPerms = [];
   }
-  const have = new Set(existingPerms.map(p => p.key || p.name).filter(Boolean));
+
+  const have = new Set(
+    existingPerms.map((p) => p.key || p.name).filter(Boolean)
+  );
 
   for (const [key, label] of Object.entries(permisosKeys)) {
     if (have.has(key)) continue;
@@ -32,6 +38,7 @@ async function seedFromLocalCatalog(token) {
       // eslint-disable-next-line no-console
       console.log("[IAM seed] permiso creado:", key);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
     }
   }
@@ -44,9 +51,10 @@ async function seedFromLocalCatalog(token) {
   } catch {
     existingRoles = [];
   }
+
   const byName = new Map(
     existingRoles
-      .map(r => [r?.name || r?._id, r])
+      .map((r) => [r?.name || r?._id, r])
       .filter(([k]) => !!k)
   );
 
@@ -56,28 +64,47 @@ async function seedFromLocalCatalog(token) {
 
     if (!currentRole) {
       try {
-        await iamApi.createRole({ name, description: "", permissions: desired }, token);
+        await iamApi.createRole(
+          { name, description: "", permissions: desired },
+          token
+        );
+        // eslint-disable-next-line no-console
         console.log("[IAM seed] rol creado:", name);
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.warn("[IAM seed] no se pudo crear rol", name, e?.message || e);
       }
     } else {
-      const current = Array.isArray(currentRole.permissions || currentRole.perms)
-        ? (currentRole.permissions || currentRole.perms)
+      const current = Array.isArray(
+        currentRole.permissions || currentRole.perms
+      )
+        ? currentRole.permissions || currentRole.perms
         : [];
+
       const same =
         current.length === desired.length &&
-        current.every(k => desired.includes(k));
+        current.every((k) => desired.includes(k));
+
       if (!same) {
         try {
-          await iamApi.updateRole(currentRole._id || currentRole.id, {
-            name,
-            description: currentRole.description || "",
-            permissions: desired,
-          });
+          await iamApi.updateRole(
+            currentRole._id || currentRole.id,
+            {
+              name,
+              description: currentRole.description || "",
+              permissions: desired,
+            },
+            token
+          );
+          // eslint-disable-next-line no-console
           console.log("[IAM seed] rol actualizado:", name);
         } catch (e) {
-          console.warn("[IAM seed] no se pudo actualizar rol", name, e?.message || e);
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[IAM seed] no se pudo actualizar rol",
+            name,
+            e?.message || e
+          );
         }
       }
     }
@@ -97,7 +124,10 @@ export default function IamAdmin() {
     (async () => {
       try {
         setCheckErr("");
-        const [p, r] = await Promise.all([iamApi.listPerms(), iamApi.listRoles()]);
+        const [p, r] = await Promise.all([
+          iamApi.listPerms(),
+          iamApi.listRoles(),
+        ]);
         const pCount = (p?.items || p?.permissions || []).length;
         const rCount = (r?.items || r?.roles || []).length;
         if (alive) setNeedsSeed(pCount === 0 || rCount === 0);
@@ -117,7 +147,10 @@ export default function IamAdmin() {
     try {
       setSeeding(true);
       await seedFromLocalCatalog();
-      const [p, r] = await Promise.all([iamApi.listPerms(), iamApi.listRoles()]);
+      const [p, r] = await Promise.all([
+        iamApi.listPerms(),
+        iamApi.listRoles(),
+      ]);
       const pCount = (p?.items || p?.permissions || []).length;
       const rCount = (r?.items || r?.roles || []).length;
       setNeedsSeed(pCount === 0 || rCount === 0);
@@ -159,7 +192,6 @@ export default function IamAdmin() {
   return (
     <IamGuard anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
       <div className="p-6 space-y-4">
-
         {/* Banner para sembrar catálogo si está vacío */}
         {needsSeed && (
           <div className="rounded border border-amber-300 bg-amber-50 text-amber-900 p-3 flex items-center justify-between">

@@ -16,7 +16,9 @@ import {
   ShieldCheck, // 👈 icono para IAM
 } from "lucide-react";
 
-// ---------- Normaliza API y SOCKET_URL ----------
+/* ===========================
+   Normaliza API y SOCKET_URL
+   =========================== */
 const RAW_API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 const API_BASE =
   typeof RAW_API === "string" && RAW_API.trim()
@@ -28,22 +30,32 @@ const API_NORM = /\/api\/?$/.test(API_BASE)
 // Base para socket (sin /api al final)
 const SOCKET_URL = API_NORM.replace(/\/api\/?$/, "");
 
-// ---------- Mapa de íconos ----------
+/* ===============
+   Mapa de íconos
+   =============== */
 const ICONS = {
   accesos: DoorOpen,
+  // ✅ soporta ambos keys por compatibilidad
   rondas: Footprints,
+  rondasqr: Footprints,
   incidentes: AlertTriangle,
   visitas: Users,
   bitacora: NotebookPen,
   evaluacion: ClipboardList,
   supervision: ClipboardList,
-  iam: ShieldCheck, // 👈 mapeo para el nuevo tile
+  iam: ShieldCheck,
 };
 
-// ---------- Permisos requeridos por sección (anyOf) ----------
+/* ==========================================
+   Permisos requeridos por sección (anyOf)
+   - Se da compatibilidad a "rondas" legacy
+   ========================================== */
 const PERMS_BY_SECTION = {
   accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
-  rondas: ["rondas.read", "rondas.create", "rondas.edit", "rondas.reports", "*"],
+  // ✅ NUEVO módulo
+  rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
+  // ✅ COMPATibilidad con permisos antiguos si aún existen en IAM
+  rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "rondas.read", "rondas.reports", "guardia", "*"],
   incidentes: [
     "incidentes.read",
     "incidentes.create",
@@ -79,7 +91,9 @@ export default function Home() {
   // Ref para mantener una sola instancia de socket (evita duplicados con HMR)
   const socketRef = React.useRef(null);
 
-  // -------- Socket.IO (solo 1 vez) --------
+  /* -------------------------
+     Socket.IO (solo 1 vez)
+     ------------------------- */
   React.useEffect(() => {
     if (!socketRef.current) {
       socketRef.current = io(SOCKET_URL, {
@@ -93,15 +107,20 @@ export default function Home() {
       // aquí puedes actualizar KPIs en vivo si quieres
     };
 
+    // ✅ escuchar evento nuevo y legacy
+    socket.on("rondasqr:check", onCheck);
     socket.on("rondas:check", onCheck);
 
     return () => {
+      socket.off("rondasqr:check", onCheck);
       socket.off("rondas:check", onCheck);
       // socket.close(); // si prefieres cerrar al desmontar
     };
   }, []);
 
-  // -------- Token para axios --------
+  /* -------------------------
+     Token para axios
+     ------------------------- */
   React.useEffect(() => {
     setAuthToken(() =>
       getAccessTokenSilently({
@@ -113,7 +132,9 @@ export default function Home() {
     );
   }, [getAccessTokenSilently]);
 
-  // -------- KPIs de incidentes --------
+  /* -------------------------
+     KPIs de incidentes
+     ------------------------- */
   React.useEffect(() => {
     (async () => {
       try {
@@ -130,19 +151,37 @@ export default function Home() {
     })();
   }, []);
 
-  // -------- Secciones con fallback para IAM --------
+  /* ---------------------------------------------
+     Secciones: alias y normalización de "rondas"
+     - Si viene key "rondas": forzamos path /rondasqr
+     - Si no existe IAM en NAV_SECTIONS: lo agregamos
+     --------------------------------------------- */
   const SECTIONS = React.useMemo(() => {
-    const hasIAM = NAV_SECTIONS.some((s) => s.key === "iam");
-    return hasIAM
-      ? NAV_SECTIONS
-      : [
-          ...NAV_SECTIONS,
-          {
-            key: "iam",
-            label: "Usuarios y Permisos",
-            path: "/iam/admin", // 👈 ruta del módulo IAM
-          },
-        ];
+    const base = NAV_SECTIONS.map((s) => {
+      // normaliza clave y path de rondas
+      if (s.key === "rondas") {
+        return {
+          ...s,
+          // conservamos label e icono; solo cambiamos path
+          path: "/rondasqr",
+        };
+      }
+      // si ya viene como rondasqr, nos aseguramos del path correcto
+      if (s.key === "rondasqr") {
+        return { ...s, path: "/rondasqr" };
+      }
+      return s;
+    });
+
+    const hasIAM = base.some((s) => s.key === "iam");
+    if (!hasIAM) {
+      base.push({
+        key: "iam",
+        label: "Usuarios y Permisos",
+        path: "/iam/admin",
+      });
+    }
+    return base;
   }, []);
 
   return (
@@ -168,8 +207,11 @@ export default function Home() {
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SECTIONS.map((s) => {
-            const Icon = ICONS[s.key];
-            const anyOf = PERMS_BY_SECTION[s.key] || ["*"]; // por si faltara mapeo
+            // Si llega "rondas" la tratamos como "rondasqr" para permisos e icono
+            const sectionKey = s.key === "rondas" ? "rondasqr" : s.key;
+            const Icon = ICONS[sectionKey] || ICONS[s.key];
+            const anyOf = PERMS_BY_SECTION[sectionKey] || ["*"];
+
             return (
               <IamGuard key={s.key} anyOf={anyOf} fallback={null}>
                 <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">

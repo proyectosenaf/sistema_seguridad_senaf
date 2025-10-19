@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 import {
   Home, DoorOpen, KeyRound, Footprints, Route,
   AlertTriangle, UsersRound, Users, NotebookPen,
-  ClipboardList, ClipboardCheck, Award, BarChart3, LogIn,
+  ClipboardList, ClipboardCheck, Award, LogIn,
   ShieldCheck,              // 👈 nuevo icono para IAM
 } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -18,14 +18,15 @@ const IconIAM        = ShieldCheck || Users;   // 👈 fallback si faltara Shiel
 const NAV_ITEMS = [
   { to: "/",            label: "Panel principal",        Icon: Home, emphasizeDark: true },
   { to: "/accesos",     label: "Control de Acceso",      Icon: IconDoor },
-  { to: "/rondas",      label: "Rondas de Vigilancia",   Icon: IconFootprints },
+  // 🔧 CORREGIDO: antes /rondas → ahora /rondasqr
+  { to: "/rondasqr",    label: "Rondas de Vigilancia",   Icon: IconFootprints },
   { to: "/incidentes",  label: "Gestión de Incidentes",  Icon: AlertTriangle },
   { to: "/visitas",     label: "Control de Visitas",     Icon: IconVisitors },
   { to: "/bitacora",    label: "Bitácora Digital",       Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión",            Icon: ClipboardList },
   { to: "/evaluacion",  label: "Evaluación",             Icon: IconEval },
 
-  // 👇 NUEVO: aparece siempre en la barra lateral
+  // 👇 siempre visible
   { to: "/iam/admin",   label: "Usuarios y Permisos",    Icon: IconIAM },
 ];
 
@@ -64,7 +65,7 @@ export default function Sidebar({ onNavigate }) {
     onNavigate?.();
     await loginWithRedirect({
       authorizationParams: {
-        redirect_uri: window.location.origin,
+        redirect_uri: window.location.origin, // si prefieres /start, cámbialo aquí
         prompt: "login",
         screen_hint: "login",
       },
