@@ -7,10 +7,10 @@ import IamGuard from "../../api/IamGuard.jsx";
 import UsersPage from "./UsersPage.jsx";
 import RolesPage from "./RolesPage.jsx";
 import PermissionCatalog from "./PermissionCatalog.jsx";
+import AuditPage from "./AuditPage.jsx"; // 
 
 import { iamApi } from "../../api/iamApi";
-import { permisosKeys, rolesKeys } from "../../catolog/perms.js"; // <-- corregido
-
+import { permisosKeys, rolesKeys } from "../../catolog/perms.js"; // <-
 /** Si BD está vacía, crea permisos/roles desde el catálogo local */
 async function seedFromLocalCatalog(token) {
   // --- PERMISOS
@@ -29,7 +29,6 @@ async function seedFromLocalCatalog(token) {
     const order = 0;
     try {
       await iamApi.createPerm({ key, label, group, order }, token);
-      // eslint-disable-next-line no-console
       console.log("[IAM seed] permiso creado:", key);
     } catch (e) {
       console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
@@ -45,9 +44,7 @@ async function seedFromLocalCatalog(token) {
     existingRoles = [];
   }
   const byName = new Map(
-    existingRoles
-      .map(r => [r?.name || r?._id, r])
-      .filter(([k]) => !!k)
+    existingRoles.map(r => [r?.name || r?._id, r]).filter(([k]) => !!k)
   );
 
   for (const [name, perms] of Object.entries(rolesKeys)) {
@@ -87,7 +84,6 @@ async function seedFromLocalCatalog(token) {
 export default function IamAdmin() {
   const [tab, setTab] = useState("users");
 
-  // Banner “cargar plantilla” si permisos/roles están vacíos
   const [needsSeed, setNeedsSeed] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [checkErr, setCheckErr] = useState("");
@@ -129,16 +125,17 @@ export default function IamAdmin() {
     }
   }, []);
 
+  // 👇 AÑADIMOS la nueva pestaña de “Historial”
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
       { id: "roles", label: "Roles" },
       { id: "perms", label: "Permisos" },
+      { id: "audit", label: "Historial" }, // 👈 NUEVA pestaña
     ],
     []
   );
 
-  // Navegación con teclado (← →)
   const onKeyDownTabs = useCallback(
     (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -159,7 +156,6 @@ export default function IamAdmin() {
   return (
     <IamGuard anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
       <div className="p-6 space-y-4">
-
         {/* Banner para sembrar catálogo si está vacío */}
         {needsSeed && (
           <div className="rounded border border-amber-300 bg-amber-50 text-amber-900 p-3 flex items-center justify-between">
@@ -243,6 +239,17 @@ export default function IamAdmin() {
           className="outline-none"
         >
           {tab === "perms" && <PermissionCatalog />}
+        </section>
+
+        {/* 👇 NUEVA SECCIÓN: HISTORIAL */}
+        <section
+          role="tabpanel"
+          id="panel-audit"
+          aria-labelledby="tab-audit"
+          hidden={tab !== "audit"}
+          className="outline-none"
+        >
+          {tab === "audit" && <AuditPage />}
         </section>
       </div>
     </IamGuard>
