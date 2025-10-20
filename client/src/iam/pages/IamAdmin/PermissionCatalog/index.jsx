@@ -1,0 +1,248 @@
+// client/src/iam/pages/IamAdmin/PermissionCatalog/index.jsx
+import React, { useMemo, useRef, useState } from "react";
+
+import { usePermissionCatalogData } from "./hooks/usePermissionCatalogData";
+// ⬇️ quitamos useStickyGrid: no es necesario para sticky
+// import { useStickyGrid } from "./hooks/useStickyGrid";
+
+import HeaderRow from "../components/HeaderRow";
+import GroupSection from "../components/GroupSection";
+import Modal from "../components/Modal";
+
+export default function PermissionCatalog() {
+  const {
+    loading, errorMsg, banner,
+    roles, groups, roleMatrix, origMatrix,
+    query, setQuery, compactView, setCompactView,
+    onToggle, onSaveAll, onCreatePerm, onDeletePerm,
+  } = usePermissionCatalogData();
+
+  // Un solo contenedor con scroll (vertical + horizontal)
+  const scrollRef = useRef(null);
+
+  const [openCreate, setOpenCreate] = useState(false);
+  const [form, setForm] = useState({ key: "", label: "", moduleValue: "bitacora" });
+  const [openDelete, setOpenDelete] = useState(null); // { id, key, label }
+
+  const colCount = roles.length;
+  const gridCols = `minmax(280px,1fr) repeat(${colCount},140px) 110px`;
+  const minWidthPx = 280 + colCount * 140 + 110;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return groups;
+    return groups
+      .map(g => ({
+        ...g,
+        items: g.items.filter(it =>
+          String(it.key).toLowerCase().includes(q) ||
+          String(it.label).toLowerCase().includes(q) ||
+          String(g.group).toLowerCase().includes(q)
+        ),
+      }))
+      .filter(g => g.items.length > 0 || compactView);
+  }, [groups, query, compactView]);
+
+  if (loading) return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
+
+  return (
+    <div className="space-y-4 layer-content">
+      {errorMsg && (
+        <div className="rounded-md border border-rose-300 bg-rose-50 text-rose-800 p-3">{errorMsg}</div>
+      )}
+      {banner && (
+        <div
+          className={
+            "rounded-md p-3 border " +
+            (banner.type === "ok"
+              ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+              : banner.type === "warn"
+              ? "bg-blue-50 text-blue-800 border-blue-300"
+              : "bg-rose-50 text-rose-800 border-rose-300")
+          }
+        >
+          {banner.msg}
+        </div>
+      )}
+
+      {/* Barra superior */}
+      <div className="fx-card">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar por clave, etiqueta o módulo…"
+            className="input-fx"
+            aria-label="Buscar permisos"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setOpenCreate(true)}
+              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+            >
+              Crear permiso
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompactView(false)}
+              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+            >
+              Mostrar
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompactView(true)}
+              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+            >
+              Ver menos
+            </button>
+            <button
+              type="button"
+              onClick={onSaveAll}
+              className="px-3 py-2 rounded-lg text-sm bg-emerald-600 text-white hover:brightness-110"
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Contenido */}
+      {filtered.length === 0 ? (
+        <div className="p-6 text-neutral-400">No se encontraron permisos para “{query}”.</div>
+      ) : compactView ? (
+        <div className="fx-card p-0 overflow-hidden">
+          <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide bg-neutral-100/70 dark:bg-neutral-900/70 text-neutral-600 dark:text-neutral-300">
+            Permisos
+          </div>
+          <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+            {filtered.map((g, idx) => (
+              <div key={`${g.group}-${idx}`} className="px-4 py-3 flex items-center gap-3 bg-neutral-100/5 dark:bg-neutral-900/30">
+                <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
+                <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
+                  {g.items.length}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="fx-card p-0">
+          {/* ⬇️ Un solo contenedor scrollable: vertical + horizontal */}
+          <div ref={scrollRef} className="overflow-auto max-h-[72vh]">
+            <div style={{ minWidth: `${minWidthPx}px` }}>
+              <HeaderRow roles={roles} gridCols={gridCols} />
+              <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                {filtered.map((g, idx) => (
+                  <GroupSection
+                    key={`${g.group}-${idx}`}
+                    group={g}
+                    roles={roles}
+                    gridCols={gridCols}
+                    roleMatrix={roleMatrix}
+                    origMatrix={origMatrix}
+                    onToggle={onToggle}
+                    onDelete={(it) => setOpenDelete({ id: it._id, key: it.key, label: it.label })}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Crear */}
+      <Modal
+        open={openCreate}
+        title="Crear permiso"
+        onClose={() => setOpenCreate(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setOpenCreate(false)} className="px-3 py-2 rounded-lg bg-neutral-200 dark:bg-neutral-800">
+              Cancelar
+            </button>
+            <button
+              onClick={async () => {
+                const ok = await onCreatePerm(form);
+                if (ok) setOpenCreate(false);
+              }}
+              className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:brightness-110"
+            >
+              Crear
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm mb-1 opacity-80">Clave</label>
+            <input
+              className="input-fx"
+              value={form.key}
+              onChange={(e) => setForm(prev => ({ ...prev, key: e.target.value }))}
+              placeholder="modulo.accion"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 opacity-80">Etiqueta</label>
+            <input
+              className="input-fx"
+              value={form.label}
+              onChange={(e) => setForm(prev => ({ ...prev, label: e.target.value }))}
+              placeholder="Módulo · Acción"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1 opacity-80">Módulo</label>
+            <select
+              className="input-fx"
+              value={form.moduleValue}
+              onChange={(e) => setForm(prev => ({ ...prev, moduleValue: e.target.value }))}
+            >
+              <option value="bitacora">Bitácora</option>
+              <option value="acceso">Control de Acceso</option>
+              <option value="evaluacion">Evaluación</option>
+              <option value="iam">IAM</option>
+              <option value="incidentes">Incidentes</option>
+              <option value="rondas">Rondas</option>
+              <option value="supervision">Supervisión</option>
+              <option value="visitas">Visitas</option>
+            </select>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Eliminar */}
+      <Modal
+        open={!!openDelete}
+        title="Eliminar permiso"
+        onClose={() => setOpenDelete(null)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setOpenDelete(null)} className="px-3 py-2 rounded-lg bg-neutral-200 dark:bg-neutral-800">
+              Cancelar
+            </button>
+            <button
+              onClick={async () => {
+                await onDeletePerm(openDelete);
+                setOpenDelete(null);
+              }}
+              className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:brightness-110"
+            >
+              Eliminar
+            </button>
+          </div>
+        }
+      >
+        {openDelete && (
+          <p className="text-sm">
+            ¿Seguro que deseas eliminar <span className="font-semibold">{openDelete.label}</span>?
+            <br />
+            <span className="font-mono opacity-80">{openDelete.key}</span>
+          </p>
+        )}
+      </Modal>
+    </div>
+  );
+}

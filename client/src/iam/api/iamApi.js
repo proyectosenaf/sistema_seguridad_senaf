@@ -60,7 +60,7 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
       const ct = r.headers.get("content-type") || "";
       if (ct.includes("application/json")) {
         const j = await toJson(r);
-        const msg = j?.error || j?.detail || `${r.status} ${r.statusText}`;
+        const msg = j?.error || j?.detail || j?.message || `${r.status} ${r.statusText}`;
         throw new Error(msg);
       }
       const text = await r.text().catch(() => "");
@@ -85,14 +85,17 @@ const PATHS = {
     disable:(id) => `${V1}/users/${id}/disable`,
   },
   roles: {
-    list:   () => `${V1}/roles`,
-    create: () => `${V1}/roles`,
-    byId:   (id) => `${V1}/roles/${id}`,
+    list:        () => `${V1}/roles`,
+    create:      () => `${V1}/roles`,
+    byId:        (id) => `${V1}/roles/${id}`,
+    permissions: (id) => `${V1}/roles/${id}/permissions`, // GET/PUT permisos del rol (keys)
   },
   perms: {
-    list:   () => `${V1}/permissions`,
-    create: () => `${V1}/permissions`,
-    byId:   (id) => `${V1}/permissions/${id}`,
+    list:        () => `${V1}/permissions`,
+    create:      () => `${V1}/permissions`,
+    byId:        (id) => `${V1}/permissions/${id}`,
+    // Helper de listado anotado por rol (usa ?role=)
+    listByRole:  (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
   auth: {
     me:     () => `${V1}/me`,
@@ -133,13 +136,8 @@ function findEmailAny(obj) {
 
 function findNameAny(obj) {
   const direct =
-    obj?.name ??
-    obj?.nombre ??
-    obj?.displayName ??
-    obj?.fullName ??
-    obj?.razonSocial ??
-    obj?.contactName ??
-    "";
+    obj?.name ?? obj?.nombre ?? obj?.displayName ?? obj?.fullName ??
+    obj?.razonSocial ?? obj?.contactName ?? "";
 
   if (typeof direct === "string" && direct.trim()) return direct.trim();
 
@@ -188,19 +186,26 @@ export const iamApi = {
     return rawFetch(PATHS.auth.login(), { method: "POST", body });
   },
 
-  // Roles/Permisos
-  listRoles:   (t)        => rawFetch(PATHS.roles.list(),   { token: t }),
-  createRole:  (p, t)     => rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
-  updateRole:  (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
-  deleteRole:  (id, t)    => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
+  // -------- Roles
+  listRoles:   (t)            => rawFetch(PATHS.roles.list(),        { token: t }),
+  createRole:  (p, t)         => rawFetch(PATHS.roles.create(),      { method: "POST", body: p, token: t }),
+  updateRole:  (id, p, t)     => rawFetch(PATHS.roles.byId(id),      { method: "PATCH", body: p, token: t }),
+  deleteRole:  (id, t)        => rawFetch(PATHS.roles.byId(id),      { method: "DELETE", token: t }),
 
-  listPerms:   (t)        => rawFetch(PATHS.perms.list(),   { token: t }),
-  createPerm:  (p, t)     => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
-  updatePerm:  (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
-  deletePerm:  (id, t)    => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
+  // Permisos de un rol (por KEYS) — NUEVO
+  getRolePerms: (id, t)       => rawFetch(PATHS.roles.permissions(id),                 { token: t }),                 // -> { permissionKeys: string[] }
+  setRolePerms: (id, keys, t) => rawFetch(PATHS.roles.permissions(id), { method: "PUT", body: { permissionKeys: keys }, token: t }),
 
-  // Usuarios
-  listUsers:   (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
+  // -------- Permisos
+  listPerms:   (t)            => rawFetch(PATHS.perms.list(),        { token: t }),
+  // Listar permisos anotados para un rol — NUEVO
+  listPermsForRole: (roleId, t) => rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
+  createPerm:  (p, t)         => rawFetch(PATHS.perms.create(),      { method: "POST",  body: p, token: t }),
+  updatePerm:  (id, p, t)     => rawFetch(PATHS.perms.byId(id),      { method: "PATCH", body: p, token: t }),
+  deletePerm:  (id, t)        => rawFetch(PATHS.perms.byId(id),      { method: "DELETE", token: t }),
+
+  // -------- Usuarios
+  listUsers:   (q = "", t)    => rawFetch(PATHS.users.list(q),       { token: t }),
 
   createUser:  (payload, t) => {
     let email = "", name = "", roles = [], active = true, perms, password;
