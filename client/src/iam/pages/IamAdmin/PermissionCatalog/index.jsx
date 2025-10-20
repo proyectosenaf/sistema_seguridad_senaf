@@ -8,6 +8,7 @@ import { usePermissionCatalogData } from "./hooks/usePermissionCatalogData";
 import HeaderRow from "../components/HeaderRow";
 import GroupSection from "../components/GroupSection";
 import Modal from "../components/Modal";
+import { Plus, Eye, Minus, Square } from "lucide-react"; // 👈 íconos para los botones
 
 export default function PermissionCatalog() {
   const {
@@ -23,6 +24,28 @@ export default function PermissionCatalog() {
   const [openCreate, setOpenCreate] = useState(false);
   const [form, setForm] = useState({ key: "", label: "", moduleValue: "bitacora" });
   const [openDelete, setOpenDelete] = useState(null); // { id, key, label }
+
+  // Control de módulos desplegados en modo compacto ("Ver menos")
+  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(() => new Set());
+  const toggleGroupCompact = (groupKey) => {
+    setExpandedGroupsCompact((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
+
+  // Control de módulos desplegados también en "Mostrar" (vista normal)
+  const [expandedGroupsFull, setExpandedGroupsFull] = useState(() => new Set());
+  const toggleGroupFull = (groupKey) => {
+    setExpandedGroupsFull((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
 
   const colCount = roles.length;
   const gridCols = `minmax(280px,1fr) repeat(${colCount},140px) 110px`;
@@ -44,6 +67,16 @@ export default function PermissionCatalog() {
   }, [groups, query, compactView]);
 
   if (loading) return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
+
+  // ======== ESTILOS VISUALES de los botones (como la referencia) ========
+  const btnDark =
+    "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium " +
+    "bg-neutral-800 text-neutral-200 border border-neutral-700 " +
+    "hover:bg-neutral-700/90 transition";
+  const btnPrimary =
+    "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold " +
+    "bg-emerald-600 text-white border border-emerald-500 " +
+    "hover:bg-emerald-500 transition shadow";
 
   return (
     <div className="space-y-4 layer-content">
@@ -76,33 +109,48 @@ export default function PermissionCatalog() {
             aria-label="Buscar permisos"
           />
           <div className="flex gap-2">
+            {/* Crear permiso */}
             <button
               type="button"
               onClick={() => setOpenCreate(true)}
-              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+              className={btnDark}
+              title="Crear permiso"
             >
-              Crear permiso
+              <Plus className="w-4 h-4 opacity-90" />
+              <span>Crear permiso</span>
             </button>
+
+            {/* Mostrar */}
             <button
               type="button"
               onClick={() => setCompactView(false)}
-              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+              className={btnDark}
+              title="Mostrar"
             >
-              Mostrar
+              <Eye className="w-4 h-4 opacity-90" />
+              <span>Mostrar</span>
             </button>
+
+            {/* Ver menos */}
             <button
               type="button"
               onClick={() => setCompactView(true)}
-              className="px-3 py-2 rounded-lg text-sm bg-neutral-200 text-neutral-900 hover:brightness-105 dark:bg-neutral-800 dark:text-neutral-100"
+              className={btnDark}
+              title="Ver menos"
             >
-              Ver menos
+              <Minus className="w-4 h-4 opacity-90" />
+              <span>Ver menos</span>
             </button>
+
+            {/* Guardar */}
             <button
               type="button"
               onClick={onSaveAll}
-              className="px-3 py-2 rounded-lg text-sm bg-emerald-600 text-white hover:brightness-110"
+              className={btnPrimary}
+              title="Guardar"
             >
-              Guardar
+              <Square className="w-4 h-4 opacity-95" />
+              <span>Guardar</span>
             </button>
           </div>
         </div>
@@ -112,40 +160,113 @@ export default function PermissionCatalog() {
       {filtered.length === 0 ? (
         <div className="p-6 text-neutral-400">No se encontraron permisos para “{query}”.</div>
       ) : compactView ? (
+        /* ====== VISTA COMPACTA CON DESPLEGABLE POR MÓDULO ====== */
         <div className="fx-card p-0 overflow-hidden">
           <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide bg-neutral-100/70 dark:bg-neutral-900/70 text-neutral-600 dark:text-neutral-300">
             Permisos
           </div>
+
           <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
-            {filtered.map((g, idx) => (
-              <div key={`${g.group}-${idx}`} className="px-4 py-3 flex items-center gap-3 bg-neutral-100/5 dark:bg-neutral-900/30">
-                <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
-                <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
-                  {g.items.length}
-                </span>
-              </div>
-            ))}
+            {filtered.map((g, idx) => {
+              const groupKey = g.group || `g-${idx}`;
+              const isOpen = expandedGroupsCompact.has(groupKey);
+
+              return (
+                <div key={`${groupKey}-${idx}`} className="bg-neutral-100/5 dark:bg-neutral-900/30">
+                  {/* Header del módulo (siempre visible en compacto) */}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupCompact(groupKey)}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 transition"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
+                      <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
+                        {g.items.length}
+                      </span>
+                    </div>
+                    <span
+                      className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      aria-hidden
+                    />
+                  </button>
+
+                  {/* Contenido del módulo (solo si está abierto) */}
+                  {isOpen && (
+                    <div className="overflow-auto">
+                      <div style={{ minWidth: `${minWidthPx}px` }}>
+                        <HeaderRow roles={roles} gridCols={gridCols} />
+                        <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                          <GroupSection
+                            key={`${g.group}-compact`}
+                            group={g}
+                            roles={roles}
+                            gridCols={gridCols}
+                            roleMatrix={roleMatrix}
+                            origMatrix={origMatrix}
+                            onToggle={onToggle}
+                            onDelete={(it) => setOpenDelete({ id: it._id, key: it.key, label: it.label })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
+        /* ====== VISTA NORMAL "MOSTRAR" CON DESPLEGABLE POR MÓDULO ====== */
         <div className="fx-card p-0">
           {/* ⬇️ Un solo contenedor scrollable: vertical + horizontal */}
           <div ref={scrollRef} className="overflow-auto max-h-[72vh]">
             <div style={{ minWidth: `${minWidthPx}px` }}>
+              {/* Encabezado general */}
               <HeaderRow roles={roles} gridCols={gridCols} />
+
               <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
-                {filtered.map((g, idx) => (
-                  <GroupSection
-                    key={`${g.group}-${idx}`}
-                    group={g}
-                    roles={roles}
-                    gridCols={gridCols}
-                    roleMatrix={roleMatrix}
-                    origMatrix={origMatrix}
-                    onToggle={onToggle}
-                    onDelete={(it) => setOpenDelete({ id: it._id, key: it.key, label: it.label })}
-                  />
-                ))}
+                {filtered.map((g, idx) => {
+                  const groupKey = g.group || `g-${idx}`;
+                  const isOpen = expandedGroupsFull.has(groupKey);
+
+                  return (
+                    <div key={`${groupKey}-${idx}`} className="bg-transparent">
+                      {/* Header del módulo (click para abrir/cerrar) */}
+                      <button
+                        type="button"
+                        onClick={() => toggleGroupFull(groupKey)}
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 transition"
+                        style={{ gridColumn: "1 / -1" }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
+                          <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
+                            {g.items.length}
+                          </span>
+                        </div>
+                        <span
+                          className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
+                          aria-hidden
+                        />
+                      </button>
+
+                      {/* Cuerpo del módulo (solo si está abierto) */}
+                      {isOpen && (
+                        <GroupSection
+                          key={`${g.group}-full`}
+                          group={g}
+                          roles={roles}
+                          gridCols={gridCols}
+                          roleMatrix={roleMatrix}
+                          origMatrix={origMatrix}
+                          onToggle={onToggle}
+                          onDelete={(it) => setOpenDelete({ id: it._id, key: it.key, label: it.label })}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -159,7 +280,7 @@ export default function PermissionCatalog() {
         onClose={() => setOpenCreate(false)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenCreate(false)} className="px-3 py-2 rounded-lg bg-neutral-200 dark:bg-neutral-800">
+            <button onClick={() => setOpenCreate(false)} className={btnDark}>
               Cancelar
             </button>
             <button
@@ -167,7 +288,7 @@ export default function PermissionCatalog() {
                 const ok = await onCreatePerm(form);
                 if (ok) setOpenCreate(false);
               }}
-              className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:brightness-110"
+              className={btnPrimary}
             >
               Crear
             </button>
@@ -220,7 +341,7 @@ export default function PermissionCatalog() {
         onClose={() => setOpenDelete(null)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenDelete(null)} className="px-3 py-2 rounded-lg bg-neutral-200 dark:bg-neutral-800">
+            <button onClick={() => setOpenDelete(null)} className={btnDark}>
               Cancelar
             </button>
             <button
@@ -228,7 +349,7 @@ export default function PermissionCatalog() {
                 await onDeletePerm(openDelete);
                 setOpenDelete(null);
               }}
-              className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:brightness-110"
+              className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition border border-rose-500 shadow"
             >
               Eliminar
             </button>
