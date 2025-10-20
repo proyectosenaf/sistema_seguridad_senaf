@@ -7,18 +7,15 @@ export default function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading, loginWithRedirect, error } = useAuth0();
   const location = useLocation();
 
-  // Permite saltar auth en desarrollo: VITE_SKIP_VERIFY=1
   const skipVerify = String(import.meta.env.VITE_SKIP_VERIFY || "") === "1";
-
-  // Evita múltiples redirecciones seguidas
   const redirectingRef = React.useRef(false);
+  const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 
   React.useEffect(() => {
-    if (skipVerify) return;        // no hacemos nada si está desactivado
-    if (isLoading) return;         // esperamos a que Auth0 cargue
+    if (skipVerify) return;
+    if (isLoading) return;
 
-    // ¿viene error en la URL o desde Auth0?
-    const params   = new URLSearchParams(location.search);
+    const params = new URLSearchParams(location.search);
     const urlError = params.get("error");
     const urlDesc  = params.get("error_description") || "";
     const denied   =
@@ -29,28 +26,23 @@ export default function ProtectedRoute({ children }) {
     if (!isAuthenticated && !redirectingRef.current) {
       redirectingRef.current = true;
 
-      // si hubo "rechazar", limpiar la URL y volver al login
       if (denied) {
         window.history.replaceState({}, document.title, location.pathname);
       }
 
-      loginWithRedirect({
-        authorizationParams: {
-          audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-          // Si quieres forzar la pantalla de login SIEMPRE, descomenta:
-          // prompt: "login",
-        },
+      const opts = {
         appState: { returnTo: location.pathname + location.search },
-      }).finally(() => {
-        // Permitimos futuros intentos si el usuario vuelve aquí
+      };
+      if (audience) opts.authorizationParams = { audience };
+
+      loginWithRedirect(opts).finally(() => {
         redirectingRef.current = false;
       });
     }
-  }, [skipVerify, isLoading, isAuthenticated, loginWithRedirect, location, error]);
+  }, [skipVerify, isLoading, isAuthenticated, loginWithRedirect, location, error, audience]);
 
   if (skipVerify) return children;
   if (isLoading)  return <div className="p-6">Cargando…</div>;
   if (!isAuthenticated) return null;
   return children;
 }
-// Componente que protege las rutas y redirige al login si no está autenticado
