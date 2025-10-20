@@ -1,27 +1,20 @@
 // client/src/iam/pages/IamAdmin/index.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 
-// Asegúrate de que el archivo existe exactamente con ese nombre
 import IamGuard from "../../api/IamGuard.jsx";
 
 // Páginas
 import UsersPage from "./UsersPage.jsx";
 import RolesPage from "./RolesPage.jsx";
-<<<<<<< HEAD
-import PermissionCatalog from "./PermissionCatalog.jsx";
-import AuditPage from "./AuditPage.jsx"; // 
+import PermissionCatalog from "./PermissionCatalog"; 
+import AuditPage from "./AuditPage.jsx";
 
-import { iamApi } from "../../api/iamApi";
-import { permisosKeys, rolesKeys } from "../../catolog/perms.js"; // <-
-=======
-// PermissionCatalog es una CARPETA con su propio index.jsx
-import PermissionCatalog from "./PermissionCatalog";
 
-import { iamApi } from "../../api/iamApi";
-// Carpeta correcta: "catalog"
+import { iamApi } from "../../api/iamApi.js";
+
+
 import { permisosKeys, rolesKeys } from "../../catalog/perms.js";
 
->>>>>>> ff466ab0e3691ff9cf9ba0e69c7dc9a68db0ce8d
 /** Si BD está vacía, crea permisos/roles desde el catálogo local */
 async function seedFromLocalCatalog(token) {
   // --- PERMISOS
@@ -32,10 +25,7 @@ async function seedFromLocalCatalog(token) {
   } catch {
     existingPerms = [];
   }
-
-  const have = new Set(
-    existingPerms.map((p) => p.key || p.name).filter(Boolean)
-  );
+  const have = new Set(existingPerms.map((p) => p.key || p.name).filter(Boolean));
 
   for (const [key, label] of Object.entries(permisosKeys)) {
     if (have.has(key)) continue;
@@ -45,7 +35,6 @@ async function seedFromLocalCatalog(token) {
       await iamApi.createPerm({ key, label, group, order }, token);
       console.log("[IAM seed] permiso creado:", key);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
     }
   }
@@ -58,16 +47,7 @@ async function seedFromLocalCatalog(token) {
   } catch {
     existingRoles = [];
   }
-
-  const byName = new Map(
-<<<<<<< HEAD
-    existingRoles.map(r => [r?.name || r?._id, r]).filter(([k]) => !!k)
-=======
-    existingRoles
-      .map((r) => [r?.name || r?._id, r])
-      .filter(([k]) => !!k)
->>>>>>> ff466ab0e3691ff9cf9ba0e69c7dc9a68db0ce8d
-  );
+  const byName = new Map(existingRoles.map((r) => [r?.name || r?._id, r]).filter(([k]) => !!k));
 
   for (const [name, perms] of Object.entries(rolesKeys)) {
     const desired = Array.isArray(perms) ? perms : [];
@@ -75,47 +55,26 @@ async function seedFromLocalCatalog(token) {
 
     if (!currentRole) {
       try {
-        await iamApi.createRole(
-          { name, description: "", permissions: desired },
-          token
-        );
-        // eslint-disable-next-line no-console
+        await iamApi.createRole({ name, description: "", permissions: desired }, token);
         console.log("[IAM seed] rol creado:", name);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn("[IAM seed] no se pudo crear rol", name, e?.message || e);
       }
     } else {
-      const current = Array.isArray(
-        currentRole.permissions || currentRole.perms
-      )
+      const current = Array.isArray(currentRole.permissions || currentRole.perms)
         ? currentRole.permissions || currentRole.perms
         : [];
-
-      const same =
-        current.length === desired.length &&
-        current.every((k) => desired.includes(k));
-
+      const same = current.length === desired.length && current.every((k) => desired.includes(k));
       if (!same) {
         try {
-          await iamApi.updateRole(
-            currentRole._id || currentRole.id,
-            {
-              name,
-              description: currentRole.description || "",
-              permissions: desired,
-            },
-            token
-          );
-          // eslint-disable-next-line no-console
+          await iamApi.updateRole(currentRole._id || currentRole.id, {
+            name,
+            description: currentRole.description || "",
+            permissions: desired,
+          });
           console.log("[IAM seed] rol actualizado:", name);
         } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[IAM seed] no se pudo actualizar rol",
-            name,
-            e?.message || e
-          );
+          console.warn("[IAM seed] no se pudo actualizar rol", name, e?.message || e);
         }
       }
     }
@@ -134,10 +93,7 @@ export default function IamAdmin() {
     (async () => {
       try {
         setCheckErr("");
-        const [p, r] = await Promise.all([
-          iamApi.listPerms(),
-          iamApi.listRoles(),
-        ]);
+        const [p, r] = await Promise.all([iamApi.listPerms(), iamApi.listRoles()]);
         const pCount = (p?.items || p?.permissions || []).length;
         const rCount = (r?.items || r?.roles || []).length;
         if (alive) setNeedsSeed(pCount === 0 || rCount === 0);
@@ -157,10 +113,7 @@ export default function IamAdmin() {
     try {
       setSeeding(true);
       await seedFromLocalCatalog();
-      const [p, r] = await Promise.all([
-        iamApi.listPerms(),
-        iamApi.listRoles(),
-      ]);
+      const [p, r] = await Promise.all([iamApi.listPerms(), iamApi.listRoles()]);
       const pCount = (p?.items || p?.permissions || []).length;
       const rCount = (r?.items || r?.roles || []).length;
       setNeedsSeed(pCount === 0 || rCount === 0);
@@ -172,13 +125,12 @@ export default function IamAdmin() {
     }
   }, []);
 
-  // 👇 AÑADIMOS la nueva pestaña de “Historial”
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
       { id: "roles", label: "Roles" },
       { id: "perms", label: "Permisos" },
-      { id: "audit", label: "Historial" }, // 👈 NUEVA pestaña
+      { id: "audit", label: "Historial" },
     ],
     []
   );
@@ -189,10 +141,7 @@ export default function IamAdmin() {
       e.preventDefault();
       const idx = tabs.findIndex((t) => t.id === tab);
       if (idx < 0) return;
-      const next =
-        e.key === "ArrowRight"
-          ? tabs[(idx + 1) % tabs.length]
-          : tabs[(idx - 1 + tabs.length) % tabs.length];
+      const next = e.key === "ArrowRight" ? tabs[(idx + 1) % tabs.length] : tabs[(idx - 1 + tabs.length) % tabs.length];
       setTab(next.id);
       const btn = document.getElementById(`tab-${next.id}`);
       if (btn) btn.focus();
@@ -225,12 +174,7 @@ export default function IamAdmin() {
         )}
 
         {/* Barra de pestañas */}
-        <div
-          role="tablist"
-          aria-label="Secciones IAM"
-          className="flex items-center gap-2 flex-wrap"
-          onKeyDown={onKeyDownTabs}
-        >
+        <div role="tablist" aria-label="Secciones IAM" className="flex items-center gap-2 flex-wrap" onKeyDown={onKeyDownTabs}>
           {tabs.map(({ id, label }) => {
             const active = tab === id;
             return (
@@ -258,44 +202,19 @@ export default function IamAdmin() {
         </div>
 
         {/* Contenido de cada pestaña */}
-        <section
-          role="tabpanel"
-          id="panel-users"
-          aria-labelledby="tab-users"
-          hidden={tab !== "users"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-users" aria-labelledby="tab-users" hidden={tab !== "users"} className="outline-none">
           {tab === "users" && <UsersPage />}
         </section>
 
-        <section
-          role="tabpanel"
-          id="panel-roles"
-          aria-labelledby="tab-roles"
-          hidden={tab !== "roles"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-roles" aria-labelledby="tab-roles" hidden={tab !== "roles"} className="outline-none">
           {tab === "roles" && <RolesPage />}
         </section>
 
-        <section
-          role="tabpanel"
-          id="panel-perms"
-          aria-labelledby="tab-perms"
-          hidden={tab !== "perms"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-perms" aria-labelledby="tab-perms" hidden={tab !== "perms"} className="outline-none">
           {tab === "perms" && <PermissionCatalog />}
         </section>
 
-        {/* 👇 NUEVA SECCIÓN: HISTORIAL */}
-        <section
-          role="tabpanel"
-          id="panel-audit"
-          aria-labelledby="tab-audit"
-          hidden={tab !== "audit"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden={tab !== "audit"} className="outline-none">
           {tab === "audit" && <AuditPage />}
         </section>
       </div>
