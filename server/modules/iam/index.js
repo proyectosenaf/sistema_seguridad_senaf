@@ -1,4 +1,3 @@
-// server/modules/iam/index.js
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -9,6 +8,7 @@ import authRoutes from "./routes/auth.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import rolesRoutes from "./routes/roles.routes.js";
 import permissionsRoutes from "./routes/permissions.routes.js";
+import auditRoutes from "./routes/audit.routes.js"; // 👈 NUEVA LÍNEA IMPORTANTE
 
 import {
   parseExcelRolesPermissions,
@@ -35,9 +35,9 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);
+  router.use("/audit", authMw, auditRoutes); // 👈 NUEVA RUTA REGISTRADA
 
   // -------- Importar Excel → seed (UI: subir archivo .xlsx) --------
-  // Nota: Sólo permitido en DEV (devOr). En prod, devOr responderá 403/404 (según tu implementación).
   router.post(
     "/import/excel",
     // Carga de multipart SOLO para esta ruta (5 MB máx)
