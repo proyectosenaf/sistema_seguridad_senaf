@@ -32,13 +32,36 @@ export default function UserEditor({ value, onClose, onSaved }) {
       try {
         const r = await iamApi.listRoles();
         const items = r?.items || r?.roles || [];
-        const names = items.map(it => typeof it === "string" ? it : (it.name || it._id)).filter(Boolean);
+        const names = items
+          .map(it => (typeof it === "string" ? it : (it.name || it._id)))
+          .filter(Boolean);
         setRoles(names);
       } catch {
         setRoles(["admin","guardia","supervisor","ti","visitante"]);
       }
     })();
   }, []);
+
+  // ⬅️ NUEVO: sincroniza el formulario cada vez que cambia "value" (usuario a editar)
+  useEffect(() => {
+    setForm({
+      nombreCompleto: value?.nombreCompleto || "",
+      tipoDni: value?.tipoDni || "Identidad",
+      dni: value?.dni || "",
+      estadoCivil: value?.estadoCivil || "",
+      fechaNacimiento: value?.fechaNacimiento ? String(value.fechaNacimiento).slice(0,10) : "",
+      paisNacimiento: value?.paisNacimiento || "",
+      ciudadNacimiento: value?.ciudadNacimiento || "",
+      municipioNacimiento: value?.municipioNacimiento || "",
+      correoPersona: value?.correoPersona || "",
+      profesion: value?.profesion || "",
+      lugarTrabajo: value?.lugarTrabajo || "",
+      telefono: value?.telefono || "",
+      domicilio: value?.domicilio || "",
+      roles: Array.isArray(value?.roles) ? value.roles : [],
+      active: value?.active !== false,
+    });
+  }, [value]);
 
   function setField(name, value) {
     setForm(prev => ({ ...prev, [name]: value }));
