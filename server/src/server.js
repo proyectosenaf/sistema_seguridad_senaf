@@ -7,6 +7,8 @@ import compression from "compression";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
 import mongoose from "mongoose";
+import nodemailer from "nodemailer";
+
 
 import { registerRondasModule } from "../modules/rondas/index.js";
 import { registerIAMModule } from "../modules/iam/index.js";
@@ -292,6 +294,101 @@ await registerIAMModule({ app, basePath: "/api/iam/v1" });
 // Endpoints /me robustos (funcionan con y sin JWT en DEV)
 app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) => res.json(pickMe(req)));
 app.get("/api/iam/v1/me", optionalAuth, (req, res) => res.json(pickMe(req)));
+
+// Asegúrate arriba del archivo:
+// import nodemailer from "nodemailer";
+
+app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const email = String(req.body?.email || "").trim();
+    if (!id || !email) {
+      return res.status(400).json({ error: "Faltan parámetros (id/email)" });
+    }
+
+    // ¿usar SMTP propio o Gmail?
+    const isCustomSmtp = !!process.env.MAIL_HOST;
+
+    const smtpTransport = isCustomSmtp
+      ? nodemailer.createTransport({
+          host: process.env.MAIL_HOST,
+          port: Number(process.env.MAIL_PORT || 587),
+          secure: String(process.env.MAIL_SECURE || "false") === "true", // true => 465
+          auth: {
+            user: process.env.MAIL_USER,
+            pass: process.env.MAIL_PASS,
+          },
+        })
+      : nodemailer.createTransport({
+          host: "smtp.gmail.com",
+          port: 465,
+          secure: true,
+          auth: {
+            user: process.env.GMAIL_USER || process.env.MAIL_USER,
+            pass: process.env.GMAIL_PASS || process.env.MAIL_PASS, // contraseña de aplicación
+          },
+        });
+
+    // Verifica conexión con SMTP
+    try {
+      await smtpTransport.verify();
+      console.log("[smtp] conexión OK con el servidor SMTP");
+    } catch (vErr) {
+      console.error("[smtp] verify() falló:", vErr?.message || vErr);
+      return res
+        .status(500)
+        .json({ error: "SMTP no disponible. Revisa credenciales/puerto/host." });
+    }
+
+    const fromAddress =
+      process.env.MAIL_FROM ||
+      `"SENAF Seguridad" <${process.env.GMAIL_USER || process.env.MAIL_USER}>`;
+
+    const link =
+      process.env.VERIFY_BASE_URL
+        ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(id)}`
+        : `http://localhost:5173/verify?user=${encodeURIComponent(id)}`;
+
+    const mailOptions = {
+      from: fromAddress,
+      to: email,
+      subject: "Verificación de correo electrónico",
+      html: `
+        <div style="font-family:Arial,sans-serif;padding:10px">
+          <h2>Verificación de cuenta</h2>
+          The <p>Hola, por favor verifica tu cuenta haciendo clic en el siguiente enlace:</p>
+          <p>
+            <a href="${link}" target="_blank"
+               style="background:#1d4ed8;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">
+               Verificar mi cuenta
+            </a>
+          </p>
+          <p>Si no solicitaste esta verificación, puedes ignorar este correo.</p>
+        </div>
+      `,
+    };
+
+    const info = await smtpTransport.sendMail(mailOptions);
+
+    console.log("[verify-email] accepted:", info.accepted);
+    console.log("[verify-email] rejected:", info.rejected);
+    console.log("[verify-email] response:", info.response);
+    console.log("[verify-email] messageId:", info.messageId);
+
+    if (info.rejected && info.rejected.length) {
+      return res
+        .status(502)
+        .json({ error: "El servidor SMTP rechazó el correo", detail: info.rejected });
+    }
+
+    return res.json({ ok: true, message: "Correo de verificación enviado" });
+  } catch (e) {
+    console.error("[verify-email] error:", e);
+    return res.status(500).json({ error: e?.message || "Error enviando verificación" });
+  }
+});
+
+
 
 // --- Audit (stub): evita 404 y devuelve lista vacía hasta que implementes persistencia ---
 app.get("/api/iam/v1/audit", (req, res) => {

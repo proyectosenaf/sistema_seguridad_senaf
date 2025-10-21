@@ -1,4 +1,5 @@
 // client/src/iam/api/iamApi.js
+
 import { API } from "../../lib/api";
 
 const V1 = `${API}/iam/v1`;
@@ -47,6 +48,7 @@ async function toJson(resp) {
   try { return await resp.json(); } catch { return {}; }
 }
 
+/** fetch con errores enriquecidos: err.status y err.payload */
 async function rawFetch(url, { method = "GET", body, token, formData = false } = {}) {
   const isFD = formData || (typeof FormData !== "undefined" && body instanceof FormData);
   try {
@@ -56,20 +58,28 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
       headers: buildHeaders({ token, isFormData: isFD, method, urlForCors: url }),
       body: body ? (isFD ? body : JSON.stringify(body)) : undefined,
     });
+
+    const contentType = r.headers.get("content-type") || "";
+    const parse = async () => (contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => ""));
+
     if (!r.ok) {
-      const ct = r.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        const j = await toJson(r);
-        const msg = j?.error || j?.detail || `${r.status} ${r.statusText}`;
-        throw new Error(msg);
-      }
-      const text = await r.text().catch(() => "");
-      throw new Error(text || `${r.status} ${r.statusText}`);
+      const data = await parse();
+      const msg = (data && (data.error || data.detail || data.message)) || `${r.status} ${r.statusText}`;
+      const err = new Error(msg);
+      err.status = r.status;       // <<<<<< clave
+      err.payload = data;          // <<<<<< clave
+      throw err;
     }
-    return toJson(r);
+
+    // OK
+    if (contentType.includes("application/json")) return toJson(r);
+    const text = await r.text().catch(() => "");
+    return text || {};
   } catch (e) {
     if (e?.name === "TypeError") {
-      throw new Error("No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL.");
+      const err = new Error("No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL.");
+      err.status = 0;
+      throw err;
     }
     throw e;
   }
@@ -83,6 +93,7 @@ const PATHS = {
     byId:   (id) => `${V1}/users/${id}`,
     enable: (id) => `${V1}/users/${id}/enable`,
     disable:(id) => `${V1}/users/${id}/disable`,
+    verify: (id) => `${V1}/users/${id}/verify-email`, // endpoint de verificación
   },
   roles: {
     list:   () => `${V1}/roles`,
@@ -96,7 +107,7 @@ const PATHS = {
   },
   auth: {
     me:     () => `${V1}/me`,
-    login:  () => `${V1}/auth/login`, // login local opcional
+    login:  () => `${V1}/auth/login`,
   },
 };
 
@@ -133,22 +144,13 @@ function findEmailAny(obj) {
 
 function findNameAny(obj) {
   const direct =
-    obj?.name ??
-    obj?.nombre ??
-    obj?.displayName ??
-    obj?.fullName ??
-    obj?.razonSocial ??
-    obj?.contactName ??
-    "";
-
+    obj?.name ?? obj?.nombre ?? obj?.displayName ?? obj?.fullName ?? obj?.razonSocial ?? obj?.contactName ?? "";
   if (typeof direct === "string" && direct.trim()) return direct.trim();
 
   const first =
-    obj?.firstName ?? obj?.firstname ?? obj?.nombres ?? obj?.primerNombre ??
-    obj?.persona?.nombres ?? obj?.persona?.firstName;
+    obj?.firstName ?? obj?.firstname ?? obj?.nombres ?? obj?.primerNombre ?? obj?.persona?.nombres ?? obj?.persona?.firstName;
   const last  =
-    obj?.lastName  ?? obj?.lastname  ?? obj?.apellidos ?? obj?.segundoNombre ??
-    obj?.persona?.apellidos ?? obj?.persona?.lastName;
+    obj?.lastName  ?? obj?.lastname  ?? obj?.apellidos ?? obj?.segundoNombre ?? obj?.persona?.apellidos ?? obj?.persona?.lastName;
 
   const combo = `${first || ""} ${last || ""}`.trim();
   if (combo) return combo;
@@ -179,7 +181,7 @@ export const iamApi = {
     throw new Error("No se pudo obtener /me");
   },
 
-  // Login local (opcional, si usas auth propio además de Auth0)
+  // Login local (opcional)
   async loginLocal({ email, password }) {
     const body = {
       email: String(email || "").trim().toLowerCase(),
@@ -214,7 +216,6 @@ export const iamApi = {
         : [];
       active = obj.active !== undefined ? (obj.active === true || obj.active === "true") : true;
       if (obj.perms)    perms = Array.isArray(obj.perms) ? obj.perms : String(obj.perms).split(",").map(s=>s.trim()).filter(Boolean);
-      // soporta alias de password
       password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     } else {
       const obj = payload || {};
@@ -246,7 +247,7 @@ export const iamApi = {
     const body = {
       name, email, roles, active,
       ...(perms ? { perms } : {}),
-      ...(password ? { password: String(password) } : {}), // opcional: crea hash en backend si viene
+      ...(password ? { password: String(password) } : {}), // opcional
     };
 
     return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
@@ -255,6 +256,9 @@ export const iamApi = {
   updateUser:  (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
   enableUser:  (id, t)    => rawFetch(PATHS.users.enable(id),  { method: "POST", token: t }),
   disableUser: (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+
+  // “Eliminar” usando desactivar (soft delete)
+  deleteUser:  (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
   // Auditoría (tolerante a 404)
   async listAudit(limit = 100, token) {
@@ -272,6 +276,32 @@ export const iamApi = {
     const fd = new FormData();
     fd.append("file", file);
     return rawFetch(`${V1}/import/excel`, { method: "POST", body: fd, token, formData: true });
+  },
+
+  /** Enviar verificación con fallback si backend no está implementado */
+  async sendVerificationEmail(userId, email, token) {
+    if (!userId || !email) throw new Error("Faltan datos para verificación");
+    try {
+      return await rawFetch(PATHS.users.verify(userId), {
+        method: "POST",
+        body: { email },
+        token,
+      });
+    } catch (e) {
+      const msg = (e?.message || "").toLowerCase();
+      const notImpl =
+        e?.status === 404 ||
+        e?.status === 501 ||
+        msg.includes("not implemented") ||
+        msg.includes("no implementado");
+
+      if (notImpl) {
+        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando envío…", { userId, email });
+        await new Promise((r) => setTimeout(r, 700));
+        return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
+      }
+      throw e;
+    }
   },
 };
 

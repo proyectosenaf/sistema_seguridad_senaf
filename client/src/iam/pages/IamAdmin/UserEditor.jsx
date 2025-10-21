@@ -7,6 +7,67 @@ const ESTADOS_CIVILES = ["Soltero/a","Casado/a","Divorciado/a","Viudo/a","Unión
 export default function UserEditor({ value, onClose, onSaved }) {
   const [roles, setRoles] = useState([]);
 
+  // ⬇️⬇️ NUEVO: normaliza el objeto `value` a las claves que este form usa
+  function mapUserToForm(u = {}) {
+    // Fecha -> YYYY-MM-DD para <input type="date">
+    const rawDate =
+      u.fechaNacimiento ??
+      u.birthDate ??
+      u.fecha_nacimiento ??
+      u.fnac ??
+      u?.persona?.fechaNacimiento ??
+      u?.persona?.fnac ??
+      "";
+
+    const fechaOk = rawDate
+      ? (typeof rawDate === "string"
+          ? rawDate.slice(0, 10)
+          : new Date(rawDate).toISOString().slice(0, 10))
+      : "";
+
+    const civil =
+      u.estadoCivil ??
+      u.estado_civil ??
+      u.civilStatus ??
+      u?.persona?.estadoCivil ??
+      "";
+
+    const civilOk = ESTADOS_CIVILES.includes(civil) ? civil : "";
+
+    // Correo: este form usa `correoelectrónico`
+    const correo =
+      u.correoelectrónico ??
+      u.correoPersona ??
+      u.email ??
+      u.correo ??
+      u.mail ??
+      u?.persona?.correo ??
+      "";
+
+    return {
+      // PERSONALES (respetamos tus claves tal cual)
+      nombreCompleto: u.nombreCompleto ?? u.name ?? u.fullName ?? u?.persona?.nombreCompleto ?? "",
+      tipoDni: u.tipoDni ?? u?.persona?.tipoDni ?? "Identidad",
+      dni: u.dni ?? u.documento ?? u.num_documento ?? u?.persona?.dni ?? "",
+      estadoCivil: civilOk,
+      fechaNacimiento: fechaOk,
+      paisNacimiento: u.paisNacimiento ?? u.pais_nacimiento ?? u.countryOfBirth ?? u?.persona?.pais ?? "",
+      ciudadNacimiento: u.ciudadNacimiento ?? u.ciudad_nacimiento ?? u.cityOfBirth ?? u?.persona?.ciudad ?? "",
+      // Este form usa `municipio` (no municipioNacimiento), aceptamos alias
+      municipio: u.municipio ?? u.municipioNacimiento ?? u?.persona?.municipio ?? "",
+      // Este form usa `correoelectrónico` como key
+      correoelectrónico: correo,
+      profesion: u.profesion ?? u.ocupacion ?? u?.persona?.ocupacion ?? "",
+      lugarTrabajo: u.lugarTrabajo ?? u.dondeLabora ?? u.empresa ?? u?.persona?.lugar_trabajo ?? "",
+      telefono: u.telefono ?? u.phone ?? u.celular ?? u.tel ?? u?.persona?.telefono ?? "",
+      domicilio: u.domicilio ?? u.direccion ?? u.address ?? u?.persona?.direccion ?? "",
+      // IAM
+      roles: Array.isArray(u.roles) ? u.roles : (u.roles ? [u.roles] : []),
+      active: u.active !== false,
+    };
+  }
+  // ⬆️⬆️ FIN NUEVO
+
   const [form, setForm] = useState({
     // PERSONALES (sin id_persona en UI)
     nombreCompleto: value?.nombreCompleto || "",
@@ -16,8 +77,8 @@ export default function UserEditor({ value, onClose, onSaved }) {
     fechaNacimiento: value?.fechaNacimiento ? String(value.fechaNacimiento).slice(0,10) : "",
     paisNacimiento: value?.paisNacimiento || "",
     ciudadNacimiento: value?.ciudadNacimiento || "",
-    municipioNacimiento: value?.municipioNacimiento || "",
-    correoPersona: value?.correoPersona || "",
+    municipio: value?.municipio || "",
+    correoelectrónico: value?.correoelectrónico || "",
     profesion: value?.profesion || "",
     lugarTrabajo: value?.lugarTrabajo || "",
     telefono: value?.telefono || "",
@@ -27,12 +88,48 @@ export default function UserEditor({ value, onClose, onSaved }) {
     active: value?.active !== false,
   });
 
+function toDateInputSafe(raw) { /* MISMO de arriba */ }
+function pick(obj, ...paths) { /* MISMO de arriba */ }
+
+// Este modal usa `municipio` y `correoelectrónico` como claves del form
+function mapUserToFormSafe(u = {}) {
+  return {
+    nombreCompleto: pick(u,"nombreCompleto","name","fullName","persona.nombreCompleto") || "",
+    tipoDni:       pick(u,"tipoDni","persona.tipoDni") || "Identidad",
+    dni:           pick(u,"dni","documento","num_documento","persona.dni") || "",
+    estadoCivil:   pick(u,"estadoCivil","estado_civil","civilStatus","persona.estadoCivil") || "",
+    fechaNacimiento: toDateInputSafe(
+      pick(u,"fechaNacimiento","birthDate","fecha_nacimiento","persona.fechaNacimiento","persona.fnac")
+    ),
+    paisNacimiento:   pick(u,"paisNacimiento","pais_nacimiento","countryOfBirth","persona.pais") || "",
+    ciudadNacimiento: pick(u,"ciudadNacimiento","ciudad_nacimiento","cityOfBirth","persona.ciudad") || "",
+    municipio:        pick(u,"municipio","municipioNacimiento","persona.municipio") || "",
+    correoelectrónico: pick(u,"correoelectrónico","correoPersona","email","correo","mail","persona.correo") || "",
+    profesion:       pick(u,"profesion","ocupacion","persona.ocupacion") || "",
+    lugarTrabajo:    pick(u,"lugarTrabajo","dondeLabora","empresa","persona.lugar_trabajo") || "",
+    telefono:        pick(u,"telefono","phone","celular","tel","persona.telefono") || "",
+    domicilio:       pick(u,"domicilio","direccion","address","persona.direccion") || "",
+    roles: Array.isArray(u.roles) ? u.roles : (u.roles ? [u.roles] : []),
+    active: u.active !== false,
+  };
+}
+
+
+  // ⬇️⬇️ NUEVO: cuando `value` cambia (abrir/editar otro usuario), prellenar con fallbacks
+  useEffect(() => {
+    if (!value) return;
+    setForm(prev => ({ ...prev, ...mapUserToForm(value) }));
+  }, [value]);
+  // ⬆️⬆️ FIN NUEVO
+
   useEffect(() => {
     (async () => {
       try {
         const r = await iamApi.listRoles();
         const items = r?.items || r?.roles || [];
-        const names = items.map(it => typeof it === "string" ? it : (it.name || it._id)).filter(Boolean);
+        const names = items
+          .map(it => (typeof it === "string" ? it : (it.name || it._id)))
+          .filter(Boolean);
         setRoles(names);
       } catch {
         setRoles(["admin","guardia","supervisor","ti","visitante"]);
@@ -83,11 +180,11 @@ export default function UserEditor({ value, onClose, onSaved }) {
 
           <Field label="País nacimiento" value={form.paisNacimiento} onChange={(v)=>setField("paisNacimiento", v)} />
           <Field label="Ciudad nacimiento" value={form.ciudadNacimiento} onChange={(v)=>setField("ciudadNacimiento", v)} />
-          <Field label="Municipio nacimiento" value={form.municipioNacimiento} onChange={(v)=>setField("municipioNacimiento", v)} />
+          <Field label="Municipio" value={form.municipio} onChange={(v)=>setField("municipio", v)} />
 
-          <Field label="Correo de la persona" value={form.correoPersona} onChange={(v)=>setField("correoPersona", v)} />
+          <Field label="Correo electrónico" value={form.correoelectrónico} onChange={(v)=>setField("correoelectrónico", v)} />
           <Field label="Profesión u oficio" value={form.profesion} onChange={(v)=>setField("profesion", v)} />
-          <Field label="Dónde labora" value={form.lugarTrabajo} onChange={(v)=>setField("lugarTrabajo", v)} />
+          <Field label="Lugar de trabajo" value={form.lugarTrabajo} onChange={(v)=>setField("lugarTrabajo", v)} />
           <Field label="Teléfono" value={form.telefono} onChange={(v)=>setField("telefono", v)} />
           <Field className="md:col-span-2" label="Domicilio actual" value={form.domicilio} onChange={(v)=>setField("domicilio", v)} />
 
@@ -121,36 +218,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
           </label>
         </div>
 
-        {/* Pie del modal: AQUÍ debe ir el botón Eliminar */}
         <div className="flex justify-end gap-2">
-          {value?._id && (
-            <button
-              data-testid="btn-eliminar-usuario"
-              className="px-3 py-2 rounded bg-red-600 text-white"
-              onClick={async () => {
-                const ok = window.confirm("¿Estás seguro de eliminar este usuario?");
-                if (!ok) return;
-                try {
-                  await iamApi.deleteUser(value._id);
-                  alert("Usuario eliminado correctamente.");
-                  onSaved?.();
-                  onClose?.();
-                } catch (err) {
-                  console.error(err);
-                  alert("Error al eliminar el usuario.");
-                }
-              }}
-            >
-              Eliminar
-            </button>
-          )}
-
-          <button className="px-3 py-2 rounded bg-gray-200 dark:bg-neutral-800" onClick={onClose}>
-            Cancelar
-          </button>
-          <button className="px-3 py-2 rounded bg-blue-600 text-white" onClick={save}>
-            Guardar
-          </button>
+          <button className="px-3 py-2 rounded bg-gray-200 dark:bg-neutral-800" onClick={onClose}>Cancelar</button>
+          <button className="px-3 py-2 rounded bg-blue-600 text-white" onClick={save}>Guardar</button>
         </div>
       </div>
     </div>
