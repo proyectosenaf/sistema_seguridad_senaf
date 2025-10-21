@@ -1,38 +1,35 @@
 // client/src/pages/Auth/LoginRedirect.jsx
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useNavigate, useLocation } from "react-router-dom";
 
-/**
- * Página pública que dispara el login de Auth0.
- * Si ya estás autenticado y entras a /login, te devuelve al panel principal (/).
- */
 export default function LoginRedirect() {
-  const { loginWithRedirect, isAuthenticated } = useAuth0();
+  const { loginWithRedirect, isAuthenticated, isLoading } = useAuth0();
   const nav = useNavigate();
   const { state } = useLocation(); // opcional: { returnTo: "/ruta" }
+  const calledRef = useRef(false);
 
   useEffect(() => {
-    (async () => {
-      if (isAuthenticated) {
-        nav(state?.returnTo || "/", { replace: true });
-        return;
-      }
-      try {
-        await loginWithRedirect({
-          authorizationParams: {
-            // ✅ Al volver del login, caemos en /start (ahí se redirige por rol)
-            redirect_uri: `${window.location.origin}/start`,
-            prompt: "login",
-            screen_hint: "login",
-          },
-        });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("Error en loginWithRedirect:", err);
-      }
-    })();
-  }, [isAuthenticated, loginWithRedirect, nav, state]);
+    if (isLoading) return;
+
+    if (isAuthenticated) {
+      nav(state?.returnTo || "/", { replace: true });
+      return;
+    }
+
+    if (!calledRef.current) {
+      calledRef.current = true;
+      const options = {
+        // Si quieres enviar algo de estado para “volver a…”
+        appState: { returnTo: state?.returnTo || "/" },
+        // Si DEFINITIVAMENTE necesitas audiencia, úsala. Si no, omítela.
+        // authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
+      };
+      loginWithRedirect(options).catch((err) =>
+        console.error("Error en loginWithRedirect:", err)
+      );
+    }
+  }, [isAuthenticated, isLoading, loginWithRedirect, nav, state]);
 
   return (
     <div className="min-h-[60vh] grid place-items-center p-6">

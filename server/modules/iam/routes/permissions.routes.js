@@ -3,6 +3,8 @@ import { Router } from "express";
 import IamPermission from "../models/IamPermission.model.js";
 import IamRole from "../models/IamRole.model.js";
 import { requirePerm, devOr } from "../utils/rbac.util.js";
+// ⬇️ Ajusta la ruta si tu helper vive en otro archivo
+import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
 
@@ -111,6 +113,16 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     if (exists) return res.status(409).json({ message: "Ya existe un permiso con esa key" });
 
     const doc = await IamPermission.create(input);
+
+    // 🔎 AUDIT: creación de permiso
+    await writeAudit(req, {
+      action: "create",
+      entity: "permission",
+      entityId: doc._id.toString(),
+      before: null,
+      after: { key: doc.key, label: doc.label, group: doc.group, order: doc.order ?? 0 },
+    });
+
     res.status(201).json(doc);
   } catch (err) {
     res.status(500).json({ message: "Error creando permiso", error: err.message });
@@ -150,6 +162,15 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       );
     }
 
+    // 🔎 AUDIT: actualización de permiso
+    await writeAudit(req, {
+      action: "update",
+      entity: "permission",
+      entityId: id,
+      before: { key: prev.key, label: prev.label, group: prev.group, order: prev.order ?? 0 },
+      after:  { key: doc.key, label: doc.label, group: doc.group, order: doc.order ?? 0 },
+    });
+
     res.json(doc);
   } catch (err) {
     res.status(500).json({ message: "Error actualizando permiso", error: err.message });
@@ -173,6 +194,15 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     // Remover la key de todos los roles que la tengan
     await IamRole.updateMany({ permissions: perm.key }, { $pull: { permissions: perm.key } });
+
+    // 🔎 AUDIT: eliminación de permiso
+    await writeAudit(req, {
+      action: "delete",
+      entity: "permission",
+      entityId: id,
+      before: { key: perm.key, label: perm.label, group: perm.group, order: perm.order ?? 0 },
+      after: null,
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -232,6 +262,15 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       });
     }
 
+    // Para el resumen de auditoría
+    const existing = await IamPermission.find(
+      { key: { $in: list.map(p => p.key) } },
+      { key: 1 }
+    ).lean();
+    const existSet = new Set(existing.map(e => e.key));
+    const willCreate = list.filter(p => !existSet.has(p.key)).map(p => p.key);
+    const willUpdate = list.filter(p => existSet.has(p.key)).map(p => p.key);
+
     // bulkWrite idempotente
     const ops = list.map(p => ({
       updateOne: {
@@ -250,6 +289,22 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const matched = result.matchedCount ?? result.nMatched ?? 0;
     const modified = result.modifiedCount ?? result.nModified ?? 0;
 
+    // 🔎 AUDIT: resumen de sincronización (bulk)
+    await writeAudit(req, {
+      action: "update",
+      entity: "permission",
+      entityId: "bulk",
+      before: null,
+      after: {
+        totalReceived: list.length,
+        created,
+        matched,
+        modified,
+        keysCreated: willCreate,
+        keysUpdated: willUpdate,
+      },
+    });
+
     return res.json({
       ok: true,
       totalReceived: list.length,
@@ -263,3 +318,4 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 });
 
 export default r;
+

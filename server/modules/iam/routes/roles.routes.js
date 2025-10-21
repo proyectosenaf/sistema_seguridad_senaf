@@ -1,8 +1,10 @@
-// routes/roles.routes.js
+// modules/iam/routes/roles.routes.js
 import { Router } from "express";
 import IamRole from "../models/IamRole.model.js";
 import IamPermission from "../models/IamPermission.model.js";
 import { devOr, requirePerm } from "../utils/rbac.util.js";
+// ⬇️ Ajusta la ruta si tu helper está en otro archivo:
+import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
 
@@ -41,6 +43,16 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   }
 
   const doc = await IamRole.create({ code, name: String(name).trim(), description, permissions: cleanPerms });
+
+  // 🔎 AUDIT: creación de rol
+  await writeAudit(req, {
+    action: "create",
+    entity: "role",
+    entityId: doc._id.toString(),
+    before: null,
+    after: { code: doc.code, name: doc.name, description: doc.description ?? null, permissions: doc.permissions || [] },
+  });
+
   res.status(201).json(doc);
 });
 
@@ -62,8 +74,23 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     if (exists) return res.status(409).json({ message: "code ya existe" });
   }
 
+  // 🔎 AUDIT: capturar estado previo
+  const before = await IamRole.findById(id).lean();
+
   const doc = await IamRole.findByIdAndUpdate(id, { $set: update }, { new: true });
   if (!doc) return res.status(404).json({ message: "No encontrado" });
+
+  // 🔎 AUDIT: actualización de rol
+  await writeAudit(req, {
+    action: "update",
+    entity: "role",
+    entityId: id,
+    before: before
+      ? { code: before.code, name: before.name, description: before.description ?? null }
+      : null,
+    after: { code: doc.code, name: doc.name, description: doc.description ?? null },
+  });
+
   res.json(doc);
 });
 
@@ -82,6 +109,16 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   }
 
   await IamRole.deleteOne({ _id: id });
+
+  // 🔎 AUDIT: eliminación de rol
+  await writeAudit(req, {
+    action: "delete",
+    entity: "role",
+    entityId: id,
+    before: { code: role.code, name: role.name, description: role.description ?? null, permissions: role.permissions || [] },
+    after: null,
+  });
+
   res.json({ ok: true });
 });
 
@@ -109,6 +146,9 @@ r.put("/:id/permissions", devOr(requirePerm("iam.roles.manage")), async (req, re
     return res.status(400).json({ message: "Uno o más permisos (keys) no existen" });
   }
 
+  // 🔎 AUDIT: before
+  const before = await IamRole.findById(req.params.id).lean();
+
   const doc = await IamRole.findByIdAndUpdate(
     req.params.id,
     { $set: { permissions: clean } },
@@ -116,6 +156,16 @@ r.put("/:id/permissions", devOr(requirePerm("iam.roles.manage")), async (req, re
   );
 
   if (!doc) return res.status(404).json({ message: "Rol no encontrado" });
+
+  // 🔎 AUDIT: cambio de permisos del rol
+  await writeAudit(req, {
+    action: "update",
+    entity: "role",
+    entityId: req.params.id,
+    before: { permissions: before?.permissions || [] },
+    after:  { permissions: doc.permissions || [] },
+  });
+
   res.json(doc);
 });
 
