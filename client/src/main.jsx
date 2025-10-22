@@ -4,7 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
 
 import App from "./App.jsx";
-import AuthBridge from "./components/AuthBridge.jsx"; // 👈 ruta corregida
+import AuthBridge from "./components/AuthBridge.jsx";
 import "./styles.css";
 
 const domain   = import.meta.env.VITE_AUTH0_DOMAIN;
@@ -29,7 +29,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     cacheLocation="localstorage"
     useRefreshTokens
   >
-    {/* 👇 Configura axios con el token de Auth0 al iniciar sesión */}
+    {/* Configura providers de token para tus APIs */}
     <AuthBridge />
 
     <BrowserRouter>

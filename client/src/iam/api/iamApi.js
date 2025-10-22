@@ -5,7 +5,7 @@ import { API } from "../../lib/api";
 const V1 = `${API}/iam/v1`;
 const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 
-/** Identidad DEV (para cabeceras x-user-*) */
+/** Identidad DEV (para cabeceras x-user-*) *
 function getDevIdentity() {
   const email =
     (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
@@ -63,12 +63,16 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
     const parse = async () => (contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => ""));
 
     if (!r.ok) {
-      const data = await parse();
-      const msg = (data && (data.error || data.detail || data.message)) || `${r.status} ${r.statusText}`;
-      const err = new Error(msg);
-      err.status = r.status;       // <<<<<< clave
-      err.payload = data;          // <<<<<< clave
-      throw err;
+
+      const ct = r.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const j = await toJson(r);
+        const msg = j?.error || j?.detail || j?.message || `${r.status} ${r.statusText}`;
+        throw new Error(msg);
+      }
+      const text = await r.text().catch(() => "");
+      throw new Error(text || `${r.status} ${r.statusText}`);
+
     }
 
     // OK
@@ -96,14 +100,17 @@ const PATHS = {
     verify: (id) => `${V1}/users/${id}/verify-email`, // endpoint de verificación
   },
   roles: {
-    list:   () => `${V1}/roles`,
-    create: () => `${V1}/roles`,
-    byId:   (id) => `${V1}/roles/${id}`,
+    list:        () => `${V1}/roles`,
+    create:      () => `${V1}/roles`,
+    byId:        (id) => `${V1}/roles/${id}`,
+    permissions: (id) => `${V1}/roles/${id}/permissions`, // GET/PUT permisos del rol (keys)
   },
   perms: {
-    list:   () => `${V1}/permissions`,
-    create: () => `${V1}/permissions`,
-    byId:   (id) => `${V1}/permissions/${id}`,
+    list:        () => `${V1}/permissions`,
+    create:      () => `${V1}/permissions`,
+    byId:        (id) => `${V1}/permissions/${id}`,
+    // Helper de listado anotado por rol (usa ?role=)
+    listByRole:  (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
   auth: {
     me:     () => `${V1}/me`,
@@ -144,13 +151,31 @@ function findEmailAny(obj) {
 
 function findNameAny(obj) {
   const direct =
-    obj?.name ?? obj?.nombre ?? obj?.displayName ?? obj?.fullName ?? obj?.razonSocial ?? obj?.contactName ?? "";
+    obj?.name ??
+    obj?.nombre ??
+    obj?.displayName ??
+    obj?.fullName ??
+    obj?.razonSocial ??
+    obj?.contactName ??
+    "";
+
   if (typeof direct === "string" && direct.trim()) return direct.trim();
 
   const first =
-    obj?.firstName ?? obj?.firstname ?? obj?.nombres ?? obj?.primerNombre ?? obj?.persona?.nombres ?? obj?.persona?.firstName;
-  const last  =
-    obj?.lastName  ?? obj?.lastname  ?? obj?.apellidos ?? obj?.segundoNombre ?? obj?.persona?.apellidos ?? obj?.persona?.lastName;
+    obj?.firstName ??
+    obj?.firstname ??
+    obj?.nombres ??
+    obj?.primerNombre ??
+    obj?.persona?.nombres ??
+    obj?.persona?.firstName;
+
+  const last =
+    obj?.lastName ??
+    obj?.lastname ??
+    obj?.apellidos ??
+    obj?.segundoNombre ??
+    obj?.persona?.apellidos ??
+    obj?.persona?.lastName;
 
   const combo = `${first || ""} ${last || ""}`.trim();
   if (combo) return combo;
@@ -158,8 +183,10 @@ function findNameAny(obj) {
   if (obj?.persona?.nombre || obj?.persona?.name) {
     return (obj?.persona?.nombre || obj?.persona?.name || "").trim();
   }
+
   return "";
 }
+
 
 function fromFormData(fd) {
   const toObj = {};
@@ -190,19 +217,26 @@ export const iamApi = {
     return rawFetch(PATHS.auth.login(), { method: "POST", body });
   },
 
-  // Roles/Permisos
-  listRoles:   (t)        => rawFetch(PATHS.roles.list(),   { token: t }),
-  createRole:  (p, t)     => rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
-  updateRole:  (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
-  deleteRole:  (id, t)    => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
+  // -------- Roles
+  listRoles:   (t)            => rawFetch(PATHS.roles.list(),        { token: t }),
+  createRole:  (p, t)         => rawFetch(PATHS.roles.create(),      { method: "POST", body: p, token: t }),
+  updateRole:  (id, p, t)     => rawFetch(PATHS.roles.byId(id),      { method: "PATCH", body: p, token: t }),
+  deleteRole:  (id, t)        => rawFetch(PATHS.roles.byId(id),      { method: "DELETE", token: t }),
 
-  listPerms:   (t)        => rawFetch(PATHS.perms.list(),   { token: t }),
-  createPerm:  (p, t)     => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
-  updatePerm:  (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
-  deletePerm:  (id, t)    => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
+  // Permisos de un rol (por KEYS) — NUEVO
+  getRolePerms: (id, t)       => rawFetch(PATHS.roles.permissions(id),                 { token: t }),                 // -> { permissionKeys: string[] }
+  setRolePerms: (id, keys, t) => rawFetch(PATHS.roles.permissions(id), { method: "PUT", body: { permissionKeys: keys }, token: t }),
 
-  // Usuarios
-  listUsers:   (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
+  // -------- Permisos
+  listPerms:   (t)            => rawFetch(PATHS.perms.list(),        { token: t }),
+  // Listar permisos anotados para un rol — NUEVO
+  listPermsForRole: (roleId, t) => rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
+  createPerm:  (p, t)         => rawFetch(PATHS.perms.create(),      { method: "POST",  body: p, token: t }),
+  updatePerm:  (id, p, t)     => rawFetch(PATHS.perms.byId(id),      { method: "PATCH", body: p, token: t }),
+  deletePerm:  (id, t)        => rawFetch(PATHS.perms.byId(id),      { method: "DELETE", token: t }),
+
+  // -------- Usuarios
+  listUsers:   (q = "", t)    => rawFetch(PATHS.users.list(q),       { token: t }),
 
   createUser:  (payload, t) => {
     let email = "", name = "", roles = [], active = true, perms, password;

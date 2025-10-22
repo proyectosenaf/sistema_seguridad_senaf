@@ -161,6 +161,37 @@ function passwordRules(p = "") {
 }
 /* =================================================== */
 
+/* ========= NUEVO (helper robusto de mapeo) ========= */
+function firstNonEmpty(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+  }
+  return "";
+}
+
+function mapUserToForm(u = {}) {
+  const p = u.persona || u.profile || {};
+
+  return {
+    nombreCompleto: firstNonEmpty(u.nombreCompleto, u.name, p.nombreCompleto, [p.nombres, p.apellidos].filter(Boolean).join(" ")),
+    tipoDni: firstNonEmpty(u.tipoDni, p.tipoDni, "Identidad"),
+    dni: firstNonEmpty(u.dni, p.dni),
+    estadoCivil: firstNonEmpty(u.estadoCivil, p.estadoCivil),
+    fechaNacimiento: (firstNonEmpty(u.fechaNacimiento, p.fechaNacimiento) || "").toString().slice(0, 10),
+    paisNacimiento: firstNonEmpty(u.paisNacimiento, p.paisNacimiento),
+    ciudadNacimiento: firstNonEmpty(u.ciudadNacimiento, p.ciudadNacimiento),
+    municipioNacimiento: firstNonEmpty(u.municipioNacimiento, p.municipioNacimiento),
+    correoPersona: firstNonEmpty(u.correoPersona, u.email, p.correoPersona),
+    profesion: firstNonEmpty(u.profesion, p.profesion),
+    lugarTrabajo: firstNonEmpty(u.lugarTrabajo, p.lugarTrabajo),
+    telefono: firstNonEmpty(u.telefono, p.telefono, u.phone),
+    domicilio: firstNonEmpty(u.domicilio, p.domicilio),
+    roles: Array.isArray(u.roles) ? u.roles : (Array.isArray(u.role) ? u.role : []),
+    active: u.active !== false,
+  };
+}
+/* =================================================== */
+
 export default function UsersPage() {
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
@@ -326,10 +357,31 @@ export default function UsersPage() {
     }
   }
 
+
   async function startEdit(u) {
+
+  /* ========= CAMBIADO: robusto y con fetch de detalle ========= */
+  async function startEdit(u) {
+    console.log("[UsersPage] entrar a edición:", u);
+
     setEditing(u._id);
     setCreds({ password: "", confirm: "", sendVerification: false });
+
+    try {
+      let full = u;
+      // Si existe getUser, intenta obtener el detalle completo
+      if (typeof iamApi.getUser === "function") {
+        const r = await iamApi.getUser(u._id);
+        full = r?.item || r?.user || r || u;
+      }
+      setForm(mapUserToForm(full));
+    } catch (e) {
+      console.warn("[UsersPage] no se pudo obtener detalle; usando item de lista:", e);
+      setForm(mapUserToForm(u));
+    }
+
     window.scrollTo({ top: 0, behavior: "smooth" });
+
     setTimeout(() => firstFieldRef.current?.focus?.(), 120);
     try {
       setLoading(true);
@@ -351,7 +403,11 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
+
+    setTimeout(() => firstFieldRef.current?.focus?.(), 100);
+
   }
+  /* ============================================================ */
 
   function cancelEdit() {
     setEditing(null);
@@ -675,6 +731,7 @@ function Field({ label, name, value, onChange, type = "text", className = "", er
 }
 
 function Select({ label, name, value, onChange, options = [] }) {
+}
   return (
     <label className="space-y-1">
       <span className="text-sm">{label}</span>
