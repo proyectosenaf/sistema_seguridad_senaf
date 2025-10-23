@@ -1,11 +1,15 @@
 // client/src/iam/api/iamApi.js
-
 import { API } from "../../lib/api";
 
-const V1 = `${API}/iam/v1`;
-const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
+// Normaliza raíz de API para evitar dobles slashes
+const API_ROOT = String(API || "").replace(/\/$/, "");
+const V1 = `${API_ROOT}/iam/v1`;
 
-/** Identidad DEV (para cabeceras x-user-*) *
+const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
+const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
+const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
+
+/** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
     (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
@@ -19,7 +23,11 @@ function getDevIdentity() {
     (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
     import.meta.env.VITE_DEV_IAM_PERMS ||
     "";
-  return { email: email.trim(), roles: roles.trim(), perms: perms.trim() };
+  return {
+    email: email.trim(),
+    roles: roles.trim(),
+    perms: (perms || "*").trim(),
+  };
 }
 
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
@@ -27,13 +35,15 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   if (!isFormData) h["Content-Type"] = "application/json";
   if (token) h.Authorization = `Bearer ${token}`;
 
-  const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
-  const shouldSendDev = FORCE_DEV || !token;
+  // Enviar headers DEV si:
+  // - Fuerzas modo dev (VITE_FORCE_DEV_IAM=1), o
+  // - No hay token y además la auth real está deshabilitada (VITE_DISABLE_AUTH=1)
+  const shouldSendDev = FORCE_DEV || (!token && DISABLE_AUTH);
   if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
     if (email) h["x-user-email"] = email;
     if (roles) h["x-roles"] = roles;
-    if (perms) h["x-perms"] = perms;
+    if (perms) h["x-perms"] = perms || "*";
   }
 
   if (DEBUG) {
@@ -45,7 +55,11 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
 }
 
 async function toJson(resp) {
-  try { return await resp.json(); } catch { return {}; }
+  try {
+    return await resp.json();
+  } catch {
+    return {};
+  }
 }
 
 /** fetch con errores enriquecidos: err.status y err.payload */
@@ -60,19 +74,18 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
     });
 
     const contentType = r.headers.get("content-type") || "";
-    const parse = async () => (contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => ""));
+    const parse = async () =>
+      contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => "");
 
     if (!r.ok) {
-
-      const ct = r.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        const j = await toJson(r);
-        const msg = j?.error || j?.detail || j?.message || `${r.status} ${r.statusText}`;
-        throw new Error(msg);
-      }
-      const text = await r.text().catch(() => "");
-      throw new Error(text || `${r.status} ${r.statusText}`);
-
+      const payload = await parse();
+      const err = new Error(
+        (payload && (payload.error || payload.detail || payload.message)) ||
+          `${r.status} ${r.statusText}`
+      );
+      err.status = r.status;
+      err.payload = payload;
+      throw err;
     }
 
     // OK
@@ -81,7 +94,9 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
     return text || {};
   } catch (e) {
     if (e?.name === "TypeError") {
-      const err = new Error("No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL.");
+      const err = new Error(
+        "No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL."
+      );
       err.status = 0;
       throw err;
     }
@@ -92,29 +107,29 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
 /* ---------- RUTAS SOLO v1 ---------- */
 const PATHS = {
   users: {
-    list:   (q) => `${V1}/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    list: (q) => `${V1}/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
     create: () => `${V1}/users`,
-    byId:   (id) => `${V1}/users/${id}`,
+    byId: (id) => `${V1}/users/${id}`,
     enable: (id) => `${V1}/users/${id}/enable`,
-    disable:(id) => `${V1}/users/${id}/disable`,
+    disable: (id) => `${V1}/users/${id}/disable`,
     verify: (id) => `${V1}/users/${id}/verify-email`, // endpoint de verificación
   },
   roles: {
-    list:        () => `${V1}/roles`,
-    create:      () => `${V1}/roles`,
-    byId:        (id) => `${V1}/roles/${id}`,
+    list: () => `${V1}/roles`,
+    create: () => `${V1}/roles`,
+    byId: (id) => `${V1}/roles/${id}`,
     permissions: (id) => `${V1}/roles/${id}/permissions`, // GET/PUT permisos del rol (keys)
   },
   perms: {
-    list:        () => `${V1}/permissions`,
-    create:      () => `${V1}/permissions`,
-    byId:        (id) => `${V1}/permissions/${id}`,
+    list: () => `${V1}/permissions`,
+    create: () => `${V1}/permissions`,
+    byId: (id) => `${V1}/permissions/${id}`,
     // Helper de listado anotado por rol (usa ?role=)
-    listByRole:  (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
+    listByRole: (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
   auth: {
-    me:     () => `${V1}/me`,
-    login:  () => `${V1}/auth/login`,
+    me: () => `${V1}/me`,
+    login: () => `${V1}/auth/login`,
   },
 };
 
@@ -187,10 +202,11 @@ function findNameAny(obj) {
   return "";
 }
 
-
 function fromFormData(fd) {
   const toObj = {};
-  fd.forEach((v, k) => { toObj[k] = v; });
+  fd.forEach((v, k) => {
+    toObj[k] = v;
+  });
   return toObj;
 }
 
@@ -198,14 +214,19 @@ function fromFormData(fd) {
 export const iamApi = {
   // Identidad
   async me(token) {
-    const headers = buildHeaders({ token, isFormData: false, method: "GET" });
+    const headers = buildHeaders({ token, isFormData: false, method: "GET", urlForCors: PATHS.auth.me() });
     try {
       const r = await fetch(PATHS.auth.me(), { headers, credentials: "include" });
       if (r.ok) return toJson(r);
+      const payload = await toJson(r);
+      const e = new Error(payload?.message || `${r.status} ${r.statusText}`);
+      e.status = r.status;
+      e.payload = payload;
+      throw e;
     } catch (e) {
       if (DEBUG) console.warn("[iamApi.me] fallo:", e?.message || e);
+      throw e;
     }
-    throw new Error("No se pudo obtener /me");
   },
 
   // Login local (opcional)
@@ -218,68 +239,104 @@ export const iamApi = {
   },
 
   // -------- Roles
-  listRoles:   (t)            => rawFetch(PATHS.roles.list(),        { token: t }),
-  createRole:  (p, t)         => rawFetch(PATHS.roles.create(),      { method: "POST", body: p, token: t }),
-  updateRole:  (id, p, t)     => rawFetch(PATHS.roles.byId(id),      { method: "PATCH", body: p, token: t }),
-  deleteRole:  (id, t)        => rawFetch(PATHS.roles.byId(id),      { method: "DELETE", token: t }),
+  listRoles: (t) => rawFetch(PATHS.roles.list(), { token: t }),
+  createRole: (p, t) => rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
+  updateRole: (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
+  deleteRole: (id, t) => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
-  // Permisos de un rol (por KEYS) — NUEVO
-  getRolePerms: (id, t)       => rawFetch(PATHS.roles.permissions(id),                 { token: t }),                 // -> { permissionKeys: string[] }
-  setRolePerms: (id, keys, t) => rawFetch(PATHS.roles.permissions(id), { method: "PUT", body: { permissionKeys: keys }, token: t }),
+  // Permisos de un rol (por KEYS)
+  getRolePerms: (id, t) => rawFetch(PATHS.roles.permissions(id), { token: t }), // -> { permissionKeys: string[] }
+  setRolePerms: (id, keys, t) =>
+    rawFetch(PATHS.roles.permissions(id), { method: "PUT", body: { permissionKeys: keys }, token: t }),
 
   // -------- Permisos
-  listPerms:   (t)            => rawFetch(PATHS.perms.list(),        { token: t }),
-  // Listar permisos anotados para un rol — NUEVO
+  listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
   listPermsForRole: (roleId, t) => rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
-  createPerm:  (p, t)         => rawFetch(PATHS.perms.create(),      { method: "POST",  body: p, token: t }),
-  updatePerm:  (id, p, t)     => rawFetch(PATHS.perms.byId(id),      { method: "PATCH", body: p, token: t }),
-  deletePerm:  (id, t)        => rawFetch(PATHS.perms.byId(id),      { method: "DELETE", token: t }),
+  createPerm: (p, t) => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
+  updatePerm: (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
+  deletePerm: (id, t) => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
   // -------- Usuarios
-  listUsers:   (q = "", t)    => rawFetch(PATHS.users.list(q),       { token: t }),
+  listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
-  createUser:  (payload, t) => {
-    let email = "", name = "", roles = [], active = true, perms, password;
+  createUser: (payload, t) => {
+    let email = "",
+      name = "",
+      roles = [],
+      active = true,
+      perms,
+      password;
 
     if (typeof FormData !== "undefined" && payload instanceof FormData) {
       const obj = fromFormData(payload);
       email = findEmailAny(obj);
-      name  = findNameAny(obj);
+      name = findNameAny(obj);
       roles = obj.roles
-        ? (Array.isArray(obj.roles) ? obj.roles : String(obj.roles).split(",").map(s => s.trim()).filter(Boolean))
+        ? Array.isArray(obj.roles)
+          ? obj.roles
+          : String(obj.roles)
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
         : [];
-      active = obj.active !== undefined ? (obj.active === true || obj.active === "true") : true;
-      if (obj.perms)    perms = Array.isArray(obj.perms) ? obj.perms : String(obj.perms).split(",").map(s=>s.trim()).filter(Boolean);
+      active = obj.active !== undefined ? obj.active === true || obj.active === "true" : true;
+      if (obj.perms)
+        perms = Array.isArray(obj.perms)
+          ? obj.perms
+          : String(obj.perms)
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
       password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     } else {
       const obj = payload || {};
-      email = findEmailAny(obj) ||
+      email =
+        findEmailAny(obj) ||
         String(
-          obj.email ?? obj.correo ?? obj.correoPersonal ?? obj.personalEmail ?? obj.mail ??
-          obj?.persona?.email ?? obj?.persona?.correo ?? ""
+          obj.email ??
+            obj.correo ??
+            obj.correoPersonal ??
+            obj.personalEmail ??
+            obj.mail ??
+            obj?.persona?.email ??
+            obj?.persona?.correo ??
+            ""
         );
-      name  = findNameAny(obj);
-      roles = Array.isArray(obj.roles) ? obj.roles
-        : (typeof obj.roles === "string" ? obj.roles.split(",").map(s=>s.trim()).filter(Boolean) : []);
+      name = findNameAny(obj);
+      roles = Array.isArray(obj.roles)
+        ? obj.roles
+        : typeof obj.roles === "string"
+        ? obj.roles.split(",").map((s) => s.trim()).filter(Boolean)
+        : [];
       active = obj.active === undefined ? true : !!obj.active;
-      if (obj.perms)    perms = Array.isArray(obj.perms) ? obj.perms : String(obj.perms).split(",").map(s=>s.trim()).filter(Boolean);
+      if (obj.perms)
+        perms = Array.isArray(obj.perms)
+          ? obj.perms
+          : String(obj.perms)
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
       password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     }
 
     email = String(email || "").trim().toLowerCase();
-    name  = (String(name || "").trim()) || nameFromEmail(email);
+    name = (String(name || "").trim()) || nameFromEmail(email);
 
     if (!email) {
       if (DEBUG) {
-        console.warn("[iamApi.createUser] payload sin email. Keys:", payload instanceof FormData
-          ? Array.from(payload.keys())
-          : Object.keys(payload || {}));
+        console.warn(
+          "[iamApi.createUser] payload sin email. Keys:",
+          payload instanceof FormData ? Array.from(payload.keys()) : Object.keys(payload || {})
+        );
       }
       return Promise.reject(new Error("email requerido"));
     }
 
     const body = {
-      name, email, roles, active,
+      name,
+      email,
+      roles,
+      active,
       ...(perms ? { perms } : {}),
       ...(password ? { password: String(password) } : {}), // opcional
     };
@@ -287,12 +344,12 @@ export const iamApi = {
     return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
   },
 
-  updateUser:  (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
-  enableUser:  (id, t)    => rawFetch(PATHS.users.enable(id),  { method: "POST", token: t }),
-  disableUser: (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+  updateUser: (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
+  enableUser: (id, t) => rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
+  disableUser: (id, t) => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
   // “Eliminar” usando desactivar (soft delete)
-  deleteUser:  (id, t)    => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+  deleteUser: (id, t) => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
   // Auditoría (tolerante a 404)
   async listAudit(limit = 100, token) {
@@ -300,7 +357,7 @@ export const iamApi = {
       return await rawFetch(`${V1}/audit?limit=${encodeURIComponent(limit)}`, { token });
     } catch (e) {
       const msg = (e.message || "").toLowerCase();
-      if (msg.includes("not found") || msg.includes("404")) return { ok: false, items: [] };
+      if (e?.status === 404 || msg.includes("not found") || msg.includes("404")) return { ok: false, items: [] };
       throw e;
     }
   },
@@ -324,10 +381,7 @@ export const iamApi = {
     } catch (e) {
       const msg = (e?.message || "").toLowerCase();
       const notImpl =
-        e?.status === 404 ||
-        e?.status === 501 ||
-        msg.includes("not implemented") ||
-        msg.includes("no implementado");
+        e?.status === 404 || e?.status === 501 || msg.includes("not implemented") || msg.includes("no implementado");
 
       if (notImpl) {
         if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando envío…", { userId, email });
