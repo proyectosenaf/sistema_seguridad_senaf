@@ -918,3 +918,17 @@ body { margin: 0; }
 }
 
 
+:root{
+  /* colores por defecto del banner (puedes cambiarlos en tiempo de ejecución) */
+  --accent-from: #38bdf8; /* sky-400 */
+  --accent-to:   #22d3ee; /* cyan-400 */
+  --accent-alpha: 0.35;   /* 0..1 suavidad/transparencia */
+}
+:root{
+  --accent-from:#38bdf8; /* sky-400 */
+  --accent-to:#22d3ee;   /* cyan-400 */
+  --accent-alpha:0.20;   /* 0..1  → 0.20 = más suave */
+}
+:root{ --accent-from:#38bdf8; --accent-to:#22d3ee; --accent-alpha:0.18; }
+
+

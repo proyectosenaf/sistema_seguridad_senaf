@@ -30,10 +30,12 @@ async function buildHeaders(json = true) {
   // Headers DEV (con IAM_ALLOW_DEV_HEADERS=1 en el server)
   if (import.meta.env.DEV) {
     const devEmail =
-      localStorage.getItem("iamDevEmail") || import.meta.env.VITE_DEV_IAM_EMAIL || null;
+      (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+      import.meta.env.VITE_DEV_IAM_EMAIL ||
+      null;
     if (devEmail) h["x-user-email"] = devEmail;
 
-    const devRoles = localStorage.getItem("iamDevRoles");
+    const devRoles = (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) || "";
     if (devRoles) h["x-roles"] = devRoles; // p.ej. "admin,rondasqr.admin"
   }
 
@@ -53,7 +55,10 @@ async function fetchJson(url, opts = {}) {
     try {
       err = await r.json();
     } catch {}
-    throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status, err });
+    const e = new Error(`HTTP ${r.status}`);
+    e.status = r.status;
+    e.payload = err;
+    throw e;
   }
   try {
     return await r.json();
@@ -70,12 +75,35 @@ export const rondasqrApi = {
   async getDetailed(q) {
     return fetchJson(`${BASE}/reports/detailed?${toQS(q)}`);
   },
-  // ⬇️ Corregido: el server monta /export/* debajo de /reports
+
+  // Rutas conocidas que ya funcionan
   csvUrl(q) {
     return `${BASE}/reports/export/csv?${toQS(q)}`;
   },
   kmlUrl(q) {
     return `${BASE}/reports/export/kml?${toQS(q)}`;
+  },
+
+  // NUEVO: helpers para PDF/XLSX (nombre más probable en el backend)
+  xlsxUrl(q) {
+    return `${BASE}/reports/export/excel?${toQS(q)}`;
+  },
+  pdfUrl(q) {
+    return `${BASE}/reports/export/pdf?${toQS(q)}`;
+  },
+
+  // NUEVO: ping a una URL de descarga para saber si existe (200 OK)
+  async ping(url) {
+    try {
+      const r = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        headers: await buildHeaders(false),
+      });
+      return r.ok;
+    } catch {
+      return false;
+    }
   },
 
   // -------- Check-in / Guardia --------
