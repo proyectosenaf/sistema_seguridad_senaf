@@ -1,14 +1,53 @@
-// src/modules/rondasqr/guard/ScanPage.jsx
-import React, { useState, useMemo } from "react";
+// client/src/modules/rondasqr/guard/ScanPage.jsx
+import React, { useState, useMemo, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import SidebarGuard from "./SidebarGuard.jsx";
 import { rondasqrApi } from "../api/rondasqrApi";
+import { useAuth0 } from "@auth0/auth0-react";
 
+/* ────────────── helpers ────────────── */
+function toArr(v) {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+function uniqLower(arr) {
+  return Array.from(new Set(toArr(arr).map((x) => String(x).trim().toLowerCase()).filter(Boolean)));
+}
+
+/* ──────────────────────────────────────────────────────── */
 export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
+  const { user } = useAuth0();
 
-  // pestaña activa derivada de la ruta
+  /* Namespaces Auth0 */
+  const ROLES_CLAIM = "https://senaf.local/roles";
+  const PERMS_CLAIM = "https://senaf.local/permissions";
+
+  // roles/permisos desde distintos orígenes
+  const rolesAuth0 = uniqLower(user?.roles);
+  const rolesClaim = uniqLower(user?.[ROLES_CLAIM]);
+  const permsClaim = uniqLower(user?.[PERMS_CLAIM]);
+
+  // Overrides locales (modo DEV)
+  const devRoles = import.meta.env.DEV
+    ? uniqLower((localStorage.getItem("iamDevRoles") || "").split(","))
+    : [];
+  const devPerms = import.meta.env.DEV
+    ? uniqLower((localStorage.getItem("iamDevPerms") || "").split(","))
+    : [];
+
+  // Combinamos todos
+  const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...devRoles]);
+  const perms = uniqLower([...permsClaim, ...devPerms]);
+
+  // Reglas de visibilidad
+  const isAdminLike =
+    perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
+  const isSupervisorLike =
+    roles.includes("supervisor") || perms.includes("rondasqr.view") || perms.includes("rondasqr.reports");
+
+  // pestaña activa
   const tab = useMemo(() => {
     if (pathname.endsWith("/qr")) return "qr";
     if (pathname.endsWith("/msg")) return "msg";
@@ -16,14 +55,15 @@ export default function ScanPage() {
     return "home";
   }, [pathname]);
 
+  /* Estado local */
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
   const [sendingAlert, setSendingAlert] = useState(false);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
-  // si el usuario entra por "#alert" desde el menú → dispara alerta
-  React.useEffect(() => {
+  /* disparar alerta si llega con hash */
+  useEffect(() => {
     if (hash === "#alert") {
       (async () => {
         await sendAlert();
@@ -32,6 +72,7 @@ export default function ScanPage() {
     }
   }, [hash, nav]);
 
+  /* Funciones principales */
   async function sendAlert() {
     if (sendingAlert) return;
     setSendingAlert(true);
@@ -51,8 +92,7 @@ export default function ScanPage() {
       }
       await rondasqrApi.panic(gps);
       alert("🚨 Alerta de pánico enviada.");
-    } catch (e) {
-      console.error("[panic]", e);
+    } catch {
       alert("No se pudo enviar la alerta.");
     } finally {
       setSendingAlert(false);
@@ -68,8 +108,7 @@ export default function ScanPage() {
       alert("✅ Mensaje enviado.");
       setMsg("");
       nav("/rondasqr/scan");
-    } catch (e) {
-      console.error("[incident]", e);
+    } catch {
       alert("No se pudo enviar el mensaje.");
     } finally {
       setSendingMsg(false);
@@ -86,141 +125,128 @@ export default function ScanPage() {
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
       nav("/rondasqr/scan");
-    } catch (e) {
-      console.error("[photos]", e);
+    } catch {
       alert("No se pudieron enviar las fotos.");
     } finally {
       setSendingPhotos(false);
     }
   }
 
+  /* Estilos comunes */
+  const pageClass = "flex min-h-screen bg-transparent text-white";
+  const headerClass =
+    "glass-card glass-header neon-border px-6 py-3 mb-5 rounded-2xl flex justify-between items-center";
+  const cardClass = "glass-card neon-border rounded-2xl p-6";
+  const neutralBtn =
+    "px-4 py-2 rounded-lg border border-white/10 bg-white/10 hover:bg-white/20 transition";
+  const coloredBtn = (color) =>
+    `btn-neon ${
+      color === "red"
+        ? "btn-red"
+        : color === "green"
+        ? "btn-green"
+        : color === "blue"
+        ? "btn-blue"
+        : color === "orange"
+        ? "btn-orange"
+        : ""
+    } px-4 py-2 rounded-lg font-semibold transition`;
+
+  const homeCols = isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
+
+  /* Render principal */
   return (
-    <div className="flex h-screen bg-gradient-to-br from-[#001e3c] to-[#004c80] text-white">
+    <div className={pageClass}>
       <SidebarGuard />
 
       <main className="flex-1 flex flex-col overflow-y-auto p-6">
-        {/* Encabezado */}
-        <div className="bg-[#0b4c7c] rounded-2xl px-6 py-3 mb-5 shadow-lg flex justify-between items-center">
-          <div className="text-2xl font-bold">Visión General</div>
+        <div className={headerClass}>
+          <h2 className="text-2xl font-bold">Panel Principal de Rondas de Vigilancia</h2>
           <div className="text-sm">
             Intervalo de tiempo: <span className="font-semibold">4h:00m</span>
           </div>
         </div>
 
-        {/* HOME */}
         {tab === "home" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className={`grid grid-cols-1 ${homeCols} gap-6`}>
             {/* ALERTA */}
-            <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl text-center">
+            <div className={cardClass + " text-center"}>
               <button
                 onClick={sendAlert}
                 disabled={sendingAlert}
-                className={`w-44 h-44 rounded-full text-2xl font-extrabold shadow-2xl border-4 ${
-                  sendingAlert
-                    ? "bg-red-400 border-red-200 cursor-not-allowed"
-                    : "bg-red-600 hover:bg-red-500 border-red-300"
+                className={`btn-neon btn-red w-44 h-44 rounded-full text-2xl font-extrabold border-4 border-red-400 ${
+                  sendingAlert ? "cursor-not-allowed" : ""
                 }`}
               >
-                {sendingAlert ? "ENVIANDO…" : "ALERTA"}
+                {sendingAlert ? "ENVIANDO..." : "ALERTA"}
               </button>
-              <div className="text-sm mt-2 text-white/90">Oprima en caso de emergencia</div>
+              <div className="text-sm mt-2 opacity-80">Oprima en caso de emergencia</div>
 
               <div className="mt-6 grid gap-3">
-                <button
-                  onClick={() => nav("/rondasqr/scan/qr")}
-                  className="bg-[#0068b3] hover:bg-[#0a75c5] text-white font-medium py-2 rounded-lg shadow"
-                >
-                  Registrar Punto Control
+                <button onClick={() => nav("/rondasqr/scan/qr")} className={coloredBtn("blue")}>
+                  Registrador Punto Control
                 </button>
-                <button
-                  onClick={() => nav("/rondasqr/scan/msg")}
-                  className="bg-[#0068b3] hover:bg-[#0a75c5] text-white font-medium py-2 rounded-lg shadow"
-                >
+                <button onClick={() => nav("/rondasqr/scan/msg")} className={coloredBtn("blue")}>
                   Mensaje Incidente
                 </button>
-                <button
-                  onClick={() => nav("/rondasqr/scan/fotos")}
-                  className="bg-[#0068b3] hover:bg-[#0a75c5] text-white font-medium py-2 rounded-lg shadow"
-                >
-                  Enviar Fotos
+                <button onClick={() => nav("/rondasqr/scan/fotos")} className={coloredBtn("blue")}>
+                  Fotos de remitentes
                 </button>
               </div>
             </div>
 
-            {/* Escanear punto (preview) */}
-            <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl">
+            {/* ESCANEAR */}
+            <div className={cardClass}>
               <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-              <div className="aspect-[3/2] bg-black/70 rounded-xl border-4 border-yellow-500 flex items-center justify-center text-yellow-400 text-4xl">
+              <div className="aspect-[3/2] bg-black/60 rounded-xl border-4 border-yellow-500 flex items-center justify-center text-yellow-400 text-4xl">
                 ☐
               </div>
               <div className="mt-4 flex gap-3">
-                <button
-                  onClick={() => nav("/rondasqr/scan/qr")}
-                  className="flex-1 bg-green-600 hover:bg-green-500 py-2 rounded-lg font-semibold shadow"
-                >
+                <button onClick={() => nav("/rondasqr/scan/qr")} className={coloredBtn("green") + " flex-1"}>
                   Escanear
                 </button>
-                <button className="flex-1 bg-orange-600 hover:bg-orange-500 py-2 rounded-lg font-semibold shadow">
-                  Finalizar
-                </button>
+                <button className={coloredBtn("orange") + " flex-1"}>Finalizar</button>
               </div>
             </div>
 
-            {/* Enviar Fotos rápido */}
-            <QuickPhotos
-              photos={photos}
-              setPhotos={setPhotos}
-              onSend={sendPhotos}
-              sending={sendingPhotos}
-            />
-          </div>
-        )}
-
-        {/* QR */}
-        {tab === "qr" && (
-          <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl">
-            <h3 className="font-semibold text-lg mb-3">Registrador / Escanear Punto</h3>
-            <div className="aspect-[3/2] bg-black/70 rounded-xl border-4 border-yellow-500 flex items-center justify-center text-yellow-400 text-4xl mb-4">
-              ☐ {/* aquí luego integras el scanner real */}
-            </div>
-            <div className="flex gap-3">
-              <button className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500">
-                Escanear
-              </button>
-              <button onClick={() => nav("/rondasqr/scan")} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20">
-                Volver
-              </button>
-            </div>
+            {/* ACCIONES (solo admin/supervisor) */}
+            {(isAdminLike || isSupervisorLike) && (
+              <div className={cardClass}>
+                <h3 className="font-semibold text-lg mb-3">Acciones</h3>
+                <p className="text-white/80 text-sm mb-4">
+                  Acciones avanzadas disponibles para supervisores o administradores.
+                </p>
+                <div className="grid gap-3">
+                  <button onClick={() => nav("/rondasqr/reports")} className={neutralBtn}>
+                    Abrir informes
+                  </button>
+                  {isAdminLike && (
+                    <button onClick={() => nav("/rondasqr/admin")} className={neutralBtn}>
+                      Administración de rondas
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* MENSAJE */}
         {tab === "msg" && (
-          <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl">
+          <div className={cardClass}>
             <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
             <textarea
-              className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-white"
+              className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-white placeholder-white/60"
               rows={5}
               placeholder="Describa el incidente..."
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
             />
             <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => nav("/rondasqr/scan")}
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20"
-              >
+              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
                 Cancelar
               </button>
-              <button
-                onClick={sendMessage}
-                disabled={sendingMsg}
-                className={`px-4 py-2 rounded-lg ${
-                  sendingMsg
-                    ? "bg-emerald-400 cursor-not-allowed"
-                    : "bg-emerald-600 hover:bg-emerald-500"
-                }`}
-              >
+              <button onClick={sendMessage} disabled={sendingMsg} className={coloredBtn("blue")}>
                 {sendingMsg ? "Enviando…" : "Enviar"}
               </button>
             </div>
@@ -229,23 +255,14 @@ export default function ScanPage() {
 
         {/* FOTOS */}
         {tab === "fotos" && (
-          <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl">
+          <div className={cardClass}>
             <h3 className="font-semibold text-lg mb-3">Enviar Fotos</h3>
-            <PhotoPicker photos={photos} setPhotos={setPhotos} idPrefix="foto2" />
+            <PhotoPicker photos={photos} setPhotos={setPhotos} />
             <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => nav("/rondasqr/scan")}
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20"
-              >
+              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
                 Cancelar
               </button>
-              <button
-                onClick={sendPhotos}
-                disabled={sendingPhotos}
-                className={`px-4 py-2 rounded-lg ${
-                  sendingPhotos ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500"
-                }`}
-              >
+              <button onClick={sendPhotos} disabled={sendingPhotos} className={coloredBtn("blue")}>
                 {sendingPhotos ? "Enviando…" : "Enviar"}
               </button>
             </div>
@@ -256,30 +273,13 @@ export default function ScanPage() {
   );
 }
 
-function QuickPhotos({ photos, setPhotos, onSend, sending }) {
-  return (
-    <div className="bg-[#012d55]/40 rounded-2xl p-6 shadow-xl">
-      <h3 className="font-semibold text-lg mb-3">Enviar fotos</h3>
-      <PhotoPicker photos={photos} setPhotos={setPhotos} idPrefix="foto" />
-      <button
-        onClick={onSend}
-        disabled={sending}
-        className={`w-full text-white mt-3 py-2 rounded-lg ${
-          sending ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500"
-        }`}
-      >
-        {sending ? "Enviando…" : "Enviar"}
-      </button>
-    </div>
-  );
-}
-
-function PhotoPicker({ photos, setPhotos, idPrefix }) {
+/* Subcomponente para fotos */
+function PhotoPicker({ photos, setPhotos }) {
   return (
     <>
       {photos.map((f, i) => (
         <div key={i} className="flex items-center justify-between mb-2">
-          <span className="text-sm">Toma foto {i + 1}</span>
+          <span className="text-sm text-white/90">Toma foto {i + 1}</span>
           <div className="flex gap-2">
             <input
               type="file"
@@ -295,17 +295,17 @@ function PhotoPicker({ photos, setPhotos, idPrefix }) {
                 });
               }}
               className="hidden"
-              id={`${idPrefix}-${i}`}
+              id={`foto-${i}`}
             />
             <label
-              htmlFor={`${idPrefix}-${i}`}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-md cursor-pointer"
+              htmlFor={`foto-${i}`}
+              className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white cursor-pointer"
             >
               Seleccionar
             </label>
             <button
               onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
-              className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-md"
+              className="px-3 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white"
             >
               Eliminar
             </button>

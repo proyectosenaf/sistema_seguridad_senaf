@@ -931,4 +931,79 @@ body { margin: 0; }
 }
 :root{ --accent-from:#38bdf8; --accent-to:#22d3ee; --accent-alpha:0.18; }
 
+:root{
+  --accent-from: #6d1d7a; /* violeta */
+  --accent-to:   #0f766e; /* teal */
+  --accent-alpha: 0.28;   /* un poco más intenso para que se note */
+}
 
+
+/* ========== GLASS + NEÓN ========== */
+
+/* Tarjetas y encabezados translúcidos con borde degradado sutil */
+.glass-card {
+  position: relative;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Borde neon (degradado) con máscara para que sea finito */
+.glass-card.neon-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;                      /* grosor del halo/borde */
+  background: linear-gradient(120deg, var(--glow-from,#60a5fa), var(--glow-to,#22d3ee));
+  -webkit-mask: 
+    linear-gradient(#000 0 0) content-box, 
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: .35;
+  transition: opacity .25s ease, filter .25s ease;
+}
+
+/* Aumenta un poquito el brillo al pasar el mouse */
+.glass-card.neon-border:hover::before {
+  opacity: .55;
+  filter: drop-shadow(0 0 12px rgba(96,165,250,.45));
+}
+
+/* Header con brillo un pelín más suave */
+.glass-header.neon-border::before {
+  opacity: .28;
+}
+
+/* -------- Botones con glow -------- */
+
+.btn-neon {
+  position: relative;
+  border-radius: .5rem;              /* igual que tus rounded-lg */
+  color: #fff;
+  transition: transform .1s ease, box-shadow .2s ease, filter .2s ease;
+}
+
+/* Paletas (puedes ajustar si usas otras) */
+.btn-blue   { background:#2563eb; }
+.btn-green  { background:#16a34a; }
+.btn-red    { background:#dc2626; }
+.btn-orange { background:#ea580c; }
+
+/* Glow base (apagado suave) */
+.btn-neon.btn-blue   { box-shadow: 0 0 0 0 rgba(37,99,235,.0); }
+.btn-neon.btn-green  { box-shadow: 0 0 0 0 rgba(22,163,74,.0); }
+.btn-neon.btn-red    { box-shadow: 0 0 0 0 rgba(220,38,38,.0); }
+.btn-neon.btn-orange { box-shadow: 0 0 0 0 rgba(234,88,12,.0); }
+
+/* Hover: halo sutil */
+.btn-neon.btn-blue:hover   { box-shadow: 0 0 22px 6px rgba(37,99,235,.28); }
+.btn-neon.btn-green:hover  { box-shadow: 0 0 22px 6px rgba(22,163,74,.28); }
+.btn-neon.btn-red:hover    { box-shadow: 0 0 22px 6px rgba(220,38,38,.28); }
+.btn-neon.btn-orange:hover { box-shadow: 0 0 22px 6px rgba(234,88,12,.28); }
+
+/* Active: un leve “tap” */
+.btn-neon:active { transform: translateY(1px); filter: brightness(0.98); }
