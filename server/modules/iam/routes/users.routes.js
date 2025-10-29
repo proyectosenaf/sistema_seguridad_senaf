@@ -38,6 +38,19 @@ function nameFromEmail(email) {
     .join(" ");
 }
 
+// Detecta si un usuario tiene rol de guardia (convenciones: guardia, guard, rondasqr.guard)
+function isGuardRole(u) {
+  const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+  const roles = [
+    ...(Array.isArray(u?.roles) ? u.roles : []),
+    ...(Array.isArray(u?.[NS]) ? u[NS] : []),
+  ]
+    .map((r) => String(r).toLowerCase().trim())
+    .filter(Boolean);
+
+  return roles.includes("guardia") || roles.includes("guard") || roles.includes("rondasqr.guard");
+}
+
 /* ===================== GET / (lista) ===================== */
 /**
  * GET /api/iam/v1/users?q=&limit=&skip=
@@ -58,21 +71,79 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         }
       : {};
 
-    const items = await IamUser.find(filter, {
-      name: 1,
-      email: 1,
-      roles: 1,
-      active: 1,
-      perms: 1,
-      createdAt: 1,
-      updatedAt: 1,
-    })
+    const items = await IamUser.find(
+      filter,
+      {
+        name: 1,
+        email: 1,
+        roles: 1,
+        active: 1,
+        perms: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        // Si tu modelo tiene sub / legacyId, también se pueden proyectar:
+        sub: 1,
+        legacyId: 1,
+      }
+    )
       .sort({ name: 1, email: 1 })
       .skip(skip)
       .limit(limit)
       .lean();
 
     res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===================== GET /guards (lista de guardias) ===================== */
+/**
+ * GET /api/iam/v1/users/guards?q=&active=1
+ * Devuelve { items: [{ _id, name, email, active, roles, opId }] }
+ *   - opId = sub || legacyId || _id  (ID operativo para rooms de socket)
+ */
+r.get("/guards", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const onlyActive = normBool(req.query.active, true);
+
+    const textFilter = q
+      ? {
+          $or: [
+            { name: { $regex: q, $options: "i" } },
+            { email: { $regex: q, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const base = onlyActive ? { ...textFilter, active: true } : textFilter;
+
+    // Traemos un set "amplio" y filtramos por rol en memoria (si la app usa múltiples namespaces)
+    const raw = await IamUser.find(base, {
+      name: 1,
+      email: 1,
+      roles: 1,
+      active: 1,
+      sub: 1,
+      legacyId: 1,
+      // por si guardaste roles en el namespace:
+      [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
+    })
+      .sort({ name: 1, email: 1 })
+      .limit(1000)
+      .lean();
+
+    const guards = raw.filter(isGuardRole).map((u) => ({
+      _id: u._id,
+      name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
+      email: u.email || "",
+      active: !!u.active,
+      roles: u.roles || [],
+      opId: u.sub || u.legacyId || String(u._id),
+    }));
+
+    res.json({ items: guards });
   } catch (err) {
     next(err);
   }

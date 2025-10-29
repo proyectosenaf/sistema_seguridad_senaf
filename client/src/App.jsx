@@ -18,9 +18,11 @@ const Home           = React.lazy(() => import("./pages/Home/Home.jsx"));
 const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
 const IncidenteForm  = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
-// ✅ Rondas QR (nuevo módulo)
-const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
-const RondasScan      = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
+// ✅ Rondas QR
+//   - Panel unificado (scan + widgets)
+const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx")); // informes
+const RondasScan      = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));         // panel unificado
+
 // ✅ Hub de administración (CRUD)
 const AdminHub        = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
@@ -102,14 +104,20 @@ function AuthTokenBridge({ children }) {
         attachRondasAuth(null);
         return;
       }
+      // ⚠️ No solicitamos offline_access; si no hay refresh token, no es error.
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
+            authorizationParams: {
+              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+              scope: "openid profile email" // ← sin offline_access para evitar "Missing Refresh Token"
+            }
           });
           return token || null;
         } catch (err) {
-          console.warn("[AuthTokenBridge]", err?.message || err);
+          // No spamear consola si sólo falta refresh; seguimos sin token.
+          const msg = (err && (err.error || err.message)) || String(err);
+          console.debug("[AuthTokenBridge] getAccessTokenSilently:", msg);
           return null;
         }
       };
@@ -126,7 +134,7 @@ function AuthTokenBridge({ children }) {
 function RondasRouterInline() {
   return (
     <>
-      {/* Admin (cualquiera de estos) → Hub */}
+      {/* Admin → Hub */}
       <IamGuard anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]} fallback={null}>
         <Navigate to="/rondasqr/admin" replace />
       </IamGuard>
@@ -136,8 +144,8 @@ function RondasRouterInline() {
         <Navigate to="/rondasqr/scan" replace />
       </IamGuard>
 
-      {/* Por defecto → Panel */}
-      <Navigate to="/rondasqr/panel" replace />
+      {/* Por defecto → Panel unificado */}
+      <Navigate to="/rondasqr/scan" replace />
     </>
   );
 }
@@ -204,27 +212,16 @@ export default function App() {
             />
 
             {/* ✅ RONDAS QR */}
-            {/* Entrada única (router inteligente) */}
+            {/* Entrada única → router inteligente (por defecto /rondasqr/scan) */}
             <Route
               path="/rondasqr"
               element={<ProtectedRoute><Layout><RondasRouterInline /></Layout></ProtectedRoute>}
             />
-            {/* Panel / Reportes (Supervisor) */}
+
+            {/* Panel unificado (Scan) */}
+            {/* ⬇⬇⬇ COMODÍN para permitir /rondasqr/scan/qr, /msg, /fotos */}
             <Route
-              path="/rondasqr/panel"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuard anyOf={["rondasqr.view","rondasqr.admin","guardia","admin","iam.users.manage","*"]}>
-                      <RondasDashboard />
-                    </IamGuard>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            {/* Scan (Guardia) */}
-            <Route
-              path="/rondasqr/scan"
+              path="/rondasqr/scan/*"
               element={
                 <ProtectedRoute>
                   <Layout hideSidebar>
@@ -235,20 +232,8 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-            {/* Admin Hub (CRUD) */}
-            <Route
-              path="/rondasqr/admin"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuard anyOf={["rondasqr.admin","admin","iam.users.manage","*"]}>
-                      <AdminHub />
-                    </IamGuard>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            {/* Reportes directo (alias) */}
+
+            {/* Informes */}
             <Route
               path="/rondasqr/reports"
               element={
@@ -262,15 +247,30 @@ export default function App() {
               }
             />
 
-            {/* Aliases de admin para que los enlaces del menú no den 404 */}
+            {/* Admin Hub (CRUD) */}
+            <Route
+              path="/rondasqr/admin"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["rondasqr.admin","admin","iam.users.manage","*"]}>
+                      <AdminHub />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Aliases de admin */}
             <Route path="/rondasqr/admin/plans"        element={<Navigate to="/rondasqr/admin" replace />} />
             <Route path="/rondasqr/admin/checkpoints"  element={<Navigate to="/rondasqr/admin" replace />} />
 
-            {/* Redirecciones “curita” para URLs mal formadas */}
-            <Route path="/rondasqrpanel" element={<Navigate to="/rondasqr/panel" replace />} />
-            <Route path="/rondasqr/rondasqrpanel" element={<Navigate to="/rondasqr/panel" replace />} />
+            {/* 🔁 Redirecciones legacy */}
+            <Route path="/rondasqrpanel"          element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondasqr/panel"         element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondasqr/rondasqrpanel" element={<Navigate to="/rondasqr/scan" replace />} />
 
-            {/* Alias legacy */}
+            {/* Alias legacy generales */}
             <Route path="/rondas"         element={<Navigate to="/rondasqr" replace />} />
             <Route path="/rondas/admin"   element={<Navigate to="/rondasqr/admin" replace />} />
             <Route path="/rondas/scan"    element={<Navigate to="/rondasqr/scan" replace />} />
