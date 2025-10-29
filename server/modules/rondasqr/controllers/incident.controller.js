@@ -1,7 +1,6 @@
 const Incident = require("../models/incident.model");
 
 // GET /api/incidentes
-// Devuelve el historial de incidentes
 exports.getAllIncidents = async (req, res) => {
   try {
     const incidents = await Incident.find().sort({ createdAt: -1 });
@@ -13,7 +12,6 @@ exports.getAllIncidents = async (req, res) => {
 };
 
 // POST /api/incidentes
-// Crea un incidente nuevo
 exports.createIncident = async (req, res) => {
   try {
     const { type, description, reportedBy, zone, priority } = req.body;
@@ -24,12 +22,11 @@ exports.createIncident = async (req, res) => {
       reportedBy,
       zone,
       priority: priority?.toLowerCase() || "media",
-      status: "abierto", // todos inician abiertos
+      status: "abierto",
       date: new Date(),
     });
 
     await newIncident.save();
-
     res.status(201).json(newIncident);
   } catch (error) {
     console.error("Error al crear incidente:", error);
@@ -38,7 +35,6 @@ exports.createIncident = async (req, res) => {
 };
 
 // PUT /api/incidentes/:id
-// Cambiar estado (ej. Procesar -> en_proceso, Resolver -> resuelto)
 exports.updateIncident = async (req, res) => {
   try {
     const { id } = req.params;
@@ -61,22 +57,5 @@ exports.updateIncident = async (req, res) => {
   } catch (error) {
     console.error("Error al actualizar incidente:", error);
     res.status(500).json({ message: "Error al actualizar el incidente" });
-  }
-};
-
-// DELETE /api/incidentes/:id
-exports.deleteIncident = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deleted = await Incident.findByIdAndDelete(id);
-
-    if (!deleted) {
-      return res.status(404).json({ message: "Incidente no encontrado" });
-    }
-
-    res.json({ message: "Incidente eliminado correctamente" });
-  } catch (error) {
-    console.error("Error al eliminar incidente:", error);
-    res.status(500).json({ message: "Error al eliminar el incidente" });
   }
 };
