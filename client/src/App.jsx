@@ -33,6 +33,11 @@ const Evaluacion    = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx
 const Chat          = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 
+/* 👇 NUEVO: páginas del módulo Control de Visitas */
+const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
+const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+/* FIN NUEVO */
+
 /** Decide home por rol/permisos */
 function pickHome({ roles = [], perms = [] }) {
   const R = new Set(roles.map((r) => String(r).toLowerCase()));
@@ -276,13 +281,109 @@ export default function App() {
             <Route path="/rondas/scan"    element={<Navigate to="/rondasqr/scan" replace />} />
             <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
 
-            {/* Otros módulos */}
-            <Route path="/accesos" element={<ProtectedRoute><Layout><IamGuard anyOf={["accesos.read","accesos.write","accesos.export","*"]}><Accesos/></IamGuard></Layout></ProtectedRoute>} />
-            <Route path="/visitas" element={<ProtectedRoute><Layout><IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}><Visitas/></IamGuard></Layout></ProtectedRoute>} />
-            <Route path="/bitacora" element={<ProtectedRoute><Layout><IamGuard anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}><Bitacora/></IamGuard></Layout></ProtectedRoute>} />
-            <Route path="/supervision" element={<ProtectedRoute><Layout><IamGuard anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}><Supervision/></IamGuard></Layout></ProtectedRoute>} />
-            <Route path="/evaluacion" element={<ProtectedRoute><Layout><IamGuard anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}><Evaluacion/></IamGuard></Layout></ProtectedRoute>} />
-            <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
+            {/* Otros módulos existentes */}
+            <Route
+              path="/accesos"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["accesos.read","accesos.write","accesos.export","*"]}>
+                      <Accesos/>
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* ⬇⬇⬇ ACTUALIZADO AQUÍ ⬇⬇⬇ */}
+            <Route
+              path="/visitas"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                      <VisitsPageCore /> {/* ← antes era <Visitas /> */}
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            {/* ⬆⬆⬆ ACTUALIZADO AQUÍ ⬆⬆⬆ */}
+
+            <Route
+              path="/bitacora"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}>
+                      <Bitacora/>
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/supervision"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}>
+                      <Supervision/>
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluacion"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}>
+                      <Evaluacion/>
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Chat />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* 🔹 NUEVO: módulo Control de Visitas moderno */}
+            <Route
+              path="/visitas/control"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                      <VisitsPageCore />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* 🔹 NUEVO: submódulo Agenda de Citas */}
+            <Route
+              path="/visitas/agenda"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                      <AgendaPageCore />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
 
             {/* 404 */}
             <Route path="*" element={<div className="p-6">No encontrado</div>} />

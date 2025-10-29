@@ -18,6 +18,11 @@ import { requireAuth } from "./middleware/auth.js";
 // Módulo Rondas QR
 import rondasqr from "../modules/rondasqr/index.js";
 
+// 👇 NUEVO: módulo Visitas (rutas REST)
+// ⚠️ CORREGIDO: se debe salir un nivel arriba (../) porque server.js está dentro de src/
+import visitasRoutes from "../modules/visitas/visitas.routes.js";
+// 👆 NUEVO CORREGIDO
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -65,7 +70,9 @@ if (!fs.existsSync(RONDAS_UPLOADS_DIR)) {
 app.use("/uploads", express.static(RONDAS_UPLOADS_DIR));
 
 /* ───────────────────────── Health checks ──────────────────────── */
-app.get("/api/health", (_req, res) => res.json({ ok: true, service: "senaf-api", ts: Date.now() }));
+app.get("/api/health", (_req, res) =>
+  res.json({ ok: true, service: "senaf-api", ts: Date.now() })
+);
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
@@ -73,7 +80,10 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: origins || true, methods: ["GET", "POST"], credentials: true },
 });
-app.use((req, _res, next) => { req.io = io; next(); });
+app.use((req, _res, next) => {
+  req.io = io;
+  next();
+});
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -81,10 +91,12 @@ if (!mongoUri) {
   console.error("[db] FALTA MONGODB_URI o MONGO_URI");
   process.exit(1);
 }
-await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
-  console.error("[db] Error conectando a MongoDB:", e?.message || e);
-  process.exit(1);
-});
+await mongoose
+  .connect(mongoUri, { autoIndex: true })
+  .catch((e) => {
+    console.error("[db] Error conectando a MongoDB:", e?.message || e);
+    process.exit(1);
+  });
 console.log("[db] MongoDB conectado");
 
 // Fix índice conflictivo en iamusers: username_1 unique con valores null
@@ -96,7 +108,10 @@ try {
     console.warn("[iamusers] index username_1 (unique) eliminado");
   }
 } catch (e) {
-  console.warn("[iamusers] no se pudo revisar/eliminar username_1:", e.message);
+  console.warn(
+    "[iamusers] no se pudo revisar/eliminar username_1:",
+    e.message
+  );
 }
 
 /* ───────────── DEV headers → payload IAM (opcional) ───────────── */
@@ -106,9 +121,13 @@ function iamDevMerge(req, _res, next) {
 
   const devEmail = req.headers["x-user-email"];
   const devRoles = String(req.headers["x-roles"] || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const devPerms = String(req.headers["x-perms"] || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   req.auth = req.auth || { payload: {} };
   const p = req.auth.payload;
@@ -138,9 +157,15 @@ function pickMe(req) {
   const p = req?.auth?.payload || {};
   const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
   const email =
-    p.email || p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] || null;
+    p.email ||
+    p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
+    null;
 
-  const roles = Array.isArray(p[NS]) ? p[NS] : Array.isArray(p.roles) ? p.roles : [];
+  const roles = Array.isArray(p[NS])
+    ? p[NS]
+    : Array.isArray(p.roles)
+    ? p.roles
+    : [];
   const permissions = Array.isArray(p.permissions) ? p.permissions : [];
 
   return {
@@ -150,7 +175,11 @@ function pickMe(req) {
     permissions,
     _debug:
       process.env.NODE_ENV !== "production"
-        ? { NS, hasAuthHeader: !!req.headers.authorization, fromDevHeaders: process.env.IAM_ALLOW_DEV_HEADERS === "1" }
+        ? {
+            NS,
+            hasAuthHeader: !!req.headers.authorization,
+            fromDevHeaders: process.env.IAM_ALLOW_DEV_HEADERS === "1",
+          }
         : undefined,
   };
 }
@@ -159,30 +188,45 @@ function pickMe(req) {
 app.use(iamDevMerge);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
-app.get("/api/incidentes", (_req, res) => res.json({ items: [], total: 0 }));
-app.post("/api/incidentes", (_req, res) => res.status(201).json({ ok: true }));
+app.get("/api/incidentes", (_req, res) =>
+  res.json({ items: [], total: 0 })
+);
+app.post("/api/incidentes", (_req, res) =>
+  res.status(201).json({ ok: true })
+);
 
 /* ───────────── IAM principal + /me ───────────── */
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
-app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) => res.json(pickMe(req)));
-app.get("/api/iam/v1/me",       optionalAuth, (req, res) => res.json(pickMe(req)));
-app.get("/api/iam/v1/audit", (_req, res) => res.json({ ok: true, items: [], limit: 100 }));
+app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) =>
+  res.json(pickMe(req))
+);
+app.get("/api/iam/v1/me", optionalAuth, (req, res) => res.json(pickMe(req)));
+app.get("/api/iam/v1/audit", (_req, res) =>
+  res.json({ ok: true, items: [], limit: 100 })
+);
 
 app.get("/api/notifications/count", (_req, res) => res.json(0));
 app.get("/api/chat/messages", (_req, res) => res.json([]));
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
-// Este prefijo coincide con el FRONT: http://localhost:4000/api/rondasqr/v1/...
 app.use("/api/rondasqr/v1", rondasqr);
 
+/* ───────────────────── Módulo Visitas (nuevo) ─────────────────── */
+app.use("/api/visitas", visitasRoutes);
+/* ───────────────────── FIN módulo Visitas ─────────────────────── */
+
 /* ─────────────────────────── 404 final ────────────────────────── */
-app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
+app.use((_req, res) =>
+  res.status(404).json({ ok: false, error: "Not implemented" })
+);
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
 server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
-  console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
+  console.log(
+    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
+  );
 });
 
 io.on("connection", (s) => {
@@ -200,7 +244,11 @@ function shutdown(sig) {
     });
   });
 }
-process.on("SIGINT",  () => shutdown("SIGINT"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException",  (err) => console.error("[api] UncaughtException:",  err));
+process.on("unhandledRejection", (err) =>
+  console.error("[api] UnhandledRejection:", err)
+);
+process.on("uncaughtException", (err) =>
+  console.error("[api] UncaughtException:", err)
+);
