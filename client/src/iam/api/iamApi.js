@@ -108,6 +108,11 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
 const PATHS = {
   users: {
     list: (q) => `${V1}/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    guards: (q, active = true) =>
+      `${V1}/users/guards${q || active ? `?${[
+        q ? `q=${encodeURIComponent(q)}` : "",
+        active ? "active=1" : ""
+      ].filter(Boolean).join("&")}` : ""}`,
     create: () => `${V1}/users`,
     byId: (id) => `${V1}/users/${id}`,
     enable: (id) => `${V1}/users/${id}/enable`,
@@ -258,6 +263,9 @@ export const iamApi = {
 
   // -------- Usuarios
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
+
+  // NUEVO: lista de guardias (para el select)
+  listGuards: (q = "", active = true, t) => rawFetch(PATHS.users.guards(q, active), { token: t }),
 
   createUser: (payload, t) => {
     let email = "",

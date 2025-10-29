@@ -1,3 +1,4 @@
+// components/Topbar.jsx
 import React from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
@@ -8,7 +9,7 @@ import {
   DoorOpen, KeyRound, Footprints, Route,
   AlertTriangle, UsersRound, Users, NotebookPen,
   ClipboardList, ClipboardCheck, Award, BarChart3,
-  ShieldCheck,                  // 👈 nuevo icono para IAM
+  ShieldCheck,
 } from "lucide-react";
 
 // === Socket para eventos en vivo ===
@@ -30,8 +31,8 @@ const PATH_LABELS = {
   "/bitacora": "Bitácora Digital",
   "/supervision": "Supervisión",
   "/evaluacion": "Evaluación",
-  "/iam": "Usuarios y Permisos",        // 👈 para breadcrumb
-  "/iam/admin": "Usuarios y Permisos",  // 👈 para breadcrumb
+  "/iam": "Usuarios y Permisos",
+  "/iam/admin": "Usuarios y Permisos",
 };
 
 // Íconos alineados con “Secciones”
@@ -39,7 +40,7 @@ const IconDoor       = DoorOpen || KeyRound;
 const IconFootprints = Footprints || Route;
 const IconVisitors   = UsersRound || Users;
 const IconEval       = ClipboardCheck || Award;
-const IconIAM        = ShieldCheck || Users;   // 👈 fallback
+const IconIAM        = ShieldCheck || Users;
 
 const MODULES = [
   { to: "/accesos",     label: "Control de Acceso",     Icon: IconDoor },
@@ -293,24 +294,41 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         )}
       </div>
 
-      {/* Paleta + tema */}
-      <ThemeFxPicker />
-      <ThemeToggle />
+      {/* === Paleta + Tema SIEMPRE visibles, conservando funcionalidad === */}
+      {/* MÓVIL: versión compacta visible en xs (misma lógica) */}
+      <div className="sm:hidden flex items-center gap-2 shrink-0">
+        <div className="shrink-0">
+          <ThemeFxPicker />
+        </div>
+        <div className="shrink-0">
+          <ThemeToggle />
+        </div>
+      </div>
 
-      {/* Usuario + logout */}
-      <span className="hidden sm:block text-sm opacity-80">{user?.name}</span>
-      <button
-        onClick={() =>
-          logout({
-            logoutParams: { returnTo: `${window.location.origin}/login`, federated: true },
-          })
-        }
-        className="btn-outline-neon inline-flex items-center gap-1"
-        title="Salir"
-      >
-        <LogOut className="w-4 h-4" />
-        <span className="hidden sm:inline">Salir</span>
-      </button>
+      {/* ESCRITORIO (sm+): versión normal + usuario/salir */}
+      <div className="hidden sm:flex items-center gap-2 shrink-0">
+        <div className="shrink-0">
+          <ThemeFxPicker />
+        </div>
+        <div className="shrink-0">
+          <ThemeToggle />
+        </div>
+
+        {/* Usuario + logout */}
+        <span className="hidden sm:block text-sm opacity-80">{user?.name}</span>
+        <button
+          onClick={() =>
+            logout({
+              logoutParams: { returnTo: `${window.location.origin}/login`, federated: true },
+            })
+          }
+          className="btn-outline-neon inline-flex items-center gap-1"
+          title="Salir"
+        >
+          <LogOut className="w-4 h-4" />
+          <span className="hidden sm:inline">Salir</span>
+        </button>
+      </div>
 
       {/* Modal búsqueda */}
       {searchOpen && (

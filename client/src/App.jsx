@@ -104,14 +104,20 @@ function AuthTokenBridge({ children }) {
         attachRondasAuth(null);
         return;
       }
+      // ⚠️ No solicitamos offline_access; si no hay refresh token, no es error.
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
+            authorizationParams: {
+              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+              scope: "openid profile email" // ← sin offline_access para evitar "Missing Refresh Token"
+            }
           });
           return token || null;
         } catch (err) {
-          console.warn("[AuthTokenBridge]", err?.message || err);
+          // No spamear consola si sólo falta refresh; seguimos sin token.
+          const msg = (err && (err.error || err.message)) || String(err);
+          console.debug("[AuthTokenBridge] getAccessTokenSilently:", msg);
           return null;
         }
       };
@@ -138,7 +144,7 @@ function RondasRouterInline() {
         <Navigate to="/rondasqr/scan" replace />
       </IamGuard>
 
-      {/* Por defecto → Panel unificado (antes te mandaba a /rondasqr/panel → informes) */}
+      {/* Por defecto → Panel unificado */}
       <Navigate to="/rondasqr/scan" replace />
     </>
   );
@@ -206,18 +212,18 @@ export default function App() {
             />
 
             {/* ✅ RONDAS QR */}
-            {/* Entrada única → router inteligente (ahora por defecto /rondasqr/scan) */}
+            {/* Entrada única → router inteligente (por defecto /rondasqr/scan) */}
             <Route
               path="/rondasqr"
               element={<ProtectedRoute><Layout><RondasRouterInline /></Layout></ProtectedRoute>}
             />
 
             {/* Panel unificado (Scan) */}
+            {/* ⬇⬇⬇ COMODÍN para permitir /rondasqr/scan/qr, /msg, /fotos */}
             <Route
-              path="/rondasqr/scan"
+              path="/rondasqr/scan/*"
               element={
                 <ProtectedRoute>
-                  {/* si no quieres el sidebar del app general aquí, deja hideSidebar */}
                   <Layout hideSidebar>
                     <IamGuard anyOf={["guardia","rondasqr.view","admin","iam.users.manage","*"]}>
                       <RondasScan />
@@ -227,7 +233,7 @@ export default function App() {
               }
             />
 
-            {/* Informes (solo cuando se invoca explícitamente) */}
+            {/* Informes */}
             <Route
               path="/rondasqr/reports"
               element={
@@ -255,14 +261,14 @@ export default function App() {
               }
             />
 
-            {/* Aliases de admin para que los enlaces del menú no den 404 */}
+            {/* Aliases de admin */}
             <Route path="/rondasqr/admin/plans"        element={<Navigate to="/rondasqr/admin" replace />} />
             <Route path="/rondasqr/admin/checkpoints"  element={<Navigate to="/rondasqr/admin" replace />} />
 
-            {/* 🔁 Redirecciones legacy que antes te llevaban a Informes */}
-            <Route path="/rondasqrpanel"                element={<Navigate to="/rondasqr/scan" replace />} />
-            <Route path="/rondasqr/panel"               element={<Navigate to="/rondasqr/scan" replace />} />
-            <Route path="/rondasqr/rondasqrpanel"       element={<Navigate to="/rondasqr/scan" replace />} />
+            {/* 🔁 Redirecciones legacy */}
+            <Route path="/rondasqrpanel"          element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondasqr/panel"         element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondasqr/rondasqrpanel" element={<Navigate to="/rondasqr/scan" replace />} />
 
             {/* Alias legacy generales */}
             <Route path="/rondas"         element={<Navigate to="/rondasqr" replace />} />
