@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -23,6 +22,9 @@ import notificationsRoutes from "./core/notifications.routes.js";
 
 // Módulo Rondas QR
 import rondasqr from "../modules/rondasqr/index.js";
+
+// Importar la función startDailyAssignmentCron
+import { startDailyAssignmentCron } from './cron/assignments.cron.js';
 
 const app = express();
 app.set("trust proxy", 1);
