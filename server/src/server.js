@@ -1,3 +1,4 @@
+// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -7,21 +8,21 @@ import compression from "compression";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
 import mongoose from "mongoose";
+import nodemailer from "nodemailer";
 import path from "node:path";
 import fs from "node:fs";
 
 // IAM (usuarios/roles/permisos)
 import { registerIAMModule } from "../modules/iam/index.js";
-// Auth opcional (sólo valida si hay Authorization)
+// Auth opcional (valida JWT sólo si hay Authorization)
 import { requireAuth } from "./middleware/auth.js";
+
+// ⬇️ Core de notificaciones (ahora dentro de src/core)
+import { makeNotifier } from "./core/notify.js";
+import notificationsRoutes from "./core/notifications.routes.js";
 
 // Módulo Rondas QR
 import rondasqr from "../modules/rondasqr/index.js";
-
-// 👇 NUEVO: módulo Visitas (rutas REST)
-// ⚠️ CORREGIDO: se debe salir un nivel arriba (../) porque server.js está dentro de src/
-import visitasRoutes from "../modules/visitas/visitas.routes.js";
-// 👆 NUEVO CORREGIDO
 
 const app = express();
 app.set("trust proxy", 1);
@@ -29,10 +30,7 @@ app.set("trust proxy", 1);
 /* ───────────────────────────── CORS ───────────────────────────── */
 function parseOrigins(str) {
   if (!str) return null;
-  return String(str)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return String(str).split(",").map((s) => s.trim()).filter(Boolean);
 }
 const devDefaults = ["http://localhost:5173", "http://localhost:3000"];
 const origins =
@@ -42,31 +40,22 @@ const origins =
 app.use(cors({ origin: origins || true, credentials: true }));
 
 /* ─────────────────────── Helmet / Seguridad ───────────────────── */
-app.use(
-  helmet({
-    crossOriginResourcePolicy: false,
-  })
-);
+app.use(helmet({ crossOriginResourcePolicy: false }));
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 app.use(compression());
 
-/* 👇 Unificamos body parser para todo (evita redundancia en el módulo) */
+/* ─────────────────────── Parsers de body ──────────────────────── */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // No cache en DEV
 if (process.env.NODE_ENV !== "production") {
-  app.use((req, res, next) => {
-    res.set("Cache-Control", "no-store");
-    next();
-  });
+  app.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
-const RONDAS_UPLOADS_DIR = path.resolve("server/modules/rondasqr/uploads");
-if (!fs.existsSync(RONDAS_UPLOADS_DIR)) {
-  fs.mkdirSync(RONDAS_UPLOADS_DIR, { recursive: true });
-}
+const RONDAS_UPLOADS_DIR = path.resolve(process.cwd(), "modules", "rondasqr", "uploads");
+if (!fs.existsSync(RONDAS_UPLOADS_DIR)) fs.mkdirSync(RONDAS_UPLOADS_DIR, { recursive: true });
 app.use("/uploads", express.static(RONDAS_UPLOADS_DIR));
 
 /* ───────────────────────── Health checks ──────────────────────── */
@@ -80,23 +69,19 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: { origin: origins || true, methods: ["GET", "POST"], credentials: true },
 });
-app.use((req, _res, next) => {
-  req.io = io;
-  next();
-});
+
+app.set("io", io);
+// compat: algunos módulos esperan req.io
+app.use((req, _res, next) => { req.io = io; next(); });
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
-if (!mongoUri) {
-  console.error("[db] FALTA MONGODB_URI o MONGO_URI");
+if (!mongoUri) { console.error("[db] FALTA MONGODB_URI o MONGO_URI"); process.exit(1); }
+await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
+  console.error("[db] Error conectando a MongoDB:", e?.message || e);
   process.exit(1);
-}
-await mongoose
-  .connect(mongoUri, { autoIndex: true })
-  .catch((e) => {
-    console.error("[db] Error conectando a MongoDB:", e?.message || e);
-    process.exit(1);
-  });
+});
+
 console.log("[db] MongoDB conectado");
 
 // Fix índice conflictivo en iamusers: username_1 unique con valores null
@@ -114,106 +99,170 @@ try {
   );
 }
 
-/* ───────────── DEV headers → payload IAM (opcional) ───────────── */
+/* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
 function iamDevMerge(req, _res, next) {
-  const allow = process.env.IAM_ALLOW_DEV_HEADERS === "1";
+  const allow = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
   if (!allow) return next();
 
   const devEmail = req.headers["x-user-email"];
-  const devRoles = String(req.headers["x-roles"] || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const devPerms = String(req.headers["x-perms"] || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
 
   req.auth = req.auth || { payload: {} };
   const p = req.auth.payload;
-
   if (devEmail && !p.email) p.email = devEmail;
 
   const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
   const mergedRoles = new Set([...(p[NS] || p.roles || []), ...devRoles]);
-  if (mergedRoles.size) {
-    p[NS] = Array.from(mergedRoles);
-    p.roles = Array.from(mergedRoles);
-  }
+  if (mergedRoles.size) { p[NS] = Array.from(mergedRoles); p.roles = Array.from(mergedRoles); }
   const mergedPerms = new Set([...(p.permissions || []), ...devPerms]);
   if (mergedPerms.size) p.permissions = Array.from(mergedPerms);
 
+  if (!req.user) {
+    req.user = {
+      sub: req.headers["x-user-id"] || "dev|local",
+      email: devEmail || "dev@local",
+      [NS]: Array.from(mergedRoles),
+      permissions: Array.from(mergedPerms),
+    };
+  }
   next();
 }
 
+/* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
+function authBridgeToReqUser(req, _res, next) {
+  if (!req.user && req?.auth?.payload) {
+    const p = req.auth.payload;
+    const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+    req.user = {
+      sub: p.sub || "auth|user",
+      email: p.email || p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] || null,
+      [NS]: Array.isArray(p[NS]) ? p[NS] : Array.isArray(p.roles) ? p.roles : [],
+      permissions: Array.isArray(p.permissions) ? p.permissions : [],
+    };
+  }
+  next();
+}
+
+/* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  if (req.headers.authorization && process.env.DISABLE_AUTH !== "1") {
+  if (req.headers.authorization && String(process.env.DISABLE_AUTH || "0") !== "1") {
     return requireAuth(req, res, next);
   }
   return next();
 }
 
+/* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
+app.use(iamDevMerge);
+app.use(authBridgeToReqUser);
+
+/* ───────────────────── Stubs simples (UI) ─────────────────────── */
+app.get("/api/incidentes", (_req, res) => res.json({ items: [], total: 0 }));
+app.post("/api/incidentes", (_req, res) => res.status(201).json({ ok: true }));
+app.get("/api/chat/messages", (_req, res) => res.json([]));
+
+/* ───────────── IAM principal + /me ───────────── */
+await registerIAMModule({ app, basePath: "/api/iam/v1" });
+
 function pickMe(req) {
   const p = req?.auth?.payload || {};
   const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
-  const email =
-    p.email ||
-    p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
-    null;
 
-  const roles = Array.isArray(p[NS])
-    ? p[NS]
-    : Array.isArray(p.roles)
-    ? p.roles
-    : [];
   const permissions = Array.isArray(p.permissions) ? p.permissions : [];
-
   return {
     ok: true,
     user: { email, name: p.name || null, sub: p.sub || null },
     roles,
     permissions,
-    _debug:
-      process.env.NODE_ENV !== "production"
-        ? {
-            NS,
-            hasAuthHeader: !!req.headers.authorization,
-            fromDevHeaders: process.env.IAM_ALLOW_DEV_HEADERS === "1",
-          }
-        : undefined,
   };
 }
 
-/* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
-app.use(iamDevMerge);
+/* ─────────── Email verify (opcional) ─────────── */
+app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const email = String(req.body?.email || "").trim();
+    if (!id || !email) return res.status(400).json({ error: "Faltan parámetros (id/email)" });
 
-/* ───────────────────── Stubs simples (UI) ─────────────────────── */
-app.get("/api/incidentes", (_req, res) =>
-  res.json({ items: [], total: 0 })
-);
-app.post("/api/incidentes", (_req, res) =>
-  res.status(201).json({ ok: true })
-);
+    const isCustomSmtp = !!process.env.MAIL_HOST;
+    const smtpTransport = isCustomSmtp
+      ? nodemailer.createTransport({
+          host: process.env.MAIL_HOST,
+          port: Number(process.env.MAIL_PORT || 587),
+          secure: String(process.env.MAIL_SECURE || "false") === "true",
+          auth: { user: process.env.MAIL_USER, pass: process.env.MAIL_PASS },
+        })
+      : nodemailer.createTransport({
+          host: "smtp.gmail.com",
+          port: 465,
+          secure: true,
+          auth: {
+            user: process.env.GMAIL_USER || process.env.MAIL_USER,
+            pass: process.env.GMAIL_PASS || process.env.MAIL_PASS,
+          },
+        });
 
-/* ───────────── IAM principal + /me ───────────── */
-await registerIAMModule({ app, basePath: "/api/iam/v1" });
-app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) =>
-  res.json(pickMe(req))
-);
-app.get("/api/iam/v1/me", optionalAuth, (req, res) => res.json(pickMe(req)));
-app.get("/api/iam/v1/audit", (_req, res) =>
-  res.json({ ok: true, items: [], limit: 100 })
-);
+    try { await smtpTransport.verify(); }
+    catch (vErr) {
+      console.error("[smtp] verify() falló:", vErr?.message || vErr);
+      return res.status(500).json({ error: "SMTP no disponible. Revisa credenciales/puerto/host." });
+    }
 
-app.get("/api/notifications/count", (_req, res) => res.json(0));
-app.get("/api/chat/messages", (_req, res) => res.json([]));
+    const fromAddress =
+      process.env.MAIL_FROM || `"SENAF Seguridad" <${process.env.GMAIL_USER || process.env.MAIL_USER}>`;
+
+    const link = process.env.VERIFY_BASE_URL
+      ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(id)}`
+      : `http://localhost:5173/verify?user=${encodeURIComponent(id)}`;
+
+    const mailOptions = {
+      from: fromAddress,
+      to: email,
+      subject: "Verificación de correo electrónico",
+      html: `
+        <div style="font-family:Arial,sans-serif;padding:10px">
+          <h2>Verificación de cuenta</h2>
+          <p>Hola, por favor verifica tu cuenta haciendo clic en el siguiente enlace:</p>
+          <p>
+            <a href="${link}" target="_blank"
+               style="background:#1d4ed8;color:#fff;padding:10px 14px;border-radius:6px;text-decoration:none;">
+               Verificar mi cuenta
+            </a>
+          </p>
+          <p>Si no solicitaste esta verificación, puedes ignorar este correo.</p>
+        </div>
+      `,
+    };
+
+    const info = await smtpTransport.sendMail(mailOptions);
+    if (info.rejected && info.rejected.length) {
+      return res.status(502).json({ error: "El servidor SMTP rechazó el correo", detail: info.rejected });
+    }
+    return res.json({ ok: true, message: "Correo de verificación enviado" });
+  } catch (e) {
+    console.error("[verify-email] error:", e);
+    return res.status(500).json({ error: e?.message || "Error enviando verificación" });
+  }
+});
+
+/* ─────────────────── Notificaciones globales ──────────────────── */
+const notifier = makeNotifier({ io, mailer: null });
+app.set("notifier", notifier);
+// Endpoints usados por client/src/lib/notificationsApi.js
+app.use("/api/notifications", notificationsRoutes);
+
+// ⏰ Inicia cron de asignaciones (diario)
+startDailyAssignmentCron(app);
+
+/* ──────────────── DEBUG: trigger de asignación por URL ─────────────── */
+app.get("/api/_debug/ping-assign", (req, res) => {
+  const userId = String(req.query.userId || "dev|local");
+  const title = String(req.query.title || "Nueva ronda asignada (prueba)");
+  const body  = String(req.query.body  || "Debes comenzar la ronda de prueba en el punto A.");
+  io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", { title, body, meta: { debug: true, ts: Date.now() } });
+  io.to(`guard-${userId}`).emit("rondasqr:nueva-asignacion", { title, body, meta: { debug: true, ts: Date.now() } });
+  res.json({ ok: true, sentTo: [`user-${userId}`, `guard-${userId}`] });
+});
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
-app.use("/api/rondasqr/v1", rondasqr);
-
-/* ───────────────────── Módulo Visitas (nuevo) ─────────────────── */
-app.use("/api/visitas", visitasRoutes);
-/* ───────────────────── FIN módulo Visitas ─────────────────────── */
 
 /* ─────────────────────────── 404 final ────────────────────────── */
 app.use((_req, res) =>
@@ -229,12 +278,21 @@ server.listen(PORT, () => {
   );
 });
 
+/* ───────────────────────── Socket.IO ──────────────────────────── */
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
   s.emit("hello", { ok: true, ts: Date.now() });
+  s.on("join-room", ({ userId }) => {
+    if (userId) {
+      s.join(`user-${userId}`);
+      s.join(`guard-${userId}`); // compat con módulo rondas
+      console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
+    }
+  });
   s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
 
+/* ────────────────────────── Shutdown ──────────────────────────── */
 function shutdown(sig) {
   console.log(`[api] ${sig} recibido. Cerrando...`);
   server.close(() => {
@@ -246,9 +304,3 @@ function shutdown(sig) {
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) =>
-  console.error("[api] UnhandledRejection:", err)
-);
-process.on("uncaughtException", (err) =>
-  console.error("[api] UncaughtException:", err)
-);

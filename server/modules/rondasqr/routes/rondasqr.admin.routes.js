@@ -1,3 +1,4 @@
+// server/modules/rondasqr/routes/rondasqr.admin.routes.js
 import express from "express";
 import mongoose from "mongoose";
 
@@ -20,16 +21,23 @@ const slug = (s) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+// normalizador de turno: "Día"/"dia"/"Dia" => "dia"; "Noche"/"noche" => "noche"
+const normShift = (s) => {
+  if (s == null) return undefined;
+  const v = String(s).trim().toLowerCase();
+  if (v === "día") return "dia";
+  return v;
+};
+
 /* =================================================================
    SITES
    GET    /admin/sites
-   POST   /admin/sites                 -> { name, code?, active?, gps? }
+   POST   /admin/sites
    PUT    /admin/sites/:id
-   PATCH  /admin/sites/:id/off | /on
+   PATCH  /admin/sites/:id/(off|on)
    DELETE /admin/sites/:id
 ================================================================= */
 
-// LIST
 router.get("/sites", async (req, res, next) => {
   try {
     const { q, active } = req.query;
@@ -48,7 +56,6 @@ router.get("/sites", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// CREATE
 router.post("/sites", async (req, res, next) => {
   try {
     const { name, code, active, gps } = req.body || {};
@@ -61,12 +68,11 @@ router.post("/sites", async (req, res, next) => {
       active: typeof active === "boolean" ? active : true,
     };
 
-    // loc solo si hay coordenadas válidas
     if (gps && typeof gps === "object") {
       const lat = Number(gps.lat);
       const lon = Number(gps.lon);
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        doc.loc = { type: "Point", coordinates: [lon, lat] }; // [lon, lat]
+        doc.loc = { type: "Point", coordinates: [lon, lat] };
       }
     }
 
@@ -84,7 +90,6 @@ router.post("/sites", async (req, res, next) => {
   }
 });
 
-// UPDATE
 router.put("/sites/:id", async (req, res, next) => {
   try {
     const id = toId(req.params.id);
@@ -96,14 +101,13 @@ router.put("/sites/:id", async (req, res, next) => {
     if (code != null) $set.code = norm(code) || null;
     if (active != null) $set.active = !!active;
 
-    // actualizar/limpiar loc según gps recibido
     if (gps !== undefined) {
       const lat = Number(gps?.lat);
       const lon = Number(gps?.lon);
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         $set.loc = { type: "Point", coordinates: [lon, lat] };
       } else {
-        $set.loc = undefined; // quita loc si llega gps inválido/vacio
+        $set.loc = undefined;
       }
     }
 
@@ -113,7 +117,6 @@ router.put("/sites/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// SOFT OFF/ON
 router.patch("/sites/:id/off", async (req, res, next) => {
   try {
     const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
@@ -131,7 +134,6 @@ router.patch("/sites/:id/on", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// DELETE
 router.delete("/sites/:id", async (req, res, next) => {
   try {
     const id = toId(req.params.id);
@@ -144,11 +146,6 @@ router.delete("/sites/:id", async (req, res, next) => {
 
 /* =================================================================
    ROUNDS
-   GET    /admin/rounds?siteId
-   POST   /admin/rounds           -> { siteId, name, code?, active? }
-   PUT    /admin/rounds/:id
-   PATCH  /admin/rounds/:id/(on|off)
-   DELETE /admin/rounds/:id
 ================================================================= */
 
 router.get("/rounds", async (req, res, next) => {
@@ -242,11 +239,6 @@ router.delete("/rounds/:id", async (req, res, next) => {
 
 /* =================================================================
    POINTS
-   GET    /admin/points?siteId&roundId&q
-   POST   /admin/points            -> { siteId, roundId, name, qr?, order?, gps?, active? }
-   PUT    /admin/points/:id
-   PATCH  /admin/points/:id/(on|off)
-   DELETE /admin/points/:id
 ================================================================= */
 
 router.get("/points", async (req, res, next) => {
@@ -293,7 +285,6 @@ router.post("/points", async (req, res, next) => {
       active: typeof active === "boolean" ? active : true,
     };
 
-    // gps / loc opcional
     if (gps && typeof gps === "object") {
       const lat = Number(gps.lat);
       const lon = Number(gps.lon);
@@ -327,7 +318,6 @@ router.put("/points/:id", async (req, res, next) => {
     if (qr != null) $set.qr = norm(qr) || null;
     if (order != null) $set.order = Number.isFinite(Number(order)) ? Number(order) : 0;
 
-    // actualizar/limpiar gps/loc
     if (gps !== undefined) {
       const lat = Number(gps?.lat);
       const lon = Number(gps?.lon);
@@ -377,49 +367,65 @@ router.delete("/points/:id", async (req, res, next) => {
 
 /* =================================================================
    PLANS
-   GET    /admin/plans?siteId&roundId
-   POST   /admin/plans     -> upsert { siteId, roundId, pointIds[], windows?, active? }
+   GET    /admin/plans?siteId=&roundId=&shift=
+   POST   /admin/plans               (upsert por siteId+roundId+shift)
    PUT    /admin/plans/:id
-   DELETE /admin/plans/:id
+   DELETE /admin/plans               (por query: siteId+roundId+shift)
+   DELETE /admin/plans/:id           (por id)
 ================================================================= */
 
+// GET: si viene siteId+roundId (y opcional shift) -> { item }, si no -> { items }
 router.get("/plans", async (req, res, next) => {
   try {
-    const { siteId, roundId, active } = req.query;
+    const { siteId, roundId, shift, active } = req.query;
     const filter = {};
     if (siteId) {
-      const sid = toId(siteId); if (!sid) return res.status(400).json({ error: "siteId inválido" });
+      const sid = toId(siteId);
+      if (!sid) return res.status(400).json({ error: "siteId inválido" });
       filter.siteId = sid;
     }
     if (roundId) {
-      const rid = toId(roundId); if (!rid) return res.status(400).json({ error: "roundId inválido" });
+      const rid = toId(roundId);
+      if (!rid) return res.status(400).json({ error: "roundId inválido" });
       filter.roundId = rid;
     }
+    const sh = normShift(shift);
+    if (sh) filter.shift = sh;
+
     if (active === "true") filter.active = true;
     if (active === "false") filter.active = false;
 
+    if (filter.siteId && filter.roundId) {
+      // consulta específica
+      const item = await RqPlan.findOne(filter).lean();
+      return res.json({ item: item || null });
+    }
+
+    // listado
     const items = await RqPlan.find(filter).lean();
     res.json({ items });
   } catch (e) { next(e); }
 });
 
-// UPSERT por (siteId, roundId)
+// UPSERT por (siteId, roundId, shift)
 router.post("/plans", async (req, res, next) => {
   try {
-    const { siteId, roundId, pointIds = [], windows = [], active } = req.body || {};
+    const { siteId, roundId, shift, pointIds = [], windows = [], active } = req.body || {};
     const sid = toId(siteId);
     const rid = toId(roundId);
     if (!sid) return res.status(400).json({ error: "siteId requerido/valido" });
     if (!rid) return res.status(400).json({ error: "roundId requerido/valido" });
 
+    const sh = normShift(shift); // puede ser undefined -> se guarda sin turno si no llega
     const pts = Array.isArray(pointIds) ? pointIds.map(toId).filter(Boolean) : [];
 
     const doc = {
       siteId: sid,
       roundId: rid,
+      shift: sh, // <-- clave
       pointIds: pts,
       windows: Array.isArray(windows)
-        ? windows.map(w => ({
+        ? windows.map((w) => ({
             label: norm(w?.label) || undefined,
             startMin: Number.isFinite(Number(w?.startMin)) ? Number(w.startMin) : undefined,
             endMin: Number.isFinite(Number(w?.endMin)) ? Number(w.endMin) : undefined,
@@ -429,7 +435,7 @@ router.post("/plans", async (req, res, next) => {
     if (active != null) doc.active = !!active;
 
     const item = await RqPlan.findOneAndUpdate(
-      { siteId: sid, roundId: rid },
+      { siteId: sid, roundId: rid, ...(sh ? { shift: sh } : {}) },
       { $set: doc },
       { upsert: true, new: true, lean: true }
     );
@@ -442,19 +448,22 @@ router.put("/plans/:id", async (req, res, next) => {
     const id = toId(req.params.id);
     if (!id) return res.status(400).json({ error: "id inválido" });
 
-    const { siteId, roundId, pointIds, windows, active } = req.body || {};
+    const { siteId, roundId, shift, pointIds, windows, active } = req.body || {};
     const $set = {};
     if (siteId != null) {
-      const sid = toId(siteId); if (!sid) return res.status(400).json({ error: "siteId inválido" });
+      const sid = toId(siteId);
+      if (!sid) return res.status(400).json({ error: "siteId inválido" });
       $set.siteId = sid;
     }
     if (roundId != null) {
-      const rid = toId(roundId); if (!rid) return res.status(400).json({ error: "roundId inválido" });
+      const rid = toId(roundId);
+      if (!rid) return res.status(400).json({ error: "roundId inválido" });
       $set.roundId = rid;
     }
+    if (shift !== undefined) $set.shift = normShift(shift) || undefined;
     if (Array.isArray(pointIds)) $set.pointIds = pointIds.map(toId).filter(Boolean);
     if (Array.isArray(windows)) {
-      $set.windows = windows.map(w => ({
+      $set.windows = windows.map((w) => ({
         label: norm(w?.label) || undefined,
         startMin: Number.isFinite(Number(w?.startMin)) ? Number(w.startMin) : undefined,
         endMin: Number.isFinite(Number(w?.endMin)) ? Number(w.endMin) : undefined,
@@ -468,6 +477,22 @@ router.put("/plans/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// DELETE por query (siteId+roundId+shift)
+router.delete("/plans", async (req, res, next) => {
+  try {
+    const { siteId, roundId, shift } = req.query;
+    const sid = toId(siteId);
+    const rid = toId(roundId);
+    const sh = normShift(shift);
+    if (!sid || !rid) return res.status(400).json({ error: "siteId y roundId requeridos" });
+
+    const del = await RqPlan.findOneAndDelete({ siteId: sid, roundId: rid, ...(sh ? { shift: sh } : {}) }).lean();
+    if (!del) return res.status(404).json({ error: "no encontrado" });
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// DELETE por id (sigue disponible)
 router.delete("/plans/:id", async (req, res, next) => {
   try {
     const id = toId(req.params.id);

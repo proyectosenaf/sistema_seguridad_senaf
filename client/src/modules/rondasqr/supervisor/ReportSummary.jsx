@@ -1,3 +1,4 @@
+// src/modules/rondasqr/supervisor/ReportSummary.jsx
 import React from "react";
 
 /** stats: [{ site, round, day, officer, puntosRegistrados, pasos, primeraMarca, ultimaMarca, duracionText, banner }] */
@@ -63,7 +64,9 @@ function Td({ children, className = "" }) {
 function fmtDateTime(d) {
   try {
     const dt = typeof d === "string" ? new Date(d) : d;
-    return isNaN(dt?.getTime?.()) ? "-" : dt.toISOString().slice(0, 19).replace("T", " ");
+    if (!dt || isNaN(dt.getTime())) return "-";
+    // Local friendly; fallback a ISO si el browser no soporta locales
+    return dt.toLocaleString?.() || dt.toISOString().slice(0, 19).replace("T", " ");
   } catch {
     return "-";
   }
