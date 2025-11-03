@@ -1,30 +1,68 @@
+// server/src/modules/visitas/visita.model.js
 import mongoose from "mongoose";
 
-const visitaSchema = new mongoose.Schema(
+const VisitaSchema = new mongoose.Schema(
   {
-    nombre: { type: String, required: true },
-    documento: { type: String, required: true },
-    empresa: { type: String, default: "-" },
-    empleado: { type: String, default: "-" }, // a quién visita
-    motivo: { type: String, required: true },
+    /* Datos base */
+    nombre:    { type: String, required: true, trim: true },
+    documento: { type: String, required: true, trim: true },
+    empresa:   { type: String, default: null, trim: true },
+    empleado:  { type: String, default: null, trim: true },
+    motivo:    { type: String, required: true, trim: true },
 
-    telefono: { type: String },
-    correo: { type: String },
+    telefono:  { type: String, default: null, trim: true },
+    correo: {
+      type: String,
+      default: null,
+      trim: true,
+      lowercase: true,
+      validate: {
+        validator: (v) => v == null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+        message: "Correo no válido",
+      },
+    },
 
-    fechaEntrada: { type: Date, default: Date.now },
-    fechaSalida: { type: Date },
+    /* Tipo y estado */
+    tipo: {
+      type: String,
+      enum: ["Ingreso", "Agendada"],
+      default: "Ingreso",
+      index: true,
+    },
 
     estado: {
       type: String,
-      enum: ["Dentro", "Finalizada"],
-      default: "Dentro",
+      enum: ["Programada", "Dentro", "Finalizada", "Cancelada"],
+      default: function () {
+        return this.tipo === "Agendada" ? "Programada" : "Dentro";
+      },
+      index: true,
     },
+
+    /* Fechas */
+    citaAt:       { type: Date, default: null, index: true },
+    fechaEntrada: { type: Date, default: null, index: true },
+    fechaSalida:  { type: Date, default: null },
   },
   {
-    timestamps: true, // createdAt / updatedAt
+    timestamps: true,
+    versionKey: false,
   }
 );
 
-const Visita = mongoose.model("Visita", visitaSchema);
+/* Índices */
+VisitaSchema.index({ tipo: 1, estado: 1, citaAt: 1 });
+VisitaSchema.index({ estado: 1, fechaEntrada: -1 });
+VisitaSchema.index({ createdAt: -1 });
 
+/* Hook: autollenar fechaEntrada solo para ingresos nuevos */
+VisitaSchema.pre("save", function (next) {
+  if (this.isNew && this.tipo === "Ingreso" && !this.fechaEntrada) {
+    this.fechaEntrada = new Date();
+  }
+  next();
+});
+
+/* Modelo */
+const Visita = mongoose.models.Visita || mongoose.model("Visita", VisitaSchema);
 export default Visita;

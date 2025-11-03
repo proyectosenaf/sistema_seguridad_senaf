@@ -1,158 +1,193 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export default function NewVisitorModal({ onClose, onSubmit }) {
-  const [form, setForm] = useState({
-    name: "",
-    document: "",
-    company: "",
-    phone: "",
-    email: "",
-    employee: "",
-    reason: "",
-  });
+  const [name, setName] = useState("");
+  const [document, setDocument] = useState("");
+  const [company, setCompany] = useState("");
+  const [employee, setEmployee] = useState(""); // texto libre
+  const [reason, setReason] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const [saving, setSaving] = useState(false);
+  const firstInputRef = useRef(null);
 
-  function handleChange(e) {
-    const { name, value } = e.target;
-    setForm((f) => ({ ...f, [name]: value }));
+  // Auto-focus al abrir
+  useEffect(() => {
+    firstInputRef.current?.focus();
+  }, []);
+
+  // Cerrar con ESC
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key === "Escape") onClose?.();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+
+    try {
+      // Validaciones rápidas en UI
+      if (!name.trim() || !document.trim() || !employee.trim() || !reason.trim()) {
+        alert("Completa los campos obligatorios.");
+        setSubmitting(false);
+        return;
+      }
+
+      // Enviamos limpio; el padre ya vuelve a validar/trim
+      await onSubmit?.({
+        name: name.trim(),
+        document: document.trim(),
+        company: company.trim(),
+        employee: employee.trim() || undefined, // <- texto libre
+        reason: reason.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+      });
+      // Importante: no cerramos aquí; el padre lo hace cuando el POST sale bien.
+    } catch (err) {
+      console.error("[NewVisitorModal] onSubmit error:", err);
+      alert("No se pudo registrar. Revisa la conexión e inténtalo de nuevo.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  async function handleSave() {
-    if (!form.name.trim() || !form.document.trim() || !form.reason.trim()) {
-      alert("Por favor llene Nombre, Documento y Motivo.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      // devolvemos al padre los datos crudos, el padre llama POST /api/visitas
-      await onSubmit(form);
-    } finally {
-      setSaving(false);
-    }
+  // Cerrar al hacer click fuera de la tarjeta
+  function handleBackdrop(e) {
+    if (e.target === e.currentTarget) onClose?.();
   }
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl bg-white text-neutral-900 shadow-xl dark:bg-neutral-900 dark:text-neutral-100 border border-neutral-200 dark:border-neutral-700">
-        {/* Header */}
-        <div className="flex items-start justify-between p-4 border-b border-neutral-200 dark:border-neutral-700">
-          <h2 className="text-lg font-semibold">Registrar Nuevo Visitante</h2>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onMouseDown={handleBackdrop}
+    >
+      <div
+        className="w-[95%] max-w-[560px] card-rich p-4 md:p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-visitor-title"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-4">
+          <h3 id="new-visitor-title" className="text-lg font-semibold text-neutral-100">
+            Registrar Visitante
+          </h3>
           <button
+            type="button"
             onClick={onClose}
-            className="text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+            className="text-neutral-400 hover:text-neutral-200"
+            aria-label="Cerrar"
           >
             ✕
           </button>
         </div>
 
-        {/* Body / Form */}
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-          <div className="flex flex-col gap-1">
-            <label className="font-medium">
-              Nombre Completo <span className="text-red-500">*</span>
-            </label>
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2">
+            <label className="text-xs text-neutral-400">Nombre completo</label>
             <input
-              name="name"
-              value={form.name}
-              onChange={handleChange}
+              ref={firstInputRef}
+              className="input-fx w-full"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ej. María López"
               required
-              className="input-fx"
-              placeholder="Ingrese el nombre"
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="font-medium">
-              Documento <span className="text-red-500">*</span>
-            </label>
+          <div>
+            <label className="text-xs text-neutral-400">Documento</label>
             <input
-              name="document"
-              value={form.document}
-              onChange={handleChange}
+              className="input-fx w-full"
+              value={document}
+              onChange={(e) => setDocument(e.target.value)}
+              placeholder="0801-YYYY-XXXXX"
               required
-              className="input-fx"
-              placeholder="Número de documento"
+              inputMode="numeric"
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="font-medium">Empresa</label>
+          <div>
+            <label className="text-xs text-neutral-400">Empresa</label>
             <input
-              name="company"
-              value={form.company}
-              onChange={handleChange}
-              className="input-fx"
-              placeholder="Nombre de la empresa"
+              className="input-fx w-full"
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              placeholder="SENAF / Munily S.A."
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="font-medium">Teléfono</label>
+          {/* Empleado anfitrión: texto libre */}
+          <div className="md:col-span-2">
+            <label className="text-xs text-neutral-400">Empleado anfitrión</label>
             <input
-              name="phone"
-              value={form.phone}
-              onChange={handleChange}
-              className="input-fx"
-              placeholder="Número de teléfono"
+              className="input-fx w-full"
+              value={employee}
+              onChange={(e) => setEmployee(e.target.value)}
+              placeholder="Nombre de la persona que visita"
+              required
             />
           </div>
 
-          <div className="flex flex-col gap-1 md:col-span-2">
-            <label className="font-medium">Email</label>
+          <div className="md:col-span-2">
+            <label className="text-xs text-neutral-400">Motivo</label>
             <input
-              name="email"
-              value={form.email}
-              onChange={handleChange}
-              className="input-fx"
-              placeholder="correo@ejemplo.com"
+              className="input-fx w-full"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Reunión / Entrega / Mantenimiento…"
+              required
             />
           </div>
 
-          <div className="flex flex-col gap-1 md:col-span-2">
-            <label className="font-medium">Empleado a Visitar</label>
+          <div>
+            <label className="text-xs text-neutral-400">Teléfono</label>
             <input
-              name="employee"
-              value={form.employee}
-              onChange={handleChange}
-              className="input-fx"
-              placeholder="Ej. Ana García"
+              className="input-fx w-full"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+504 9999-9999"
+              type="tel"
+              inputMode="tel"
             />
           </div>
 
-          <div className="flex flex-col gap-1 md:col-span-2">
-            <label className="font-medium">
-              Motivo de la Visita <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              name="reason"
-              value={form.reason}
-              onChange={handleChange}
-              className="input-fx min-h-[80px] resize-none"
-              placeholder="Describa el motivo de la visita"
+          <div>
+            <label className="text-xs text-neutral-400">Correo</label>
+            <input
+              type="email"
+              className="input-fx w-full"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="correo@empresa.com"
             />
           </div>
-        </div>
 
-        {/* Footer / Actions */}
-        <div className="p-4 flex justify-end gap-3 border-t border-neutral-200 dark:border-neutral-700">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-300 dark:border-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            disabled={saving}
-          >
-            Cancelar
-          </button>
-
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="btn-neon text-sm px-4 py-2 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? "Guardando…" : "Registrar Visitante"}
-          </button>
-        </div>
+          <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              disabled={submitting}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="btn-neon px-3 py-2 text-sm rounded-lg font-semibold disabled:opacity-60"
+              disabled={submitting}
+            >
+              {submitting ? "Registrando…" : "Registrar"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
