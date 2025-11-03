@@ -24,9 +24,6 @@ import notificationsRoutes from "./core/notifications.routes.js";
 // Módulo Rondas QR
 import rondasqr from "../modules/rondasqr/index.js";
 
-// ⬇️⬇️⬇️ AGREGADO: Rutas de Visitas
-import visitasRoutes from "../modules/visitas/visitas.routes.js";
-// ⬆️⬆️⬆️
 
 // Cron de asignaciones (DIARIO)
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
@@ -108,7 +105,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-///* ─────────────────────────── MongoDB ──────────────────────────── */
+
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!mongoUri) {
   console.error("[db] FALTA MONGODB_URI o MONGO_URI");
@@ -357,6 +354,7 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       `"SENAF Seguridad" <${
         process.env.GMAIL_USER || process.env.MAIL_USER
       }>`;
+
     const link = process.env.VERIFY_BASE_URL
       ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
           id
@@ -451,9 +449,6 @@ app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
 );
 app.use("/api/rondasqr/v1", rondasqr);
 
-/* ⬇️⬇️⬇️ AGREGADO: montar módulo de Visitas */
-app.use("/api", visitasRoutes);
-/* ⬆️⬆️⬆️ */
 
 /* ────────────────────── Error handler (500) ───────────────────── */
 app.use((err, _req, res, _next) => {
@@ -476,7 +471,9 @@ const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
 server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(
-    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
+    `[cors] origins: ${
+      origins ? origins.join(", ") : "(allow all)"
+    }`
   );
 });
 
