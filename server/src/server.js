@@ -24,7 +24,6 @@ import notificationsRoutes from "./core/notifications.routes.js";
 // Módulo Rondas QR
 import rondasqr from "../modules/rondasqr/index.js";
 
-
 // Cron de asignaciones (DIARIO)
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 
@@ -105,7 +104,6 @@ app.use((req, _res, next) => {
   next();
 });
 
-
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!mongoUri) {
   console.error("[db] FALTA MONGODB_URI o MONGO_URI");
@@ -134,13 +132,7 @@ try {
   );
 }
 
-/* ───────────── DEV headers → payload IAM + req.user (bridge) ─────────────
-   En local queremos poder simular un usuario sin Auth0.
-   Reglas:
-   - Sólo se activa si IAM_ALLOW_DEV_HEADERS=1
-   - Usa headers x-user-email, x-roles, x-perms
-   - Nunca debe explotar si faltan headers
-*/
+/* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
 function iamDevMerge(req, _res, next) {
   const allow = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
   if (!allow) return next();
@@ -225,14 +217,12 @@ function authBridgeToReqUser(req, _res, next) {
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  // Si viene Authorization y NO estamos en modo "DISABLE_AUTH=1", validamos JWT.
   if (
     req.headers.authorization &&
     String(process.env.DISABLE_AUTH || "0") !== "1"
   ) {
     return requireAuth(req, res, next);
   }
-  // En dev sin token, sigue.
   return next();
 }
 
@@ -354,14 +344,9 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       `"SENAF Seguridad" <${
         process.env.GMAIL_USER || process.env.MAIL_USER
       }>`;
-
     const link = process.env.VERIFY_BASE_URL
-      ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
-          id
-        )}`
-      : `http://localhost:5173/verify?user=${encodeURIComponent(
-          id
-        )}`;
+      ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(id)}`
+      : `http://localhost:5173/verify?user=${encodeURIComponent(id)}`;
 
     const mailOptions = {
       from: fromAddress,
@@ -384,12 +369,10 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 
     const info = await smtpTransport.sendMail(mailOptions);
     if (info.rejected && info.rejected.length) {
-      return res
-        .status(502)
-        .json({
-          error: "El servidor SMTP rechazó el correo",
-          detail: info.rejected,
-        });
+      return res.status(502).json({
+        error: "El servidor SMTP rechazó el correo",
+        detail: info.rejected,
+      });
     }
     return res.json({
       ok: true,
@@ -406,7 +389,6 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 /* ─────────────────── Notificaciones globales ──────────────────── */
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
-// Endpoints usados por client/src/lib/notificationsApi.js
 app.use("/api/notifications", notificationsRoutes);
 
 // ⏰ Inicia cron de asignaciones (diario)
@@ -415,29 +397,19 @@ startDailyAssignmentCron(app);
 /* ──────────────── DEBUG: trigger de asignación por URL ─────────────── */
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
-  const title = String(
-    req.query.title || "Nueva ronda asignada (prueba)"
-  );
-  const body = String(
-    req.query.body ||
-      "Debes comenzar la ronda de prueba en el punto A."
-  );
+  const title = String(req.query.title || "Nueva ronda asignada (prueba)");
+  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
     body,
     meta: { debug: true, ts: Date.now() },
   });
-  io
-    .to(`guard-${userId}`)
-    .emit("rondasqr:nueva-asignacion", {
-      title,
-      body,
-      meta: { debug: true, ts: Date.now() },
-    });
-  res.json({
-    ok: true,
-    sentTo: [`user-${userId}`, `guard-${userId}`],
+  io.to(`guard-${userId}`).emit("rondasqr:nueva-asignacion", {
+    title,
+    body,
+    meta: { debug: true, ts: Date.now() },
   });
+  res.json({ ok: true, sentTo: [`user-${userId}`, `guard-${userId}`] });
 });
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
@@ -449,6 +421,336 @@ app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
 );
 app.use("/api/rondasqr/v1", rondasqr);
 
+/* ──────────────────────── AÑADIDOS: CITAS & VISITAS ─────────────────────── */
+
+// Modelo Cita (usado por AgendaPage.jsx: requiere campo citaAt)
+const Cita =
+  mongoose.models.Cita ||
+  mongoose.model(
+    "Cita",
+    new mongoose.Schema(
+      {
+        nombre: { type: String, required: true },
+        documento: { type: String, required: true },
+        empresa: { type: String, required: true },
+        empleado: { type: String, required: true },
+        motivo: { type: String, required: true },
+        telefono: String,
+        correo: String,
+        citaAt: { type: Date, required: true }, // clave para tu UI
+        estado: {
+          type: String,
+          enum: ["programada", "finalizada", "cancelada"],
+          default: "programada",
+        },
+      },
+      { timestamps: true }
+    )
+  );
+
+// POST /api/citas  (crea cita)
+app.post("/api/citas", async (req, res) => {
+  try {
+    const {
+      nombre,
+      documento,
+      empresa,
+      empleado,
+      motivo,
+      telefono,
+      correo,
+      fecha, // YYYY-MM-DD
+      hora,  // HH:mm
+    } = req.body;
+
+    if (!nombre || !documento || !empresa || !empleado || !motivo || !fecha || !hora) {
+      return res.status(400).json({ ok: false, error: "Faltan campos requeridos" });
+    }
+
+    const citaAt = new Date(`${fecha}T${hora}:00`);
+    const item = await Cita.create({
+      nombre,
+      documento,
+      empresa,
+      empleado,
+      motivo,
+      telefono,
+      correo,
+      citaAt,
+    });
+
+    res.status(201).json({ ok: true, item });
+  } catch (e) {
+    console.error("[citas] POST error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error creando cita" });
+  }
+});
+
+// GET /api/citas?month=YYYY-MM  (lista todas o por mes)
+app.get("/api/citas", async (req, res) => {
+  try {
+    const { month } = req.query;
+    const q = {};
+    if (month) {
+      const start = new Date(`${month}-01T00:00:00`);
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
+      q.citaAt = { $gte: start, $lt: end };
+    }
+    const items = await Cita.find(q).sort({ citaAt: 1, createdAt: -1 });
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[citas] GET error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error listando citas" });
+  }
+});
+
+// Modelo Visita (para el modal Registrar Visitante)
+const Visita =
+  mongoose.models.Visita ||
+  mongoose.model(
+    "Visita",
+    new mongoose.Schema(
+      {
+        nombre: { type: String, required: true },
+        documento: { type: String, required: true },
+        empresa: { type: String, required: true },
+        empleado: { type: String, required: true },
+        motivo: { type: String, required: true },
+        telefono: String,
+        correo: String,
+        // 🔄 Ajuste mínimo: usamos los valores del modelo/pantalla ("Dentro"/"Finalizada"/"Cancelada")
+        estado: {
+          type: String,
+          enum: ["Dentro", "Finalizada", "Cancelada", "Programada"],
+          default: "Dentro", // ✅ por defecto ACTIVA (Dentro)
+        },
+        fechaEntrada: { type: Date, default: () => new Date() },
+        fechaSalida: { type: Date, default: null },
+      },
+      { timestamps: true }
+    )
+  );
+
+// POST /api/visitas  (registrar visitante entrando → Dentro)
+app.post("/api/visitas", async (req, res) => {
+  try {
+    const {
+      nombre,
+      documento,
+      empresa,
+      empleado,
+      motivo,
+      telefono,
+      correo,
+    } = req.body;
+
+    if (!nombre || !documento || !empresa || !empleado || !motivo) {
+      return res.status(400).json({ ok: false, error: "Faltan campos requeridos" });
+    }
+
+    const item = await Visita.create({
+      nombre,
+      documento,
+      empresa,
+      empleado,
+      motivo,
+      telefono,
+      correo,
+      estado: "Dentro",          // ✅ ACTIVA
+      fechaEntrada: new Date(),  // ✅ ahora
+      fechaSalida: null,         // ✅ sin salida
+    });
+
+    res.status(201).json({ ok: true, item });
+  } catch (e) {
+    console.error("[visitas] POST error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error creando visita" });
+  }
+});
+
+// GET /api/visitas  (lista y normaliza estado para docs viejos sin estado)
+app.get("/api/visitas", async (_req, res) => {
+  try {
+    const raw = await Visita.find().sort({ createdAt: -1 }).lean();
+
+    const items = raw.map(v => {
+      const estado = v.estado
+        ? v.estado
+        : (v.fechaSalida ? "Finalizada" : "Dentro"); // ✅ normalización consistente
+      return { ...v, estado };
+    });
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[visitas] GET error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error listando visitas" });
+  }
+});
+
+// PUT /api/visitas/:id/finalizar  → pasa a Finalizada y marca fechaSalida
+app.put("/api/visitas/:id/finalizar", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const v = await Visita.findByIdAndUpdate(
+      id,
+      { estado: "Finalizada", fechaSalida: new Date() }, // ✅ finaliza
+      { new: true }
+    );
+    if (!v) return res.status(404).json({ ok: false, error: "No encontrada" });
+    res.json({ ok: true, item: v });
+  } catch (e) {
+    console.error("[visitas] FINALIZAR error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error finalizando visita" });
+  }
+});
+
+// PATCH /api/visitas/:id/cerrar  → alias compatible (evita "Not implemented")
+app.patch("/api/visitas/:id/cerrar", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const v = await Visita.findByIdAndUpdate(
+      id,
+      { estado: "Finalizada", fechaSalida: new Date() },
+      { new: true }
+    );
+    if (!v) return res.status(404).json({ ok: false, error: "No encontrada" });
+    res.json({ ok: true, item: v });
+  } catch (e) {
+    console.error("[visitas] CERRAR (PATCH) error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error cerrando visita" });
+  }
+});
+
+// POST /api/visitas/:id/cerrar  → alias extra (algunos UIs usan POST)
+app.post("/api/visitas/:id/cerrar", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const v = await Visita.findByIdAndUpdate(
+      id,
+      { estado: "Finalizada", fechaSalida: new Date() },
+      { new: true }
+    );
+    if (!v) return res.status(404).json({ ok: false, error: "No encontrada" });
+    res.json({ ok: true, item: v });
+  } catch (e) {
+    console.error("[visitas] CERRAR (POST) error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error cerrando visita" });
+  }
+});
+
+// Compatibilidad adicional por si algún componente llama /api/visitas/visitas/:id/cerrar
+app.patch("/api/visitas/visitas/:id/cerrar", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const v = await Visita.findByIdAndUpdate(
+      id,
+      { estado: "Finalizada", fechaSalida: new Date() },
+      { new: true }
+    );
+    if (!v) return res.status(404).json({ ok: false, error: "No encontrada" });
+    res.json({ ok: true, item: v });
+  } catch (e) {
+    console.error("[visitas] CERRAR (compat) error:", e);
+    res.status(500).json({ ok: false, error: e.message || "Error cerrando visita" });
+  }
+});
+
+/* ───────────── MÉTRICAS DIARIAS (reinicia cada día) ───────────── */
+
+// GET /api/visitas/metrics/daily?date=YYYY-MM-DD
+app.get("/api/visitas/metrics/daily", async (req, res) => {
+  try {
+    const dateStr = String(
+      req.query.date || new Date().toISOString().slice(0, 10)
+    ); // YYYY-MM-DD
+    const start = new Date(`${dateStr}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const match = { fechaEntrada: { $gte: start, $lt: end } };
+
+    const [row] = await Visita.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          activos: {
+            $sum: { $cond: [{ $eq: ["$estado", "Dentro"] }, 1, 0] },
+          },
+          finalizadas: {
+            $sum: { $cond: [{ $eq: ["$estado", "Finalizada"] }, 1, 0] },
+          },
+          canceladas: {
+            $sum: { $cond: [{ $eq: ["$estado", "Cancelada"] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    res.json({
+      ok: true,
+      date: dateStr,
+      total: row?.total || 0,
+      activos: row?.activos || 0,
+      finalizadas: row?.finalizadas || 0,
+      canceladas: row?.canceladas || 0,
+    });
+  } catch (e) {
+    console.error("[visitas] metrics daily error:", e);
+    res
+      .status(500)
+      .json({ ok: false, error: e.message || "Error metrics visitas" });
+  }
+});
+
+// GET /api/citas/metrics/daily?date=YYYY-MM-DD
+app.get("/api/citas/metrics/daily", async (req, res) => {
+  try {
+    const dateStr = String(
+      req.query.date || new Date().toISOString().slice(0, 10)
+    );
+    const start = new Date(`${dateStr}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const match = { citaAt: { $gte: start, $lt: end } };
+
+    const [row] = await Cita.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          programadas: {
+            $sum: { $cond: [{ $eq: ["$estado", "programada"] }, 1, 0] },
+          },
+          finalizadas: {
+            $sum: { $cond: [{ $eq: ["$estado", "finalizada"] }, 1, 0] },
+          },
+          canceladas: {
+            $sum: { $cond: [{ $eq: ["$estado", "cancelada"] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    res.json({
+      ok: true,
+      date: dateStr,
+      total: row?.total || 0,
+      programadas: row?.programadas || 0,
+      finalizadas: row?.finalizadas || 0,
+      canceladas: row?.canceladas || 0,
+    });
+  } catch (e) {
+    console.error("[citas] metrics daily error:", e);
+    res
+      .status(500)
+      .json({ ok: false, error: e.message || "Error metrics citas" });
+  }
+});
 
 /* ────────────────────── Error handler (500) ───────────────────── */
 app.use((err, _req, res, _next) => {
@@ -471,9 +773,7 @@ const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
 server.listen(PORT, () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(
-    `[cors] origins: ${
-      origins ? origins.join(", ") : "(allow all)"
-    }`
+    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
   );
 });
 
@@ -490,9 +790,7 @@ io.on("connection", (s) => {
       );
     }
   });
-  s.on("disconnect", () =>
-    console.log("[io] bye:", s.id)
-  );
+  s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
 
 /* ────────────────────────── Shutdown ──────────────────────────── */

@@ -1,224 +1,273 @@
-// server/modules/visitas/visitas.controller.js
-import mongoose from "mongoose";
-import Visita from "./visitas.model.js";
+// client/src/pages/VisitasControlPage.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-/* Utilidades de limpieza */
-const clean = (v) => (typeof v === "string" ? v.trim() : v ?? undefined);
-const required = (v) => typeof v === "string" && v.trim().length > 0;
-
-// Rango de día local [00:00, 23:59:59.999]
-function dayRange(dayStr /* YYYY-MM-DD */) {
-  const start = new Date(`${dayStr}T00:00:00`);
-  const end = new Date(`${dayStr}T23:59:59.999`);
-  return { start, end };
-}
-
-// Rango de mes local (YYYY-MM)
-function monthRange(ym /* YYYY-MM */) {
-  const start = new Date(`${ym}-01T00:00:00`);
-  const [y, m] = ym.split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const end = new Date(`${ym}-${String(lastDay).padStart(2, "0")}T23:59:59.999`);
-  return { start, end };
+/** ───────── Helpers de formato ───────── **/
+function fmtFechaHora(d) {
+  if (!d) return "-";
+  const dt = new Date(d);
+  const dia = dt.toLocaleDateString("es-HN", { day: "numeric" });
+  const mes = dt.toLocaleDateString("es-HN", { month: "numeric" });
+  const hora = dt.toLocaleTimeString("es-HN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${dia}/${mes}, ${hora}`;
 }
 
 /**
- * GET /api/visitas
- * Lista visitas. Por defecto, SOLO ingresos (no incluye agendadas).
- * Usa ?soloIngresos=0 para traer todo. Filtro opcional: ?estado=Dentro|Finalizada
+ * Normaliza estado a los valores del modelo:
+ * "Dentro" | "Programada" | "Finalizada" | "Cancelada"
  */
-export async function getVisitas(req, res) {
-  try {
-    const { soloIngresos = "1", estado } = req.query;
+function getEstado(v) {
+  if (v?.estado) return v.estado; // ya viene correcto del backend
+  // Inferencia defensiva para documentos viejos:
+  if (v?.fechaSalida) return "Finalizada";
+  // Si fue creada como agendada y aún no tiene entrada:
+  if (v?.tipo === "Agendada" && !v?.fechaEntrada) return "Programada";
+  // Si no hay salida y (es ingreso o ya tiene fechaEntrada):
+  return "Dentro";
+}
 
-    const filter = {};
-    if (soloIngresos === "1") filter.tipo = { $ne: "Agendada" };
-    if (estado) filter.estado = estado;
+function EstadoBadge({ estado }) {
+  const base = "px-2 py-1 rounded-full text-xs font-semibold";
+  let classes = " bg-neutral-600/30 text-neutral-300";
+  let label = estado;
 
-    const visitas = await Visita.find(filter).sort({ createdAt: -1 }).lean();
-    return res.json({ ok: true, items: visitas });
-  } catch (err) {
-    console.error("[visitas] getVisitas error:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Error interno" });
+  if (estado === "Dentro") {
+    classes = " bg-green-500/20 text-green-300";
+    label = "Dentro";
+  } else if (estado === "Programada") {
+    classes = " bg-yellow-500/20 text-yellow-300";
+    label = "Programada";
+  } else if (estado === "Cancelada") {
+    classes = " bg-red-500/20 text-red-300";
+    label = "Cancelada";
+  } else if (estado === "Finalizada") {
+    classes = " bg-neutral-600/30 text-neutral-300";
+    label = "Finalizada";
   }
+
+  return <span className={base + classes}>{label}</span>;
 }
 
-/**
- * POST /api/visitas
- * Crea/Registra un visitante que está entrando (INGRESO real, no agenda).
- */
-export async function createVisita(req, res) {
-  try {
-    const payload = {
-      nombre: clean(req.body?.nombre),
-      documento: clean(req.body?.documento),
-      empresa: clean(req.body?.empresa),
-      empleado: clean(req.body?.empleado), // texto libre
-      motivo: clean(req.body?.motivo),
-      telefono: clean(req.body?.telefono),
-      correo: clean(req.body?.correo),
-    };
+export default function VisitasControlPage() {
+  const navigate = useNavigate();
 
-    if (
-      !required(payload.nombre) ||
-      !required(payload.documento) ||
-      !required(payload.empleado) ||
-      !required(payload.motivo)
-    ) {
-      return res.status(400).json({
-        ok: false,
-        error: "Faltan campos obligatorios (nombre, documento, empleado, motivo).",
-      });
+  const [visitas, setVisitas] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState(""); // búsqueda por nombre/documento
+  const [filtro, setFiltro] = useState("todos"); // todos | Dentro | Programada | Finalizada | Cancelada
+
+  async function cargarVisitas() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/visitas");
+      const data = await res.json();
+      const items = res.ok && data?.ok ? data.items : [];
+      setVisitas(Array.isArray(items) ? items : []);
+    } catch (e) {
+      console.error("[visitas] fetch error:", e);
+      setVisitas([]);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    const visita = await Visita.create({
-      ...payload,
-      tipo: "Ingreso",
-      estado: "Dentro",          // ⬅️ Compat con la UI
-      fechaEntrada: new Date(),
+  useEffect(() => {
+    cargarVisitas();
+  }, []);
+
+  // Lista normalizada (estado en el mismo set que tu modelo)
+  const visitasNorm = useMemo(
+    () => (visitas || []).map((v) => ({ ...v, estado: getEstado(v) })),
+    [visitas]
+  );
+
+  // Contadores (tarjetas superiores)
+  const activos = useMemo(
+    () => visitasNorm.filter((v) => v.estado === "Dentro").length,
+    [visitasNorm]
+  );
+
+  const totalHoy = useMemo(() => {
+    const hoy = new Date();
+    const y = hoy.getFullYear();
+    const m = hoy.getMonth();
+    const d = hoy.getDate();
+    return visitasNorm.filter((v) => {
+      const dt = v?.fechaEntrada ? new Date(v.fechaEntrada) : null;
+      return dt && dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d;
+    }).length;
+  }, [visitasNorm]);
+
+  const empresasVisitantes = useMemo(() => {
+    const set = new Set();
+    for (const v of visitasNorm) if (v?.empresa) set.add(v.empresa);
+    return set.size;
+  }, [visitasNorm]);
+
+  // Búsqueda + filtro de estado
+  const visitasFiltradas = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return visitasNorm.filter((v) => {
+      const okEstado = filtro === "todos" ? true : v.estado === filtro;
+      if (!okEstado) return false;
+      if (!term) return true;
+      const nombre = String(v?.nombre || "").toLowerCase();
+      const doc = String(v?.documento || "").toLowerCase();
+      const emp = String(v?.empresa || "").toLowerCase();
+      return nombre.includes(term) || doc.includes(term) || emp.includes(term);
     });
+  }, [visitasNorm, q, filtro]);
 
-    return res.status(201).json({ ok: true, item: visita });
-  } catch (err) {
-    console.error("[visitas] createVisita error:", err);
-    if (err?.name === "ValidationError") {
-      return res.status(422).json({ ok: false, error: err.message });
+  async function finalizarVisita(id) {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/visitas/${id}/finalizar`, { method: "PUT" });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) throw new Error(data?.error || "No se pudo finalizar");
+      await cargarVisitas();
+    } catch (e) {
+      console.error("[visitas] finalizar error:", e);
+      alert("No se pudo finalizar la visita");
     }
-    return res.status(400).json({ ok: false, error: err.message || "No se pudo crear la visita" });
   }
-}
 
-/**
- * PATCH /api/visitas/:id/cerrar
- * Marca salida de un visitante (estado → Finalizada, fechaSalida → now).
- */
-export async function closeVisita(req, res) {
-  try {
-    const { id } = req.params;
+  return (
+    <div className="layer-content relative z-[1] flex flex-col gap-6">
+      {/* FX */}
+      <div className="mesh mesh--ribbon" />
+      <div className="mesh mesh--br" />
+      <div className="mesh mesh--lb" />
 
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ ok: false, error: "ID inválido" });
-    }
+      {/* Header + tarjetas */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-2xl border border-neutral-800/60 bg-neutral-900/30 p-4">
+          <div className="text-sm text-neutral-300 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-purple-400" />
+            Visitantes Activos (Dentro)
+          </div>
+          <div className="text-4xl mt-2 font-bold text-neutral-100">{activos}</div>
+        </div>
+        <div className="rounded-2xl border border-neutral-800/60 bg-neutral-900/30 p-4">
+          <div className="text-sm text-neutral-300 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-pink-400" />
+            Total Hoy
+          </div>
+          <div className="text-4xl mt-2 font-bold text-neutral-100">{totalHoy}</div>
+        </div>
+        <div className="rounded-2xl border border-neutral-800/60 bg-neutral-900/30 p-4">
+          <div className="text-sm text-neutral-300 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
+            Empresas Visitantes
+          </div>
+          <div className="text-4xl mt-2 font-bold text-neutral-100">{empresasVisitantes}</div>
+        </div>
+      </div>
 
-    const visita = await Visita.findByIdAndUpdate(
-      id,
-      { estado: "Finalizada", fechaSalida: new Date() },
-      { new: true }
-    );
+      {/* Barra superior: título + filtros */}
+      <div className="rounded-2xl border border-neutral-800/60 bg-neutral-900/30">
+        <div className="px-4 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <h2 className="text-lg font-semibold text-neutral-100">Lista de Visitantes</h2>
+          <div className="flex items-center gap-3">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por nombre, documento o empresa"
+              className="rounded-xl bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+            />
+            <select
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+              className="rounded-xl bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+            >
+              <option value="todos">Todos los Estados</option>
+              <option value="Dentro">Dentro</option>
+              <option value="Programada">Programadas</option>
+              <option value="Finalizada">Finalizadas</option>
+              <option value="Cancelada">Canceladas</option>
+            </select>
+            <button
+              onClick={cargarVisitas}
+              className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600"
+            >
+              Actualizar
+            </button>
+          </div>
+        </div>
 
-    if (!visita) {
-      return res.status(404).json({ ok: false, error: "Visita no encontrada" });
-    }
+        {loading ? (
+          <div className="px-4 pb-4 text-neutral-400">Cargando…</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
+              <thead className="text-xs uppercase text-neutral-400 border-y border-neutral-700/40">
+                <tr className="[&>th]:py-2 [&>th]:pr-4">
+                  <th className="pl-4">Visitante</th>
+                  <th>Documento</th>
+                  <th>Empresa</th>
+                  <th>Empleado</th>
+                  <th>Entrada</th>
+                  <th>Salida</th>
+                  <th>Estado</th>
+                  <th className="pr-4">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="text-neutral-200">
+                {visitasFiltradas.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-6 text-neutral-400">
+                      Sin registros.
+                    </td>
+                  </tr>
+                ) : (
+                  visitasFiltradas.map((it) => (
+                    <tr
+                      key={it._id}
+                      className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                    >
+                      <td className="pl-4 font-medium text-neutral-100">
+                        {it.nombre || "-"}
+                      </td>
+                      <td>{it.documento || "-"}</td>
+                      <td>{it.empresa || "-"}</td>
+                      <td>{it.empleado || "-"}</td>
+                      <td>{fmtFechaHora(it.fechaEntrada)}</td>
+                      <td>{fmtFechaHora(it.fechaSalida)}</td>
+                      <td>
+                        <EstadoBadge estado={it.estado} />
+                      </td>
+                      <td className="pr-4">
+                        {it.estado === "Dentro" ? (
+                          <button
+                            onClick={() => finalizarVisita(it._id)}
+                            className="px-2 py-1 rounded-md text-xs bg-blue-600/70 hover:bg-blue-600 text-blue-50"
+                          >
+                            Finalizar
+                          </button>
+                        ) : (
+                          <span className="text-xs text-neutral-500">(cerrada)</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
-    return res.json({ ok: true, item: visita });
-  } catch (err) {
-    console.error("[visitas] closeVisita error:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Error cerrando visita" });
-  }
-}
-
-/* =====================  CITAS (AGENDADAS)  ===================== */
-
-/**
- * POST /api/citas
- * Crea una cita AGENDADA (no es ingreso).
- */
-export async function createCita(req, res) {
-  try {
-    const nombre = clean(req.body?.nombre);
-    const documento = clean(req.body?.documento);
-    const empresa = clean(req.body?.empresa);
-    const empleado = clean(req.body?.empleado);
-    const motivo = clean(req.body?.motivo);
-    const telefono = clean(req.body?.telefono);
-    const correo = clean(req.body?.correo);
-    const fecha = clean(req.body?.fecha); // YYYY-MM-DD
-    const hora = clean(req.body?.hora);   // HH:mm
-
-    if (!required(nombre) || !required(documento) || !required(empleado) || !required(motivo) || !required(fecha) || !required(hora)) {
-      return res.status(400).json({
-        ok: false,
-        error: "Faltan campos obligatorios (nombre, documento, empleado, motivo, fecha, hora).",
-      });
-    }
-
-    const citaAt = new Date(`${fecha}T${hora}:00`);
-    if (isNaN(citaAt.getTime())) {
-      return res.status(400).json({ ok: false, error: "Fecha u hora inválidas" });
-    }
-
-    const doc = await Visita.create({
-      nombre, documento, empresa, empleado, motivo, telefono, correo,
-      tipo: "Agendada",
-      estado: "Programada",
-      citaAt,
-    });
-
-    return res.status(201).json({ ok: true, item: doc });
-  } catch (err) {
-    console.error("[citas] createCita error:", err);
-    if (err?.name === "ValidationError") {
-      return res.status(422).json({ ok: false, error: err.message });
-    }
-    return res.status(400).json({ ok: false, error: err.message || "No se pudo agendar la cita" });
-  }
-}
-
-/**
- * GET /api/citas?day=YYYY-MM-DD | ?month=YYYY-MM | ?start=ISO&end=ISO
- */
-export async function listCitas(req, res) {
-  try {
-    const { day, month, start, end } = req.query;
-
-    const filter = { tipo: "Agendada" };
-
-    if (day) {
-      const { start: s, end: e } = dayRange(day);
-      filter.citaAt = { $gte: s, $lte: e };
-    } else if (month) {
-      const { start: s, end: e } = monthRange(month);
-      filter.citaAt = { $gte: s, $lte: e };
-    } else if (start || end) {
-      filter.citaAt = {};
-      if (start) filter.citaAt.$gte = new Date(start);
-      if (end) filter.citaAt.$lte = new Date(end);
-    }
-
-    const items = await Visita.find(filter).sort({ citaAt: 1 }).lean();
-    return res.json({ ok: true, items });
-  } catch (err) {
-    console.error("[citas] listCitas error:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Error listando citas" });
-  }
-}
-
-/**
- * PATCH /api/citas/:id/checkin
- * Convierte una cita PROGRAMADA en un ingreso real (check-in).
- */
-export async function checkinCita(req, res) {
-  try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ ok: false, error: "ID inválido" });
-    }
-
-    const visita = await Visita.findById(id);
-    if (!visita) return res.status(404).json({ ok: false, error: "Cita no encontrada" });
-
-    if (visita.tipo !== "Agendada") {
-      return res.status(409).json({ ok: false, error: "La visita no es una cita agendada" });
-    }
-
-    visita.tipo = "Ingreso";
-    visita.estado = "Dentro";          // ⬅️ Compat con la UI
-    visita.fechaEntrada = new Date();
-    await visita.save();
-
-    return res.json({ ok: true, item: visita });
-  } catch (err) {
-    console.error("[citas] checkinCita error:", err);
-    return res.status(500).json({ ok: false, error: err.message || "Error realizando check-in" });
-  }
+      {/* Footer / navegación opcional */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => navigate("/visitas/control")}
+          className="text-xs text-blue-400 hover:underline"
+        >
+          ← Volver
+        </button>
+      </div>
+    </div>
+  );
 }
