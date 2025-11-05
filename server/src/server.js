@@ -495,7 +495,6 @@ io.on("connection", (s) => {
 
 /* ────────────────────────── Shutdown ──────────────────────────── */
 function shutdown(sig) {
-  console.log(`[api] ${sig} recibido. Cerrando...`);
   server.close(() => {
     mongoose.connection.close(false).then(() => {
       console.log("[api] cerrado.");
@@ -503,11 +502,13 @@ function shutdown(sig) {
     });
   });
 }
+
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) =>
-  console.error("[api] UnhandledRejection:", err)
-);
-process.on("uncaughtException", (err) =>
-  console.error("[api] UncaughtException:", err)
-);
+process.on("unhandledRejection", (err) => {
+  console.error("[api] UnhandledRejection:", err);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[api] UncaughtException:", err);
+});
+
