@@ -9,6 +9,9 @@ import {
   checkinCita,
 } from "./visitas.controller.js";
 
+// ✅ Middleware para validar horario de atención (8:00–12:00 y 13:00–17:00)
+import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+
 const router = Router();
 
 /**
@@ -52,8 +55,8 @@ router.patch(["/visitas/:id/cerrar", "/:id/cerrar"], asyncHandler(closeVisita));
    → Monta este router en "/api" para que queden como /api/citas.
 */
 
-// Crear una cita (programar visita futura)
-router.post("/citas", asyncHandler(createCita));
+// ✅ Crear una cita (programar visita futura) con validación de horario
+router.post("/citas", enforceBusinessHours, asyncHandler(createCita));
 
 // Listar citas programadas
 // Ejemplo: GET /api/citas?day=2025-11-01 o ?month=2025-11

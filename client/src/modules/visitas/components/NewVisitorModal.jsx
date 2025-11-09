@@ -12,6 +12,23 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
 
   const firstInputRef = useRef(null);
 
+  // ===== Helpers de horario de atención =====
+  // Rangos válidos: [08:00, 12:00) y [13:00, 17:00) (12:00 y 17:00 excluidas)
+  function isWithinBusinessHours(date) {
+    if (!(date instanceof Date) || isNaN(date)) return false;
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    const AM_START = 8 * 60;   // 08:00
+    const AM_END   = 12 * 60;  // 12:00 (excluido)
+    const PM_START = 13 * 60;  // 13:00
+    const PM_END   = 17 * 60;  // 17:00 (excluido)
+    return (minutes >= AM_START && minutes < AM_END) ||
+           (minutes >= PM_START && minutes < PM_END);
+  }
+  function businessHoursMessage() {
+    return "Horario permitido: 8:00–12:00 y 13:00–17:00 (12:00 y 17:00 no permitidas).";
+  }
+  // ==========================================
+
   // Auto-focus al abrir
   useEffect(() => {
     firstInputRef.current?.focus();
@@ -39,6 +56,14 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         return;
       }
 
+      // ✅ Validación de horario con la hora local actual
+      const now = new Date();
+      if (!isWithinBusinessHours(now)) {
+        alert(`No se puede registrar la visita fuera del horario permitido.\n${businessHoursMessage()}`);
+        setSubmitting(false);
+        return;
+      }
+
       // Enviamos limpio; el padre ya vuelve a validar/trim
       await onSubmit?.({
         name: name.trim(),
@@ -48,6 +73,8 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         reason: reason.trim(),
         phone: phone.trim(),
         email: email.trim(),
+        // Si en el futuro agregas una hora específica, aquí enviarías:
+        // scheduledAt: selectedDateTime.toISOString(),
       });
       // Importante: no cerramos aquí; el padre lo hace cuando el POST sale bien.
     } catch (err) {
@@ -87,6 +114,11 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
           >
             ✕
           </button>
+        </div>
+
+        {/* Aviso de horario en la UI */}
+        <div className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+          {businessHoursMessage()}
         </div>
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
