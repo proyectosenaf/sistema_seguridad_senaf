@@ -21,18 +21,17 @@ function getOfficer(req) {
 
 /* =========================================================================
    SCAN (registrar punto)
-   POST /api/rondasqr/v1/checkin/scan
-   body: { qr: string, hardwareId?, gps?:{lat,lon,acc}, ts?, message?, steps? }
-   resp: { ok, point:{_id,name,...}, markId, nextName?, progressPct? }
+   Puede vivir como:
+   - POST /api/rondasqr/v1/checkin/scan
+   - POST /api/rondasqr/v1/scan
    ========================================================================= */
-router.post("/scan", async (req, res, next) => {
+async function handleScan(req, res, next) {
   try {
     const { qr, hardwareId, gps, ts, message, steps } = req.body || {};
     if (!qr || typeof qr !== "string") {
       return res.status(400).json({ ok: false, error: "qr_required" });
     }
 
-    // Soporta distintos campos de identificación del punto (qr | qrNo | code)
     const point = await RqPoint.findOne({
       active: true,
       $or: [{ qr }, { qrNo: qr }, { code: qr }],
@@ -40,7 +39,6 @@ router.post("/scan", async (req, res, next) => {
 
     if (!point) return res.status(404).json({ ok: false, error: "point_not_found" });
 
-    // Crear marca (check-in)
     const { officerEmail, officerName, officerSub } = getOfficer(req);
     const hasGps = gps && typeof gps.lat === "number" && typeof gps.lon === "number";
 
@@ -49,27 +47,20 @@ router.post("/scan", async (req, res, next) => {
       pointName: point.name || "",
       siteId: point.siteId || null,
       roundId: point.roundId || null,
-
-      // mantener ambos por compatibilidad con esquemas previos
       qr: point.qr || qr,
       qrNo: point.qrNo || undefined,
-
       at: ts ? new Date(ts) : new Date(),
       gps: gps || {},
       loc: hasGps ? { type: "Point", coordinates: [Number(gps.lon), Number(gps.lat)] } : undefined,
-
       deviceId: hardwareId || null,
       message: message || "",
       steps: typeof steps === "number" ? steps : undefined,
-
       officerEmail,
       officerName,
       officerSub,
-
-      // campos opcionales adicionales de tu schema pueden ir aquí...
     });
 
-    // Calcular "siguiente" y % de progreso a partir del plan (si existe)
+    // progreso
     let nextName = null;
     let progressPct = 0;
 
@@ -93,14 +84,16 @@ router.post("/scan", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+}
+router.post("/scan", handleScan);
+router.post("/checkin/scan", handleScan);
 
 /* =========================================================================
    INCIDENTES MANUALES
    POST /api/rondasqr/v1/checkin/incidents
-   body: { text, lat?, lon?, gps?, photosBase64? }
+   POST /api/rondasqr/v1/incidents
    ========================================================================= */
-router.post("/incidents", async (req, res, next) => {
+async function handleIncidents(req, res, next) {
   try {
     const b = req.body || {};
     if (!b.text) return res.status(400).json({ ok: false, error: "text_required" });
@@ -124,14 +117,16 @@ router.post("/incidents", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+}
+router.post("/incidents", handleIncidents);
+router.post("/checkin/incidents", handleIncidents);
 
 /* =========================================================================
    PÁNICO
-   POST /api/rondasqr/v1/checkin/panic
-   body: { gps? }
+   POST /api/rondasqr/v1/checkin/panic   ← lo que está llamando tu front
+   POST /api/rondasqr/v1/panic           ← por si montaste un nivel arriba
    ========================================================================= */
-router.post("/panic", async (req, res, next) => {
+async function handlePanic(req, res, next) {
   try {
     const { gps } = req.body || {};
     const { officerEmail, officerName, officerSub } = getOfficer(req);
@@ -146,19 +141,23 @@ router.post("/panic", async (req, res, next) => {
       officerSub,
     });
 
+    // el front escucha esto en el socket
     req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
+
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
   }
-});
+}
+router.post("/panic", handlePanic);
+router.post("/checkin/panic", handlePanic);
 
 /* =========================================================================
    INACTIVIDAD
    POST /api/rondasqr/v1/checkin/inactivity
-   body: { minutes, steps?, gps?, siteId?, siteName?, roundId?, roundName?, pointId?, pointName? }
+   POST /api/rondasqr/v1/inactivity
    ========================================================================= */
-router.post("/inactivity", async (req, res, next) => {
+async function handleInactivity(req, res, next) {
   try {
     const b = req.body || {};
     const { officerEmail, officerName, officerSub } = getOfficer(req);
@@ -186,14 +185,16 @@ router.post("/inactivity", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+}
+router.post("/inactivity", handleInactivity);
+router.post("/checkin/inactivity", handleInactivity);
 
 /* =========================================================================
    HOMBRE CAÍDO
    POST /api/rondasqr/v1/checkin/fall
-   body: { afterInactivityMin?, steps?, gps? }
+   POST /api/rondasqr/v1/fall
    ========================================================================= */
-router.post("/fall", async (req, res, next) => {
+async function handleFall(req, res, next) {
   try {
     const b = req.body || {};
     const { officerEmail, officerName, officerSub } = getOfficer(req);
@@ -215,6 +216,8 @@ router.post("/fall", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
-});
+}
+router.post("/fall", handleFall);
+router.post("/checkin/fall", handleFall);
 
 export default router;

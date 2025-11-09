@@ -34,8 +34,11 @@ async function handleScan(req, res, next) {
     // (Opcional) trae nombres de site/round
     const [round, site] = await Promise.all([
       point.roundId ? RqRound.findById(point.roundId).lean() : null,
-      point.siteId  ? RqSite.findById(point.siteId).lean()  : null,
+      point.siteId ? RqSite.findById(point.siteId).lean() : null,
     ]);
+
+    // unificamos origen del usuario (req.user o req.auth.payload)
+    const u = req.user || req?.auth?.payload || {};
 
     const doc = await RqMark.create({
       hardwareId: b.hardwareId || "",
@@ -50,16 +53,20 @@ async function handleScan(req, res, next) {
       message: b.message || "",
       steps: Number(b.steps || 0),
       at: new Date(),
-      // guardia (si tenés auth, completa desde req.auth; si no, deja vacío)
-      guardName:  req?.auth?.payload?.name  || "",
-      guardId:    req?.auth?.payload?.sub   || "",
-      officerName: req?.auth?.payload?.name  || "",   // compat con reportes
-      officerEmail: req?.auth?.payload?.email || "",
+      // guardia
+      guardName: u.name || u.email || "",
+      guardId: u.sub || "",
+      officerName: u.name || u.email || "",
+      officerEmail: u.email || "",
       // gps
       gps: b.gps || {},
-      loc: (b?.gps?.lat != null && b?.gps?.lon != null)
-        ? { type: "Point", coordinates: [Number(b.gps.lon), Number(b.gps.lat)] }
-        : undefined,
+      loc:
+        b?.gps?.lat != null && b?.gps?.lon != null
+          ? {
+              type: "Point",
+              coordinates: [Number(b.gps.lon), Number(b.gps.lat)],
+            }
+          : undefined,
       pointQr: point.qrNo, // compat con reportes CSV/KML
     });
 
@@ -73,7 +80,7 @@ async function handleScan(req, res, next) {
 }
 
 /* Exponer ambos endpoints como alias */
-router.post("/scan", handleScan);            // /api/rondasqr/v1/scan
-router.post("/checkin/scan", handleScan);    // /api/rondasqr/v1/checkin/scan  <-- tu fetch
+router.post("/scan", handleScan); // /api/rondasqr/v1/scan
+router.post("/checkin/scan", handleScan); // /api/rondasqr/v1/checkin/scan
 
 export default router;

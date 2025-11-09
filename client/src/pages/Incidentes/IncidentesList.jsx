@@ -13,6 +13,10 @@ export default function IncidentesList() {
     alta: 0,
   });
 
+  // si tus rutas de imagen vienen como /uploads/incidents/xxx.jpg
+  // las completamos con el host de la API
+  const API_HOST = "http://localhost:4000";
+
   // cargar historial al montar
   useEffect(() => {
     axios
@@ -54,9 +58,10 @@ export default function IncidentesList() {
 
       // actualizar KPIs rápido también
       setStats((prev) => {
-        const abiertos = nuevoEstado === "en_proceso" || nuevoEstado === "resuelto"
-          ? prev.abiertos - 1
-          : prev.abiertos;
+        const abiertos =
+          nuevoEstado === "en_proceso" || nuevoEstado === "resuelto"
+            ? prev.abiertos - 1
+            : prev.abiertos;
         const enProceso =
           nuevoEstado === "en_proceso"
             ? prev.enProceso + 1
@@ -94,6 +99,7 @@ export default function IncidentesList() {
           </p>
         </div>
 
+        {/* 👉 mismo destino que el sidebar */}
         <button
           onClick={() => nav("/incidentes/nuevo")}
           className="self-start bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
@@ -213,6 +219,7 @@ export default function IncidentesList() {
                 <th className="px-4 py-3 font-medium">Fecha</th>
                 <th className="px-4 py-3 font-medium">Prioridad</th>
                 <th className="px-4 py-3 font-medium">Estado</th>
+                <th className="px-4 py-3 font-medium">Evidencias</th>
                 <th className="px-4 py-3 font-medium text-right">Acciones</th>
               </tr>
             </thead>
@@ -221,102 +228,155 @@ export default function IncidentesList() {
               {incidentes.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="text-center text-gray-500 py-10 text-sm"
                   >
                     No hay incidentes registrados.
                   </td>
                 </tr>
               ) : (
-                incidentes.map((i) => (
-                  <tr
-                    key={i._id}
-                    className="border-b border-cyan-400/5 hover:bg-[#1b2d44] transition-colors"
-                  >
-                    <td className="px-4 py-3 text-white font-medium">
-                      {i.type}
-                    </td>
+                incidentes.map((i) => {
+                  // 👇 aquí está el cambio importante
+                  const photos =
+                    Array.isArray(i.photos) && i.photos.length
+                      ? i.photos
+                      : Array.isArray(i.photosBase64)
+                      ? i.photosBase64
+                      : [];
 
-                    <td className="px-4 py-3 text-gray-300 max-w-[320px] truncate">
-                      {i.description}
-                    </td>
+                  return (
+                    <tr
+                      key={i._id}
+                      className="border-b border-cyan-400/5 hover:bg-[#1b2d44] transition-colors"
+                    >
+                      <td className="px-4 py-3 text-white font-medium">
+                        {i.type}
+                      </td>
 
-                    <td className="px-4 py-3 text-gray-200">{i.reportedBy}</td>
+                      <td className="px-4 py-3 text-gray-300 max-w-[320px] truncate">
+                        {i.description}
+                      </td>
 
-                    <td className="px-4 py-3 text-gray-200">{i.zone}</td>
+                      <td className="px-4 py-3 text-gray-200">
+                        {i.reportedBy}
+                      </td>
 
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-xs">
-                      {new Date(i.date || i.createdAt).toLocaleString()}
-                    </td>
+                      <td className="px-4 py-3 text-gray-200">{i.zone}</td>
 
-                    {/* PRIORIDAD */}
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
-                          (i.priority === "alta"
-                            ? "bg-red-600/20 text-red-400 border border-red-500/40 shadow-[0_0_8px_rgba(255,0,0,0.5)]"
-                            : i.priority === "media"
-                            ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 shadow-[0_0_8px_rgba(255,255,0,0.4)]"
-                            : "bg-green-600/20 text-green-400 border border-green-500/40 shadow-[0_0_8px_rgba(0,255,128,0.5)]")
-                        }
-                      >
-                        {i.priority}
-                      </span>
-                    </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-xs">
+                        {new Date(i.date || i.createdAt).toLocaleString()}
+                      </td>
 
-                    {/* ESTADO */}
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
-                          (i.status === "resuelto"
-                            ? "bg-green-600/20 text-green-400 border border-green-500/40 shadow-[0_0_8px_rgba(0,255,128,0.5)]"
-                            : i.status === "en_proceso"
-                            ? "bg-blue-600/20 text-blue-400 border border-blue-500/40 shadow-[0_0_8px_rgba(0,128,255,0.5)]"
-                            : "bg-red-600/20 text-red-400 border border-red-500/40 shadow-[0_0_8px_rgba(255,0,0,0.5)]")
-                        }
-                      >
-                        {i.status === "en_proceso"
-                          ? "En proceso"
-                          : i.status === "resuelto"
-                          ? "Resuelto"
-                          : "Abierto"}
-                      </span>
-                    </td>
-
-                    {/* ACCIONES */}
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {i.status === "abierto" && (
-                        <button
-                          onClick={() =>
-                            actualizarEstado(i._id, "en_proceso")
+                      {/* PRIORIDAD */}
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
+                            (i.priority === "alta"
+                              ? "bg-red-600/20 text-red-400 border border-red-500/40 shadow-[0_0_8px_rgba(255,0,0,0.5)]"
+                              : i.priority === "media"
+                              ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/40 shadow-[0_0_8px_rgba(255,255,0,0.4)]"
+                              : "bg-green-600/20 text-green-400 border border-green-500/40 shadow-[0_0_8px_rgba(0,255,128,0.5)]")
                           }
-                          className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 
+                        >
+                          {i.priority}
+                        </span>
+                      </td>
+
+                      {/* ESTADO */}
+                      <td className="px-4 py-3">
+                        <span
+                          className={
+                            "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
+                            (i.status === "resuelto"
+                              ? "bg-green-600/20 text-green-400 border border-green-500/40 shadow-[0_0_8px_rgba(0,255,128,0.5)]"
+                              : i.status === "en_proceso"
+                              ? "bg-blue-600/20 text-blue-400 border border-blue-500/40 shadow-[0_0_8px_rgba(0,128,255,0.5)]"
+                              : "bg-red-600/20 text-red-400 border border-red-500/40 shadow-[0_0_8px_rgba(255,0,0,0.5)]")
+                          }
+                        >
+                          {i.status === "en_proceso"
+                            ? "En proceso"
+                            : i.status === "resuelto"
+                            ? "Resuelto"
+                            : "Abierto"}
+                        </span>
+                      </td>
+
+                      {/* EVIDENCIAS */}
+                      <td className="px-4 py-3">
+                        {photos.length ? (
+                          <div className="flex gap-2">
+                            {photos.slice(0, 3).map((p, idx) => {
+                              // si es base64 lo usamos tal cual, si no le agregamos el host
+                              const src =
+                                typeof p === "string" &&
+                                (p.startsWith("http") ||
+                                  p.startsWith("data:image"))
+                                  ? p
+                                  : `${API_HOST}${p}`;
+                              return (
+                                <a
+                                  key={idx}
+                                  href={src}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block w-12 h-12 rounded overflow-hidden border border-cyan-400/20 bg-black/30"
+                                >
+                                  <img
+                                    src={src}
+                                    alt="evidencia"
+                                    className="w-full h-full object-cover"
+                                  />
+                                </a>
+                              );
+                            })}
+                            {photos.length > 3 && (
+                              <span className="text-xs text-gray-400">
+                                +{photos.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-500">—</span>
+                        )}
+                      </td>
+
+                      {/* ACCIONES */}
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {i.status === "abierto" && (
+                          <button
+                            onClick={() =>
+                              actualizarEstado(i._id, "en_proceso")
+                            }
+                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 
                                      border border-blue-400/40 
                                      shadow-[0_0_15px_rgba(0,128,255,0.5)] 
                                      hover:shadow-[0_0_30px_rgba(0,128,255,0.8)] 
                                      transition-all duration-300"
-                        >
-                          Procesar
-                        </button>
-                      )}
+                          >
+                            Procesar
+                          </button>
+                        )}
 
-                      {i.status === "en_proceso" && (
-                        <button
-                          onClick={() => actualizarEstado(i._id, "resuelto")}
-                          className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 
+                        {i.status === "en_proceso" && (
+                          <button
+                            onClick={() =>
+                              actualizarEstado(i._id, "resuelto")
+                            }
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 
                                      border border-green-400/40 
                                      shadow-[0_0_15px_rgba(0,255,128,0.4)] 
                                      hover:shadow-[0_0_30px_rgba(0,255,128,0.7)] 
                                      transition-all duration-300"
-                        >
-                          Resolver
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                          >
+                            Resolver
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

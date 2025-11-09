@@ -177,12 +177,57 @@ export const rondasqrApi = {
       body: JSON.stringify(payload || {}),
     });
   },
+
+  // ⬇️ AQUÍ la parte importante
   async panic(gps) {
-    return fetchJson(`${BASE}/checkin/panic`, {
-      method: "POST",
-      body: JSON.stringify({ gps }),
-    });
+    // normalizar payload
+    let body;
+    if (gps && typeof gps === "object") {
+      if ("gps" in gps) {
+        body = gps;
+      } else if ("lat" in gps || "lon" in gps) {
+        body = { gps };
+      } else {
+        body = { gps };
+      }
+    } else {
+      body = { gps: null };
+    }
+
+    // intentamos varias rutas porque tu backend está devolviendo 404
+    const candidateUrls = [
+      `${BASE}/checkin/panic`,
+      `${BASE}/panic`,
+      `${BASE}/alerts/panic`,
+      // sin /v1
+      `${ROOT}/api/rondasqr/checkin/panic`,
+      `${ROOT}/api/rondasqr/panic`,
+      // súper genérica
+      `${ROOT}/api/panic`,
+    ];
+
+    let lastErr;
+    for (const url of candidateUrls) {
+      try {
+        // console.log("probando panic en", url);
+        return await fetchJson(url, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        // si es 404 seguimos probando, si es otra cosa la guardamos igual
+        lastErr = err;
+        if (err.status !== 404 && err.status !== 405) {
+          // error "real": auth, 500, etc → cortamos
+          break;
+        }
+      }
+    }
+
+    // si llegamos aquí es que ninguna ruta funcionó
+    throw lastErr || new Error("No se pudo enviar el pánico: ninguna ruta coincidió");
   },
+
   async postInactivity(payload) {
     return fetchJson(`${BASE}/checkin/inactivity`, {
       method: "POST",

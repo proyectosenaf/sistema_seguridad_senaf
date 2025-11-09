@@ -54,8 +54,16 @@ const PERMS_BY_SECTION = {
   accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
   // ✅ NUEVO módulo
   rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
-  // ✅ COMPATibilidad con permisos antiguos si aún existen en IAM
-  rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "rondas.read", "rondas.reports", "guardia", "*"],
+  // ✅ compat con legacy
+  rondas: [
+    "rondasqr.view",
+    "rondasqr.admin",
+    "rondasqr.reports",
+    "rondas.read",
+    "rondas.reports",
+    "guardia",
+    "*",
+  ],
   incidentes: [
     "incidentes.read",
     "incidentes.create",
@@ -86,7 +94,11 @@ const PERMS_BY_SECTION = {
 export default function Home() {
   const nav = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
-  const [incStats, setIncStats] = React.useState({ total: 0, abiertos: 0, alta: 0 });
+  const [incStats, setIncStats] = React.useState({
+    total: 0,
+    abiertos: 0,
+    alta: 0,
+  });
 
   // Ref para mantener una sola instancia de socket (evita duplicados con HMR)
   const socketRef = React.useRef(null);
@@ -114,7 +126,7 @@ export default function Home() {
     return () => {
       socket.off("rondasqr:check", onCheck);
       socket.off("rondas:check", onCheck);
-      // socket.close(); // si prefieres cerrar al desmontar
+      // socket.close();
     };
   }, []);
 
@@ -138,6 +150,7 @@ export default function Home() {
   React.useEffect(() => {
     (async () => {
       try {
+        // ojo: aquí tu api ya tiene base, pero lo dejo igual que lo tenías
         const r = await api.get("/api/incidentes", { params: { limit: 100 } });
         const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
         setIncStats({
@@ -153,8 +166,6 @@ export default function Home() {
 
   /* ---------------------------------------------
      Secciones: alias y normalización de "rondas"
-     - Si viene key "rondas": forzamos path /rondasqr
-     - Si no existe IAM en NAV_SECTIONS: lo agregamos
      --------------------------------------------- */
   const SECTIONS = React.useMemo(() => {
     const base = NAV_SECTIONS.map((s) => {
@@ -162,11 +173,9 @@ export default function Home() {
       if (s.key === "rondas") {
         return {
           ...s,
-          // conservamos label e icono; solo cambiamos path
           path: "/rondasqr",
         };
       }
-      // si ya viene como rondasqr, nos aseguramos del path correcto
       if (s.key === "rondasqr") {
         return { ...s, path: "/rondasqr" };
       }
@@ -202,7 +211,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Secciones (visibles solo si el usuario tiene permisos) */}
+      {/* Secciones */}
       <div className="card fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -214,12 +223,17 @@ export default function Home() {
 
             return (
               <IamGuard key={s.key} anyOf={anyOf} fallback={null}>
-                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
+                <button
+                  onClick={() => nav(s.path)}
+                  className="fx-tile text-left p-4"
+                >
                   <div className="flex items-center gap-3">
                     {Icon && <Icon className="w-5 h-5 opacity-80" />}
                     <div className="font-medium">{s.label}</div>
                   </div>
-                  <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
+                  <div className="text-xs mt-1 opacity-70">
+                    Ir a {s.label}
+                  </div>
                 </button>
               </IamGuard>
             );

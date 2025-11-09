@@ -1,16 +1,24 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import SidebarGuard from "./SidebarGuard.jsx";
 import QrScanner from "./QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 import { useAuth0 } from "@auth0/auth0-react";
-/* 🆕 */
 import { useAssignmentSocket } from "../hooks/useAssignmentSocket.js";
+import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
 
 /* Utils */
-function toArr(v) { return !v ? [] : Array.isArray(v) ? v : [v]; }
+function toArr(v) {
+  return !v ? [] : Array.isArray(v) ? v : [v];
+}
 function uniqLower(arr) {
-  return Array.from(new Set(toArr(arr).map((x) => String(x).trim().toLowerCase()).filter(Boolean)));
+  return Array.from(
+    new Set(
+      toArr(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 }
 
 export default function ScanPage() {
@@ -18,27 +26,110 @@ export default function ScanPage() {
   const { pathname, hash } = useLocation();
   const { user } = useAuth0();
 
-  const [isNavOpen, setIsNavOpen] = useState(false); // drawer móvil
-  useEffect(() => { setIsNavOpen(false); }, [pathname]);
+  const [isNavOpen, setIsNavOpen] = useState(false);
+  useEffect(() => {
+    setIsNavOpen(false);
+  }, [pathname]);
   useEffect(() => {
     document.body.style.overflow = isNavOpen ? "hidden" : "";
     return () => (document.body.style.overflow = "");
   }, [isNavOpen]);
 
-  /* 🆕: pedir permiso de notificaciones del navegador una sola vez */
+  // pedir permisos de notificación una vez
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
   }, []);
 
-  /* 🆕: escuchar asignaciones nuevas para este guardia (user.sub)
-     Nota: el hook ya muestra notificación y reproduce sonido,
-     aquí solo podrías refrescar UI si hace falta. */
-  useAssignmentSocket(user, (_payload) => {
-    // Ejemplo: refrescar contadores/listas si necesitas
-    // console.log("Nueva asignación recibida:", _payload);
+  // refs para audio
+  const alertAudioRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const alarmStopRef = useRef(null);
+
+  // último panic para mostrar la burbuja
+  const [lastPanic, setLastPanic] = useState(null);
+
+  // socket de asignaciones
+  useAssignmentSocket(user, (evt) => {
+    const t = evt?.type || evt?.event || evt?.kind;
+    if (t === "panic" || t === "rondasqr:panic") {
+      handleIncomingPanic(evt.payload || {});
+    }
   });
+
+  // escuchar alertas locales (misma pestaña / misma app)
+  useEffect(() => {
+    const unsub = subscribeLocalPanic((payload) => {
+      handleIncomingPanic(payload);
+    });
+    return () => unsub && unsub();
+  }, []);
+
+  // sonido "serio" con Web Audio
+  function playAlarmTone() {
+    try {
+      // crear contexto 1 sola vez
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtxRef.current = new Ctx();
+      }
+      const ctx = audioCtxRef.current;
+
+      // algunos navegadores piden resume por interacción
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+
+      // oscilador + gain
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sawtooth"; // más ruidoso que sine
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      // patrón: sube y baja la frecuencia 2 segundos
+      osc.frequency.setValueAtTime(500, now);
+      osc.frequency.linearRampToValueAtTime(900, now + 0.4);
+      osc.frequency.linearRampToValueAtTime(500, now + 0.8);
+      osc.frequency.linearRampToValueAtTime(900, now + 1.2);
+      osc.frequency.linearRampToValueAtTime(500, now + 1.6);
+
+      // volumen
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.4, now + 0.05);
+      gain.gain.linearRampToValueAtTime(0.4, now + 1.6);
+      gain.gain.linearRampToValueAtTime(0.0001, now + 1.9);
+
+      osc.start(now);
+      osc.stop(now + 2.0);
+
+      // guardar para poder cortar (aunque aquí se auto-corta)
+      alarmStopRef.current = () => {
+        try {
+          osc.stop();
+        } catch {}
+      };
+    } catch {
+      // si algo falla, intentamos beep de fallback
+      if (alertAudioRef.current) {
+        alertAudioRef.current.currentTime = 0;
+        alertAudioRef.current.play().catch(() => {});
+      }
+    }
+  }
+
+  function handleIncomingPanic(payload) {
+    setLastPanic({
+      at: new Date().toLocaleTimeString(),
+      ...payload,
+    });
+    // sonido al recibir
+    playAlarmTone();
+  }
 
   const ROLES_CLAIM = "https://senaf.local/roles";
   const PERMS_CLAIM = "https://senaf.local/permissions";
@@ -58,16 +149,28 @@ export default function ScanPage() {
   const perms = uniqLower([...permsClaim, ...devPerms]);
 
   const isAdminLike =
-    perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
+    perms.includes("*") ||
+    roles.includes("admin") ||
+    roles.includes("rondasqr.admin");
   const isSupervisorLike =
-    roles.includes("supervisor") || perms.includes("rondasqr.view") || perms.includes("rondasqr.reports");
+    roles.includes("supervisor") ||
+    perms.includes("rondasqr.view") ||
+    perms.includes("rondasqr.reports");
 
+  // qué pestaña estoy viendo
   const tab = useMemo(() => {
     if (pathname.endsWith("/qr")) return "qr";
     if (pathname.endsWith("/msg")) return "msg";
     if (pathname.endsWith("/fotos")) return "fotos";
     return "home";
   }, [pathname]);
+
+  // si alguien entra directo a /rondasqr/scan/msg lo mandamos al módulo de incidentes
+  useEffect(() => {
+    if (tab === "msg") {
+      nav("/incidentes/nuevo", { replace: true });
+    }
+  }, [tab, nav]);
 
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
@@ -76,14 +179,14 @@ export default function ScanPage() {
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
   // --- Carga de plan/puntos para progreso ---
-  const [planMeta, setPlanMeta] = useState(null); // {siteId, roundId}
-  const [points, setPoints] = useState([]);        // [{_id,name,order,qrCode}, ...]
+  const [planMeta, setPlanMeta] = useState(null);
+  const [points, setPoints] = useState([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const plans = await rondasqrApi.listPlans(); // {items:[]}
+        const plans = await rondasqrApi.listPlans();
         const plan = plans?.items?.[0] || null;
         if (!alive || !plan) return;
 
@@ -99,18 +202,31 @@ export default function ScanPage() {
         console.warn("[ScanPage] No se pudieron cargar puntos", e);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // ---- Progreso (persistido en localStorage) ----
-  const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
+  // ---- Progreso (localStorage) ----
+  const [progress, setProgress] = useState({
+    lastPoint: null,
+    nextPoint: null,
+    pct: 0,
+  });
+
   function loadLocalProgress() {
     const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
     const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
-    const pct = Math.max(0, Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0)));
+    const pct = Math.max(
+      0,
+      Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0))
+    );
     setProgress({ lastPoint, nextPoint, pct });
   }
-  useEffect(() => { loadLocalProgress(); }, []);
+
+  useEffect(() => {
+    loadLocalProgress();
+  }, []);
 
   // ---- Alerta rápida (#alert) ----
   useEffect(() => {
@@ -123,28 +239,42 @@ export default function ScanPage() {
   }, [hash, nav]);
 
   async function sendAlert() {
-    if (sendingAlert) return;
+    if (sendingAlert) return false;
     setSendingAlert(true);
     try {
       let gps;
       if ("geolocation" in navigator) {
         await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
-            (pos) => { gps = { lat: pos.coords.latitude, lon: pos.coords.longitude }; resolve(); },
+            (pos) => {
+              gps = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+              };
+              resolve();
+            },
             () => resolve(),
             { enableHighAccuracy: true, timeout: 5000 }
           );
         });
       }
-      await rondasqrApi.panic(gps);
+      await rondasqrApi.panic(gps || null);
+      // avisamos localmente
+      emitLocalPanic({ source: "home-button", user: user?.name || user?.email });
+      // 🔊 sonido también cuando YO la disparo
+      playAlarmTone();
       alert("🚨 Alerta de pánico enviada.");
-    } catch {
+      return true;
+    } catch (err) {
+      console.error("[ScanPage] error al enviar alerta", err);
       alert("No se pudo enviar la alerta.");
+      return false;
     } finally {
       setSendingAlert(false);
     }
   }
 
+  // (legacy) por si llegaran a navegar ahí sin pasar por el nuevo form
   async function sendMessage() {
     if (sendingMsg) return;
     if (!msg.trim()) return alert("Escribe un mensaje.");
@@ -167,7 +297,10 @@ export default function ScanPage() {
     if (!base64s.length) return alert("Selecciona al menos una foto.");
     setSendingPhotos(true);
     try {
-      await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
+      await rondasqrApi.postIncident({
+        text: "Fotos de ronda",
+        photosBase64: base64s,
+      });
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
       nav("/rondasqr/scan");
@@ -178,7 +311,7 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== Estilos listos para claro/oscuro ===== */
+  /* ===== estilos ===== */
   const pageClass =
     "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
 
@@ -209,79 +342,48 @@ export default function ScanPage() {
     .btn-neon-amber  { background-image:linear-gradient(90deg,#f59e0b,#ef4444); }
     .btn-neon-purple { background-image:linear-gradient(90deg,#a855f7,#6366f1); }
     .dark .btn-neon { box-shadow:0 14px 36px rgba(99,102,241,.38),0 10px 28px rgba(6,182,212,.28); }
+
+    @keyframes panic-blink {
+      0%, 100% { opacity: 1; box-shadow: 0 0 25px rgba(248,113,113,.8); }
+      50% { opacity: .55; box-shadow: 0 0 6px rgba(248,113,113,.2); }
+    }
+    .panic-indicator {
+      animation: panic-blink 1s ease-in-out infinite;
+    }
   `;
 
   const homeCols =
-    (isAdminLike || isSupervisorLike) ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2";
+    isAdminLike || isSupervisorLike ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2";
 
-  // ==== Handler principal de lectura ====
-  // evita doble POST si ZXing entrega 2 lecturas muy seguidas
-  const lastScanRef = React.useRef({ text: "", at: 0 });
-
-  const handleScan = async (text) => {
-    const now = Date.now();
-    if (lastScanRef.current.text === text && now - lastScanRef.current.at < 2000) {
-      return; // antirrebote
-    }
-    lastScanRef.current = { text, at: now };
-
-    try {
-      // GPS opcional
-      let gps;
-      if ("geolocation" in navigator) {
-        await new Promise((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => { gps = { lat: pos.coords.latitude, lon: pos.coords.longitude }; resolve(); },
-            () => resolve(),
-            { enableHighAccuracy: true, timeout: 4000 }
-          );
-        });
-      }
-
-      // 1) Enviar check-in
-      await rondasqrApi.postScan({ qr: text, gps });
-
-      // 2) Actualizar progreso buscando el punto por su qrCode
-      let displayName = text;
-      let pct = Number(localStorage.getItem("rondasqr:progressPct") || 0);
-      if (points.length) {
-        const idx = points.findIndex(p => p.qrCode && String(p.qrCode).trim() === String(text).trim());
-        if (idx >= 0) {
-          displayName = points[idx].name || `Punto ${idx + 1}`;
-          const next = idx + 1 < points.length ? (points[idx + 1].name || `Punto ${idx + 2}`) : "";
-          localStorage.setItem("rondasqr:lastPointName", displayName);
-          localStorage.setItem("rondasqr:nextPointName", next);
-          pct = Math.round(((idx + 1) / points.length) * 100);
-          localStorage.setItem("rondasqr:progressPct", String(Math.max(0, Math.min(100, pct))));
-        } else {
-          // si el QR no pertenece al plan, al menos marcamos último leído
-          localStorage.setItem("rondasqr:lastPointName", displayName);
-          localStorage.setItem("rondasqr:progressPct", String(pct));
-        }
-      } else {
-        // sin plan cargado: solo guardamos el último
-        localStorage.setItem("rondasqr:lastPointName", displayName);
-      }
-
-      loadLocalProgress();
-      alert(`✅ Punto registrado: ${displayName}`);
-      nav("/rondasqr/scan");
-    } catch (e) {
-      console.error("[handleScan] error", e);
-      alert("No se pudo registrar el punto. Reintenta.");
-    }
-  };
+  // beep mínimo como respaldo
+  const BEEP_SRC =
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
 
   return (
     <div className={pageClass}>
       <style>{neonStyles}</style>
 
-      {/* Desktop sidebar */}
+      {/* audio oculto de respaldo */}
+      <audio ref={alertAudioRef} src={BEEP_SRC} preload="auto" />
+
+      {/* indicador de pánico flotante */}
+      {lastPanic && (
+        <button
+          onClick={() => setLastPanic(null)}
+          className="fixed top-20 right-6 z-[120] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white panic-indicator shadow-lg"
+          title={`Alerta recibida ${lastPanic.at}`}
+        >
+          <span className="text-[10px] leading-none font-bold">ALERTA</span>
+          <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
+        </button>
+      )}
+
+      {/* sidebar desktop */}
       <div className="hidden md:block">
         <SidebarGuard variant="desktop" />
       </div>
 
-      {/* Backdrop + drawer móvil */}
+      {/* drawer móvil */}
       {isNavOpen && (
         <>
           <div
@@ -293,7 +395,7 @@ export default function ScanPage() {
       )}
 
       <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 relative">
-        {/* Botón hamburguesa en móvil */}
+        {/* hamburguesa móvil */}
         <div className="md:hidden mb-3">
           <button
             onClick={() => setIsNavOpen(true)}
@@ -306,7 +408,7 @@ export default function ScanPage() {
           </button>
         </div>
 
-        {/* Encabezado */}
+        {/* header */}
         <div className={headerClass}>
           <h2 className="text-xl sm:text-2xl font-bold">Visión General</h2>
           <div className="text-xs sm:text-sm">
@@ -317,18 +419,21 @@ export default function ScanPage() {
         {/* ===== HOME ===== */}
         {tab === "home" && (
           <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
-            {/* ALERTA + accesos */}
+            {/* alerta + accesos */}
             <section className={cardClass + " text-center"}>
               <div className="flex flex-col items-center">
                 <button
-                  onClick={sendAlert}
+                  onClick={async () => {
+                    const ok = await sendAlert();
+                    if (ok) nav("/rondasqr/scan", { replace: true });
+                  }}
                   disabled={sendingAlert}
                   aria-label="Botón de alerta de pánico"
                   className={[
                     "rounded-full font-extrabold text-white",
                     "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
                     "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
-                    sendingAlert ? "cursor-not-allowed opacity-80" : ""
+                    sendingAlert ? "cursor-not-allowed opacity-80" : "",
                   ].join(" ")}
                 >
                   {sendingAlert ? "ENVIANDO..." : "ALERTA"}
@@ -342,20 +447,20 @@ export default function ScanPage() {
                 <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
                   Registrador Punto Control
                 </button>
-                <button onClick={() => nav("/rondasqr/scan/msg")} className="w-full btn-neon btn-neon-purple">
+                <button
+                  onClick={() => nav("/incidentes/nuevo")}
+                  className="w-full btn-neon btn-neon-purple"
+                >
                   Mensaje Incidente
-                </button>
-                <button onClick={() => nav("/rondasqr/scan/fotos")} className="w-full btn-neon btn-neon-green">
-                  Fotos de remitentes
                 </button>
               </div>
             </section>
 
-            {/* PROGRESO DE RONDA */}
+            {/* progreso */}
             <section className={cardClass}>
               <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
-              {(progress.lastPoint || progress.nextPoint || progress.pct > 0) ? (
+              {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
                 <>
                   <div className="text-sm space-y-1 mb-3">
                     {progress.lastPoint && (
@@ -375,7 +480,9 @@ export default function ScanPage() {
                   <div className="w-full h-3 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
-                      style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
+                      style={{
+                        width: `${Math.max(0, Math.min(100, progress.pct))}%`,
+                      }}
                     />
                   </div>
                   <div className="mt-1 text-right text-xs opacity-70">
@@ -387,7 +494,7 @@ export default function ScanPage() {
                       onClick={() => nav("/rondasqr/scan/qr")}
                       className="w-full btn-neon btn-neon-green"
                     >
-                      Abrir escáner
+                      Continuar ronda
                     </button>
                     <button
                       onClick={() => nav("/rondasqr/scan")}
@@ -400,24 +507,19 @@ export default function ScanPage() {
               ) : (
                 <>
                   <p className="text-sm text-slate-600 dark:text-white/80">
-                    Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y
-                    escanea el primer punto asignado.
+                    Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong>{" "}
+                    y escanea el primer punto asignado.
                   </p>
                   <ul className="mt-3 text-sm space-y-1 list-disc list-inside text-slate-600 dark:text-white/70">
                     <li>Asegúrate de dar permisos de cámara al navegador.</li>
                     <li>Si no ves los puntos, confirma que el plan de ronda esté cargado.</li>
                     <li>Puedes reportar un incidente desde “Mensaje Incidente”.</li>
                   </ul>
-                  <div className="mt-4">
-                    <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon w-full">
-                      Abrir escáner
-                    </button>
-                  </div>
                 </>
               )}
             </section>
 
-            {/* ACCIONES */}
+            {/* acciones admin/supervisor */}
             {(isAdminLike || isSupervisorLike) && (
               <section className={cardClass}>
                 <h3 className="font-semibold text-lg mb-3">Acciones</h3>
@@ -425,7 +527,10 @@ export default function ScanPage() {
                   Acciones avanzadas disponibles para supervisores o administradores.
                 </p>
                 <div className="grid gap-3 max-w-sm">
-                  <button onClick={() => nav("/rondasqr/reports")} className="w-full btn-neon">
+                  <button
+                    onClick={() => nav("/rondasqr/reports")}
+                    className="w-full btn-neon"
+                  >
                     📊 Abrir informes
                   </button>
                   {isAdminLike && (
@@ -459,17 +564,23 @@ export default function ScanPage() {
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className="w-full btn-neon btn-neon-amber">
+              <button
+                onClick={() => nav("/rondasqr/scan")}
+                className="w-full btn-neon btn-neon-amber"
+              >
                 Finalizar
               </button>
-              <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon btn-neon-green">
+              <button
+                onClick={() => nav("/rondasqr/scan/qr")}
+                className="w-full btn-neon btn-neon-green"
+              >
                 Reintentar
               </button>
             </div>
           </section>
         )}
 
-        {/* ===== MENSAJE ===== */}
+        {/* ===== MENSAJE (legacy) ===== */}
         {tab === "msg" && (
           <section className={cardClass}>
             <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
@@ -483,7 +594,9 @@ export default function ScanPage() {
               onChange={(e) => setMsg(e.target.value)}
             />
             <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>Cancelar</button>
+              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+                Cancelar
+              </button>
               <button onClick={sendMessage} disabled={sendingMsg} className="btn-neon">
                 {sendingMsg ? "Enviando…" : "Enviar"}
               </button>
@@ -497,7 +610,9 @@ export default function ScanPage() {
             <h3 className="font-semibold text-lg mb-3">Enviar Fotos</h3>
             <PhotoPicker photos={photos} setPhotos={setPhotos} />
             <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>Cancelar</button>
+              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+                Cancelar
+              </button>
               <button onClick={sendPhotos} disabled={sendingPhotos} className="btn-neon">
                 {sendingPhotos ? "Enviando…" : "Enviar"}
               </button>
@@ -516,7 +631,9 @@ function PhotoPicker({ photos, setPhotos }) {
     <>
       {photos.map((f, i) => (
         <div key={i} className="flex items-center justify-between mb-2">
-          <span className="text-sm text-slate-700 dark:text-white/90">Toma foto {i + 1}</span>
+          <span className="text-sm text-slate-700 dark:text-white/90">
+            Toma foto {i + 1}
+          </span>
           <div className="flex gap-2">
             <input
               type="file"
@@ -541,7 +658,9 @@ function PhotoPicker({ photos, setPhotos }) {
               Seleccionar
             </label>
             <button
-              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
+              onClick={() =>
+                setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))
+              }
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
             >
               Eliminar

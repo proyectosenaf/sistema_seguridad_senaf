@@ -6,6 +6,9 @@ import ChatDock from "./ChatDock.jsx";
 import Footer from "./Footer.jsx";
 import { useLayoutUI } from "./layout-ui.jsx";
 
+// 👇 NUEVO: escucha global de alertas
+import GlobalPanicListener from "./GlobalPanicListener.jsx";
+
 export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { pathname } = useLocation();
@@ -54,6 +57,9 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-[100svh] bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
+      {/* 👇 AQUÍ: esto vive en todo el layout, por lo tanto en toda la app */}
+      <GlobalPanicListener />
+
       {/* Fondo global */}
       <div className="app-bg pointer-events-none" aria-hidden />
 
@@ -91,7 +97,9 @@ export default function Layout({ children }) {
       >
         <main id="app-main" className="flex-1">
           <div
-            className={`${showSidebar ? "max-w-7xl" : "max-w-[1600px]"} w-full mx-auto px-4 md:px-6 py-6 space-y-6`}
+            className={`${
+              showSidebar ? "max-w-7xl" : "max-w-[1600px]"
+            } w-full mx-auto px-4 md:px-6 py-6 space-y-6`}
           >
             {children}
           </div>
@@ -103,7 +111,9 @@ export default function Layout({ children }) {
       {/* Drawer móvil para el sidebar */}
       <div
         className={`fixed inset-0 z-50 md:hidden transition-opacity ${
-          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          mobileOpen
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
         }`}
         aria-hidden={!mobileOpen}
       >

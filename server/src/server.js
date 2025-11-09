@@ -21,9 +21,10 @@ import { requireAuth } from "./middleware/auth.js";
 import { makeNotifier } from "./core/notify.js";
 import notificationsRoutes from "./core/notifications.routes.js";
 
-// Módulo Rondas QR
+// Módulo Rondas QR (router principal)
 import rondasqr from "../modules/rondasqr/index.js";
-
+// 👇 **NUEVO**: router que tiene /scan, /incidents, /panic, etc.
+import rondasqrCheckin from "../modules/rondasqr/routes/rondasqr.checkin.routes.js";
 
 // Cron de asignaciones (DIARIO)
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
@@ -105,7 +106,6 @@ app.use((req, _res, next) => {
   next();
 });
 
-
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!mongoUri) {
   console.error("[db] FALTA MONGODB_URI o MONGO_URI");
@@ -155,18 +155,14 @@ function iamDevMerge(req, _res, next) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Asegura estructura base
   req.auth = req.auth || { payload: {} };
   const p = req.auth.payload;
 
-  // email simulado
   if (devEmail && !p.email) p.email = devEmail;
 
-  // namespace de los roles
   const NS =
     process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
-  // fusionar roles
   const mergedRoles = new Set([
     ...((p[NS] || p.roles || []) ?? []),
     ...devRolesArr,
@@ -176,7 +172,6 @@ function iamDevMerge(req, _res, next) {
     p.roles = Array.from(mergedRoles);
   }
 
-  // fusionar permisos
   const mergedPerms = new Set([
     ...((p.permissions || []) ?? []),
     ...devPermsArr,
@@ -185,7 +180,6 @@ function iamDevMerge(req, _res, next) {
     p.permissions = Array.from(mergedPerms);
   }
 
-  // Exponer req.user también (varios handlers esperan req.user directo)
   if (!req.user) {
     req.user = {
       sub: req.headers["x-user-id"] || "dev|local",
@@ -225,14 +219,12 @@ function authBridgeToReqUser(req, _res, next) {
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  // Si viene Authorization y NO estamos en modo "DISABLE_AUTH=1", validamos JWT.
   if (
     req.headers.authorization &&
     String(process.env.DISABLE_AUTH || "0") !== "1"
   ) {
     return requireAuth(req, res, next);
   }
-  // En dev sin token, sigue.
   return next();
 }
 
@@ -354,7 +346,6 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       `"SENAF Seguridad" <${
         process.env.GMAIL_USER || process.env.MAIL_USER
       }>`;
-
     const link = process.env.VERIFY_BASE_URL
       ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
           id
@@ -406,7 +397,6 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 /* ─────────────────── Notificaciones globales ──────────────────── */
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
-// Endpoints usados por client/src/lib/notificationsApi.js
 app.use("/api/notifications", notificationsRoutes);
 
 // ⏰ Inicia cron de asignaciones (diario)
@@ -448,7 +438,8 @@ app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
 );
 app.use("/api/rondasqr/v1", rondasqr);
-
+// 👇 **aquí montamos directamente las rutas que tienen /checkin/panic**
+app.use("/api/rondasqr/v1", rondasqrCheckin);
 
 /* ────────────────────── Error handler (500) ───────────────────── */
 app.use((err, _req, res, _next) => {
