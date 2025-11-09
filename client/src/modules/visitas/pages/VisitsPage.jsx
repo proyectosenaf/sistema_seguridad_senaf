@@ -15,6 +15,15 @@ async function readJsonSafe(res) {
   }
 }
 
+// ⏰ helpers de rango del día local
+function getTodayRange() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
 export default function VisitsPage() {
   const navigate = useNavigate();
 
@@ -70,6 +79,9 @@ export default function VisitsPage() {
               entry: fmt(entryDate),
               exit: fmt(exitDate),
               status: v.estado,
+              // ✅ guardo fechas crudas para cálculos (no visibles)
+              entryAt: entryDate,
+              exitAt: exitDate,
             };
           });
           setVisitors(mapped);
@@ -93,11 +105,23 @@ export default function VisitsPage() {
     () => visitors.filter((v) => v.status === "Dentro").length,
     [visitors]
   );
-  const kpiTotalHoy = useMemo(() => visitors.length, [visitors]);
-  const kpiEmpresas = useMemo(
-    () => new Set(visitors.map((v) => v.company)).size,
-    [visitors]
-  );
+
+  // ✅ “Total Hoy” solo cuenta visitas con fechaEntrada dentro del día local de HOY
+  const kpiTotalHoy = useMemo(() => {
+    const { start, end } = getTodayRange();
+    return visitors.filter(
+      (v) => v.entryAt && v.entryAt >= start && v.entryAt < end
+    ).length;
+  }, [visitors]);
+
+  // ✅ “Empresas Visitantes” también por HOY (únicas del día)
+  const kpiEmpresas = useMemo(() => {
+    const { start, end } = getTodayRange();
+    const empresasDeHoy = visitors
+      .filter((v) => v.entryAt && v.entryAt >= start && v.entryAt < end)
+      .map((v) => v.company);
+    return new Set(empresasDeHoy).size;
+  }, [visitors]);
 
   const filteredVisitors = useMemo(() => {
     return visitors.filter((v) => {
@@ -158,6 +182,9 @@ export default function VisitsPage() {
         entry: fmtEntry,
         exit: "-",
         status: v.estado || "Dentro",
+        // ✅ para KPI de hoy
+        entryAt: entryDate,
+        exitAt: null,
       };
 
       setVisitors((prev) => [newRow, ...prev]);
@@ -197,7 +224,9 @@ export default function VisitsPage() {
 
       setVisitors((prev) =>
         prev.map((row) =>
-          row.id === id ? { ...row, status: "Finalizada", exit: fmtExit } : row
+          row.id === id
+            ? { ...row, status: "Finalizada", exit: fmtExit, exitAt: exitDate }
+            : row
         )
       );
     } catch (err) {
