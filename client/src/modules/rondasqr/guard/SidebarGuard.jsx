@@ -1,10 +1,11 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 import {
-  Home, AlertTriangle, QrCode, MessageSquare, Camera, Send, Database,
+  Home, AlertTriangle, QrCode, MessageSquare, Send, Database,
   Settings, LogOut, BookOpen, Info, Languages, FileBarChart
 } from "lucide-react";
 import { rondasqrApi } from "../api/rondasqrApi.js";
+import { emitLocalPanic } from "../utils/panicBus.js";
 
 export default function SidebarGuard({
   variant = "desktop",   // "desktop" | "mobile"
@@ -27,7 +28,6 @@ export default function SidebarGuard({
   const actionItems = [
     { key: "alert",   label: "Enviar Alerta",        icon: AlertTriangle },
     { key: "msg",     label: "Mensaje Incidente",    icon: MessageSquare },
-    { key: "photo",   label: "Enviar foto",          icon: Camera },
     { key: "tx",      label: "Transmitir Rondas",    icon: Send },
     { key: "dumpdb",  label: "Enviar base de datos", icon: Database },
     { key: "manuals", label: "Manuales",             icon: BookOpen },
@@ -44,37 +44,56 @@ export default function SidebarGuard({
           if ("geolocation" in navigator) {
             await new Promise((resolve) => {
               navigator.geolocation.getCurrentPosition(
-                (pos) => { gps = { lat: pos.coords.latitude, lon: pos.coords.longitude }; resolve(); },
+                (pos) => {
+                  gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                  resolve();
+                },
                 () => resolve(),
                 { enableHighAccuracy: true, timeout: 5000 }
               );
             });
           }
-          await rondasqrApi.panic(gps);
+          await rondasqrApi.panic(gps || null);
+          // avisamos a toda la app
+          emitLocalPanic({ source: "sidebar" });
           window.alert("🚨 Alerta de pánico enviada.");
+          window.location.assign("/rondasqr/scan");
           break;
         }
-        case "msg":     window.location.assign("/incidentes/nuevo"); break;
-        case "photo":   window.alert("📷 Enviar foto: pendiente."); break;
-        case "tx":      window.alert("⬆️ Transmitir Rondas: pendiente."); break;
-        case "dumpdb":  window.alert("💾 Enviar base de datos: pendiente."); break;
-        case "manuals": window.open("https://example.com/manual.pdf","_blank","noopener,noreferrer"); break;
-        case "about":   window.alert("ℹ️ SENAF · Módulo Rondas QR"); break;
-        case "lang":    window.alert("🌐 Cambio de idioma: pendiente."); break;
-        case "logout":  window.location.assign("/login"); break;
-        default: break;
+        case "msg":
+          window.location.assign("/incidentes/nuevo");
+          break;
+        case "tx":
+          window.alert("⬆️ Transmitir Rondas: pendiente.");
+          break;
+        case "dumpdb":
+          window.alert("💾 Enviar base de datos: pendiente.");
+          break;
+        case "manuals":
+          window.open("https://example.com/manual.pdf","_blank","noopener,noreferrer");
+          break;
+        case "about":
+          window.alert("ℹ️ SENAF · Módulo Rondas QR");
+          break;
+        case "lang":
+          window.alert("🌐 Cambio de idioma: pendiente.");
+          break;
+        case "logout":
+          window.location.assign("/login");
+          break;
+        default:
+          break;
       }
       if (variant === "mobile" && onCloseMobile) onCloseMobile();
     } catch (err) {
-      console.error("[SidebarGuard]", err);
-      window.alert("Ocurrió un error ejecutando la acción.");
+      console.error("[SidebarGuard] error al enviar alerta", err);
+      window.alert("No se pudo enviar la alerta.");
     }
   }
 
   const widthClass =
     variant === "mobile" ? "w-72" : collapsed ? "w-16" : "w-64";
 
-  // Fondo sólido en claro + gradiente en oscuro
   const containerBase =
     variant === "mobile"
       ? "fixed inset-y-0 left-0 z-50 p-4 border-r overflow-y-auto overscroll-contain " +
@@ -93,7 +112,6 @@ export default function SidebarGuard({
       className={`${containerBase} ${widthClass} flex-col`}
       aria-label="Navegación del módulo de rondas"
     >
-      {/* Encabezado */}
       <div className={`${collapsed ? "text-center" : ""} mb-5`}>
         <div className={`font-extrabold tracking-tight ${collapsed ? "text-base" : "text-2xl"} text-slate-900 dark:text-white`}>
           SENAF
@@ -105,7 +123,6 @@ export default function SidebarGuard({
         )}
       </div>
 
-      {/* Navegación */}
       <nav className="flex-1 flex flex-col gap-1">
         {navItems.map((it) => {
           const Icon = it.icon;
