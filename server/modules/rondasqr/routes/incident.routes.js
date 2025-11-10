@@ -1,14 +1,35 @@
-const express = require("express");
+// server/modules/rondasqr/routes/incident.routes.js
+import express from "express";
+import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+
+import {
+  getAllIncidents,
+  createIncident,
+  updateIncident,
+} from "../controllers/incident.controller.js";
+
 const router = express.Router();
-const IncidentController = require("../controllers/incident.controller");
 
-// Historial
-router.get("/api/incidentes", IncidentController.getAllIncidents);
+// carpeta donde se guardarán las fotos
+const uploadDir = path.resolve(process.cwd(), "uploads", "incidentes");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
-// Crear
-router.post("/api/incidentes", IncidentController.createIncident);
+// multer simple: guarda en disco
+const upload = multer({
+  dest: uploadDir,
+});
 
-// Actualizar estado
-router.put("/api/incidentes/:id", IncidentController.updateIncident);
+// GET lista
+router.get("/api/incidentes", getAllIncidents);
 
-module.exports = router;
+// POST crear (con fotos opcionales)
+router.post("/api/incidentes", upload.array("photos", 10), createIncident);
+
+// PUT actualizar estado u otros campos
+router.put("/api/incidentes/:id", updateIncident);
+
+export default router;

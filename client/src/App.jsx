@@ -115,12 +115,11 @@ function AuthTokenBridge({ children }) {
           const token = await getAccessTokenSilently({
             authorizationParams: {
               audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              scope: "openid profile email" // ← sin offline_access para evitar "Missing Refresh Token"
+              scope: "openid profile email"
             }
           });
           return token || null;
         } catch (err) {
-          // No spamear consola si sólo falta refresh; seguimos sin token.
           const msg = (err && (err.error || err.message)) || String(err);
           console.debug("[AuthTokenBridge] getAccessTokenSilently:", msg);
           return null;
@@ -188,6 +187,19 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            {/* 👉 alias para que /incidentes/lista no dé 404 */}
+            <Route
+              path="/incidentes/lista"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuard anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
+                      <IncidentesList />
+                    </IamGuard>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/incidentes/nuevo"
               element={
@@ -224,7 +236,6 @@ export default function App() {
             />
 
             {/* Panel unificado (Scan) */}
-            {/* ⬇⬇⬇ COMODÍN para permitir /rondasqr/scan/qr, /msg, /fotos */}
             <Route
               path="/rondasqr/scan/*"
               element={

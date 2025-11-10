@@ -1,9 +1,9 @@
+// src/pages/Incidentes/IncidentesList.jsx
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 
 export default function IncidentesList() {
-  const nav = useNavigate();
   const [incidentes, setIncidentes] = useState([]);
 
   const [stats, setStats] = useState({
@@ -13,76 +13,118 @@ export default function IncidentesList() {
     alta: 0,
   });
 
-  // si tus rutas de imagen vienen como /uploads/incidents/xxx.jpg
-  // las completamos con el host de la API
+  // mostrar/ocultar formulario
+  const [showForm, setShowForm] = useState(false);
+
+  // campos del formulario
+  const [form, setForm] = useState({
+    type: "",
+    description: "",
+    reportedBy: "",
+    zone: "",
+    priority: "media",
+  });
+  const [files, setFiles] = useState([]);
+
+  const API_BASE = "http://localhost:4000";
   const API_HOST = "http://localhost:4000";
 
-  // cargar historial al montar
+  // ───────────────────────────────
+  // Helpers
+  // ───────────────────────────────
+  function recomputeStats(list) {
+    const abiertos = list.filter((i) => i.status === "abierto").length;
+    const enProceso = list.filter((i) => i.status === "en_proceso").length;
+    const resueltos = list.filter((i) => i.status === "resuelto").length;
+    const alta = list.filter((i) => i.priority === "alta").length;
+    setStats({ abiertos, enProceso, resueltos, alta });
+  }
+
+  // ───────────────────────────────
+  // Cargar historial al montar
+  // ───────────────────────────────
   useEffect(() => {
     axios
-      .get("http://localhost:4000/api/incidentes")
+      .get(`${API_BASE}/api/incidentes`)
       .then((res) => {
         const data = Array.isArray(res.data) ? res.data : [];
         setIncidentes(data);
-
-        const abiertos = data.filter((i) => i.status === "abierto").length;
-        const enProceso = data.filter((i) => i.status === "en_proceso").length;
-        const resueltos = data.filter((i) => i.status === "resuelto").length;
-        const alta = data.filter((i) => i.priority === "alta").length;
-
-        setStats({
-          abiertos,
-          enProceso,
-          resueltos,
-          alta,
-        });
+        recomputeStats(data);
       })
       .catch((err) => {
         console.error("Error cargando incidentes", err);
       });
   }, []);
 
-  // actualizar estado (Procesar / Resolver)
+  // ───────────────────────────────
+  // Actualizar estado de un incidente (Procesar / Resolver)
+  // ───────────────────────────────
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
-      await axios.put(`http://localhost:4000/api/incidentes/${id}`, {
+      await axios.put(`${API_BASE}/api/incidentes/${id}`, {
         status: nuevoEstado,
       });
 
-      // reflejarlo en UI sin recargar
-      setIncidentes((prev) =>
-        prev.map((inc) =>
-          inc._id === id ? { ...inc, status: nuevoEstado } : inc
-        )
+      const next = incidentes.map((inc) =>
+        inc._id === id ? { ...inc, status: nuevoEstado } : inc
       );
-
-      // actualizar KPIs rápido también
-      setStats((prev) => {
-        const abiertos =
-          nuevoEstado === "en_proceso" || nuevoEstado === "resuelto"
-            ? prev.abiertos - 1
-            : prev.abiertos;
-        const enProceso =
-          nuevoEstado === "en_proceso"
-            ? prev.enProceso + 1
-            : nuevoEstado === "resuelto"
-            ? prev.enProceso - 1
-            : prev.enProceso;
-        const resueltos =
-          nuevoEstado === "resuelto"
-            ? prev.resueltos + 1
-            : prev.resueltos;
-
-        return {
-          ...prev,
-          abiertos: abiertos < 0 ? 0 : abiertos,
-          enProceso: enProceso < 0 ? 0 : enProceso,
-          resueltos,
-        };
-      });
+      setIncidentes(next);
+      recomputeStats(next);
     } catch (err) {
       console.error("Error actualizando incidente", err);
       alert("No se pudo actualizar el estado");
+    }
+  };
+
+  // ───────────────────────────────
+  // Enviar nuevo incidente SIN redirigir
+  // ───────────────────────────────
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    try {
+      // si tu backend espera multipart (porque puede traer fotos)
+      const fd = new FormData();
+      fd.append("type", form.type);
+      fd.append("description", form.description);
+      fd.append("reportedBy", form.reportedBy);
+      fd.append("zone", form.zone);
+      fd.append("priority", form.priority);
+      // status por defecto
+      fd.append("status", "abierto");
+
+      // adjuntar fotos si hay
+      Array.from(files || []).forEach((file) => {
+        fd.append("photos", file);
+      });
+
+      const res = await axios.post(`${API_BASE}/api/incidentes`, fd, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+
+      // el backend debería devolver el incidente creado
+      const creado = res.data;
+
+      // meterlo al principio de la lista
+      const next = [creado, ...incidentes];
+      setIncidentes(next);
+      recomputeStats(next);
+
+      // limpiar formulario
+      setForm({
+        type: "",
+        description: "",
+        reportedBy: "",
+        zone: "",
+        priority: "media",
+      });
+      setFiles([]);
+      setShowForm(false);
+    } catch (err) {
+      console.error("Error creando incidente", err);
+      alert("No se pudo crear el incidente. Revisa la consola.");
     }
   };
 
@@ -99,18 +141,122 @@ export default function IncidentesList() {
           </p>
         </div>
 
-        {/* 👉 mismo destino que el sidebar */}
+        {/* 👉 ya no navegamos, solo mostramos el form */}
         <button
-          onClick={() => nav("/incidentes/nuevo")}
+          onClick={() => setShowForm((v) => !v)}
           className="self-start bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
                      border border-red-400/40 
                      shadow-[0_0_20px_rgba(255,0,0,0.4)] 
                      hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
                      transition-all duration-300"
         >
-          + Reportar Incidente
+          {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
         </button>
       </div>
+
+      {/* Formulario inline */}
+      {showForm && (
+        <div className="bg-[#0f1b2d] border border-red-400/30 rounded-lg p-5 space-y-4">
+          <h2 className="text-lg font-semibold text-white">
+            Nuevo incidente
+          </h2>
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                Tipo de incidente
+              </label>
+              <input
+                required
+                value={form.type}
+                onChange={(e) => setForm({ ...form, type: e.target.value })}
+                className="w-full bg-[#1e2a3f] border border-slate-600/40 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/50"
+                placeholder="Ej. Intrusión, Daño, Robo…"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                Reportado por
+              </label>
+              <input
+                value={form.reportedBy}
+                onChange={(e) =>
+                  setForm({ ...form, reportedBy: e.target.value })
+                }
+                className="w-full bg-[#1e2a3f] border border-slate-600/40 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/50"
+                placeholder="Nombre del guardia / sistema"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-gray-400 block mb-1">
+                Descripción
+              </label>
+              <textarea
+                required
+                value={form.description}
+                onChange={(e) =>
+                  setForm({ ...form, description: e.target.value })
+                }
+                className="w-full bg-[#1e2a3f] border border-slate-600/40 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/50 min-h-[80px]"
+                placeholder="Describe qué pasó…"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                Zona / Ubicación
+              </label>
+              <input
+                value={form.zone}
+                onChange={(e) => setForm({ ...form, zone: e.target.value })}
+                className="w-full bg-[#1e2a3f] border border-slate-600/40 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/50"
+                placeholder="Ej. Bodega, Entrada principal…"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">
+                Prioridad
+              </label>
+              <select
+                value={form.priority}
+                onChange={(e) =>
+                  setForm({ ...form, priority: e.target.value })
+                }
+                className="w-full bg-[#1e2a3f] border border-slate-600/40 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/50"
+              >
+                <option value="baja">Baja</option>
+                <option value="media">Media</option>
+                <option value="alta">Alta</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-gray-400 block mb-1">
+                Evidencias (fotos)
+              </label>
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={(e) => setFiles(e.target.files)}
+                className="text-sm"
+              />
+            </div>
+            <div className="md:col-span-2 flex gap-2">
+              <button
+                type="submit"
+                className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all"
+              >
+                Guardar incidente
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="bg-slate-700/60 hover:bg-slate-700 text-white text-sm font-medium rounded px-4 py-2 transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Tarjetas KPI */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -212,15 +358,15 @@ export default function IncidentesList() {
           <table className="w-full text-sm text-left text-gray-200">
             <thead className="bg-[#1e2a3f] text-gray-400 uppercase text-xs border-b border-cyan-400/10">
               <tr>
-                <th className="px-4 py-3 font-medium">Tipo</th>
-                <th className="px-4 py-3 font-medium">Descripción</th>
-                <th className="px-4 py-3 font-medium">Reportado por</th>
-                <th className="px-4 py-3 font-medium">Zona</th>
-                <th className="px-4 py-3 font-medium">Fecha</th>
-                <th className="px-4 py-3 font-medium">Prioridad</th>
-                <th className="px-4 py-3 font-medium">Estado</th>
-                <th className="px-4 py-3 font-medium">Evidencias</th>
-                <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                <th className="px-4 py-3 font-medium">TIPO</th>
+                <th className="px-4 py-3 font-medium">DESCRIPCIÓN</th>
+                <th className="px-4 py-3 font-medium">REPORTADO POR</th>
+                <th className="px-4 py-3 font-medium">ZONA</th>
+                <th className="px-4 py-3 font-medium">FECHA</th>
+                <th className="px-4 py-3 font-medium">PRIORIDAD</th>
+                <th className="px-4 py-3 font-medium">ESTADO</th>
+                <th className="px-4 py-3 font-medium">EVIDENCIAS</th>
+                <th className="px-4 py-3 font-medium text-right">ACCIONES</th>
               </tr>
             </thead>
 
@@ -236,7 +382,6 @@ export default function IncidentesList() {
                 </tr>
               ) : (
                 incidentes.map((i) => {
-                  // 👇 aquí está el cambio importante
                   const photos =
                     Array.isArray(i.photos) && i.photos.length
                       ? i.photos
@@ -308,7 +453,6 @@ export default function IncidentesList() {
                         {photos.length ? (
                           <div className="flex gap-2">
                             {photos.slice(0, 3).map((p, idx) => {
-                              // si es base64 lo usamos tal cual, si no le agregamos el host
                               const src =
                                 typeof p === "string" &&
                                 (p.startsWith("http") ||
@@ -385,14 +529,14 @@ export default function IncidentesList() {
         {/* Footer con botón Crear */}
         <div className="flex justify-end p-4 border-t border-cyan-400/10">
           <button
-            onClick={() => nav("/incidentes/nuevo")}
+            onClick={() => setShowForm((v) => !v)}
             className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
                        border border-red-400/40 
                        shadow-[0_0_20px_rgba(255,0,0,0.4)] 
                        hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
                        transition-all duration-300"
           >
-            + Reportar Incidente
+            {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
           </button>
         </div>
       </div>

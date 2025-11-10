@@ -1,6 +1,6 @@
-// guard/IncidentForm.jsx
+// src/modules/rondasqr/guard/IncidentForm.jsx
 import React, { useState } from "react";
-import { rondasqrApi } from "../api/rondasqrApi";
+import { rondasqrApi } from "../api/rondasqrApi.js";
 
 export default function IncidentForm() {
   const [text, setText] = useState("");
