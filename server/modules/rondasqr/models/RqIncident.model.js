@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 
 const RqIncidentSchema = new mongoose.Schema(
   {
-    // panic | inactivity | fall | noncompliance | custom
+    // tipo de incidente
     type: {
       type: String,
       enum: ["panic", "inactivity", "fall", "noncompliance", "custom"],
@@ -11,7 +11,7 @@ const RqIncidentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Texto libre (ej: “Botón de pánico activado”, “Inmovilidad 60 min”, etc.)
+    // Texto libre
     text: { type: String, default: "" },
 
     // Contexto (sitio/ronda/punto si aplica)
@@ -22,17 +22,38 @@ const RqIncidentSchema = new mongoose.Schema(
     pointId: { type: String, default: "" },
     pointName: { type: String, default: "" },
 
-    // Oficial
+    // Oficial / guardia
+    guardId: { type: String, default: "" },
+    guardName: { type: String, default: "" },
     officerName: { type: String, default: "" },
     officerEmail: { type: String, index: true, sparse: true },
 
     // Momento
     at: { type: Date, default: () => new Date(), index: true },
 
-    // GPS
+    // GPS simple
     gps: {
       lat: Number,
       lon: Number,
+    },
+
+    // GeoJSON opcional (cuando lo mandas como loc)
+    loc: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number],
+        default: undefined,
+      },
+    },
+
+    // Fotos guardadas en disco
+    photos: {
+      type: [String],
+      default: [],
     },
 
     // Extra para alertas:

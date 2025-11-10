@@ -1,4 +1,3 @@
-// client/src/modules/rondasqr/admin/AdminHub.jsx
 import React, { useEffect, useState } from "react";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import AssignmentsPage from "./AssignmentsPage.jsx";
@@ -158,7 +157,6 @@ function SitesTab() {
 function RoundsTab() {
   const [sites, setSites] = useState([]);
   const [rows, setRows] = useState([]);
-  the
   const [siteId, setSiteId] = useState("");
   const [name, setName] = useState("");
 
@@ -381,14 +379,6 @@ function PointsTab() {
 }
 
 /* -------------------- Plans -------------------- */
-/**
- * Ajustado a tu backend:
- *  - GET    /admin/plans?siteId=&roundId=&shift=
- *  - POST   /admin/plans  (upsert)
- *  - PUT    /admin/plans  (fallback)
- *  - DELETE /admin/plans?siteId=&roundId=&shift=
- * Se usa `shift` (turno) para separar Día/Noche.
- */
 function PlansTab() {
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
@@ -397,14 +387,13 @@ function PlansTab() {
   const [siteId, setSiteId] = useState("");
   const [roundId, setRoundId] = useState("");
 
-  // Turnos (ajusta `value` a lo que espera tu backend)
   const shifts = [
     { value: "dia", label: "Día" },
     { value: "noche", label: "Noche" },
   ];
   const [shift, setShift] = useState("noche");
 
-  const [selected, setSelected] = useState([]); // pointIds en orden
+  const [selected, setSelected] = useState([]);
   const [savedPlanCount, setSavedPlanCount] = useState(0);
 
   // 1) Cargar sitios al montar
@@ -443,7 +432,6 @@ function PlansTab() {
     })();
   }, [siteId, roundId]);
 
-  // Helper robusto para extraer un "item plan" aunque el backend devuelva {item} o {items:[...]} o {plan}
   const pickPlanItem = (res) =>
     res?.item ??
     (Array.isArray(res?.items) ? res.items[0] : undefined) ??
@@ -478,11 +466,10 @@ function PlansTab() {
       await api.createOrUpdatePlan({
         siteId,
         roundId,
-        shift, // importante
+        shift,
         pointIds: selected,
       });
 
-      // refrescar el plan guardado
       const res2 = await api.getPlan({ siteId, roundId, shift });
       const item2 = pickPlanItem(res2);
       const ids2 =
