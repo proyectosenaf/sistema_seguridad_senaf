@@ -9,9 +9,6 @@ import {
   Database,
   Settings,
   LogOut,
-  BookOpen,
-  Info,
-  Languages,
   FileBarChart,
 } from "lucide-react";
 import { rondasqrApi } from "../api/rondasqrApi.js";
@@ -38,15 +35,12 @@ export default function SidebarGuard({
     { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin" },
   ];
 
+  // Separamos las acciones del logout
   const actionItems = [
     { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
     { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
     { key: "tx", label: "Transmitir Rondas Pendientes", icon: Send },
     { key: "dumpdb", label: "Enviar base de datos", icon: Database },
-    { key: "manuals", label: "Manuales", icon: BookOpen },
-    { key: "about", label: "Acerca", icon: Info },
-    { key: "lang", label: "Idioma", icon: Languages },
-    { key: "logout", label: "Aplicación Salir", icon: LogOut },
   ];
 
   async function handleAction(key) {
@@ -94,7 +88,6 @@ export default function SidebarGuard({
           const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
           let resp;
           try {
-            // 👇 nueva ruta
             resp = await fetch(`${apiBase}/api/rondasqr-offline/v1/dump`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -132,18 +125,6 @@ export default function SidebarGuard({
           break;
         }
 
-        case "manuals":
-          window.open("https://example.com/manual.pdf", "_blank", "noopener,noreferrer");
-          break;
-
-        case "about":
-          window.alert("ℹ️ SENAF · Módulo Rondas QR");
-          break;
-
-        case "lang":
-          window.alert("🌐 Cambio de idioma: pendiente.");
-          break;
-
         case "logout":
           window.location.assign("/login");
           break;
@@ -179,6 +160,7 @@ export default function SidebarGuard({
       className={`${containerBase} ${widthClass} flex-col`}
       aria-label="Navegación del módulo de rondas"
     >
+      {/* Encabezado */}
       <div className={`${collapsed ? "text-center" : ""} mb-5`}>
         <div
           className={`font-extrabold tracking-tight ${
@@ -194,6 +176,7 @@ export default function SidebarGuard({
         )}
       </div>
 
+      {/* Navegación principal */}
       <nav className="flex-1 flex flex-col gap-1">
         {navItems.map((it) => {
           const Icon = it.icon;
@@ -213,6 +196,7 @@ export default function SidebarGuard({
           );
         })}
 
+        {/* Acciones intermedias */}
         {actionItems.map((it) => {
           const Icon = it.icon;
           return (
@@ -229,6 +213,20 @@ export default function SidebarGuard({
             </button>
           );
         })}
+
+        {/* 🚨 Botón salir en rojo al final */}
+        <div className="mt-auto pt-3 border-t border-white/10">
+          <button
+            type="button"
+            onClick={() => handleAction("logout")}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left 
+                       bg-red-600/10 hover:bg-red-600/20 text-red-500 font-medium
+                       transition-colors duration-150"
+          >
+            <LogOut size={18} aria-hidden />
+            <span className={`text-[15px] leading-none ${labelClass}`}>Aplicación Salir</span>
+          </button>
+        </div>
       </nav>
     </aside>
   );

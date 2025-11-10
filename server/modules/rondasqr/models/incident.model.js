@@ -1,12 +1,12 @@
-// server/src/models/incident.model.js
+// server/modules/rondasqr/models/incident.model.js
 import mongoose from "mongoose";
 
 const IncidentSchema = new mongoose.Schema(
   {
-    type: { type: String, required: true },
-    description: { type: String, required: true },
-    reportedBy: { type: String, required: true },
-    zone: { type: String, default: "" },
+    type: { type: String, required: true }, // Ej: "Acceso no autorizado"
+    description: { type: String, required: true }, // Detalle del incidente
+    reportedBy: { type: String, required: true }, // Quién reporta
+    zone: { type: String, required: true }, // Dónde pasó
     priority: {
       type: String,
       enum: ["baja", "media", "alta"],
@@ -19,12 +19,8 @@ const IncidentSchema = new mongoose.Schema(
       default: "abierto",
       required: true,
     },
+    photos: [{ type: String }], // rutas /uploads/incidentes/...
     date: { type: Date, default: Date.now },
-    // 👇 importante para que el front pueda mostrar las miniaturas
-    photos: {
-      type: [String],
-      default: [],
-    },
   },
   { timestamps: true }
 );
