@@ -1,4 +1,3 @@
-// server/modules/rondasqr/models/RqPlan.model.js
 import mongoose from "mongoose";
 
 const PointItemSchema = new mongoose.Schema(
@@ -8,15 +7,15 @@ const PointItemSchema = new mongoose.Schema(
       ref: "RqPoint",
       required: true,
     },
-    // Orden secuencial dentro de la ronda
+    // orden dentro del plan
     order: { type: Number, default: 0 },
 
-    // Ventana esperada opcional (minutos desde el inicio de la ronda/turno)
+    // ventanas opcionales
     windowStartMin: { type: Number, default: undefined },
-    windowEndMin:   { type: Number, default: undefined },
+    windowEndMin: { type: Number, default: undefined },
 
-    // Tolerancia puntual (si no se define, hereda del plan)
-    toleranceMin:   { type: Number, default: undefined },
+    // tolerancia puntual
+    toleranceMin: { type: Number, default: undefined },
   },
   { _id: false }
 );
@@ -36,17 +35,23 @@ const RqPlanSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Nombre/etiqueta del plan (útil si manejas varias versiones)
+    // 👇 NUEVO: turno/shift (el frontend ya lo manda)
+    // lo dejamos flexible pero indexado
+    shift: {
+      type: String,
+      trim: true,
+      default: "dia", // o "diurno", elige uno y sé consistente
+      index: true,
+    },
+
+    // opcional
     name: { type: String, trim: true },
 
-    // Versión simple para diferenciar cambios (no obligatorio)
     version: { type: Number, default: 1 },
 
-    // Estructura rica de puntos
     points: {
       type: [PointItemSchema],
       default: [],
-      // Dejamos el validador, pero haremos la deduplicación previa en pre-validate
       validate: {
         validator(arr) {
           const ids = arr.map((p) => String(p.pointId));
@@ -56,10 +61,9 @@ const RqPlanSchema = new mongoose.Schema(
       },
     },
 
-    // Retrocompatibilidad con tu campo anterior
+    // compat
     pointIds: [{ type: mongoose.Types.ObjectId, ref: "RqPoint", default: [] }],
 
-    // Ventanas globales opcionales (para turnos/labels)
     windows: [
       {
         label: String,
@@ -69,7 +73,6 @@ const RqPlanSchema = new mongoose.Schema(
       },
     ],
 
-    // Tolerancia global (min) para retraso/omisión si no se especifica en el punto
     toleranceMin: { type: Number, default: 5 },
 
     active: { type: Boolean, default: true },
@@ -77,37 +80,32 @@ const RqPlanSchema = new mongoose.Schema(
   { timestamps: true, collection: "rq_plans" }
 );
 
-/* -------------------- Índices -------------------- */
-// Un plan por site+round (si quisieras múltiples versiones activas, quita unique)
-RqPlanSchema.index({ siteId: 1, roundId: 1 }, { unique: true });
+/* ------------ índices ------------ */
+// antes era {siteId, roundId} unique
+// ahora debe ser {siteId, roundId, shift} para permitir 1 por turno
+RqPlanSchema.index({ siteId: 1, roundId: 1, shift: 1 }, { unique: true });
 RqPlanSchema.index({ active: 1, siteId: 1 });
 RqPlanSchema.index({ "points.pointId": 1 });
 
-/* -------------------- Helpers internos -------------------- */
 function toObjIdSafe(v) {
   try {
     if (!v) return null;
     const s = String(v);
-    return mongoose.Types.ObjectId.isValid(s) ? new mongoose.Types.ObjectId(s) : null;
+    return mongoose.Types.ObjectId.isValid(s)
+      ? new mongoose.Types.ObjectId(s)
+      : null;
   } catch {
     return null;
   }
 }
 
-/* -------------------- Pre-validate: normalización robusta -------------------- */
-/**
- * - Si viene pointIds y points vacío → crea points a partir de pointIds (0..N-1)
- * - Deduplica por pointId (mantiene la primera ocurrencia)
- * - Filtra pointId inválidos
- * - Reasigna order = 0..N-1 (siempre)
- * - Sincroniza pointIds desde points
- */
+/* ------------ normalización ------------ */
 RqPlanSchema.pre("validate", function normalizePoints(next) {
   try {
     const hasPointsArr = Array.isArray(this.points) && this.points.length > 0;
-    const hasPointIds  = Array.isArray(this.pointIds) && this.pointIds.length > 0;
+    const hasPointIds = Array.isArray(this.pointIds) && this.pointIds.length > 0;
 
-    // 1) Construir "points" desde pointIds si no hay "points"
+    // si no hay points pero sí pointIds, los creamos
     if (!hasPointsArr && hasPointIds) {
       this.points = this.pointIds
         .map((pid, idx) => {
@@ -117,7 +115,6 @@ RqPlanSchema.pre("validate", function normalizePoints(next) {
         .filter(Boolean);
     }
 
-    // 2) Normalizar "points" (dedupe, filtrar inválidos)
     const dedup = [];
     const seen = new Set();
     for (const raw of this.points || []) {
@@ -129,20 +126,30 @@ RqPlanSchema.pre("validate", function normalizePoints(next) {
       dedup.push({
         pointId: oid,
         order: Number.isFinite(raw?.order) ? Math.floor(raw.order) : dedup.length,
-        windowStartMin: Number.isFinite(raw?.windowStartMin) ? raw.windowStartMin : undefined,
-        windowEndMin:   Number.isFinite(raw?.windowEndMin)   ? raw.windowEndMin   : undefined,
-        toleranceMin:   Number.isFinite(raw?.toleranceMin)   ? raw.toleranceMin   : undefined,
+        windowStartMin: Number.isFinite(raw?.windowStartMin)
+          ? raw.windowStartMin
+          : undefined,
+        windowEndMin: Number.isFinite(raw?.windowEndMin)
+          ? raw.windowEndMin
+          : undefined,
+        toleranceMin: Number.isFinite(raw?.toleranceMin)
+          ? raw.toleranceMin
+          : undefined,
       });
     }
 
-    // 3) Ordenar por 'order' y reasignar 0..N-1 para que quede compacto
     dedup.sort((a, b) => (a.order || 0) - (b.order || 0));
-    dedup.forEach((p, i) => { p.order = i; });
+    dedup.forEach((p, i) => {
+      p.order = i;
+    });
 
     this.points = dedup;
-
-    // 4) Mantener pointIds en sincronía (retrocompatibilidad)
     this.pointIds = (this.points || []).map((p) => p.pointId);
+
+    // shift por defecto si viene vacío
+    if (!this.shift) {
+      this.shift = "dia";
+    }
 
     next();
   } catch (e) {
@@ -150,7 +157,6 @@ RqPlanSchema.pre("validate", function normalizePoints(next) {
   }
 });
 
-/* -------------------- Virtuals / salida limpia -------------------- */
 RqPlanSchema.virtual("pointIdsComputed").get(function () {
   return (this.points || []).map((p) => p.pointId);
 });
@@ -161,7 +167,6 @@ RqPlanSchema.set("toJSON", {
   transform(_, ret) {
     ret.id = ret._id;
     delete ret._id;
-    // Por compat, si no hay pointIds explícito, exponer desde points
     if (!ret.pointIds || ret.pointIds.length === 0) {
       ret.pointIds = (ret.points || []).map((p) => p.pointId);
     }
@@ -169,16 +174,16 @@ RqPlanSchema.set("toJSON", {
   },
 });
 
-/* -------------------- Métodos de utilidad -------------------- */
 RqPlanSchema.methods.getOrderedPoints = function () {
-  return (this.points || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  return (this.points || [])
+    .slice()
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
 };
 
 RqPlanSchema.methods.expectedPointSet = function () {
   return new Set((this.points || []).map((p) => String(p.pointId)));
 };
 
-/* -------------------- Registro del modelo -------------------- */
 const RqPlan =
   mongoose.models.RqPlan || mongoose.model("RqPlan", RqPlanSchema);
 

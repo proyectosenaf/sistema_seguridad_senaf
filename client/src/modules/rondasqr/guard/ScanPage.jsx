@@ -1,3 +1,4 @@
+// client/src/modules/rondasqr/pages/ScanPage.jsx
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import SidebarGuard from "./SidebarGuard.jsx";
@@ -7,7 +8,16 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useAssignmentSocket } from "../hooks/useAssignmentSocket.js";
 import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
 
-/* Utils */
+// ✅ Cola local de pendientes
+import {
+  getOutbox,
+  queueCheckin,
+  transmitOutbox,
+  removeById,
+  countOutbox,
+} from "../utils/outbox.js";
+
+/* utils pequeños */
 function toArr(v) {
   return !v ? [] : Array.isArray(v) ? v : [v];
 }
@@ -20,12 +30,24 @@ function uniqLower(arr) {
     )
   );
 }
+function readJsonLS(key, fallback) {
+  try {
+    if (typeof localStorage === "undefined") return fallback;
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed == null ? fallback : parsed;
+  } catch {
+    return fallback;
+  }
+}
 
 export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
   const { user } = useAuth0();
 
+  /* ===== nav lateral móvil ===== */
   const [isNavOpen, setIsNavOpen] = useState(false);
   useEffect(() => {
     setIsNavOpen(false);
@@ -35,22 +57,19 @@ export default function ScanPage() {
     return () => (document.body.style.overflow = "");
   }, [isNavOpen]);
 
-  // pedir permisos de notificación una vez
+  /* ===== notificaciones ===== */
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
   }, []);
 
-  // refs para audio
+  /* ===== audio de alerta ===== */
   const alertAudioRef = useRef(null);
   const audioCtxRef = useRef(null);
-  const alarmStopRef = useRef(null);
-
-  // último panic para mostrar la burbuja
   const [lastPanic, setLastPanic] = useState(null);
 
-  // socket de asignaciones
+  /* ===== socket: alertas entrantes ===== */
   useAssignmentSocket(user, (evt) => {
     const t = evt?.type || evt?.event || evt?.kind;
     if (t === "panic" || t === "rondasqr:panic") {
@@ -58,47 +77,37 @@ export default function ScanPage() {
     }
   });
 
-  // escuchar alertas locales (misma pestaña / misma app)
+  /* ===== bus local: alertas desde otra página ===== */
   useEffect(() => {
-    const unsub = subscribeLocalPanic((payload) => {
-      handleIncomingPanic(payload);
-    });
+    const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
     return () => unsub && unsub();
   }, []);
 
-  // sonido "serio" con Web Audio
   function playAlarmTone() {
     try {
-      // crear contexto 1 sola vez
       if (!audioCtxRef.current) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
         audioCtxRef.current = new Ctx();
       }
       const ctx = audioCtxRef.current;
-
-      // algunos navegadores piden resume por interacción
       if (ctx.state === "suspended") {
         ctx.resume().catch(() => {});
       }
 
-      // oscilador + gain
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-
-      osc.type = "sawtooth"; // más ruidoso que sine
+      osc.type = "sawtooth";
       osc.connect(gain);
       gain.connect(ctx.destination);
 
       const now = ctx.currentTime;
-      // patrón: sube y baja la frecuencia 2 segundos
       osc.frequency.setValueAtTime(500, now);
       osc.frequency.linearRampToValueAtTime(900, now + 0.4);
       osc.frequency.linearRampToValueAtTime(500, now + 0.8);
       osc.frequency.linearRampToValueAtTime(900, now + 1.2);
       osc.frequency.linearRampToValueAtTime(500, now + 1.6);
 
-      // volumen
       gain.gain.setValueAtTime(0.0001, now);
       gain.gain.linearRampToValueAtTime(0.4, now + 0.05);
       gain.gain.linearRampToValueAtTime(0.4, now + 1.6);
@@ -106,15 +115,7 @@ export default function ScanPage() {
 
       osc.start(now);
       osc.stop(now + 2.0);
-
-      // guardar para poder cortar (aunque aquí se auto-corta)
-      alarmStopRef.current = () => {
-        try {
-          osc.stop();
-        } catch {}
-      };
     } catch {
-      // si algo falla, intentamos beep de fallback
       if (alertAudioRef.current) {
         alertAudioRef.current.currentTime = 0;
         alertAudioRef.current.play().catch(() => {});
@@ -123,14 +124,11 @@ export default function ScanPage() {
   }
 
   function handleIncomingPanic(payload) {
-    setLastPanic({
-      at: new Date().toLocaleTimeString(),
-      ...payload,
-    });
-    // sonido al recibir
+    setLastPanic({ at: new Date().toLocaleTimeString(), ...payload });
     playAlarmTone();
   }
 
+  /* ===== roles/permisos ===== */
   const ROLES_CLAIM = "https://senaf.local/roles";
   const PERMS_CLAIM = "https://senaf.local/permissions";
 
@@ -149,39 +147,35 @@ export default function ScanPage() {
   const perms = uniqLower([...permsClaim, ...devPerms]);
 
   const isAdminLike =
-    perms.includes("*") ||
-    roles.includes("admin") ||
-    roles.includes("rondasqr.admin");
+    perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
   const isSupervisorLike =
     roles.includes("supervisor") ||
     perms.includes("rondasqr.view") ||
     perms.includes("rondasqr.reports");
 
-  // qué pestaña estoy viendo
+  /* ===== qué pestaña ===== */
   const tab = useMemo(() => {
     if (pathname.endsWith("/qr")) return "qr";
     if (pathname.endsWith("/msg")) return "msg";
     if (pathname.endsWith("/fotos")) return "fotos";
+    if (pathname.endsWith("/outbox") || pathname.endsWith("/sync")) return "outbox";
+    if (pathname.endsWith("/dump") || pathname.endsWith("/offline")) return "dump";
     return "home";
   }, [pathname]);
 
-  // si alguien entra directo a /rondasqr/scan/msg lo mandamos al módulo de incidentes
   useEffect(() => {
-    if (tab === "msg") {
-      nav("/incidentes/nuevo", { replace: true });
-    }
+    if (tab === "msg") nav("/incidentes/nuevo", { replace: true });
   }, [tab, nav]);
 
+  /* ===== estados varios ===== */
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
   const [sendingAlert, setSendingAlert] = useState(false);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
-  // --- Carga de plan/puntos para progreso ---
-  const [planMeta, setPlanMeta] = useState(null);
+  /* ===== carga de plan/puntos ===== */
   const [points, setPoints] = useState([]);
-
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -189,8 +183,6 @@ export default function ScanPage() {
         const plans = await rondasqrApi.listPlans();
         const plan = plans?.items?.[0] || null;
         if (!alive || !plan) return;
-
-        setPlanMeta({ siteId: plan.siteId, roundId: plan.roundId });
 
         const pts = await rondasqrApi.listPoints({
           siteId: plan.siteId,
@@ -207,13 +199,12 @@ export default function ScanPage() {
     };
   }, []);
 
-  // ---- Progreso (localStorage) ----
+  /* ===== progreso local ===== */
   const [progress, setProgress] = useState({
     lastPoint: null,
     nextPoint: null,
     pct: 0,
   });
-
   function loadLocalProgress() {
     const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
     const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
@@ -223,12 +214,11 @@ export default function ScanPage() {
     );
     setProgress({ lastPoint, nextPoint, pct });
   }
-
   useEffect(() => {
     loadLocalProgress();
   }, []);
 
-  // ---- Alerta rápida (#alert) ----
+  /* ===== alerta rápida por hash ===== */
   useEffect(() => {
     if (hash === "#alert") {
       (async () => {
@@ -238,6 +228,7 @@ export default function ScanPage() {
     }
   }, [hash, nav]);
 
+  /* ===== enviar alerta ===== */
   async function sendAlert() {
     if (sendingAlert) return false;
     setSendingAlert(true);
@@ -247,10 +238,7 @@ export default function ScanPage() {
         await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
             (pos) => {
-              gps = {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-              };
+              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
               resolve();
             },
             () => resolve(),
@@ -259,9 +247,7 @@ export default function ScanPage() {
         });
       }
       await rondasqrApi.panic(gps || null);
-      // avisamos localmente
       emitLocalPanic({ source: "home-button", user: user?.name || user?.email });
-      // 🔊 sonido también cuando YO la disparo
       playAlarmTone();
       alert("🚨 Alerta de pánico enviada.");
       return true;
@@ -274,7 +260,68 @@ export default function ScanPage() {
     }
   }
 
-  // (legacy) por si llegaran a navegar ahí sin pasar por el nuevo form
+  /* ===== manejar QR ESCANEADO ===== */
+  async function handleScan(result) {
+    const qr = typeof result === "string" ? result : result?.text;
+    if (!qr) return;
+
+    if (!navigator.onLine) {
+      queueCheckin({ qr, gps: null });
+      alert("📦 Sin conexión. QR guardado para transmitir más tarde.");
+      nav("/rondasqr/scan", { replace: true });
+      return;
+    }
+
+    try {
+      let gps = null;
+      if ("geolocation" in navigator) {
+        await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+              resolve();
+            },
+            () => resolve(),
+            { enableHighAccuracy: true, timeout: 3000 }
+          );
+        });
+      }
+
+      if (typeof rondasqrApi.checkinScan === "function") {
+        await rondasqrApi.checkinScan({ qr, gps });
+      } else if (typeof rondasqrApi.scan === "function") {
+        await rondasqrApi.scan({ qr, gps });
+      } else {
+        await fetch(
+          (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000") +
+            "/api/rondasqr/v1/checkin/scan",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ qr, gps }),
+          }
+        ).then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+        });
+      }
+
+      localStorage.setItem("rondasqr:lastPointName", qr);
+      localStorage.setItem("rondasqr:progressPct", "100");
+      setProgress((prev) => ({ ...prev, lastPoint: qr, pct: 100 }));
+
+      alert("✅ Punto registrado: " + qr);
+      window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+      nav("/rondasqr/scan", { replace: true });
+    } catch (err) {
+      console.error("[ScanPage] error al registrar punto (se guarda en pendientes)", err);
+      queueCheckin({ qr, gps: null });
+      alert("📦 No se pudo enviar. Guardado para transmitir más tarde.");
+      nav("/rondasqr/scan/outbox", { replace: true });
+    }
+  }
+
+  /* ===== mensaje legacy ===== */
   async function sendMessage() {
     if (sendingMsg) return;
     if (!msg.trim()) return alert("Escribe un mensaje.");
@@ -291,16 +338,14 @@ export default function ScanPage() {
     }
   }
 
+  /* ===== fotos ===== */
   async function sendPhotos() {
     if (sendingPhotos) return;
     const base64s = photos.filter(Boolean);
     if (!base64s.length) return alert("Selecciona al menos una foto.");
     setSendingPhotos(true);
     try {
-      await rondasqrApi.postIncident({
-        text: "Fotos de ronda",
-        photosBase64: base64s,
-      });
+      await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
       nav("/rondasqr/scan");
@@ -311,19 +356,141 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== estilos ===== */
-  const pageClass =
-    "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
+  /* ===== OUTBOX ===== */
+  const [outbox, setOutbox] = useState(getOutbox());
+  const [syncing, setSyncing] = useState(false);
+  const refreshOutbox = () => setOutbox(getOutbox());
 
+  async function sendCheckinViaApi(it) {
+    if (typeof rondasqrApi.checkinScan === "function") {
+      await rondasqrApi.checkinScan({ qr: it.qr, gps: it.gps || null });
+    } else if (typeof rondasqrApi.scan === "function") {
+      await rondasqrApi.scan({ qr: it.qr, gps: it.gps || null });
+    } else {
+      await fetch(
+        (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000") +
+          "/api/rondasqr/v1/checkin/scan",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ qr: it.qr, gps: it.gps || null }),
+        }
+      ).then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+      });
+    }
+  }
+
+  async function transmitNow() {
+    if (!outbox.length) {
+      alert("No hay rondas pendientes.");
+      return;
+    }
+    setSyncing(true);
+    try {
+      const res = await transmitOutbox(sendCheckinViaApi);
+      refreshOutbox();
+      alert(`Transmitidas: ${res.ok}  •  Fallidas: ${res.fail}`);
+    } catch (e) {
+      console.error("transmitNow error", e);
+      alert("Ocurrió un error al transmitir.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "outbox") refreshOutbox();
+  }, [tab]);
+
+  /* ===== Payload offline ===== */
+  function buildOfflinePayload(authUser) {
+    const outboxData = getOutbox();
+    const progress = {
+      lastPoint: localStorage.getItem("rondasqr:lastPointName") || null,
+      nextPoint: localStorage.getItem("rondasqr:nextPointName") || null,
+      pct: Number(localStorage.getItem("rondasqr:progressPct") || 0),
+    };
+    const device = {
+      ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      online: typeof navigator !== "undefined" ? navigator.onLine : false,
+      connection:
+        typeof navigator !== "undefined" && navigator.connection
+          ? {
+              type: navigator.connection.effectiveType,
+              downlink: navigator.connection.downlink,
+            }
+          : null,
+    };
+    const userInfo = authUser
+      ? {
+          id: authUser.sub || null,
+          email: authUser.email || null,
+          name: authUser.name || null,
+        }
+      : null;
+    const assignments = readJsonLS("rondasqr:assignments", []);
+    const logs = readJsonLS("rondasqr:logs", []);
+
+    return {
+      outbox: outboxData,
+      progress,
+      device,
+      user: userInfo,
+      assignments: Array.isArray(assignments) ? assignments : [],
+      logs: Array.isArray(logs) ? logs : [],
+      at: new Date().toISOString(),
+    };
+  }
+
+  function openOutbox() {
+    nav("/rondasqr/scan/outbox");
+  }
+
+  async function sendOfflineDump() {
+    try {
+      const payload = buildOfflinePayload(user);
+      const pending = payload.outbox;
+      if (!pending || !pending.length) {
+        alert("No hay información offline para enviar.");
+        return;
+      }
+
+      const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+      const res = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+
+      const json = await res.json().catch(() => ({ ok: true }));
+      alert("📤 Base de datos local enviada.\n" + (json?.message || ""));
+    } catch (err) {
+      console.error("[ScanPage] dump offline error", err);
+      alert("No se pudo enviar la base de datos.");
+    }
+  }
+
+  /* ===== estilos ===== */
+  const pageClass = "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
+
+  // 👉 aquí va el suavizado de modo claro
   const headerClass =
-    "rounded-xl px-4 sm:px-6 py-3 mb-4 sm:mb-6 flex items-center justify-between " +
-    "bg-white shadow border border-slate-200 " +
-    "dark:bg-white/5 dark:shadow-none dark:border-white/10 dark:backdrop-blur";
+    "rounded-2xl px-4 sm:px-6 py-3 mb-4 sm:mb-6 flex items-center justify-between " +
+    "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
+    "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
 
   const cardClass =
-    "rounded-xl p-4 sm:p-6 " +
-    "bg-white shadow border border-slate-200 " +
-    "dark:bg-white/5 dark:shadow-none dark:border-white/10 dark:backdrop-blur";
+    "rounded-2xl p-4 sm:p-6 " +
+    "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
+    "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
 
   const neutralBtn =
     "px-4 py-2 rounded-lg border font-medium " +
@@ -331,42 +498,43 @@ export default function ScanPage() {
     "dark:border-white/15 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white";
 
   const neonStyles = `
-    .btn-neon { padding:.5rem 1rem;border-radius:.5rem;font-weight:600;color:#fff;
+    .btn-neon {
+      padding:.5rem 1rem;
+      border-radius:.5rem;
+      font-weight:600;
+      color:#fff;
       background-image:linear-gradient(90deg,#8b5cf6,#06b6d4);
-      box-shadow:0 10px 28px rgba(99,102,241,.28),0 6px 20px rgba(6,182,212,.22);
-      transition:filter .2s ease, transform .2s ease; }
-    .btn-neon:hover { filter:brightness(1.06); transform:translateY(-1px); }
+      box-shadow:0 10px 28px rgba(99,102,241,.18),0 6px 20px rgba(6,182,212,.12);
+      transition:filter .2s ease, transform .2s ease;
+    }
+    .btn-neon:hover { filter:brightness(1.04); transform:translateY(-1px); }
     .btn-neon:active { transform:translateY(0); }
     .btn-neon-green  { background-image:linear-gradient(90deg,#22c55e,#06b6d4); }
     .btn-neon-rose   { background-image:linear-gradient(90deg,#f43f5e,#fb7185); }
     .btn-neon-amber  { background-image:linear-gradient(90deg,#f59e0b,#ef4444); }
     .btn-neon-purple { background-image:linear-gradient(90deg,#a855f7,#6366f1); }
-    .dark .btn-neon { box-shadow:0 14px 36px rgba(99,102,241,.38),0 10px 28px rgba(6,182,212,.28); }
-
+    .dark .btn-neon {
+      box-shadow:0 14px 36px rgba(99,102,241,.38),0 10px 28px rgba(6,182,212,.28);
+    }
     @keyframes panic-blink {
       0%, 100% { opacity: 1; box-shadow: 0 0 25px rgba(248,113,113,.8); }
       50% { opacity: .55; box-shadow: 0 0 6px rgba(248,113,113,.2); }
     }
-    .panic-indicator {
-      animation: panic-blink 1s ease-in-out infinite;
-    }
+    .panic-indicator { animation: panic-blink 1s ease-in-out infinite; }
   `;
 
   const homeCols =
     isAdminLike || isSupervisorLike ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2";
 
-  // beep mínimo como respaldo
   const BEEP_SRC =
-    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
 
   return (
     <div className={pageClass}>
       <style>{neonStyles}</style>
 
-      {/* audio oculto de respaldo */}
       <audio ref={alertAudioRef} src={BEEP_SRC} preload="auto" />
 
-      {/* indicador de pánico flotante */}
       {lastPanic && (
         <button
           onClick={() => setLastPanic(null)}
@@ -380,7 +548,11 @@ export default function ScanPage() {
 
       {/* sidebar desktop */}
       <div className="hidden md:block">
-        <SidebarGuard variant="desktop" />
+        <SidebarGuard
+          variant="desktop"
+          onSendAlert={sendAlert}
+          onDumpDb={() => nav("/rondasqr/scan/dump")}
+        />
       </div>
 
       {/* drawer móvil */}
@@ -390,19 +562,23 @@ export default function ScanPage() {
             onClick={() => setIsNavOpen(false)}
             className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
           />
-          <SidebarGuard variant="mobile" onCloseMobile={() => setIsNavOpen(false)} />
+          <SidebarGuard
+            variant="mobile"
+            onCloseMobile={() => setIsNavOpen(false)}
+            onSendAlert={sendAlert}
+            onDumpDb={() => nav("/rondasqr/scan/dump")}
+          />
         </>
       )}
 
-      <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 relative">
-        {/* hamburguesa móvil */}
-        <div className="md:hidden mb-3">
+      <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 relative gap-4">
+        {/* hamburguesa */}
+        <div className="md:hidden mb-1">
           <button
             onClick={() => setIsNavOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg px-3 py-2
-                       border border-slate-300 bg-white text-slate-800
+                       border border-slate-300 bg-slate-50 text-slate-800
                        dark:border-white/15 dark:bg-white/10 dark:text-white"
-            aria-label="Abrir menú"
           >
             ☰ Menú
           </button>
@@ -412,14 +588,14 @@ export default function ScanPage() {
         <div className={headerClass}>
           <h2 className="text-xl sm:text-2xl font-bold">Visión General</h2>
           <div className="text-xs sm:text-sm">
-            Intervalo de tiempo: <span className="font-semibold">4h:00m</span>
+            Pendientes: <span className="font-semibold">{countOutbox()}</span>
           </div>
         </div>
 
-        {/* ===== HOME ===== */}
+        {/* HOME */}
         {tab === "home" && (
           <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
-            {/* alerta + accesos */}
+            {/* bloque alerta */}
             <section className={cardClass + " text-center"}>
               <div className="flex flex-col items-center">
                 <button
@@ -428,7 +604,6 @@ export default function ScanPage() {
                     if (ok) nav("/rondasqr/scan", { replace: true });
                   }}
                   disabled={sendingAlert}
-                  aria-label="Botón de alerta de pánico"
                   className={[
                     "rounded-full font-extrabold text-white",
                     "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
@@ -453,13 +628,18 @@ export default function ScanPage() {
                 >
                   Mensaje Incidente
                 </button>
+                <button onClick={openOutbox} className="w-full btn-neon btn-neon-green">
+                  Transmitir Rondas Pendientes ({countOutbox()})
+                </button>
+                <button onClick={() => nav("/rondasqr/scan/dump")} className="w-full btn-neon">
+                  Base offline
+                </button>
               </div>
             </section>
 
             {/* progreso */}
             <section className={cardClass}>
               <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
-
               {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
                 <>
                   <div className="text-sm space-y-1 mb-3">
@@ -476,30 +656,20 @@ export default function ScanPage() {
                       </div>
                     )}
                   </div>
-
-                  <div className="w-full h-3 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                  <div className="w-full h-3 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
-                      style={{
-                        width: `${Math.max(0, Math.min(100, progress.pct))}%`,
-                      }}
+                      style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
                     />
                   </div>
                   <div className="mt-1 text-right text-xs opacity-70">
                     {Math.max(0, Math.min(100, progress.pct))}% completado
                   </div>
-
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => nav("/rondasqr/scan/qr")}
-                      className="w-full btn-neon btn-neon-green"
-                    >
+                    <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
                       Continuar ronda
                     </button>
-                    <button
-                      onClick={() => nav("/rondasqr/scan")}
-                      className="w-full btn-neon btn-neon-amber"
-                    >
+                    <button onClick={() => nav("/rondasqr/scan")} className="btn-neon btn-neon-amber">
                       Finalizar
                     </button>
                   </div>
@@ -507,11 +677,11 @@ export default function ScanPage() {
               ) : (
                 <>
                   <p className="text-sm text-slate-600 dark:text-white/80">
-                    Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong>{" "}
-                    y escanea el primer punto asignado.
+                    Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y
+                    escanea el primer punto asignado.
                   </p>
                   <ul className="mt-3 text-sm space-y-1 list-disc list-inside text-slate-600 dark:text-white/70">
-                    <li>Asegúrate de dar permisos de cámara al navegador.</li>
+                    <li>Da permisos de cámara al navegador.</li>
                     <li>Si no ves los puntos, confirma que el plan de ronda esté cargado.</li>
                     <li>Puedes reportar un incidente desde “Mensaje Incidente”.</li>
                   </ul>
@@ -519,7 +689,7 @@ export default function ScanPage() {
               )}
             </section>
 
-            {/* acciones admin/supervisor */}
+            {/* acciones */}
             {(isAdminLike || isSupervisorLike) && (
               <section className={cardClass}>
                 <h3 className="font-semibold text-lg mb-3">Acciones</h3>
@@ -527,32 +697,58 @@ export default function ScanPage() {
                   Acciones avanzadas disponibles para supervisores o administradores.
                 </p>
                 <div className="grid gap-3 max-w-sm">
-                  <button
-                    onClick={() => nav("/rondasqr/reports")}
-                    className="w-full btn-neon"
-                  >
+                  <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
                     📊 Abrir informes
                   </button>
                   {isAdminLike && (
-                    <button
-                      onClick={() => nav("/rondasqr/admin")}
-                      className="w-full btn-neon btn-neon-purple"
-                    >
+                    <button onClick={() => nav("/rondasqr/admin")} className="btn-neon btn-neon-purple">
                       ⚙️ Administración de rondas
                     </button>
                   )}
                 </div>
               </section>
             )}
+
+            {/* fila inferior */}
+            <section className={cardClass}>
+              <h3 className="font-semibold mb-2">Actividad reciente</h3>
+              <p className="text-sm text-slate-600 dark:text-white/70">Sin check-ins recientes.</p>
+            </section>
+
+            <section className={cardClass}>
+              <h3 className="font-semibold mb-2">Consejos rápidos</h3>
+              <ul className="list-disc list-inside text-sm text-slate-600 dark:text-white/70 space-y-1">
+                <li>Antes de salir, verifica conexión o transmite pendientes.</li>
+                <li>Si falla el QR, usa “Transmitir Rondas Pendientes”.</li>
+                <li>La alerta también está en el menú lateral.</li>
+              </ul>
+            </section>
+
+            <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
+              <h3 className="font-semibold mb-2">Rendimiento del dispositivo</h3>
+              <p className="text-sm text-slate-600 dark:text-white/70 mb-2">
+                Estado rápido del navegador y de la conexión actual.
+              </p>
+              <p className="text-sm">
+                <strong>Online:</strong>{" "}
+                {typeof navigator !== "undefined" && navigator.onLine ? "Sí" : "No"}
+              </p>
+              <p className="text-sm break-all">
+                <strong>User-Agent:</strong>{" "}
+                {typeof navigator !== "undefined" ? navigator.userAgent : ""}
+              </p>
+              <p className="text-sm">
+                <strong>Último pánico:</strong> {lastPanic ? lastPanic.at : "No registrado."}
+              </p>
+            </section>
           </div>
         )}
 
-        {/* ===== ESCÁNER QR ===== */}
+        {/* QR */}
         {tab === "qr" && (
           <section className={cardClass}>
             <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-
-            <div className="aspect-[3/2] rounded-xl overflow-hidden relative">
+            <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
               <QrScanner
                 facingMode="environment"
                 once={true}
@@ -562,17 +758,22 @@ export default function ScanPage() {
                 onError={(e) => console.warn("QR error", e)}
               />
             </div>
-
             <div className="mt-4 grid grid-cols-2 gap-3">
               <button
-                onClick={() => nav("/rondasqr/scan")}
-                className="w-full btn-neon btn-neon-amber"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                  nav("/rondasqr/scan");
+                }}
+                className="btn-neon btn-neon-amber"
               >
                 Finalizar
               </button>
               <button
-                onClick={() => nav("/rondasqr/scan/qr")}
-                className="w-full btn-neon btn-neon-green"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                  nav("/rondasqr/scan/qr");
+                }}
+                className="btn-neon btn-neon-green"
               >
                 Reintentar
               </button>
@@ -580,13 +781,188 @@ export default function ScanPage() {
           </section>
         )}
 
-        {/* ===== MENSAJE (legacy) ===== */}
+        {/* OUTBOX */}
+        {tab === "outbox" && (
+          <section className={cardClass}>
+            <div className="flex items-center justify-between gap-4 mb-3">
+              <h3 className="font-semibold text-lg">Transmitir Rondas Pendientes</h3>
+              <div className="text-sm opacity-70">Pendientes: {outbox.length}</div>
+            </div>
+            {outbox.length === 0 ? (
+              <div className="text-slate-600 dark:text-white/80">
+                No hay check-ins pendientes. ✨
+              </div>
+            ) : (
+              <>
+                <ul className="divide-y divide-slate-200 dark:divide-white/10 mb-4">
+                  {outbox.map((it) => (
+                    <li key={it.id} className="py-2 flex items-center justify-between gap-4">
+                      <div className="text-sm">
+                        <div className="font-medium">{it.qr}</div>
+                        <div className="opacity-70">
+                          {new Date(it.at).toLocaleString()}
+                          {it.gps
+                            ? ` • (${it.gps.lat.toFixed?.(4)}, ${it.gps.lon?.toFixed?.(4)})`
+                            : ""}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          removeById(it.id);
+                          refreshOutbox();
+                        }}
+                        className="px-2 py-1 rounded border text-sm
+                                   border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700
+                                   dark:border-rose-600/40 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 dark:text-rose-300"
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex justify-end gap-3">
+                  <button onClick={transmitNow} disabled={syncing} className="btn-neon">
+                    {syncing ? "Transmitiendo…" : "Transmitir ahora"}
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* BASE OFFLINE */}
+        {tab === "dump" && (
+          <section className={cardClass}>
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h3 className="font-semibold text-lg">Base de datos offline</h3>
+              <span className="text-sm opacity-70">
+                {getOutbox().length} check-ins almacenados
+              </span>
+            </div>
+
+            {getOutbox().length === 0 ? (
+              <div className="text-slate-600 dark:text-white/80 mb-4">
+                No hay información offline guardada en este dispositivo.
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-slate-600 dark:text-white/70 mb-3">
+                  Esto es lo que se enviará al servidor. Incluye check-ins, progreso, datos del
+                  guardia y algunos registros locales.
+                </p>
+
+                <div className="grid md:grid-cols-2 gap-4 mb-4">
+                  <div className="rounded-lg bg-slate-100/70 dark:bg-white/5 p-3">
+                    <h4 className="font-medium mb-2">Progreso guardado</h4>
+                    <p className="text-sm">
+                      Último punto:{" "}
+                      <strong>{localStorage.getItem("rondasqr:lastPointName") || "—"}</strong>
+                    </p>
+                    <p className="text-sm">
+                      Siguiente:{" "}
+                      <strong>{localStorage.getItem("rondasqr:nextPointName") || "—"}</strong>
+                    </p>
+                    <p className="text-sm">
+                      % completado:{" "}
+                      <strong>{Number(localStorage.getItem("rondasqr:progressPct") || 0)}%</strong>
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg bg-slate-100/70 dark:bg-white/5 p-3 space-y-1">
+                    <h4 className="font-medium mb-2">Dispositivo / Usuario</h4>
+                    <p className="text-sm break-all">
+                      UA:{" "}
+                      <span className="opacity-70">
+                        {typeof navigator !== "undefined" ? navigator.userAgent : ""}
+                      </span>
+                    </p>
+                    <p className="text-sm">
+                      Online:{" "}
+                      <strong>
+                        {typeof navigator !== "undefined" && navigator.onLine ? "sí" : "no"}
+                      </strong>
+                    </p>
+                    <p className="text-sm">
+                      Usuario: <strong>{user?.email || user?.name || "—"}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                {readJsonLS("rondasqr:assignments", []).length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="font-medium mb-2">Asignaciones locales</h4>
+                    <ul className="text-sm list-disc list-inside space-y-1">
+                      {readJsonLS("rondasqr:assignments", []).map((a, idx) => (
+                        <li key={idx}>
+                          {a.roundName || a.roundId || "Ronda"} — guardia: {a.guardId || "?"} —
+                          fecha: {a.date || "?"}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {readJsonLS("rondasqr:logs", []).length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="font-medium mb-2">Logs locales</h4>
+                    <pre className="text-xs bg-black/5 dark:bg-white/5 rounded p-2 max-h-40 overflow-auto">
+                      {JSON.stringify(readJsonLS("rondasqr:logs", []), null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                <div className="mb-4">
+                  <h4 className="font-medium mb-2">Check-ins en memoria</h4>
+                  <ul className="divide-y divide-slate-200 dark:divide-white/10">
+                    {getOutbox().map((it) => (
+                      <li key={it.id} className="py-2 text-sm flex justify-between gap-4">
+                        <div>
+                          <div className="font-medium">{it.qr}</div>
+                          <div className="opacity-70">
+                            {new Date(it.at).toLocaleString()}
+                            {it.gps
+                              ? ` • (${it.gps.lat?.toFixed?.(4)}, ${it.gps.lon?.toFixed?.(4)})`
+                              : ""}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            removeById(it.id);
+                            nav("/rondasqr/scan/dump", { replace: true });
+                          }}
+                          className="px-2 py-1 rounded bg-rose-500 text-white text-xs"
+                        >
+                          Quitar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+                Volver
+              </button>
+              <button
+                onClick={sendOfflineDump}
+                className="btn-neon btn-neon-green"
+                disabled={getOutbox().length === 0}
+              >
+                Enviar base de datos
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* MENSAJE legacy */}
         {tab === "msg" && (
           <section className={cardClass}>
             <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
             <textarea
-              className="w-full rounded-lg px-3 py-2 border bg-white text-slate-800 placeholder-slate-400
-                         border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-300
+              className="w-full rounded-lg px-3 py-2 border bg-slate-50 text-slate-800 placeholder-slate-400
+                         border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-300
                          dark:bg-black/30 dark:text-white dark:placeholder-white/60 dark:border-white/10"
               rows={5}
               placeholder="Describa el incidente..."
@@ -604,7 +980,7 @@ export default function ScanPage() {
           </section>
         )}
 
-        {/* ===== FOTOS ===== */}
+        {/* FOTOS */}
         {tab === "fotos" && (
           <section className={cardClass}>
             <h3 className="font-semibold text-lg mb-3">Enviar Fotos</h3>
@@ -624,16 +1000,13 @@ export default function ScanPage() {
   );
 }
 
-/* ================= Subcomponentes ================= */
-
+/* ========== subcomponentes ========== */
 function PhotoPicker({ photos, setPhotos }) {
   return (
     <>
       {photos.map((f, i) => (
         <div key={i} className="flex items-center justify-between mb-2">
-          <span className="text-sm text-slate-700 dark:text-white/90">
-            Toma foto {i + 1}
-          </span>
+          <span className="text-sm text-slate-700 dark:text-white/90">Toma foto {i + 1}</span>
           <div className="flex gap-2">
             <input
               type="file"
@@ -658,9 +1031,7 @@ function PhotoPicker({ photos, setPhotos }) {
               Seleccionar
             </label>
             <button
-              onClick={() =>
-                setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))
-              }
+              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
             >
               Eliminar

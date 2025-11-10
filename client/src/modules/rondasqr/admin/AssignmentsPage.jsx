@@ -18,8 +18,8 @@ export default function AssignmentsPage() {
   const [roundId, setRoundId] = useState("");
 
   // Guardias (IAM)
-  const [guards, setGuards] = useState([]);      // [{_id, name, email, opId, active}]
-  const [guardId, setGuardId] = useState("");    // opId seleccionado
+  const [guards, setGuards] = useState([]); // [{_id, name, email, opId, active}]
+  const [guardId, setGuardId] = useState(""); // opId seleccionado
 
   // Horarios
   const [startTime, setStartTime] = useState("");
@@ -27,7 +27,10 @@ export default function AssignmentsPage() {
 
   /* ─────────────── Cargar Sitios ─────────────── */
   useEffect(() => {
-    api.listSites().then((d) => setSites(d.items || [])).catch(console.error);
+    api
+      .listSites()
+      .then((d) => setSites(d.items || []))
+      .catch(console.error);
   }, []);
 
   /* ─────────────── Cargar Rondas ─────────────── */
@@ -37,7 +40,10 @@ export default function AssignmentsPage() {
       setRoundId("");
       return;
     }
-    api.listRounds(siteId).then((d) => setRounds(d.items || [])).catch(console.error);
+    api
+      .listRounds(siteId)
+      .then((d) => setRounds(d.items || []))
+      .catch(console.error);
   }, [siteId]);
 
   /* ─────────────── Cargar Guardias (IAM) ─────────────── */
@@ -47,28 +53,33 @@ export default function AssignmentsPage() {
       try {
         let items = [];
         if (typeof iamApi.listGuards === "function") {
-          // q="" y activeOnly=true para traer sólo guardias activos
+          // q="" y activeOnly=true
           const r = await iamApi.listGuards("", true);
           items = r.items || [];
         } else {
-          // Fallback: listar usuarios y normalizar a “guardias”
+          // Fallback
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
-          items = (r.items || []).filter((u) => {
-            const roles = [
-              ...(Array.isArray(u.roles) ? u.roles : []),
-              ...(Array.isArray(u[NS]) ? u[NS] : []),
-            ].map((x) => String(x).toLowerCase());
-            return roles.includes("guardia") || roles.includes("guard") || roles.includes("rondasqr.guard");
-          }).map((u) => ({
-            _id: u._id,
-            name: u.name,
-            email: u.email,
-            opId: u.opId || u.sub || u.legacyId || String(u._id),
-            active: u.active !== false,
-          }));
+          items = (r.items || [])
+            .filter((u) => {
+              const roles = [
+                ...(Array.isArray(u.roles) ? u.roles : []),
+                ...(Array.isArray(u[NS]) ? u[NS] : []),
+              ].map((x) => String(x).toLowerCase());
+              return (
+                roles.includes("guardia") ||
+                roles.includes("guard") ||
+                roles.includes("rondasqr.guard")
+              );
+            })
+            .map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+              opId: u.opId || u.sub || u.legacyId || String(u._id),
+              active: u.active !== false,
+            }));
         }
-        // Asegurar shape final
         const normalized = (items || []).map((u) => ({
           _id: u._id,
           name: u.name,
@@ -82,7 +93,9 @@ export default function AssignmentsPage() {
         if (mounted) setGuards([]);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   /* ─────────────── Listado del Día ─────────────── */
@@ -98,7 +111,9 @@ export default function AssignmentsPage() {
     }
   }
 
-  useEffect(() => { refresh(); }, [date]);
+  useEffect(() => {
+    refresh();
+  }, [date]);
 
   /* ─────────────── Crear Asignación ─────────────── */
   async function onCreate() {
@@ -132,31 +147,33 @@ export default function AssignmentsPage() {
     return a.guardId || "—";
   }
 
+  // estilo compacto para los controles
+  const controlClass =
+    "w-full px-3 py-1.5 rounded-md border bg-white text-slate-900 border-slate-200 " +
+    "dark:bg-[#1f2937] dark:text-white dark:border-[#374151] focus:outline-none focus:ring-2 focus:ring-cyan-500/70";
+
   return (
     <div className="p-4">
       <h1 className="text-2xl font-semibold mb-4">Asignaciones de Rondas</h1>
 
-      {/* Filtros / Creación */}
-      <div
-        className="grid gap-3"
-        style={{ gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))" }}
-      >
-        <div>
+      {/* Filtros en una sola fila (en md+) */}
+      <div className="grid gap-3 md:grid-cols-12">
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Fecha</label>
           <input
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151]"
+            className={controlClass}
           />
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Sitio</label>
           <select
             value={siteId}
             onChange={(e) => setSiteId(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151]"
+            className={controlClass}
           >
             <option value="">-- Selecciona --</option>
             {sites.map((s) => (
@@ -167,13 +184,13 @@ export default function AssignmentsPage() {
           </select>
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Ronda</label>
           <select
             value={roundId}
             onChange={(e) => setRoundId(e.target.value)}
             disabled={!siteId}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151] disabled:opacity-50"
+            className={controlClass + " disabled:opacity-50"}
           >
             <option value="">-- Selecciona --</option>
             {rounds.map((r) => (
@@ -184,68 +201,69 @@ export default function AssignmentsPage() {
           </select>
         </div>
 
-        {/* ⬇️ Select de guardias (IAM) */}
-        <div>
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Guardia</label>
           <select
             value={guardId}
             onChange={(e) => setGuardId(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151]"
+            className={controlClass}
           >
             <option value="">-- Selecciona --</option>
             {guards.map((g) => (
               <option key={g._id} value={g.opId}>
-                {g.name || "(Sin nombre)"}{g.email ? ` — ${g.email}` : ""}
+                {g.name || "(Sin nombre)"} {g.email ? ` — ${g.email}` : ""}
               </option>
             ))}
           </select>
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Inicio</label>
           <input
             type="time"
             value={startTime}
             onChange={(e) => setStartTime(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151]"
+            className={controlClass}
           />
         </div>
 
-        <div>
+        <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Fin</label>
           <input
             type="time"
             value={endTime}
             onChange={(e) => setEndTime(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-[#1f2937] text-white border border-[#374151]"
+            className={controlClass}
           />
         </div>
       </div>
 
-      <div className="flex gap-2 mt-3">
-        <button
-          onClick={onCreate}
-          className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition"
-        >
-          Crear asignación
-        </button>
-        <button
-          onClick={refresh}
-          className="px-4 py-2 rounded-xl bg-zinc-700 text-white hover:bg-zinc-600 transition"
-        >
-          Actualizar
-        </button>
+      {/* Encabezado + botones (derecha) */}
+      <div className="mt-6 mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Listado ({date})</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={onCreate}
+            className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition"
+          >
+            Crear asignación
+          </button>
+          <button
+            onClick={refresh}
+            className="px-4 py-2 rounded-xl bg-cyan-500 text-white hover:bg-cyan-400 transition"
+          >
+            Actualizar
+          </button>
+        </div>
       </div>
 
       {/* Tabla de asignaciones */}
-      <h2 className="text-lg font-semibold mt-6 mb-2">Listado ({date})</h2>
-
       {loading ? (
-        <div className="text-zinc-400">Cargando…</div>
+        <div className="text-slate-500 dark:text-zinc-400">Cargando…</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-[#374151]">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-[#374151]">
           <table className="min-w-full text-sm">
-            <thead className="bg-[#0b1220] text-zinc-300">
+            <thead className="bg-slate-100 text-slate-700 dark:bg-[#0b1220] dark:text-zinc-300">
               <tr>
                 <th className="text-left p-3">Guardia</th>
                 <th className="text-left p-3">Sitio</th>
@@ -261,7 +279,7 @@ export default function AssignmentsPage() {
             </thead>
             <tbody>
               {(items || []).map((a) => (
-                <tr key={a._id} className="border-t border-[#374151]">
+                <tr key={a._id} className="border-t border-slate-200 dark:border-[#374151]">
                   <td className="p-3">{renderGuardCell(a)}</td>
                   <td className="p-3">{a.siteName || "-"}</td>
                   <td className="p-3">{a.roundName || a.roundId?.name || "-"}</td>
@@ -285,7 +303,10 @@ export default function AssignmentsPage() {
               ))}
               {(!items || items.length === 0) && (
                 <tr>
-                  <td colSpan={10} className="p-4 text-zinc-400 text-center">
+                  <td
+                    colSpan={10}
+                    className="p-4 text-slate-500 dark:text-zinc-400 text-center"
+                  >
                     Sin asignaciones.
                   </td>
                 </tr>

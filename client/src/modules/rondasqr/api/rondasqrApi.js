@@ -20,24 +20,16 @@ function toId(v) {
   if (v == null) return null;
   if (typeof v === "string") return v.trim() || null;
   if (typeof v === "object") {
-    // común: {_id: "…"} o {id: "…"}
     return v._id || v.id || null;
   }
   return null;
 }
 
-/** Acepta points como:
- *  - ["653..a1", "653..b2"]
- *  - [{pointId:"..", order:1}, {pointId:"..", order:2}]
- *  - [{_id:"..", name:"A"}, {_id:"..", name:"B"}]
- *  - [{id:".."}, "653..x"]
- *  - ⚠️ y también `pointIds: ["..",".."]`
- */
+/** Acepta varias formas de points y lo deja plano */
 function normalizePlanBody(body = {}) {
   const siteId = toId(body.siteId ?? body.site ?? body.site_id);
   const roundId = toId(body.roundId ?? body.round ?? body.round_id);
 
-  // Soporta distintas formas de entrada
   const rawArray =
     Array.isArray(body.points)
       ? body.points
@@ -51,9 +43,7 @@ function normalizePlanBody(body = {}) {
     .map((p, idx) => {
       if (typeof p === "string") return { pointId: p, order: idx + 1 };
       if (typeof p === "object") {
-        const pid =
-          toId(p.pointId ?? p.point_id ?? p._id ?? p.id) ??
-          (Array.isArray(body.pointIds) ? null : null);
+        const pid = toId(p.pointId ?? p.point_id ?? p._id ?? p.id);
         const ord = Number.isFinite(p.order) ? p.order : idx + 1;
         return pid ? { pointId: pid, order: ord } : null;
       }
@@ -78,7 +68,7 @@ async function buildHeaders(json = true) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
 
-  // Auth Bearer (si fue inyectado)
+  // bearer opcional
   if (typeof tokenProvider === "function") {
     try {
       const token = await tokenProvider();
@@ -86,7 +76,7 @@ async function buildHeaders(json = true) {
     } catch {}
   }
 
-  // Headers DEV (si IAM_ALLOW_DEV_HEADERS=1)
+  // headers de dev
   if (import.meta.env.DEV) {
     const devEmail =
       (typeof localStorage !== "undefined" &&
@@ -99,7 +89,7 @@ async function buildHeaders(json = true) {
       (typeof localStorage !== "undefined" &&
         localStorage.getItem("iamDevRoles")) ||
       "";
-    if (devRoles) h["x-roles"] = devRoles; // p.ej. "admin,rondasqr.admin"
+    if (devRoles) h["x-roles"] = devRoles;
   }
 
   return h;
@@ -125,7 +115,7 @@ async function fetchJson(url, opts = {}) {
   try {
     return await r.json();
   } catch {
-    return null; // Maneja respuestas vacías (204)
+    return null;
   }
 }
 
@@ -138,7 +128,6 @@ export const rondasqrApi = {
     return fetchJson(`${BASE}/reports/detailed?${toQS(q)}`);
   },
 
-  // Descargas
   csvUrl(q) {
     return `${BASE}/reports/export/csv?${toQS(q)}`;
   },
@@ -178,7 +167,6 @@ export const rondasqrApi = {
     });
   },
 
-  // ⬇️ AQUÍ la parte importante
   async panic(gps) {
     // normalizar payload
     let body;
@@ -194,7 +182,7 @@ export const rondasqrApi = {
       body = { gps: null };
     }
 
-    // intentamos varias rutas porque tu backend está devolviendo 404
+    // intentamos varias rutas porque tu backend está devolviendo 404 a veces
     const candidateUrls = [
       `${BASE}/checkin/panic`,
       `${BASE}/panic`,
@@ -202,29 +190,25 @@ export const rondasqrApi = {
       // sin /v1
       `${ROOT}/api/rondasqr/checkin/panic`,
       `${ROOT}/api/rondasqr/panic`,
-      // súper genérica
       `${ROOT}/api/panic`,
     ];
 
     let lastErr;
     for (const url of candidateUrls) {
       try {
-        // console.log("probando panic en", url);
         return await fetchJson(url, {
           method: "POST",
           body: JSON.stringify(body),
         });
       } catch (err) {
-        // si es 404 seguimos probando, si es otra cosa la guardamos igual
         lastErr = err;
+        // si no es 404/405 dejamos de probar
         if (err.status !== 404 && err.status !== 405) {
-          // error "real": auth, 500, etc → cortamos
           break;
         }
       }
     }
 
-    // si llegamos aquí es que ninguna ruta funcionó
     throw lastErr || new Error("No se pudo enviar el pánico: ninguna ruta coincidió");
   },
 
@@ -241,7 +225,7 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- Catálogos / Admin CRUD --------
+  // -------- Admin CRUD --------
   async listSites() {
     return fetchJson(`${BASE}/admin/sites`);
   },
@@ -263,7 +247,7 @@ export const rondasqrApi = {
     });
   },
 
-  // Rounds
+  // Rondas
   async listRounds(siteId) {
     const q = siteId ? `?${toQS({ siteId })}` : "";
     return fetchJson(`${BASE}/admin/rounds${q}`);
@@ -286,7 +270,7 @@ export const rondasqrApi = {
     });
   },
 
-  // Points
+  // Puntos
   async listPoints({ siteId, roundId } = {}) {
     const q = toQS({ siteId, roundId });
     return fetchJson(`${BASE}/admin/points${q ? `?${q}` : ""}`);
@@ -315,9 +299,9 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- Plans (robusto con fallback y reload automático) --------
+  // -------- Plans --------
   async getPlan(q = {}) {
-    const qs = toQS(q);
+    const qs = toQS(q); // q puede traer shift
     return fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`);
   },
 
@@ -341,13 +325,17 @@ export const rondasqrApi = {
       if (body[k] != null && body[k] !== "") extras[k] = body[k];
     }
 
-    const pointIds = base.points.map(p => String(p.pointId));
+    const pointIds = base.points.map((p) => String(p.pointId));
     const payload = { ...base, ...extras, pointIds };
 
     const tryAndReload = async (url, method) => {
       const res = await fetchJson(url, { method, body: JSON.stringify(payload) });
       return res == null
-        ? this.getPlan({ siteId: base.siteId, roundId: base.roundId })
+        ? this.getPlan({
+            siteId: base.siteId,
+            roundId: base.roundId,
+            shift: payload.shift,
+          })
         : res;
     };
 
@@ -385,7 +373,7 @@ export const rondasqrApi = {
     }
   },
 
-  // --- Aliases de compatibilidad ---
+  // --- aliases
   async listPlans(q = {}) {
     return this.getPlan(q);
   },
@@ -406,7 +394,7 @@ export const rondasqrApi = {
     throw e;
   },
 
-  // -------- ASIGNACIONES --------
+  // -------- Asignaciones --------
   async listAssignments(date) {
     const qs = toQS(date ? { date } : {});
     return fetchJson(`${BASE}/admin/assignments${qs ? `?${qs}` : ""}`);
@@ -421,6 +409,14 @@ export const rondasqrApi = {
     return fetchJson(`${BASE}/admin/assignments/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  },
+
+  // ✅ alias para ScanPage
+  async checkinScan(payload) {
+    return this.postScan(payload);
+  },
+  async scan(payload) {
+    return this.postScan(payload);
   },
 };
 
