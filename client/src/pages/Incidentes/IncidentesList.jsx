@@ -2,22 +2,19 @@
 import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
-// 👇 mismo componente que usas en el otro form
 import CameraCapture from "../../components/CameraCapture.jsx";
 
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
-
   const [stats, setStats] = useState({
     abiertos: 0,
     enProceso: 0,
     resueltos: 0,
     alta: 0,
   });
-
   const [showForm, setShowForm] = useState(false);
 
-  // estado del form BONITO
+  // estado del form inline
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
@@ -76,9 +73,7 @@ export default function IncidentesList() {
     }
   };
 
-  // ───────────────────────────────
-  // FORM bonito inline
-  // ───────────────────────────────
+  // ───────── form inline ─────────
   const handleFormChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
@@ -90,7 +85,6 @@ export default function IncidentesList() {
     e.target.value = "";
   };
 
-  // cuando la cámara toma la foto
   const handleCameraCapture = (dataUrl) => {
     setPhotos((prev) => [...prev, dataUrl]);
     setShowCamera(false);
@@ -134,7 +128,7 @@ export default function IncidentesList() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
-      {/* Encabezado superior */}
+      {/* header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-white">
@@ -157,23 +151,23 @@ export default function IncidentesList() {
         </button>
       </div>
 
-      {/* FORM BONITO EMBEBIDO */}
+      {/* FORM inline con el MISMO estilo del IncidenteForm */}
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg-white/5 border border-white/10 shadow-lg backdrop-blur-sm transition-all">
-          <h2 className="text-xl font-semibold mb-6">
+        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
+          <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             Reportar Nuevo Incidente
           </h2>
           <form onSubmit={handleSubmit} className="space-y-6 text-sm">
             {/* Tipo */}
             <div>
-              <label className="block mb-2 text-white/80 font-medium">
+              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Tipo de Incidente
               </label>
               <select
                 name="type"
                 value={form.type}
                 onChange={handleFormChange}
-                className="w-full bg-black/20 text-white border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
               >
                 <option>Acceso no autorizado</option>
                 <option>Falla técnica</option>
@@ -184,44 +178,44 @@ export default function IncidentesList() {
 
             {/* Descripción */}
             <div>
-              <label className="block mb-2 text-white/80 font-medium">
+              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Descripción del Incidente
               </label>
               <textarea
                 name="description"
                 value={form.description}
                 onChange={handleFormChange}
-                className="w-full bg-black/20 text-white border border-white/10 rounded-lg px-3 py-2 min-h-[110px] resize-none focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-white/25"
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 min-h-[110px] resize-none focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
                 placeholder="Describa detalladamente lo ocurrido..."
                 required
               />
             </div>
 
-            {/* Reportado por / Zona */}
+            {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block mb-2 text-white/80 font-medium">
+                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
                 </label>
                 <input
                   name="reportedBy"
                   value={form.reportedBy}
                   onChange={handleFormChange}
-                  className="w-full bg-black/20 text-white border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-white/25"
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
                   placeholder="Nombre del guardia o responsable"
                   required
                 />
               </div>
 
               <div>
-                <label className="block mb-2 text-white/80 font-medium">
+                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Zona / Ubicación
                 </label>
                 <input
                   name="zone"
                   value={form.zone}
                   onChange={handleFormChange}
-                  className="w-full bg-black/20 text-white border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-white/25"
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
                   placeholder="Ej. Entrada Principal / Comayagua / Sala Juntas A"
                   required
                 />
@@ -230,14 +224,14 @@ export default function IncidentesList() {
 
             {/* Prioridad */}
             <div>
-              <label className="block mb-2 text-white/80 font-medium">
+              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Prioridad
               </label>
               <select
                 name="priority"
                 value={form.priority}
                 onChange={handleFormChange}
-                className="w-full bg-black/20 text-white border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
               >
                 <option value="alta">Alta</option>
                 <option value="media">Media</option>
@@ -247,7 +241,7 @@ export default function IncidentesList() {
 
             {/* Evidencias */}
             <div className="space-y-2">
-              <label className="block mb-1 text-white/80 font-medium">
+              <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
                 Evidencias (fotos)
               </label>
               <div className="flex flex-wrap gap-3">
@@ -267,7 +261,7 @@ export default function IncidentesList() {
                   📷 Tomar foto
                 </button>
 
-                <p className="text-xs text-white/40 self-center">
+                <p className="text-xs text-gray-500 dark:text-white/40 self-center">
                   Puede adjuntar varias imágenes como evidencia.
                 </p>
               </div>
@@ -305,7 +299,7 @@ export default function IncidentesList() {
               )}
             </div>
 
-            {/* Botones */}
+            {/* botones */}
             <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:justify-end">
               <button
                 type="button"
@@ -313,7 +307,7 @@ export default function IncidentesList() {
                   setShowForm(false);
                   setPhotos([]);
                 }}
-                className="text-sm bg-transparent border border-white/10 text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
                 Cancelar
               </button>
@@ -330,7 +324,6 @@ export default function IncidentesList() {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        {/* Abiertos */}
         <div className="rounded-lg bg-[#0f1b2d] border border-red-400/40 p-4">
           <div className="text-xs uppercase text-red-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500" />
@@ -340,7 +333,6 @@ export default function IncidentesList() {
             {stats.abiertos}
           </div>
         </div>
-        {/* En Proceso */}
         <div className="rounded-lg bg-[#0f1b2d] border border-blue-400/40 p-4">
           <div className="text-xs uppercase text-blue-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-blue-500" />
@@ -350,7 +342,6 @@ export default function IncidentesList() {
             {stats.enProceso}
           </div>
         </div>
-        {/* Resueltos */}
         <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
           <div className="text-xs uppercase text-green-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500" />
@@ -360,7 +351,6 @@ export default function IncidentesList() {
             {stats.resueltos}
           </div>
         </div>
-        {/* Alta prioridad */}
         <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
           <div className="text-xs uppercase text-yellow-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-yellow-400" />
@@ -564,7 +554,6 @@ export default function IncidentesList() {
         </Link>
       </div>
 
-      {/* modal de cámara */}
       {showCamera && (
         <CameraCapture
           onCapture={handleCameraCapture}

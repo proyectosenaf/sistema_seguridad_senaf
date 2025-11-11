@@ -138,6 +138,7 @@ export default function IncidenteForm({
         </div>
       )}
 
+      {/* tarjeta principal con el estilo que quieres */}
       <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6">
           Reportar Nuevo Incidente

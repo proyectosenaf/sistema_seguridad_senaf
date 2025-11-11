@@ -8,7 +8,6 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useAssignmentSocket } from "../hooks/useAssignmentSocket.js";
 import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
 
-// ✅ Cola local de pendientes
 import {
   getOutbox,
   queueCheckin,
@@ -163,7 +162,7 @@ export default function ScanPage() {
     return "home";
   }, [pathname]);
 
-  // 👇 aquí estaba el redireccionamiento directo al form de incidentes
+  // ✅ CAMBIO 1: cuando la pestaña es "msg", lo mandamos al formulario global en modo rondas
   useEffect(() => {
     if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
   }, [tab, nav]);
@@ -445,10 +444,6 @@ export default function ScanPage() {
     };
   }
 
-  function openOutbox() {
-    nav("/rondasqr/scan/outbox");
-  }
-
   async function sendOfflineDump() {
     try {
       const payload = buildOfflinePayload(user);
@@ -622,13 +617,14 @@ export default function ScanPage() {
                 <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
                   Registrador Punto Control
                 </button>
+                {/* ✅ CAMBIO 2: aquí ya con el query */}
                 <button
                   onClick={() => nav("/incidentes/nuevo?from=ronda")}
                   className="w-full btn-neon btn-neon-purple"
                 >
                   Mensaje Incidente
                 </button>
-                <button onClick={openOutbox} className="w-full btn-neon btn-neon-green">
+                <button onClick={() => nav("/rondasqr/scan/outbox")} className="w-full btn-neon btn-neon-green">
                   Transmitir Rondas Pendientes ({countOutbox()})
                 </button>
                 <button onClick={() => nav("/rondasqr/scan/dump")} className="w-full btn-neon">
@@ -689,7 +685,7 @@ export default function ScanPage() {
               )}
             </section>
 
-            {/* acciones */}
+            {/* acciones admin/supervisor */}
             {(isAdminLike || isSupervisorLike) && (
               <section className={cardClass}>
                 <h3 className="font-semibold text-lg mb-3">Acciones</h3>
@@ -709,7 +705,7 @@ export default function ScanPage() {
               </section>
             )}
 
-            {/* fila inferior */}
+            {/* actividad reciente */}
             <section className={cardClass}>
               <h3 className="font-semibold mb-2">Actividad reciente</h3>
               <p className="text-sm text-slate-600 dark:text-white/70">Sin check-ins recientes.</p>
@@ -746,39 +742,39 @@ export default function ScanPage() {
 
         {/* QR */}
         {tab === "qr" && (
-          <section className={cardClass}>
-            <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-            <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
-              <QrScanner
-                facingMode="environment"
-                once={true}
-                enableTorch
-                enableFlip
-                onResult={handleScan}
-                onError={(e) => console.warn("QR error", e)}
-              />
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                  nav("/rondasqr/scan");
-                }}
-                className="btn-neon btn-neon-amber"
-              >
-                Finalizar
-              </button>
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                  nav("/rondasqr/scan/qr");
-                }}
-                className="btn-neon btn-neon-green"
-              >
-                Reintentar
-              </button>
-            </div>
-          </section>
+            <section className={cardClass}>
+              <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
+              <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
+                <QrScanner
+                  facingMode="environment"
+                  once={true}
+                  enableTorch
+                  enableFlip
+                  onResult={handleScan}
+                  onError={(e) => console.warn("QR error", e)}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                    nav("/rondasqr/scan");
+                  }}
+                  className="btn-neon btn-neon-amber"
+                >
+                  Finalizar
+                </button>
+                <button
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                    nav("/rondasqr/scan/qr");
+                  }}
+                  className="btn-neon btn-neon-green"
+                >
+                  Reintentar
+                </button>
+              </div>
+            </section>
         )}
 
         {/* OUTBOX */}
@@ -956,7 +952,7 @@ export default function ScanPage() {
           </section>
         )}
 
-        {/* MENSAJE legacy */}
+        {/* MENSAJE legacy (ya redirigimos arriba, pero lo dejamos por si acaso) */}
         {tab === "msg" && (
           <section className={cardClass}>
             <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
