@@ -22,7 +22,7 @@ export default function SidebarGuard({
   onSendAlert,
   onDumpDb,
 }) {
-  const navigate = useNavigate(); // 👈 para navegar dentro del SPA
+  const navigate = useNavigate();
 
   const itemBase =
     "group relative block rounded-xl transition-colors focus-visible:outline-none " +
@@ -38,7 +38,6 @@ export default function SidebarGuard({
     { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin" },
   ];
 
-  // acciones rápidas
   const actionItems = [
     { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
     { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
@@ -76,9 +75,8 @@ export default function SidebarGuard({
         }
 
         case "msg":
-          // ⬇️ ANTES: window.location.assign("/incidentes/nuevo");
-          // ahora lo mandamos a la ruta del guardia/rondas
-          navigate("/rondasqr/incidente"); // o "/guard/incidente" según la que tengas
+          // aquí lo metemos al formulario global PERO en modo rondas
+          navigate("/incidentes/nuevo?from=ronda");
           break;
 
         case "tx":
@@ -116,9 +114,7 @@ export default function SidebarGuard({
           let data = null;
           try {
             data = await resp.json();
-          } catch {
-            // no pasa nada si no es JSON
-          }
+          } catch {}
 
           if (resp.ok && data && data.ok) {
             window.alert(

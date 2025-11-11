@@ -163,8 +163,9 @@ export default function ScanPage() {
     return "home";
   }, [pathname]);
 
+  // 👇 aquí estaba el redireccionamiento directo al form de incidentes
   useEffect(() => {
-    if (tab === "msg") nav("/incidentes/nuevo", { replace: true });
+    if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
   }, [tab, nav]);
 
   /* ===== estados varios ===== */
@@ -327,7 +328,6 @@ export default function ScanPage() {
     if (!msg.trim()) return alert("Escribe un mensaje.");
     setSendingMsg(true);
     try {
-      // 👇 este endpoint es el de tu backend de rondas (/api/rondasqr/v1/checkin/incidents)
       await rondasqrApi.postIncident({ text: msg.trim() });
       alert("✅ Mensaje enviado.");
       setMsg("");
@@ -346,7 +346,6 @@ export default function ScanPage() {
     if (!base64s.length) return alert("Selecciona al menos una foto.");
     setSendingPhotos(true);
     try {
-      // igual que arriba: usa la ruta de checkin/incidents del módulo rondasqr
       await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
@@ -624,7 +623,7 @@ export default function ScanPage() {
                   Registrador Punto Control
                 </button>
                 <button
-                  onClick={() => nav("/incidentes/nuevo")}
+                  onClick={() => nav("/incidentes/nuevo?from=ronda")}
                   className="w-full btn-neon btn-neon-purple"
                 >
                   Mensaje Incidente

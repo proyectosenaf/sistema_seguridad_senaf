@@ -13,16 +13,12 @@ export default function IncidenteForm({
   const nav = useNavigate();
   const location = useLocation();
 
-  // 👇 prioridad del flag:
   // 1) prop
-  // 2) location.state.stayOnFinish
+  // 2) state
   // 3) query ?from=ronda
   const search = new URLSearchParams(location.search);
   const fromQueryIsRonda = search.get("from") === "ronda";
-  const locationStay =
-    location.state && location.state.stayOnFinish
-      ? location.state.stayOnFinish
-      : false;
+  const locationStay = location.state?.stayOnFinish ?? false;
   const finalStayOnFinish = stayOnFinish || locationStay || fromQueryIsRonda;
 
   const [form, setForm] = useState({
@@ -79,8 +75,13 @@ export default function IncidenteForm({
         ...extraData,
       };
 
+      // 👇 añadimos Accept para obligar JSON y evitar redirecciones tipo HTML
       await axios.post(`${API_BASE}/api/incidentes`, payload, {
         withCredentials: true,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
       });
 
       if (finalStayOnFinish) {
@@ -105,7 +106,7 @@ export default function IncidenteForm({
     }
 
     if (finalStayOnFinish) {
-      // viene de rondas → no salir
+      // viene de rondas → solo limpiar
       resetForm();
     } else {
       nav("/incidentes/lista");

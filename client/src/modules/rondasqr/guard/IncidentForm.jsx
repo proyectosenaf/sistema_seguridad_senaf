@@ -1,15 +1,11 @@
 // src/modules/rondasqr/guard/IncidentForm.jsx
 import React, { useState } from "react";
-import axios from "axios";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 export default function IncidentForm() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState([]);
   const [sending, setSending] = useState(false);
-
-  const API_BASE =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
   async function submit(e) {
     if (e) e.preventDefault();
@@ -20,15 +16,18 @@ export default function IncidentForm() {
 
     setSending(true);
 
-    // 1) intentar obtener GPS (no obligatorio)
-    const gps = await new Promise((res) =>
-      navigator.geolocation.getCurrentPosition(
-        (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude }),
-        () => res(null)
-      )
-    );
+    // 1️⃣ Intentar obtener ubicación GPS (opcional)
+    let gps = null;
+    try {
+      gps = await new Promise((res) =>
+        navigator.geolocation.getCurrentPosition(
+          (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude }),
+          () => res(null)
+        )
+      );
+    } catch (_) {}
 
-    // 2) primero: guardar en el módulo de RONDAS
+    // 2️⃣ Enviar solo al módulo de RONDAS
     try {
       const fd = new FormData();
       fd.append("text", text);
@@ -38,47 +37,23 @@ export default function IncidentForm() {
       }
       [...files].forEach((f) => fd.append("photos", f));
 
+      // ✅ Este endpoint ahora se encarga de guardar en rondas y en incidentes global
       await rondasqrApi.createIncident(fd);
+
+      alert("✅ Incidente de ronda enviado correctamente.");
+      setText("");
+      setFiles([]);
     } catch (err) {
-      console.warn("No se pudo guardar en el módulo de rondas:", err);
-      // seguimos igual intentando guardar en el general
+      console.error("Error al enviar el incidente:", err);
+      alert("Error al enviar el incidente. Intenta de nuevo.");
+    } finally {
+      setSending(false);
     }
-
-    // 3) segundo: intentar guardarlo también en /api/incidentes
-    try {
-      // pasamos las fotos a base64 porque tu otro formulario trabaja así
-      const photosBase64 = await Promise.all(
-        [...files].map((f) => fileToBase64(f))
-      );
-
-      const payload = {
-        type: "Incidente de ronda",
-        description: text,
-        reportedBy: "guardia (ronda)",
-        zone: gps ? `${gps.lat},${gps.lon}` : "",
-        priority: "media",
-        status: "abierto",
-        origin: "ronda", // 👈 para que el backend sepa de dónde vino
-        photosBase64,
-      };
-
-      await axios.post(`${API_BASE}/api/incidentes`, payload, {
-        withCredentials: true,
-      });
-    } catch (err) {
-      console.warn("Se guardó en rondas pero no en /api/incidentes:", err);
-    }
-
-    // 4) limpiar y avisar
-    setText("");
-    setFiles([]);
-    setSending(false);
-    alert("Incidente enviado");
   }
 
   return (
     <div className="p-4 bg-slate-900/30 rounded-xl border border-slate-800">
-      <h2 className="font-medium text-white mb-3">Registrar incidente</h2>
+      <h2 className="font-medium text-white mb-3">Registrar incidente de ronda</h2>
 
       <form onSubmit={submit} className="space-y-3">
         <textarea
@@ -108,13 +83,4 @@ export default function IncidentForm() {
     </div>
   );
 }
-
-// util para pasar File -> base64 (igual que en tu otro form)
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-}
+  
