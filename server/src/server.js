@@ -27,11 +27,14 @@ import rondasqr from "../modules/rondasqr/index.js";
 // ✅ Evaluaciones (rutas)
 import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
 
-// ✅ Incidentes (el tuyo, que está dentro de modules/rondasqr/routes)
-import incidentesRoutes from "../modules/rondasqr/routes/incident.routes.js";
+// ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
+import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
 
 // ✅ Reports de Rondas (el archivo largo que pegaste)
 import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
+
+// ✅ NUEVO: rutas offline de rondasqr (para /offline/dump)
+import rondasOfflineRoutes from "../modules/rondasqr/routes/rondasqr.offline.routes.js";
 
 // Cron de asignaciones (DIARIO)
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
@@ -417,11 +420,14 @@ app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
 );
 app.use("/api/rondasqr/v1", rondasqr);
 
-/* ✅ Módulo de REPORTES de Rondas (el que necesitaba el front) */
+/* ✅ Módulo de REPORTES de Rondas */
 app.use("/api/rondasqr/v1", rondasReportsRoutes);
 
-/* ✅ Incidentes (queda en /api/incidentes, /api/incidentes/:id, etc.) */
-app.use(incidentesRoutes);
+/* ✅ Módulo OFFLINE de Rondas */
+app.use("/api/rondasqr/v1", rondasOfflineRoutes);
+
+/* ✅ Módulo de INCIDENTES (ahora sí en /api/incidentes) */
+app.use("/api/incidentes", incidentesRoutes);
 
 /* ✅ Evaluaciones */
 app.use("/evaluaciones", evaluacionesRoutes);

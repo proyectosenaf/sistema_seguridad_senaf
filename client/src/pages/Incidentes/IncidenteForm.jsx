@@ -1,10 +1,29 @@
+// src/modules/incidentes/IncidenteForm.jsx
 import React, { useState, useRef } from "react";
 import axios from "axios";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
 
-export default function IncidenteForm() {
+export default function IncidenteForm({
+  stayOnFinish = false,
+  onCancel,
+  origin,
+  extraData = {},
+}) {
   const nav = useNavigate();
+  const location = useLocation();
+
+  // 👇 prioridad del flag:
+  // 1) prop
+  // 2) location.state.stayOnFinish
+  // 3) query ?from=ronda
+  const search = new URLSearchParams(location.search);
+  const fromQueryIsRonda = search.get("from") === "ronda";
+  const locationStay =
+    location.state && location.state.stayOnFinish
+      ? location.state.stayOnFinish
+      : false;
+  const finalStayOnFinish = stayOnFinish || locationStay || fromQueryIsRonda;
 
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
@@ -18,6 +37,9 @@ export default function IncidenteForm() {
   const [sending, setSending] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
+
+  const API_BASE =
+    import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -35,6 +57,17 @@ export default function IncidenteForm() {
     setShowCamera(false);
   };
 
+  const resetForm = () => {
+    setForm({
+      type: "Acceso no autorizado",
+      description: "",
+      reportedBy: "",
+      zone: "",
+      priority: "alta",
+    });
+    setPhotos([]);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -42,9 +75,21 @@ export default function IncidenteForm() {
       const payload = {
         ...form,
         photosBase64: photos,
+        ...(origin ? { origin } : {}),
+        ...extraData,
       };
-      await axios.post("http://localhost:4000/api/incidentes", payload);
-      nav("/incidentes/lista");
+
+      await axios.post(`${API_BASE}/api/incidentes`, payload, {
+        withCredentials: true,
+      });
+
+      if (finalStayOnFinish) {
+        // usado desde rondas → no navegar
+        resetForm();
+      } else {
+        // usado desde módulo incidentes
+        nav("/incidentes/lista");
+      }
     } catch (err) {
       console.error(err);
       alert("Error al reportar el incidente");
@@ -53,35 +98,46 @@ export default function IncidenteForm() {
     }
   };
 
+  const handleCancel = () => {
+    if (onCancel) {
+      onCancel();
+      return;
+    }
+
+    if (finalStayOnFinish) {
+      // viene de rondas → no salir
+      resetForm();
+    } else {
+      nav("/incidentes/lista");
+    }
+  };
+
   return (
     <div className="min-h-screen px-4 py-6 md:p-8 max-w-[1100px] mx-auto space-y-6 transition-colors">
-      {/* migas */}
-      <div className="text-xs text-gray-500 dark:text-white/60 flex flex-wrap items-center gap-2">
-        <Link
-          to="/"
-          className="hover:text-black dark:hover:text-white hover:underline underline-offset-4"
-        >
-          Panel principal
-        </Link>
-        <span className="text-gray-400">/</span>
-        <Link
-          to="/incidentes/lista"
-          className="hover:text-black dark:hover:text-white hover:underline underline-offset-4"
-        >
-          Gestión de Incidentes
-        </Link>
-        <span className="text-gray-400">/</span>
-        <span className="text-gray-700 dark:text-white/85">
-          Reportar Incidente
-        </span>
-      </div>
+      {/* migas solo si NO venimos de rondas */}
+      {!finalStayOnFinish && (
+        <div className="text-xs text-gray-500 dark:text-white/60 flex flex-wrap items-center gap-2">
+          <Link
+            to="/"
+            className="hover:text-black dark:hover:text-white hover:underline underline-offset-4"
+          >
+            Panel principal
+          </Link>
+          <span className="text-gray-400">/</span>
+          <Link
+            to="/incidentes/lista"
+            className="hover:text-black dark:hover:text-white hover:underline underline-offset-4"
+          >
+            Gestión de Incidentes
+          </Link>
+          <span className="text-gray-400">/</span>
+          <span className="text-gray-700 dark:text-white/85">
+            Reportar Incidente
+          </span>
+        </div>
+      )}
 
-      {/* Contenedor adaptable */}
-      <div className="rounded-xl p-6 md:p-8 
-                      bg-white/70 dark:bg-white/5 
-                      border border-gray-200 dark:border-white/10 
-                      shadow-lg dark:shadow-sm 
-                      backdrop-blur-sm transition-all">
+      <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6">
           Reportar Nuevo Incidente
         </h2>
@@ -120,34 +176,34 @@ export default function IncidenteForm() {
             />
           </div>
 
-          {/* Reportado por */}
-          <div>
-            <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
-              Reportado por
-            </label>
-            <input
-              name="reportedBy"
-              value={form.reportedBy}
-              onChange={handleChange}
-              className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-              placeholder="Nombre del guardia o responsable"
-              required
-            />
-          </div>
-
-          {/* Zona */}
-          <div>
-            <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
-              Zona / Ubicación
-            </label>
-            <input
-              name="zone"
-              value={form.zone}
-              onChange={handleChange}
-              className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-              placeholder="Ej. Entrada Principal / Comayagua / Sala Juntas A"
-              required
-            />
+          {/* Reportado / Zona */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                Reportado por
+              </label>
+              <input
+                name="reportedBy"
+                value={form.reportedBy}
+                onChange={handleChange}
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
+                placeholder="Nombre del guardia o responsable"
+                required
+              />
+            </div>
+            <div>
+              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                Zona / Ubicación
+              </label>
+              <input
+                name="zone"
+                value={form.zone}
+                onChange={handleChange}
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
+                placeholder="Ej. Entrada Principal / Comayagua / Sala Juntas A"
+                required
+              />
+            </div>
           </div>
 
           {/* Prioridad */}
@@ -180,7 +236,6 @@ export default function IncidenteForm() {
               >
                 📁 Seleccionar archivo
               </button>
-
               <button
                 type="button"
                 onClick={() => setShowCamera(true)}
@@ -188,13 +243,10 @@ export default function IncidenteForm() {
               >
                 📷 Tomar foto
               </button>
-
               <p className="text-xs text-gray-500 dark:text-white/40 self-center">
                 Puede adjuntar varias imágenes como evidencia.
               </p>
             </div>
-
-            {/* input oculto */}
             <input
               ref={fileInputRef}
               type="file"
@@ -202,8 +254,6 @@ export default function IncidenteForm() {
               onChange={handleFile}
               className="hidden"
             />
-
-            {/* previews */}
             {photos.length > 0 && (
               <div className="flex flex-wrap gap-3 mt-2">
                 {photos.map((src, idx) => (
@@ -231,20 +281,18 @@ export default function IncidenteForm() {
             )}
           </div>
 
-          {/* Botones */}
           <div className="pt-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
             <button
               type="button"
-              onClick={() => nav("/incidentes/lista")}
-              className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:text-black dark:hover:text-white hover:border-cyan-400/80 hover:shadow-[0_0_14px_rgba(0,255,255,0.25)] transition-all duration-300"
+              onClick={handleCancel}
+              className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:text-black dark:hover:text-white hover:border-cyan-400/80 transition-all"
             >
               Cancelar
             </button>
-
             <button
               type="submit"
               disabled={sending}
-              className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300 disabled:opacity-70"
+              className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all disabled:opacity-70"
             >
               {sending ? "Enviando..." : "Reportar Incidente"}
             </button>
@@ -252,7 +300,6 @@ export default function IncidenteForm() {
         </form>
       </div>
 
-      {/* modal cámara */}
       {showCamera && (
         <CameraCapture
           onCapture={handleCameraCapture}
@@ -263,7 +310,6 @@ export default function IncidenteForm() {
   );
 }
 
-// util
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();

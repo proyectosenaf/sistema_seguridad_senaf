@@ -15,17 +15,14 @@ function toQS(o = {}) {
     .join("&");
 }
 
-/* ───────────── helpers de normalización ───────────── */
+/* ───────────── helpers ───────────── */
 function toId(v) {
   if (v == null) return null;
   if (typeof v === "string") return v.trim() || null;
-  if (typeof v === "object") {
-    return v._id || v.id || null;
-  }
+  if (typeof v === "object") return v._id || v.id || null;
   return null;
 }
 
-/** Acepta varias formas de points y lo deja plano */
 function normalizePlanBody(body = {}) {
   const siteId = toId(body.siteId ?? body.site ?? body.site_id);
   const roundId = toId(body.roundId ?? body.round ?? body.round_id);
@@ -68,7 +65,6 @@ async function buildHeaders(json = true) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
 
-  // bearer opcional
   if (typeof tokenProvider === "function") {
     try {
       const token = await tokenProvider();
@@ -76,19 +72,15 @@ async function buildHeaders(json = true) {
     } catch {}
   }
 
-  // headers de dev
   if (import.meta.env.DEV) {
     const devEmail =
-      (typeof localStorage !== "undefined" &&
-        localStorage.getItem("iamDevEmail")) ||
+      (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
       import.meta.env.VITE_DEV_IAM_EMAIL ||
       null;
     if (devEmail) h["x-user-email"] = devEmail;
 
     const devRoles =
-      (typeof localStorage !== "undefined" &&
-        localStorage.getItem("iamDevRoles")) ||
-      "";
+      (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) || "";
     if (devRoles) h["x-roles"] = devRoles;
   }
 
@@ -119,6 +111,7 @@ async function fetchJson(url, opts = {}) {
   }
 }
 
+/* ───────────── API principal ───────────── */
 export const rondasqrApi = {
   // -------- Reportes --------
   async getSummary(q) {
@@ -140,6 +133,7 @@ export const rondasqrApi = {
   pdfUrl(q) {
     return `${BASE}/reports/export/pdf?${toQS(q)}`;
   },
+
   async ping(url) {
     try {
       const r = await fetch(url, {
@@ -160,55 +154,40 @@ export const rondasqrApi = {
       body: JSON.stringify(payload || {}),
     });
   },
+
+  // ⚙️ Corrección: endpoint real del backend
   async postIncident(payload) {
-    return fetchJson(`${BASE}/checkin/incidents`, {
+    const url = `${ROOT}/api/incidentes`; // endpoint del backend Node
+    return fetchJson(url, {
       method: "POST",
       body: JSON.stringify(payload || {}),
     });
   },
 
   async panic(gps) {
-    // normalizar payload
-    let body;
-    if (gps && typeof gps === "object") {
-      if ("gps" in gps) {
-        body = gps;
-      } else if ("lat" in gps || "lon" in gps) {
-        body = { gps };
-      } else {
-        body = { gps };
-      }
-    } else {
-      body = { gps: null };
-    }
+    const body =
+      gps && typeof gps === "object"
+        ? "gps" in gps
+          ? gps
+          : { gps }
+        : { gps: null };
 
-    // intentamos varias rutas porque tu backend está devolviendo 404 a veces
-    const candidateUrls = [
+    const urls = [
       `${BASE}/checkin/panic`,
       `${BASE}/panic`,
-      `${BASE}/alerts/panic`,
-      // sin /v1
-      `${ROOT}/api/rondasqr/checkin/panic`,
       `${ROOT}/api/rondasqr/panic`,
       `${ROOT}/api/panic`,
     ];
 
     let lastErr;
-    for (const url of candidateUrls) {
+    for (const url of urls) {
       try {
-        return await fetchJson(url, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
+        return await fetchJson(url, { method: "POST", body: JSON.stringify(body) });
       } catch (err) {
         lastErr = err;
-        // si no es 404/405 dejamos de probar
-        if (err.status !== 404 && err.status !== 405) {
-          break;
-        }
+        if (err.status !== 404 && err.status !== 405) break;
       }
     }
-
     throw lastErr || new Error("No se pudo enviar el pánico: ninguna ruta coincidió");
   },
 
@@ -220,6 +199,20 @@ export const rondasqrApi = {
   },
   async postFall(payload) {
     return fetchJson(`${BASE}/checkin/fall`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  // -------- OFFLINE --------
+  async offlineCheckin(item) {
+    return fetchJson(`${BASE}/offline/checkin`, {
+      method: "POST",
+      body: JSON.stringify(item || {}),
+    });
+  },
+  async offlineDump(payload) {
+    return fetchJson(`${BASE}/offline/dump`, {
       method: "POST",
       body: JSON.stringify(payload || {}),
     });
@@ -242,9 +235,7 @@ export const rondasqrApi = {
     });
   },
   async deleteSite(id) {
-    return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
+    return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // Rondas
@@ -265,9 +256,7 @@ export const rondasqrApi = {
     });
   },
   async deleteRound(id) {
-    return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
+    return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // Puntos
@@ -288,9 +277,7 @@ export const rondasqrApi = {
     });
   },
   async deletePoint(id) {
-    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
+    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   async reorderPoints(roundId, pointIds) {
     return fetchJson(`${BASE}/admin/points/reorder`, {
@@ -301,7 +288,7 @@ export const rondasqrApi = {
 
   // -------- Plans --------
   async getPlan(q = {}) {
-    const qs = toQS(q); // q puede traer shift
+    const qs = toQS(q);
     return fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`);
   },
 
@@ -359,9 +346,7 @@ export const rondasqrApi = {
   async deletePlanByQuery(q = {}) {
     const qs = toQS(q);
     try {
-      return await fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`, {
-        method: "DELETE",
-      });
+      return await fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`, { method: "DELETE" });
     } catch (err) {
       if (err.status === 404 || err.status === 405) {
         return await fetchJson(`${BASE}/admin/plans/delete`, {
@@ -380,16 +365,12 @@ export const rondasqrApi = {
   async createPlan(body) {
     return this.createOrUpdatePlan(body);
   },
-  async updatePlan(_idIgnored, body) {
+  async updatePlan(_, body) {
     return this.createOrUpdatePlan(body);
   },
   async deletePlan(arg) {
-    if (arg && typeof arg === "object") {
-      return this.deletePlanByQuery(arg);
-    }
-    const e = new Error(
-      "deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})"
-    );
+    if (arg && typeof arg === "object") return this.deletePlanByQuery(arg);
+    const e = new Error("deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})");
     e.status = 400;
     throw e;
   },

@@ -1,9 +1,10 @@
+// server/modules/rondasqr/models/RqPlan.model.js
 import mongoose from "mongoose";
 
 const PointItemSchema = new mongoose.Schema(
   {
     pointId: {
-      type: mongoose.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "RqPoint",
       required: true,
     },
@@ -23,24 +24,23 @@ const PointItemSchema = new mongoose.Schema(
 const RqPlanSchema = new mongoose.Schema(
   {
     siteId: {
-      type: mongoose.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "RqSite",
       required: true,
       index: true,
     },
     roundId: {
-      type: mongoose.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "RqRound",
       required: true,
       index: true,
     },
 
-    // 👇 NUEVO: turno/shift (el frontend ya lo manda)
-    // lo dejamos flexible pero indexado
+    // 👇 turno/shift (el frontend ya lo manda)
     shift: {
       type: String,
       trim: true,
-      default: "dia", // o "diurno", elige uno y sé consistente
+      default: "dia", // sé consistente con esto en el front
       index: true,
     },
 
@@ -49,6 +49,7 @@ const RqPlanSchema = new mongoose.Schema(
 
     version: { type: Number, default: 1 },
 
+    // puntos completos
     points: {
       type: [PointItemSchema],
       default: [],
@@ -61,9 +62,18 @@ const RqPlanSchema = new mongoose.Schema(
       },
     },
 
-    // compat
-    pointIds: [{ type: mongoose.Types.ObjectId, ref: "RqPoint", default: [] }],
+    // compat: sólo IDs
+    pointIds: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "RqPoint",
+        },
+      ],
+      default: [],
+    },
 
+    // ventanas generales del plan
     windows: [
       {
         label: String,
@@ -81,8 +91,7 @@ const RqPlanSchema = new mongoose.Schema(
 );
 
 /* ------------ índices ------------ */
-// antes era {siteId, roundId} unique
-// ahora debe ser {siteId, roundId, shift} para permitir 1 por turno
+// 1 por sitio + ronda + turno
 RqPlanSchema.index({ siteId: 1, roundId: 1, shift: 1 }, { unique: true });
 RqPlanSchema.index({ active: 1, siteId: 1 });
 RqPlanSchema.index({ "points.pointId": 1 });
@@ -138,6 +147,7 @@ RqPlanSchema.pre("validate", function normalizePoints(next) {
       });
     }
 
+    // reordenar
     dedup.sort((a, b) => (a.order || 0) - (b.order || 0));
     dedup.forEach((p, i) => {
       p.order = i;

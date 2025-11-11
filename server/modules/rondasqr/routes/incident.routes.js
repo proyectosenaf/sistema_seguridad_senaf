@@ -11,28 +11,25 @@ import {
 
 const router = express.Router();
 
-// carpeta donde se van a guardar las fotos de incidentes
 const uploadDir = path.resolve(process.cwd(), "uploads", "incidentes");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// multer simple → guarda en disco
 const upload = multer({
   dest: uploadDir,
 });
 
-// GET lista
-router.get("/api/incidentes", getAllIncidents);
+// 👇 AHORA sí ponemos el prefijo de API de RONDAS
+router.get("/api/rondasqr/v1/incidentes", getAllIncidents);
 
-// POST crear (con fotos opcionales)
+// acepta fotos
 router.post(
-  "/api/incidentes",
+  "/api/rondasqr/v1/incidentes",
   upload.array("photos", 10),
   createIncident
 );
 
-// PUT actualizar estado u otros campos
-router.put("/api/incidentes/:id", updateIncident);
+router.put("/api/rondasqr/v1/incidentes/:id", updateIncident);
 
 export default router;

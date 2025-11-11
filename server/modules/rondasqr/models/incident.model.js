@@ -3,10 +3,10 @@ import mongoose from "mongoose";
 
 const IncidentSchema = new mongoose.Schema(
   {
-    type: { type: String, required: true }, // Ej: "Acceso no autorizado"
-    description: { type: String, required: true }, // Detalle del incidente
-    reportedBy: { type: String, required: true }, // Quién reporta
-    zone: { type: String, required: true }, // Dónde pasó
+    type: { type: String, required: true, trim: true }, // Ej: "Acceso no autorizado"
+    description: { type: String, required: true, trim: true }, // Detalle del incidente
+    reportedBy: { type: String, required: true, trim: true }, // Quién reporta
+    zone: { type: String, required: true, trim: true }, // Dónde pasó
     priority: {
       type: String,
       enum: ["baja", "media", "alta"],
@@ -25,5 +25,11 @@ const IncidentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const Incident = mongoose.model("Incident", IncidentSchema);
+// índice para listar rápido por fecha (GET /incidentes)
+IncidentSchema.index({ createdAt: -1 });
+
+// previene error de modelo redefinido en hot reload
+const Incident =
+  mongoose.models.Incident || mongoose.model("Incident", IncidentSchema);
+
 export default Incident;

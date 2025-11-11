@@ -18,59 +18,87 @@ export default function CameraCapture({ onCapture, onClose }) {
           await videoRef.current.play();
         }
       } catch (err) {
-        console.error("No se pudo acceder a la cámara", err);
-        setError("No se pudo acceder a la cámara.");
+        console.error("[CameraCapture] no se pudo abrir la cámara", err);
+        setError("No se pudo acceder a la cámara");
       }
     })();
 
     return () => {
-      if (stream) stream.getTracks().forEach((t) => t.stop());
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
     };
   }, []);
 
-  const handleTakePhoto = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-    const w = video.videoWidth || 640;
-    const h = video.videoHeight || 480;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-    onCapture?.(dataUrl);
-  };
+  function takePhoto() {
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+
+      const w = video.videoWidth || 640;
+      const h = video.videoHeight || 480;
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+
+      if (typeof onCapture === "function") {
+        onCapture(dataUrl);
+      }
+    } catch (err) {
+      console.error("[CameraCapture] error al capturar", err);
+      setError("No se pudo capturar la foto");
+    }
+  }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-[#0f1b2d] border border-cyan-400/30 rounded-lg p-4 w-full max-w-md space-y-3">
-        <h3 className="text-white font-semibold text-sm">Cámara</h3>
-        {error ? (
-          <p className="text-red-300 text-xs">{error}</p>
-        ) : (
-          <video
-            ref={videoRef}
-            className="w-full rounded bg-black aspect-video object-contain"
-            autoPlay
-            muted
-            playsInline
-          />
-        )}
-        <div className="flex gap-2 justify-end">
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-slate-900/90 border border-white/10 rounded-2xl w-full max-w-md mx-4 overflow-hidden shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <h3 className="text-white font-semibold text-sm">Capturar foto</h3>
           <button
             onClick={onClose}
-            className="px-3 py-1 text-xs rounded bg-slate-600/50 hover:bg-slate-500"
+            className="text-white/70 hover:text-white text-sm"
           >
-            Cerrar
-          </button>
-          <button
-            onClick={handleTakePhoto}
-            className="px-3 py-1 text-xs rounded bg-cyan-600 hover:bg-cyan-500"
-          >
-            Tomar foto
+            ✕
           </button>
         </div>
+
+        <div className="p-4 space-y-3">
+          {error ? (
+            <div className="text-red-200 text-sm">{error}</div>
+          ) : (
+            <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover"
+                playsInline
+                muted
+              />
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg bg-slate-700/60 text-white text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={takePhoto}
+              className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-white text-sm font-semibold"
+              disabled={!!error}
+            >
+              Tomar foto
+            </button>
+          </div>
+        </div>
+
+        {/* canvas oculto */}
         <canvas ref={canvasRef} className="hidden" />
       </div>
     </div>

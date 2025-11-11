@@ -1,3 +1,4 @@
+// server/modules/rondasqr/routes/assignments.routes.js
 import express from "express";
 import mongoose from "mongoose";
 import RqAssignment from "../models/RqAssignment.model.js";
@@ -9,16 +10,17 @@ const router = express.Router();
 const isId = (v) => typeof v === "string" && mongoose.Types.ObjectId.isValid(v);
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-// Horarios por nombre de ronda
+/* ───────────────────────────── Helpers ───────────────────────────── */
 function inferTimesByRoundName(name = "") {
   const n = String(name).toLowerCase();
-  if (n.includes("diurn"))   return { startTime: "06:00", endTime: "18:00" };
+  if (n.includes("diurn")) return { startTime: "06:00", endTime: "18:00" };
   if (n.includes("nocturn")) return { startTime: "18:00", endTime: "06:00" };
-  if (n.includes("mediod") || n.includes("meridian")) return { startTime: "12:00", endTime: "18:00" };
+  if (n.includes("mediod") || n.includes("meridian"))
+    return { startTime: "12:00", endTime: "18:00" };
   return {};
 }
 
-// Tomar snapshot del plan activo
+// snapshot del plan activo al momento de crear la asignación
 async function getPlanSnapshot(siteId, roundId) {
   const plan = await RqPlan.findOne({ siteId, roundId, active: true }).lean();
   if (!plan) return { planId: null, planSnap: [] };
@@ -26,7 +28,7 @@ async function getPlanSnapshot(siteId, roundId) {
   const ordered = (plan.points || [])
     .slice()
     .sort((a, b) => (a.order || 0) - (b.order || 0))
-    .map(p => ({
+    .map((p) => ({
       pointId: p.pointId,
       order: p.order || 0,
       windowStartMin: p.windowStartMin,
@@ -37,6 +39,7 @@ async function getPlanSnapshot(siteId, roundId) {
   return { planId: plan._id, planSnap: ordered };
 }
 
+/* ───────────────────────────── GET ALL ───────────────────────────── */
 /* GET /admin/assignments?date=YYYY-MM-DD */
 router.get("/", async (req, res, next) => {
   try {
@@ -49,43 +52,57 @@ router.get("/", async (req, res, next) => {
       .populate({ path: "planId", select: "name version" })
       .lean();
 
-    // Mapear nombres de sitio
     const siteIds = Array.from(
-      new Set(items.map(a => a.roundId?.siteId || a.siteId).filter(Boolean).map(String))
+      new Set(
+        items
+          .map((a) => a.roundId?.siteId || a.siteId)
+          .filter(Boolean)
+          .map(String)
+      )
     );
-    const sitesById = siteIds.length
-      ? (await RqSite.find({ _id: { $in: siteIds } }).select({ name: 1 }).lean())
-          .reduce((acc, s) => ((acc[String(s._id)] = s), acc), {})
-      : {};
 
-    const mapped = items.map(a => ({
+    const sitesById =
+      siteIds.length > 0
+        ? (
+            await RqSite.find({ _id: { $in: siteIds } })
+              .select({ name: 1 })
+              .lean()
+          ).reduce((acc, s) => ((acc[String(s._id)] = s), acc), {})
+        : {};
+
+    const mapped = items.map((a) => ({
       ...a,
       roundName: a.roundId?.name || "",
       planName: a.planId?.name || "",
       planVersion: a.planId?.version || 1,
-      siteName: sitesById[String(a.roundId?.siteId || a.siteId || "")]?.name || "",
+      siteName:
+        sitesById[String(a.roundId?.siteId || a.siteId || "")]?.name || "",
       pointsCount: Array.isArray(a.planSnap) ? a.planSnap.length : 0,
     }));
 
     res.json({ ok: true, items: mapped });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
+/* ───────────────────────────── CREATE ───────────────────────────── */
 /* POST /admin/assignments */
 router.post("/", async (req, res, next) => {
   try {
     const b = req.body || {};
-    const date      = typeof b.date === "string"      ? b.date.trim()      : "";
-    const guardId   = typeof b.guardId === "string"   ? b.guardId.trim()   : "";
-    const roundId   = typeof b.roundId === "string"   ? b.roundId.trim()   : "";
+    const date = typeof b.date === "string" ? b.date.trim() : "";
+    const guardId = typeof b.guardId === "string" ? b.guardId.trim() : "";
+    const roundId = typeof b.roundId === "string" ? b.roundId.trim() : "";
     const startTime = typeof b.startTime === "string" ? b.startTime.trim() : "";
-    const endTime   = typeof b.endTime === "string"   ? b.endTime.trim()   : "";
+    const endTime = typeof b.endTime === "string" ? b.endTime.trim() : "";
 
     if (!date || !guardId || !isId(roundId))
       return res.status(400).json({ ok: false, error: "invalid_payload" });
 
     const round = await RqRound.findById(roundId).lean();
-    if (!round) return res.status(404).json({ ok: false, error: "round_not_found" });
+    if (!round)
+      return res.status(404).json({ ok: false, error: "round_not_found" });
 
     const inferred = inferTimesByRoundName(round.name);
     const { planId, planSnap } = await getPlanSnapshot(round.siteId, round._id);
@@ -93,68 +110,65 @@ router.post("/", async (req, res, next) => {
     const payload = {
       date,
       guardId,
-      roundId: round._id,
-      siteId: round.siteId || undefined,
+      roundId: new mongoose.Types.ObjectId(round._id),
+      siteId: new mongoose.Types.ObjectId(round.siteId),
       status: "assigned",
-      startTime: HHMM.test(startTime) ? startTime : inferred.startTime || undefined,
-      endTime:   HHMM.test(endTime)   ? endTime   : inferred.endTime   || undefined,
+      startTime: HHMM.test(startTime)
+        ? startTime
+        : inferred.startTime || undefined,
+      endTime: HHMM.test(endTime) ? endTime : inferred.endTime || undefined,
       planId,
       planSnap,
-      // al crear: reiniciar flags de notificación
       notified: false,
       notifiedAt: undefined,
       notifiedBy: null,
     };
 
-    // Crear o reemplazar asignación
     const doc = await RqAssignment.findOneAndUpdate(
       { date, guardId, roundId },
       { $set: payload },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
 
-    // 🔔 Notificar (usa tu makeNotifier.assignment)
+    /* 🔔 Notificación */
     try {
       const notifier = req.app.get("notifier");
       const site = await RqSite.findById(round.siteId).lean();
       const siteName = site?.name || "";
       const roundName = round?.name || "";
 
-      if (notifier) {
-        // ⬅️ CORREGIDO: usar .assignment(...) (no .notifyAssignment)
+      if (notifier?.assignment) {
         await notifier.assignment({
           userId: guardId,
-          email: null, // si tienes email real del guardia, colócalo aquí
+          email: null, // puedes poner email real si lo tienes
           siteName,
           roundName,
           startTime: doc.startTime,
           endTime: doc.endTime,
           assignmentId: String(doc._id),
         });
-
-        await RqAssignment.updateOne(
-          { _id: doc._id },
-          { $set: { notified: true, notifiedAt: new Date(), notifiedBy: "socket" } }
-        );
       } else if (req.io) {
-        // fallback simple: emitir por socket si no hay notifier expuesto
         req.io.to(`guard-${guardId}`).emit("rondasqr:nueva-asignacion", {
           title: "Nueva ronda asignada",
           body: `${roundName} en ${siteName}`,
-          meta: { id: doc._id, startTime: doc.startTime, endTime: doc.endTime },
+          meta: {
+            id: doc._id,
+            startTime: doc.startTime,
+            endTime: doc.endTime,
+          },
         });
-        await RqAssignment.updateOne(
-          { _id: doc._id },
-          { $set: { notified: true, notifiedAt: new Date(), notifiedBy: "socket" } }
-        );
       }
+
+      await RqAssignment.updateOne(
+        { _id: doc._id },
+        { $set: { notified: true, notifiedAt: new Date(), notifiedBy: "socket" } }
+      );
     } catch (err) {
-      console.warn("[assignments.notify] aviso: ", err?.message || err);
+      console.warn("[assignments.notify] aviso:", err?.message || err);
     }
 
     const resp = { ok: true, item: doc };
     if (!payload.planId) resp.warning = "no_active_plan_found";
-
     res.status(201).json(resp);
   } catch (e) {
     if (e?.code === 11000)
@@ -163,16 +177,18 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+/* ───────────────────────────── DELETE ───────────────────────────── */
 /* DELETE /admin/assignments/:id */
 router.delete("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!isId(id)) return res.status(400).json({ ok: false, error: "invalid_id" });
 
-    // (opcional) podrías leer el doc antes para notificar “cancelado” al guardia
     const r = await RqAssignment.deleteOne({ _id: id });
     res.json({ ok: true, deleted: r.deletedCount });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 export default router;

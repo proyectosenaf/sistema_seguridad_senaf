@@ -1,5 +1,6 @@
+// client/src/modules/rondasqr/pages/SidebarGuard.jsx
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   Home,
   AlertTriangle,
@@ -21,6 +22,8 @@ export default function SidebarGuard({
   onSendAlert,
   onDumpDb,
 }) {
+  const navigate = useNavigate(); // 👈 para navegar dentro del SPA
+
   const itemBase =
     "group relative block rounded-xl transition-colors focus-visible:outline-none " +
     "focus-visible:ring-2 focus-visible:ring-indigo-400 dark:focus-visible:ring-cyan-400";
@@ -35,7 +38,7 @@ export default function SidebarGuard({
     { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin" },
   ];
 
-  // Separamos las acciones del logout
+  // acciones rápidas
   const actionItems = [
     { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
     { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
@@ -51,8 +54,9 @@ export default function SidebarGuard({
             await onSendAlert();
             break;
           }
+
           let gps;
-          if ("geolocation" in navigator) {
+          if (typeof navigator !== "undefined" && "geolocation" in navigator) {
             await new Promise((resolve) => {
               navigator.geolocation.getCurrentPosition(
                 (pos) => {
@@ -67,16 +71,18 @@ export default function SidebarGuard({
           await rondasqrApi.panic(gps || null);
           emitLocalPanic({ source: "sidebar" });
           window.alert("🚨 Alerta de pánico enviada.");
-          window.location.assign("/rondasqr/scan");
+          navigate("/rondasqr/scan");
           break;
         }
 
         case "msg":
-          window.location.assign("/incidentes/nuevo");
+          // ⬇️ ANTES: window.location.assign("/incidentes/nuevo");
+          // ahora lo mandamos a la ruta del guardia/rondas
+          navigate("/rondasqr/incidente"); // o "/guard/incidente" según la que tengas
           break;
 
         case "tx":
-          window.location.assign("/rondasqr/scan/outbox");
+          navigate("/rondasqr/scan/outbox");
           break;
 
         case "dumpdb": {
@@ -86,16 +92,21 @@ export default function SidebarGuard({
           }
 
           const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+          const payload = {
+            at: new Date().toISOString(),
+            device: {
+              ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+              online: typeof navigator !== "undefined" ? navigator.onLine : false,
+            },
+          };
+
           let resp;
           try {
-            resp = await fetch(`${apiBase}/api/rondasqr-offline/v1/dump`, {
+            resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               credentials: "include",
-              body: JSON.stringify({
-                at: new Date().toISOString(),
-                device: { ua: navigator.userAgent },
-              }),
+              body: JSON.stringify(payload),
             });
           } catch (errFetch) {
             window.alert("No se pudo enviar la base de datos (fetch): " + errFetch.message);
@@ -106,14 +117,16 @@ export default function SidebarGuard({
           try {
             data = await resp.json();
           } catch {
-            // ignore
+            // no pasa nada si no es JSON
           }
 
           if (resp.ok && data && data.ok) {
             window.alert(
               "📤 Base enviada.\n" +
-                `marks: ${data.saved?.marks ?? 0}, incidents: ${data.saved?.incidents ?? 0}, alerts: ${data.saved?.alerts ?? 0}` +
-                (data.info ? `\ninfo: ${data.info}` : "")
+                `marks: ${data.saved?.marks ?? 0}, incidents: ${data.saved?.incidents ?? 0}, device: ${data.saved?.device ?? 0}` +
+                (Array.isArray(data.errors) && data.errors.length
+                  ? `\ncon errores: ${data.errors.length}`
+                  : "")
             );
           } else {
             window.alert(
@@ -126,7 +139,7 @@ export default function SidebarGuard({
         }
 
         case "logout":
-          window.location.assign("/login");
+          navigate("/login");
           break;
 
         default:
@@ -160,7 +173,6 @@ export default function SidebarGuard({
       className={`${containerBase} ${widthClass} flex-col`}
       aria-label="Navegación del módulo de rondas"
     >
-      {/* Encabezado */}
       <div className={`${collapsed ? "text-center" : ""} mb-5`}>
         <div
           className={`font-extrabold tracking-tight ${
@@ -176,7 +188,6 @@ export default function SidebarGuard({
         )}
       </div>
 
-      {/* Navegación principal */}
       <nav className="flex-1 flex flex-col gap-1">
         {navItems.map((it) => {
           const Icon = it.icon;
@@ -196,7 +207,6 @@ export default function SidebarGuard({
           );
         })}
 
-        {/* Acciones intermedias */}
         {actionItems.map((it) => {
           const Icon = it.icon;
           return (
@@ -214,7 +224,6 @@ export default function SidebarGuard({
           );
         })}
 
-        {/* 🚨 Botón salir en rojo al final */}
         <div className="mt-auto pt-3 border-t border-white/10">
           <button
             type="button"

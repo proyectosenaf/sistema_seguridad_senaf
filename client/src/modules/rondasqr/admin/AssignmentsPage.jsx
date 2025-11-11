@@ -1,7 +1,8 @@
+// client/src/modules/rondasqr/admin/AssignmentsPage.jsx
 import React, { useEffect, useState } from "react";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
-// ✅ desde src/modules/rondasqr/admin → src/iam/api/iamApi.js
 import iamApi from "../../../iam/api/iamApi.js";
+// import { io } from "socket.io-client"; // 👈 descomenta si usarás actualizaciones en vivo
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -25,7 +26,12 @@ export default function AssignmentsPage() {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
 
-  /* ─────────────── Cargar Sitios ─────────────── */
+  /* ─────────────── Validación HH:mm ─────────────── */
+  function isHHMM(str) {
+    return /^([01]\d|2[0-3]):[0-5]\d$/.test(str);
+  }
+
+  /* ─────────────── Cargar sitios ─────────────── */
   useEffect(() => {
     api
       .listSites()
@@ -33,7 +39,7 @@ export default function AssignmentsPage() {
       .catch(console.error);
   }, []);
 
-  /* ─────────────── Cargar Rondas ─────────────── */
+  /* ─────────────── Cargar rondas ─────────────── */
   useEffect(() => {
     if (!siteId) {
       setRounds([]);
@@ -46,18 +52,17 @@ export default function AssignmentsPage() {
       .catch(console.error);
   }, [siteId]);
 
-  /* ─────────────── Cargar Guardias (IAM) ─────────────── */
+  /* ─────────────── Cargar guardias ─────────────── */
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         let items = [];
         if (typeof iamApi.listGuards === "function") {
-          // q="" y activeOnly=true
           const r = await iamApi.listGuards("", true);
           items = r.items || [];
         } else {
-          // Fallback
+          // fallback si no hay listGuards()
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || [])
@@ -98,7 +103,7 @@ export default function AssignmentsPage() {
     };
   }, []);
 
-  /* ─────────────── Listado del Día ─────────────── */
+  /* ─────────────── Listado del día ─────────────── */
   async function refresh() {
     setLoading(true);
     try {
@@ -115,14 +120,20 @@ export default function AssignmentsPage() {
     refresh();
   }, [date]);
 
-  /* ─────────────── Crear Asignación ─────────────── */
+  /* ─────────────── Crear asignación ─────────────── */
   async function onCreate() {
     if (!date || !roundId || !guardId) {
       alert("Completa fecha, ronda y guardia.");
       return;
     }
+    if (startTime && !isHHMM(startTime)) return alert("Hora de inicio inválida (usa HH:mm)");
+    if (endTime && !isHHMM(endTime)) return alert("Hora de fin inválida (usa HH:mm)");
     try {
       await api.createAssignment({ date, roundId, guardId, startTime, endTime });
+      setRoundId("");
+      setGuardId("");
+      setStartTime("");
+      setEndTime("");
       await refresh();
     } catch (e) {
       console.error(e);
@@ -135,28 +146,41 @@ export default function AssignmentsPage() {
   async function onDelete(id) {
     try {
       await api.deleteAssignment(id);
-      await refresh();
     } catch (e) {
       console.error(e);
+    } finally {
+      await refresh();
     }
   }
 
+  /* ─────────────── Render guardia ─────────────── */
   function renderGuardCell(a) {
-    if (a.guardName) return a.guardName;
-    if (a.guardEmail) return a.guardEmail;
-    return a.guardId || "—";
+    const g = guards.find((x) => x.opId === a.guardId);
+    return g
+      ? `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`
+      : a.guardId || "—";
   }
 
-  // estilo compacto para los controles
+  // estilo compacto
   const controlClass =
     "w-full px-3 py-1.5 rounded-md border bg-white text-slate-900 border-slate-200 " +
     "dark:bg-[#1f2937] dark:text-white dark:border-[#374151] focus:outline-none focus:ring-2 focus:ring-cyan-500/70";
+
+  /* ─────────────── Socket.IO opcional ─────────────── */
+  // useEffect(() => {
+  //   const socket = io(import.meta.env.VITE_API_BASE_URL);
+  //   socket.on("rondasqr:nueva-asignacion", (msg) => {
+  //     console.log("Nueva asignación recibida:", msg);
+  //     refresh();
+  //   });
+  //   return () => socket.disconnect();
+  // }, []);
 
   return (
     <div className="p-4">
       <h1 className="text-2xl font-semibold mb-4">Asignaciones de Rondas</h1>
 
-      {/* Filtros en una sola fila (en md+) */}
+      {/* Filtros superiores */}
       <div className="grid gap-3 md:grid-cols-12">
         <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Fecha</label>
@@ -211,7 +235,7 @@ export default function AssignmentsPage() {
             <option value="">-- Selecciona --</option>
             {guards.map((g) => (
               <option key={g._id} value={g.opId}>
-                {g.name || "(Sin nombre)"} {g.email ? ` — ${g.email}` : ""}
+                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}
               </option>
             ))}
           </select>
@@ -238,7 +262,7 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
-      {/* Encabezado + botones (derecha) */}
+      {/* Acciones */}
       <div className="mt-6 mb-2 flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Listado ({date})</h2>
         <div className="flex gap-2">

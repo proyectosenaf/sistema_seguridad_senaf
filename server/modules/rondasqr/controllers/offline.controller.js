@@ -1,14 +1,12 @@
-// server/modules/rondasqr/routes/rondasqr.offline.routes.js
-import express from "express";
+// server/modules/rondasqr/controllers/offline.controller.js
+
 import RqPoint from "../models/RqPoint.model.js";
 import RqMark from "../models/RqMark.model.js";
-import RqIncident from "../models/RqIncident.model.js"; // queda por si después mandás incidentes
-import RqDevice from "../models/RqDevice.model.js"; // lo tienes en tu carpeta
-
-const router = express.Router();
+import RqIncident from "../models/RqIncident.model.js"; // por si luego mandas incidentes
+import RqDevice from "../models/RqDevice.model.js";
 
 /**
- * Saca datos del oficial desde req.user o headers de dev
+ * Devuelve datos básicos del oficial/usuario que hace el dump
  */
 function getOfficer(req) {
   const u = req?.user || {};
@@ -22,21 +20,73 @@ function getOfficer(req) {
 /**
  * GET /api/rondasqr/v1/offline/ping
  */
-router.get("/offline/ping", (_req, res) => {
+export function offlinePing(_req, res) {
   res.json({ ok: true, where: "/api/rondasqr/v1/offline/ping", ts: Date.now() });
-});
+}
+
+/**
+ * POST /api/rondasqr/v1/offline/checkin
+ * versión corta: un solo check-in offline
+ */
+export async function postOfflineCheckin(req, res, next) {
+  try {
+    const { qr, gps, at } = req.body || {};
+    if (!qr) {
+      return res.status(400).json({ ok: false, error: "qr_required" });
+    }
+
+    const { officerEmail, officerName, officerSub } = getOfficer(req);
+
+    const point = await RqPoint.findOne({
+      active: true,
+      $or: [{ qr }, { qrNo: qr }, { code: qr }],
+    }).lean();
+
+    if (!point) {
+      return res.status(404).json({ ok: false, error: "point_not_found" });
+    }
+
+    const hasGps =
+      gps && typeof gps.lat === "number" && typeof gps.lon === "number";
+
+    await RqMark.create({
+      pointId: point._id,
+      pointName: point.name || "",
+      siteId: point.siteId || null,
+      roundId: point.roundId || null,
+      qr: point.qr || qr,
+      qrNo: point.qrNo || undefined,
+      at: at ? new Date(at) : new Date(),
+      gps: gps || {},
+      loc: hasGps
+        ? {
+            type: "Point",
+            coordinates: [Number(gps.lon), Number(gps.lat)],
+          }
+        : undefined,
+      deviceId: req.body?.hardwareId || req.body?.deviceId || null,
+      officerEmail,
+      officerName,
+      officerSub,
+    });
+
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+}
 
 /**
  * POST /api/rondasqr/v1/offline/dump
- * Aquí aceptamos EL FORMATO QUE MANDA TU CLIENTE:
+ * Formato que envía tu front:
  * {
  *   outbox: [{ qr, gps, at, ... }],
- *   progress: { ... },
- *   device: { ... },
+ *   progress: {...},
+ *   device: {...},
  *   at: "..."
  * }
  */
-router.post("/offline/dump", async (req, res, next) => {
+export async function postOfflineDump(req, res, next) {
   try {
     const {
       outbox = [],
@@ -50,7 +100,7 @@ router.post("/offline/dump", async (req, res, next) => {
     const saved = { marks: 0, incidents: 0, device: 0 };
     const errors = [];
 
-    /* 1) procesar outbox -> lo tratamos como “marks offline” */
+    // 1) procesar los check-ins pendientes
     for (const it of Array.isArray(outbox) ? outbox : []) {
       try {
         const qr = String(it.qr || "").trim();
@@ -59,7 +109,6 @@ router.post("/offline/dump", async (req, res, next) => {
           continue;
         }
 
-        // buscar el punto por cualquiera de los campos típicos
         const point = await RqPoint.findOne({
           active: true,
           $or: [{ qr }, { qrNo: qr }, { code: qr }],
@@ -103,12 +152,11 @@ router.post("/offline/dump", async (req, res, next) => {
       }
     }
 
-    /* 2) si vino un progreso, lo guardamos en RqDevice como último estado */
+    // 2) guardar estado del dispositivo / progreso
     if (Object.keys(progress).length || Object.keys(device).length) {
       try {
         await RqDevice.findOneAndUpdate(
           {
-            // identificamos el device por user o por userAgent si no hay nada más
             officerSub: officerSub || undefined,
             officerEmail: officerEmail || undefined,
           },
@@ -127,17 +175,12 @@ router.post("/offline/dump", async (req, res, next) => {
       }
     }
 
-    // (opcional) si en algún futuro quieres que también mande incidentes, aquí:
-    // const { incidents = [] } = req.body; ...
-
     return res.json({
       ok: true,
       saved,
       errors,
     });
-  } catch (e) {
-    next(e);
+  } catch (err) {
+    next(err);
   }
-});
-
-export default router;
+}

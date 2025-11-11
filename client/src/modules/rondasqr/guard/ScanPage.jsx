@@ -327,6 +327,7 @@ export default function ScanPage() {
     if (!msg.trim()) return alert("Escribe un mensaje.");
     setSendingMsg(true);
     try {
+      // 👇 este endpoint es el de tu backend de rondas (/api/rondasqr/v1/checkin/incidents)
       await rondasqrApi.postIncident({ text: msg.trim() });
       alert("✅ Mensaje enviado.");
       setMsg("");
@@ -345,6 +346,7 @@ export default function ScanPage() {
     if (!base64s.length) return alert("Selecciona al menos una foto.");
     setSendingPhotos(true);
     try {
+      // igual que arriba: usa la ruta de checkin/incidents del módulo rondasqr
       await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
@@ -481,7 +483,6 @@ export default function ScanPage() {
   /* ===== estilos ===== */
   const pageClass = "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
 
-  // 👉 aquí va el suavizado de modo claro
   const headerClass =
     "rounded-2xl px-4 sm:px-6 py-3 mb-4 sm:mb-6 flex items-center justify-between " +
     "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
