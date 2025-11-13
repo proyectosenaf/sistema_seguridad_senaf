@@ -1,6 +1,13 @@
 // client/src/modules/rondasqr/api/rondasqrApi.js
-const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
-const BASE = `${ROOT}/api/rondasqr/v1`;
+
+// 👉 Convención: VITE_API_BASE_URL YA incluye /api
+//    ej. https://urchin-app-fuirh.ondigitalocean.app/api
+const ROOT = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+).replace(/\/$/, "");
+
+// Base de RondasQR: /api/rondasqr/v1
+const BASE = `${ROOT}/rondasqr/v1`;
 
 /** Permite inyectar un proveedor de token (Auth0, etc.) */
 let tokenProvider = null;
@@ -27,14 +34,13 @@ function normalizePlanBody(body = {}) {
   const siteId = toId(body.siteId ?? body.site ?? body.site_id);
   const roundId = toId(body.roundId ?? body.round ?? body.round_id);
 
-  const rawArray =
-    Array.isArray(body.points)
-      ? body.points
-      : Array.isArray(body.items)
-      ? body.items
-      : Array.isArray(body.pointIds)
-      ? body.pointIds
-      : [];
+  const rawArray = Array.isArray(body.points)
+    ? body.points
+    : Array.isArray(body.items)
+    ? body.items
+    : Array.isArray(body.pointIds)
+    ? body.pointIds
+    : [];
 
   const points = rawArray
     .map((p, idx) => {
@@ -74,13 +80,15 @@ async function buildHeaders(json = true) {
 
   if (import.meta.env.DEV) {
     const devEmail =
-      (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+      (typeof localStorage !== "undefined" &&
+        localStorage.getItem("iamDevEmail")) ||
       import.meta.env.VITE_DEV_IAM_EMAIL ||
       null;
     if (devEmail) h["x-user-email"] = devEmail;
 
     const devRoles =
-      (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) || "";
+      (typeof localStorage !== "undefined" &&
+        localStorage.getItem("iamDevRoles")) || "";
     if (devRoles) h["x-roles"] = devRoles;
   }
 
@@ -155,9 +163,9 @@ export const rondasqrApi = {
     });
   },
 
-  // ⚙️ Corrección: endpoint real del backend
+  // Incidente desde rondas → módulo central de incidentes
   async postIncident(payload) {
-    const url = `${ROOT}/api/incidentes`; // endpoint del backend Node
+    const url = `${ROOT}/incidentes`; // /api/incidentes
     return fetchJson(url, {
       method: "POST",
       body: JSON.stringify(payload || {}),
@@ -175,14 +183,17 @@ export const rondasqrApi = {
     const urls = [
       `${BASE}/checkin/panic`,
       `${BASE}/panic`,
-      `${ROOT}/api/rondasqr/panic`,
-      `${ROOT}/api/panic`,
+      `${ROOT}/rondasqr/panic`,
+      `${ROOT}/panic`,
     ];
 
     let lastErr;
     for (const url of urls) {
       try {
-        return await fetchJson(url, { method: "POST", body: JSON.stringify(body) });
+        return await fetchJson(url, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
       } catch (err) {
         lastErr = err;
         if (err.status !== 404 && err.status !== 405) break;
@@ -235,7 +246,9 @@ export const rondasqrApi = {
     });
   },
   async deleteSite(id) {
-    return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 
   // Rondas
@@ -256,7 +269,9 @@ export const rondasqrApi = {
     });
   },
   async deleteRound(id) {
-    return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 
   // Puntos
@@ -277,7 +292,9 @@ export const rondasqrApi = {
     });
   },
   async deletePoint(id) {
-    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, { method: "DELETE" });
+    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
   async reorderPoints(roundId, pointIds) {
     return fetchJson(`${BASE}/admin/points/reorder`, {
@@ -316,7 +333,10 @@ export const rondasqrApi = {
     const payload = { ...base, ...extras, pointIds };
 
     const tryAndReload = async (url, method) => {
-      const res = await fetchJson(url, { method, body: JSON.stringify(payload) });
+      const res = await fetchJson(url, {
+        method,
+        body: JSON.stringify(payload),
+      });
       return res == null
         ? this.getPlan({
             siteId: base.siteId,
@@ -346,7 +366,9 @@ export const rondasqrApi = {
   async deletePlanByQuery(q = {}) {
     const qs = toQS(q);
     try {
-      return await fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`, { method: "DELETE" });
+      return await fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`, {
+        method: "DELETE",
+      });
     } catch (err) {
       if (err.status === 404 || err.status === 405) {
         return await fetchJson(`${BASE}/admin/plans/delete`, {
@@ -370,7 +392,9 @@ export const rondasqrApi = {
   },
   async deletePlan(arg) {
     if (arg && typeof arg === "object") return this.deletePlanByQuery(arg);
-    const e = new Error("deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})");
+    const e = new Error(
+      "deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})"
+    );
     e.status = 400;
     throw e;
   },

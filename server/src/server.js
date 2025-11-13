@@ -447,8 +447,8 @@ app.use((_req, res) =>
 );
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
-const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
-server.listen(PORT, () => {
+const PORT = Number(process.env.PORT || 8080);
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(
     `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`

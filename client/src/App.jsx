@@ -109,14 +109,13 @@ function AuthTokenBridge({ children }) {
         attachRondasAuth(null);
         return;
       }
-      // ⚠️ No solicitamos offline_access; si no hay refresh token, no es error.
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
             authorizationParams: {
               audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              scope: "openid profile email"
-            }
+              scope: "openid profile email",
+            },
           });
           return token || null;
         } catch (err) {
@@ -160,18 +159,33 @@ export default function App() {
       <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
-            {/* Pública */}
+            {/* 🔹 Callback de Auth0 (entra aquí después del login) */}
+            <Route path="/callback" element={<LoginRedirect />} />
+
+            {/* Pública: ruta /login manual */}
             <Route path="/login" element={<LoginRedirect />} />
 
             {/* Protegidas */}
             <Route
               path="/"
-              element={<ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Home />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             <Route
               path="/start"
-              element={<ProtectedRoute><Layout><RoleRedirectInline /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <RoleRedirectInline />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             {/* Incidentes */}
@@ -214,7 +228,14 @@ export default function App() {
             />
 
             {/* IAM */}
-            <Route path="/iam" element={<ProtectedRoute><Navigate to="/iam/admin" replace /></ProtectedRoute>} />
+            <Route
+              path="/iam"
+              element={
+                <ProtectedRoute>
+                  <Navigate to="/iam/admin" replace />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/iam/admin"
               element={
@@ -229,10 +250,15 @@ export default function App() {
             />
 
             {/* ✅ RONDAS QR */}
-            {/* Entrada única → router inteligente (por defecto /rondasqr/scan) */}
             <Route
               path="/rondasqr"
-              element={<ProtectedRoute><Layout><RondasRouterInline /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <RondasRouterInline />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             {/* Panel unificado (Scan) */}
@@ -299,27 +325,26 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuard anyOf={["accesos.read","accesos.write","accesos.export","*"]}>
-                      <Accesos/>
+                      <Accesos />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>
               }
             />
 
-            {/* ⬇⬇⬇ ACTUALIZADO AQUÍ ⬇⬇⬇ */}
+            {/* Control de visitas (moderno) */}
             <Route
               path="/visitas"
               element={
                 <ProtectedRoute>
                   <Layout>
                     <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
-                      <VisitsPageCore /> {/* ← antes era <Visitas /> */}
+                      <VisitsPageCore />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>
               }
             />
-            {/* ⬆⬆⬆ ACTUALIZADO AQUÍ ⬆⬆⬆ */}
 
             <Route
               path="/bitacora"
@@ -327,7 +352,7 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuard anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}>
-                      <Bitacora/>
+                      <Bitacora />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>
@@ -339,7 +364,7 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuard anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}>
-                      <Supervision/>
+                      <Supervision />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>
@@ -351,7 +376,7 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuard anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}>
-                      <Evaluacion/>
+                      <Evaluacion />
                     </IamGuard>
                   </Layout>
                 </ProtectedRoute>

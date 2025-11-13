@@ -1,20 +1,21 @@
+// src/auth0/Auth0ProviderWithHistory.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
 
-const Auth0ProviderWithHistory = ({ children }) => {
+export default function Auth0ProviderWithHistory({ children }) {
   const navigate = useNavigate();
+
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 
   const onRedirectCallback = (appState) => {
-    navigate(appState?.returnTo || "/"); // ✅ evita bucle en /login
+    navigate(appState?.returnTo || "/start");
   };
 
-  // ⚠️ No bloquees si falta audience
   if (!(domain && clientId)) {
-    return <div>Configurando Auth0...</div>;
+    return <div>Configurando Auth0…</div>;
   }
 
   return (
@@ -22,17 +23,15 @@ const Auth0ProviderWithHistory = ({ children }) => {
       domain={domain}
       clientId={clientId}
       authorizationParams={{
-        redirect_uri: window.location.origin, // vuelve al inicio tras login
-        ...(audience ? { audience } : {}),    // solo si existe
+        redirect_uri: `${window.location.origin}/callback`,
+        ...(audience ? { audience } : {}),
         scope: "openid profile email offline_access",
       }}
       onRedirectCallback={onRedirectCallback}
+      useRefreshTokens
       cacheLocation="localstorage"
-      useRefreshTokens={true}
     >
       {children}
     </Auth0Provider>
   );
-};
-
-export default Auth0ProviderWithHistory;
+}

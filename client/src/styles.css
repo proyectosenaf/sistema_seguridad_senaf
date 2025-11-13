@@ -113,7 +113,7 @@ html.dark[data-fx] .fx-card{ --surface:rgba(17,19,24,.92); color:#e5e7eb; }
     0 0 20px color-mix(in oklab, var(--fx1) 45%, transparent);
   transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
 }
-.btn-neon:hover{ transform: translateY(-1px) scale(1.02); filter:saturate(120%); }
+.btn-neon:hover{ transform: translateY(-1px) scale(1.02); filter:saturate(115%); }
 
 /* Focus ring accesible */
 :focus-visible{ outline:2px solid var(--ring); outline-offset:2px; }
@@ -416,7 +416,7 @@ html.dark[data-fx] .fx-card{ --surface:rgba(17,19,24,.92); color:#e5e7eb; }
    Fin de client/src/styles.css
    ========================= */
 
-   /* === PALETA DEL CHAT (independiente del tema global) === */
+/* === PALETA DEL CHAT (independiente del tema global) === */
 :root{
   --chat-1: #ff3cac;
   --chat-2: #784ba0;
@@ -615,6 +615,7 @@ html.dark[data-fx] .fx-card{ --surface:rgba(17,19,24,.92); color:#e5e7eb; }
 .chat-row{ margin-bottom: 10px; max-width: 80%; }
 .chat-row.me{ margin-left: auto; text-align: right; }
 
+/* Burbuja del mensaje */
 .chat-pill{
   display: inline-block;
   padding: 8px 12px; border-radius: 14px;
@@ -1092,4 +1093,4 @@ input.input-fx, select.input-fx{ height:44px; border-radius:12px; }
 .eval-history.eval-ultra .mini-bar{ width:110px; height:4px; }
 .eval-history.eval-ultra .tbl .mini-bar + span{ min-width:30px; font-size:.74rem; }
 .eval-history.eval-ultra .chip{ padding:.14rem .42rem; font-size:.70rem; border-radius:999px; }
-.eval-history.eval-ultra::before{ opacity:.35; }
+.eval-history.eval-ultra::before{ opacity:.35; } 
