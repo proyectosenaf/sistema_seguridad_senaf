@@ -34,6 +34,7 @@ const Supervision   = React.lazy(() => import("./pages/Supervision/Supervision.j
 const Evaluacion    = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat          = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
+const AuthCallback  = React.lazy(() => import("./pages/Auth/AuthCallback.jsx")); // 👈 NUEVO
 
 /* 👇 NUEVO: páginas del módulo Control de Visitas */
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
@@ -159,10 +160,10 @@ export default function App() {
       <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
-            {/* 🔹 Callback de Auth0 (entra aquí después del login) */}
-            <Route path="/callback" element={<LoginRedirect />} />
+            {/* 🔹 Callback de Auth0: SOLO termina login y redirige */}
+            <Route path="/callback" element={<AuthCallback />} />
 
-            {/* Pública: ruta /login manual */}
+            {/* Pública: ruta /login manual (siempre fuerza login) */}
             <Route path="/login" element={<LoginRedirect />} />
 
             {/* Protegidas */}
