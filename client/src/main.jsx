@@ -5,9 +5,8 @@ import { BrowserRouter } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
 import App from "./App.jsx";
 
-// 👈 IMPORTA AQUÍ TUS ESTILOS (Tailwind / CSS global)
+// 👈 Estilos globales
 import "./styles.css";
-   // o "./styles.css" según como se llame tu archivo
 
 const domain = import.meta.env.VITE_AUTH0_DOMAIN;
 const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
@@ -20,8 +19,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         domain={domain}
         clientId={clientId}
         authorizationParams={{
-          // Auth0 redirige aquí tras login/logout
-          redirect_uri: `${window.location.origin}/callback`,
+          redirect_uri: window.location.origin, // 🔥 SIN /callback
           ...(audience ? { audience } : {}),
           scope: "openid profile email offline_access",
         }}
