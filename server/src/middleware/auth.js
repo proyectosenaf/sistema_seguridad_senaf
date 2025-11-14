@@ -1,4 +1,4 @@
-// src/middleware/auth.js
+// server/src/middleware/auth.js
 import { auth, requiredScopes } from "express-oauth2-jwt-bearer";
 import { env } from "../config/env.js";
 
@@ -23,13 +23,13 @@ if (process.env.DISABLE_AUTH !== "1") {
   if (!domain) {
     console.warn(
       "[auth] WARNING: env.auth0.domain no está definido. " +
-      "Define AUTH0_DOMAIN en tu .env o usa DISABLE_AUTH=1 para desactivar auth temporalmente."
+        "Define AUTH0_DOMAIN en tu .env o usa DISABLE_AUTH=1 para desactivar auth temporalmente."
     );
   }
   if (!audience) {
     console.warn(
       "[auth] WARNING: env.auth0.audience no está definido. " +
-      "Define AUTH0_AUDIENCE en tu .env o usa DISABLE_AUTH=1 para desactivar auth temporalmente."
+        "Define AUTH0_AUDIENCE en tu .env o usa DISABLE_AUTH=1 para desactivar auth temporalmente."
     );
   }
 }
@@ -44,7 +44,6 @@ export const requireAuth =
   process.env.DISABLE_AUTH === "1"
     ? (_req, _res, next) => next()
     : auth({
-        // Estos campos deben existir en producción
         issuerBaseURL,
         audience,
         tokenSigningAlg: "RS256",
@@ -62,17 +61,39 @@ export const requireScope = (scopes) =>
   requiredScopes(Array.isArray(scopes) ? scopes : [scopes]);
 
 /**
- * Helper opcional: obtiene un objeto de usuario amigable desde req.auth.payload
+ * Helper: obtiene un objeto de usuario amigable desde req.auth.payload
  * Útil en controllers si quieres registrar quién hizo la acción.
  */
 export function getUserFromReq(req) {
   const p = req?.auth?.payload || {};
+
+  // Namespace de roles (coincide con tu IAM_ROLES_NAMESPACE)
+  const NS =
+    process.env.AUTH0_NAMESPACE ||
+    process.env.IAM_ROLES_NAMESPACE ||
+    "https://senaf.local/roles";
+
+  let roles =
+    p[NS] ||
+    p["https://senaf.local/roles"] ||
+    p["https://senaf.example.com/roles"] ||
+    p.roles ||
+    [];
+
+  if (!Array.isArray(roles)) {
+    roles = [roles].filter(Boolean);
+  }
+
+  const permissions = Array.isArray(p.permissions)
+    ? p.permissions
+    : [];
+
   return {
     sub: p.sub ?? null,
     name: p.name ?? null,
     email: p.email ?? null,
-    // agrega aquí claims personalizados si los mapeas en Auth0 (e.g., roles/permissions)
-    permissions: p.permissions ?? [],
+    roles,
+    permissions,
   };
 }
 

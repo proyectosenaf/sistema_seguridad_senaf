@@ -1,7 +1,6 @@
 // src/modules/incidentes/IncidenteForm.jsx
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useLocation, useNavigate, Link, useEffect } from "react";
 import axios from "axios";
-import { useNavigate, Link, useLocation } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
 
 export default function IncidenteForm({
@@ -21,12 +20,17 @@ export default function IncidenteForm({
   const locationStay = location.state?.stayOnFinish ?? false;
   const finalStayOnFinish = stayOnFinish || locationStay || fromQueryIsRonda;
 
+  // soporte opcional para edición si alguien manda location.state.incidente
+  const editingIncident = location.state?.incidente || null;
+  const editing = !!editingIncident;
+
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
     reportedBy: "",
     zone: "",
     priority: "alta",
+    status: "abierto",
   });
 
   const [photos, setPhotos] = useState([]);
@@ -36,6 +40,26 @@ export default function IncidenteForm({
 
   const API_BASE =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+
+  // si viene en modo edición, precargar datos
+  useEffect(() => {
+    if (!editingIncident) return;
+
+    setForm({
+      type: editingIncident.type || "Acceso no autorizado",
+      description: editingIncident.description || "",
+      reportedBy: editingIncident.reportedBy || "",
+      zone: editingIncident.zone || "",
+      priority: editingIncident.priority || "alta",
+      status: editingIncident.status || "abierto",
+    });
+
+    if (Array.isArray(editingIncident.photosBase64)) {
+      setPhotos(editingIncident.photosBase64);
+    } else if (Array.isArray(editingIncident.photos)) {
+      setPhotos(editingIncident.photos);
+    }
+  }, [editingIncident]);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -60,6 +84,7 @@ export default function IncidenteForm({
       reportedBy: "",
       zone: "",
       priority: "alta",
+      status: "abierto",
     });
     setPhotos([]);
   };
@@ -75,8 +100,16 @@ export default function IncidenteForm({
         ...extraData,
       };
 
-      // 👇 añadimos Accept para obligar JSON y evitar redirecciones tipo HTML
-      await axios.post(`${API_BASE}/api/incidentes`, payload, {
+      const url = editingIncident
+        ? `${API_BASE}/api/incidentes/${editingIncident._id}`
+        : `${API_BASE}/api/incidentes`;
+
+      const method = editingIncident ? "put" : "post";
+
+      await axios({
+        method,
+        url,
+        data: payload,
         withCredentials: true,
         headers: {
           "Content-Type": "application/json",
@@ -93,7 +126,7 @@ export default function IncidenteForm({
       }
     } catch (err) {
       console.error(err);
-      alert("Error al reportar el incidente");
+      alert("Error al guardar el incidente");
     } finally {
       setSending(false);
     }
@@ -133,15 +166,15 @@ export default function IncidenteForm({
           </Link>
           <span className="text-gray-400">/</span>
           <span className="text-gray-700 dark:text-white/85">
-            Reportar Incidente
+            {editing ? "Editar incidente" : "Reportar Incidente"}
           </span>
         </div>
       )}
 
-      {/* tarjeta principal con el estilo que quieres */}
-      <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
+      {/* tarjeta principal */}
+      <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg白/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6">
-          Reportar Nuevo Incidente
+          {editing ? "Editar incidente" : "Reportar Nuevo Incidente"}
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-6 text-sm">
@@ -296,7 +329,13 @@ export default function IncidenteForm({
               disabled={sending}
               className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all disabled:opacity-70"
             >
-              {sending ? "Enviando..." : "Reportar Incidente"}
+              {sending
+                ? editing
+                  ? "Guardando cambios..."
+                  : "Enviando..."
+                : editing
+                ? "Guardar cambios"
+                : "Reportar incidente"}
             </button>
           </div>
         </form>

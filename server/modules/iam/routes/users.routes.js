@@ -12,21 +12,27 @@ const r = Router();
 function normEmail(e) {
   return String(e || "").trim().toLowerCase();
 }
+
 function normBool(v, def = true) {
   if (v === undefined || v === null) return !!def;
   if (typeof v === "boolean") return v;
-  if (typeof v === "string") return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+  if (typeof v === "string") {
+    return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+  }
   return !!v;
 }
+
 function toStringArray(v) {
   if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
-  if (typeof v === "string")
+  if (typeof v === "string") {
     return v
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+  }
   return [];
 }
+
 function nameFromEmail(email) {
   const local = String(email || "").split("@")[0];
   if (!local) return null;
@@ -48,7 +54,11 @@ function isGuardRole(u) {
     .map((r) => String(r).toLowerCase().trim())
     .filter(Boolean);
 
-  return roles.includes("guardia") || roles.includes("guard") || roles.includes("rondasqr.guard");
+  return (
+    roles.includes("guardia") ||
+    roles.includes("guard") ||
+    roles.includes("rondasqr.guard")
+  );
 }
 
 /* ===================== GET / (lista) ===================== */
@@ -134,14 +144,15 @@ r.get("/guards", devOr(requirePerm("iam.users.manage")), async (req, res, next) 
       .limit(1000)
       .lean();
 
-    const guards = raw.filter(isGuardRole).map((u) => ({
+    const guards = raw.map((u) => ({
       _id: u._id,
       name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
       email: u.email || "",
       active: !!u.active,
       roles: u.roles || [],
       opId: u.sub || u.legacyId || String(u._id),
-    }));
+      isGuard: isGuardRole(u),
+    })).filter((u) => u.isGuard);
 
     res.json({ items: guards });
   } catch (err) {
@@ -211,7 +222,12 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       entity: "user",
       entityId: item._id.toString(),
       before: null,
-      after: { email: item.email, roles: item.roles, perms: item.perms, active: item.active },
+      after: {
+        email: item.email,
+        roles: item.roles,
+        perms: item.perms,
+        active: item.active,
+      },
     });
 
     res.status(201).json({
@@ -261,9 +277,19 @@ r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) =
       entity: "user",
       entityId: id,
       before: before
-        ? { email: before.email, roles: before.roles, perms: before.perms, active: before.active }
+        ? {
+            email: before.email,
+            roles: before.roles,
+            perms: before.perms,
+            active: before.active,
+          }
         : null,
-      after: { email: item.email, roles: item.roles, perms: item.perms, active: item.active },
+      after: {
+        email: item.email,
+        roles: item.roles,
+        perms: item.perms,
+        active: item.active,
+      },
     });
 
     res.json({ item });
@@ -279,7 +305,11 @@ r.post("/:id/enable", devOr(requirePerm("iam.users.manage")), async (req, res, n
 
     const before = await IamUser.findById(id).lean();
 
-    const item = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
+    const item = await IamUser.findByIdAndUpdate(
+      id,
+      { $set: { active: true } },
+      { new: true }
+    ).lean();
     if (!item) return res.status(404).json({ error: "No encontrado" });
 
     await writeAudit(req, {
@@ -302,7 +332,11 @@ r.post("/:id/disable", devOr(requirePerm("iam.users.manage")), async (req, res, 
 
     const before = await IamUser.findById(id).lean();
 
-    const item = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
+    const item = await IamUser.findByIdAndUpdate(
+      id,
+      { $set: { active: false } },
+      { new: true }
+    ).lean();
     if (!item) return res.status(404).json({ error: "No encontrado" });
 
     await writeAudit(req, {
@@ -348,8 +382,7 @@ r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res,
       entityId: id,
       // No guardamos password ni hash:
       before: { hasPassword: !!before?.passwordHash },
-      after:  { hasPassword: !!item?.passwordHash },
-      // Si tu helper soporta meta, podrías incluir: meta:{ changed:["passwordHash"] }
+      after: { hasPassword: !!item?.passwordHash },
     });
 
     res.json({ ok: true });
@@ -374,7 +407,12 @@ r.delete("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) 
       action: "delete",
       entity: "user",
       entityId: id,
-      before: { email: before.email, roles: before.roles, perms: before.perms, active: before.active },
+      before: {
+        email: before.email,
+        roles: before.roles,
+        perms: before.perms,
+        active: before.active,
+      },
       after: null,
     });
 

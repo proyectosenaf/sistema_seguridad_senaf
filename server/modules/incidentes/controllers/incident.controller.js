@@ -117,3 +117,45 @@ export async function updateIncident(req, res) {
       .json({ ok: false, error: "Error actualizando incidente" });
   }
 }
+
+// DELETE /api/incidentes/:id
+export async function deleteIncident(req, res) {
+  try {
+    const { id } = req.params;
+
+    // eliminamos el documento
+    const deleted = await IncidentGlobal.findByIdAndDelete(id).lean();
+    if (!deleted) {
+      return res
+        .status(404)
+        .json({ ok: false, error: "Incidente no encontrado" });
+    }
+
+    // intentar borrar los archivos físicos de las fotos
+    if (Array.isArray(deleted.photos)) {
+      for (const rel of deleted.photos) {
+        try {
+          if (typeof rel !== "string") continue;
+
+          // normalmente viene como "/uploads/incidentes/archivo.png"
+          const clean = rel.replace(/^\//, ""); // quita el /
+          const abs = path.resolve(process.cwd(), clean);
+
+          if (abs.startsWith(uploadDir) && fs.existsSync(abs)) {
+            fs.unlinkSync(abs);
+          }
+        } catch (e) {
+          // no rompemos si falla borrar un archivo
+          console.warn("[incidentes-global] error borrando archivo:", e?.message || e);
+        }
+      }
+    }
+
+    return res.json({ ok: true, id });
+  } catch (err) {
+    console.error("[incidentes-global] deleteIncident:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Error eliminando incidente" });
+  }
+}

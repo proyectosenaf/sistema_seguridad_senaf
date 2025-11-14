@@ -1,3 +1,4 @@
+// client/src/auth/AuthBridge.jsx
 import { useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -32,7 +33,10 @@ export default function AuthBridge() {
           });
           return token || null;
         } catch (err) {
-          console.warn("[AuthBridge] no se pudo obtener token:", err?.message || err);
+          console.warn(
+            "[AuthBridge] no se pudo obtener token:",
+            err?.message || err
+          );
           return null;
         }
       };

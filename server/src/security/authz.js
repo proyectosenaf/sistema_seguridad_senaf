@@ -1,77 +1,137 @@
-// src/security/authz.js
-import jwt from "jsonwebtoken";
+// server/src/security/authz.js
+import { requireAuth as baseRequireAuth } from "../middleware/auth.js";
 
 /**
- * Extrae el JWT desde Authorization: Bearer <token>
+ * Normaliza roles / scopes a partir del payload del token (req.auth.payload)
  */
-function extractToken(req) {
-  const h = req.headers["authorization"];
-  if (!h) return null;
-  const parts = h.split(" ");
-  if (parts.length === 2 && /^bearer$/i.test(parts[0])) {
-    return parts[1];
+function normalizeAuthFromPayload(decoded = {}) {
+  const email = decoded.email || decoded["user_email"] || null;
+  const name = decoded.name || decoded["user_name"] || null;
+  const sub = decoded.sub || null;
+
+  // Namespace configurable para roles
+  const NS =
+    process.env.AUTH0_NAMESPACE ||
+    process.env.IAM_ROLES_NAMESPACE ||
+    "https://senaf.local/roles";
+
+  let roles =
+    decoded[NS] ||
+    decoded["https://senaf.local/roles"] ||
+    decoded["https://senaf.example.com/roles"] ||
+    decoded.roles ||
+    [];
+
+  if (!Array.isArray(roles)) {
+    roles = [roles].filter(Boolean);
   }
-  return null;
+
+  // Scopes / Permissions
+  const scopesSet = new Set();
+
+  // scope: "openid profile email ronda:read"
+  if (typeof decoded.scope === "string") {
+    decoded.scope
+      .split(" ")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .forEach((s) => scopesSet.add(s));
+  }
+
+  // scp: ["ronda:read", "ronda:write"]
+  if (Array.isArray(decoded.scp)) {
+    decoded.scp
+      .map((s) => String(s).trim())
+      .filter(Boolean)
+      .forEach((s) => scopesSet.add(s));
+  }
+
+  // permissions: Auth0 RBAC (si marcaste "Add permissions in the access token")
+  if (Array.isArray(decoded.permissions)) {
+    decoded.permissions
+      .map((s) => String(s).trim())
+      .filter(Boolean)
+      .forEach((s) => scopesSet.add(s));
+  }
+
+  const scopes = Array.from(scopesSet);
+
+  return {
+    sub,
+    email,
+    name,
+    roles,
+    scopes,
+    raw: decoded,
+  };
 }
 
 /**
- * Verifica el JWT con Auth0
- * - Usa tu AUTH0_JWKS o SECRET para validar
- * - Aquí uso jwt.verify con secret simulado, pero
- *   en prod deberías usar jwks-rsa (rotación de claves).
+ * Asegura que req.user esté poblado a partir de req.auth.payload
  */
-function verifyJwt(token) {
-  const secret = process.env.AUTH0_CLIENT_SECRET || process.env.JWT_SECRET;
-  const audience = process.env.VITE_AUTH0_AUDIENCE;
-  const issuer = process.env.VITE_AUTH0_ISSUER;
-
-  try {
-    const decoded = jwt.verify(token, secret, {
-      audience,
-      issuer,
-      algorithms: ["HS256", "RS256"],
-    });
-    return decoded;
-  } catch (err) {
-    console.error("[authz] verifyJwt error:", err.message);
+function ensureUserFromAuth(req) {
+  if (!req.auth || !req.auth.payload) {
     return null;
   }
+  const user = normalizeAuthFromPayload(req.auth.payload);
+  req.user = user;
+  return user;
 }
 
 /**
  * 🔒 requireAuth
- * Verifica que el request tenga JWT válido.
+ * Envuelve al requireAuth de express-oauth2-jwt-bearer y además
+ * normaliza req.user con roles/scopes.
+ *
+ * Úsalo en rutas antiguas que hacían:
+ *   import { requireAuth } from "../security/authz.js";
  */
 export function requireAuth(req, res, next) {
-  const token = extractToken(req);
-  if (!token) {
-    return res.status(401).json({ error: "No token provided" });
-  }
-  const decoded = verifyJwt(token);
-  if (!decoded) {
-    return res.status(401).json({ error: "Invalid or expired token" });
-  }
+  return baseRequireAuth(req, res, (err) => {
+    if (err) {
+      // Delegamos al manejador de errores global
+      return next(err);
+    }
 
-  // Normaliza usuario
-  req.user = {
-    sub: decoded.sub,
-    email: decoded.email,
-    name: decoded.name,
-    roles: decoded["https://senaf.example.com/roles"] || decoded.roles || [],
-    scopes: decoded.scope ? decoded.scope.split(" ") : [],
-    raw: decoded,
-  };
+    if (!req.auth || !req.auth.payload) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-  next();
+    ensureUserFromAuth(req);
+    return next();
+  });
+}
+
+/**
+ * Helper interno para leer user siempre normalizado,
+ * incluso si solo pasó por optionalAuth.
+ */
+function getUser(req) {
+  if (!req.user && req.auth && req.auth.payload) {
+    ensureUserFromAuth(req);
+  }
+  return req.user || { roles: [], scopes: [] };
 }
 
 /**
  * 🔒 requireRole("admin")
  * Permite acceso solo si el user tiene ese rol.
+ *
+ * ⚠️ Comportamiento:
+ *  - Si el usuario tiene rol "admin" → se considera que puede pasar
+ *    cualquier requireRole(...) (rol administrador global).
  */
 export function requireRole(role) {
   return function (req, res, next) {
-    if (!req.user?.roles?.includes(role)) {
+    const user = getUser(req);
+    const roles = user.roles || [];
+
+    // admin siempre pasa
+    if (roles.includes("admin")) {
+      return next();
+    }
+
+    if (!roles.includes(role)) {
       return res.status(403).json({ error: `Requires role: ${role}` });
     }
     next();
@@ -80,12 +140,24 @@ export function requireRole(role) {
 
 /**
  * 🔒 requireAnyRole(["admin","supervisor"])
+ *
+ * ⚠️ admin siempre pasa como rol global.
  */
 export function requireAnyRole(roles) {
   return function (req, res, next) {
-    const ok = req.user?.roles?.some((r) => roles.includes(r));
+    const user = getUser(req);
+    const userRoles = user.roles || [];
+
+    if (userRoles.includes("admin")) {
+      // admin es rol global
+      return next();
+    }
+
+    const ok = userRoles.some((r) => roles.includes(r));
     if (!ok) {
-      return res.status(403).json({ error: `Requires any role: ${roles.join(",")}` });
+      return res.status(403).json({
+        error: `Requires any role: ${roles.join(",")}`,
+      });
     }
     next();
   };
@@ -93,11 +165,27 @@ export function requireAnyRole(roles) {
 
 /**
  * 🔒 requireScope("rondas:read")
+ *
+ * ⚠️ Si el usuario tiene:
+ *  - rol "admin" → pasa siempre
+ *  - scope "*"   → pasa siempre
+ *  - sino → debe tener el scope específico
  */
 export function requireScope(scope) {
   return function (req, res, next) {
-    if (!req.user?.scopes?.includes(scope)) {
-      return res.status(403).json({ error: `Requires scope: ${scope}` });
+    const user = getUser(req);
+    const roles = user.roles || [];
+    const scopes = user.scopes || [];
+
+    // admin o scope global "*" pasan siempre
+    if (roles.includes("admin") || scopes.includes("*")) {
+      return next();
+    }
+
+    if (!scopes.includes(scope)) {
+      return res
+        .status(403)
+        .json({ error: `Requires scope: ${scope}` });
     }
     next();
   };
@@ -105,11 +193,25 @@ export function requireScope(scope) {
 
 /**
  * Helpers para usar en controllers
+ *
+ * ⚠️ En ambos helpers:
+ *  - Si el usuario tiene rol "admin" se considera que "sí tiene" cualquier rol/scope.
+ *  - Si tiene scope "*" también se considera que "sí tiene" cualquier scope.
  */
 export function hasRole(req, role) {
-  return Array.isArray(req.user?.roles) && req.user.roles.includes(role);
+  const user = getUser(req);
+  const roles = user.roles || [];
+  if (roles.includes("admin")) return true;
+  return roles.includes(role);
 }
 
 export function hasScope(req, scope) {
-  return Array.isArray(req.user?.scopes) && req.user.scopes.includes(scope);
+  const user = getUser(req);
+  const roles = user.roles || [];
+  const scopes = user.scopes || [];
+
+  if (roles.includes("admin")) return true;
+  if (scopes.includes("*")) return true;
+
+  return scopes.includes(scope);
 }

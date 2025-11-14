@@ -42,6 +42,48 @@ import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 const app = express();
 app.set("trust proxy", 1);
 
+/* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
+
+// Namespace IAM para roles
+const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+
+// Correos que serán super administradores en TODOS los módulos.
+// Ejemplo en .env: ROOT_ADMINS=tu_correo@dominio.com,otro@dominio.com
+const ROOT_ADMINS = (process.env.ROOT_ADMINS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Dado un email + roles/permisos actuales, fuerza rol admin y permisos globales
+ * si el email está en ROOT_ADMINS.
+ */
+function applyRootAdmin(email, rolesArr = [], permsArr = []) {
+  const emailNorm = (email || "").toLowerCase();
+  const roles = new Set(Array.isArray(rolesArr) ? rolesArr : []);
+  const perms = new Set(Array.isArray(permsArr) ? permsArr : []);
+
+  if (emailNorm && ROOT_ADMINS.includes(emailNorm)) {
+    roles.add("admin");
+    perms.add("*");
+    // permisos clave que ya usas en el frontend
+    perms.add("iam.users.manage");
+    perms.add("iam.roles.manage");
+    perms.add("rondasqr.admin");
+    perms.add("rondasqr.view");
+    perms.add("rondasqr.reports");
+    perms.add("incidentes.read");
+    perms.add("incidentes.create");
+    perms.add("incidentes.edit");
+    perms.add("incidentes.reports");
+  }
+
+  return {
+    roles: Array.from(roles),
+    permissions: Array.from(perms),
+  };
+}
+
 /* ───────────────────────────── CORS ───────────────────────────── */
 function parseOrigins(str) {
   if (!str) return null;
@@ -166,11 +208,9 @@ function iamDevMerge(req, _res, next) {
 
   if (devEmail && !p.email) p.email = devEmail;
 
-  const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
-
-  const mergedRoles = new Set([...(p[NS] || p.roles || []), ...devRolesArr]);
+  const mergedRoles = new Set([...(p[IAM_NS] || p.roles || []), ...devRolesArr]);
   if (mergedRoles.size) {
-    p[NS] = Array.from(mergedRoles);
+    p[IAM_NS] = Array.from(mergedRoles);
     p.roles = Array.from(mergedRoles);
   }
 
@@ -179,12 +219,18 @@ function iamDevMerge(req, _res, next) {
     p.permissions = Array.from(mergedPerms);
   }
 
+  // Aplicar super admin si el correo está en ROOT_ADMINS
+  const applied = applyRootAdmin(devEmail, p[IAM_NS] || p.roles || [], p.permissions || []);
+  p[IAM_NS] = applied.roles;
+  p.roles = applied.roles;
+  p.permissions = applied.permissions;
+
   if (!req.user) {
     req.user = {
       sub: req.headers["x-user-id"] || "dev|local",
       email: devEmail || "dev@local",
-      [NS]: Array.from(mergedRoles),
-      permissions: Array.from(mergedPerms),
+      [IAM_NS]: applied.roles,
+      permissions: applied.permissions,
     };
   }
 
@@ -193,23 +239,39 @@ function iamDevMerge(req, _res, next) {
 
 /* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
 function authBridgeToReqUser(req, _res, next) {
-  if (!req.user && req?.auth?.payload) {
-    const p = req.auth.payload;
-    const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+  if (!req?.auth?.payload) return next();
+
+  const p = req.auth.payload;
+  const email =
+    p.email ||
+    p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
+    null;
+
+  let roles =
+    Array.isArray(p[IAM_NS]) ? p[IAM_NS] :
+    Array.isArray(p.roles)   ? p.roles   :
+    [];
+
+  let permissions = Array.isArray(p.permissions) ? p.permissions : [];
+
+  // Forzar super admin si corresponde
+  const applied = applyRootAdmin(email, roles, permissions);
+  roles = applied.roles;
+  permissions = applied.permissions;
+
+  p[IAM_NS] = roles;
+  p.roles = roles;
+  p.permissions = permissions;
+
+  if (!req.user) {
     req.user = {
       sub: p.sub || "auth|user",
-      email:
-        p.email ||
-        p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
-        null,
-      [NS]: Array.isArray(p[NS])
-        ? p[NS]
-        : Array.isArray(p.roles)
-        ? p.roles
-        : [],
-      permissions: Array.isArray(p.permissions) ? p.permissions : [],
+      email,
+      [IAM_NS]: roles,
+      permissions,
     };
   }
+
   next();
 }
 
@@ -233,20 +295,23 @@ await registerIAMModule({ app, basePath: "/api/iam/v1" });
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
-  const NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
   const email =
     p.email ||
     p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
     null;
 
-  const roles = Array.isArray(p[NS])
-    ? p[NS]
-    : Array.isArray(p.roles)
-    ? p.roles
-    : [];
+  let roles =
+    Array.isArray(p[IAM_NS]) ? p[IAM_NS] :
+    Array.isArray(p.roles)   ? p.roles   :
+    [];
 
-  const permissions = Array.isArray(p.permissions) ? p.permissions : [];
+  let permissions = Array.isArray(p.permissions) ? p.permissions : [];
+
+  // Aplicar super admin también en la respuesta de /me
+  const applied = applyRootAdmin(email, roles, permissions);
+  roles = applied.roles;
+  permissions = applied.permissions;
 
   return {
     ok: true,
@@ -260,7 +325,7 @@ function pickMe(req) {
     _debug:
       process.env.NODE_ENV !== "production"
         ? {
-            NS,
+            NS: IAM_NS,
             hasAuthHeader: !!req.headers.authorization,
             fromDevHeaders:
               String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1",

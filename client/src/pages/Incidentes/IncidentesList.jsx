@@ -14,17 +14,19 @@ export default function IncidentesList() {
   });
   const [showForm, setShowForm] = useState(false);
 
-  // estado del form inline
+  // form inline (crear / editar)
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
     reportedBy: "",
     zone: "",
     priority: "alta",
+    status: "abierto",
   });
   const [photos, setPhotos] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
+  const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
   const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
   const API_HOST = API_BASE;
@@ -56,14 +58,15 @@ export default function IncidentesList() {
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
-      await axios.put(
+      const res = await axios.put(
         `${API_BASE}/api/incidentes/${id}`,
         { status: nuevoEstado },
         { withCredentials: true }
       );
 
+      const actualizado = res.data || {};
       const next = incidentes.map((inc) =>
-        inc._id === id ? { ...inc, status: nuevoEstado } : inc
+        inc._id === id ? { ...inc, ...actualizado } : inc
       );
       setIncidentes(next);
       recomputeStats(next);
@@ -72,6 +75,13 @@ export default function IncidentesList() {
       alert("No se pudo actualizar el estado");
     }
   };
+
+  // ───────── helpers fotos ─────────
+  function extractPhotos(inc) {
+    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
+    if (Array.isArray(inc.photos)) return inc.photos;
+    return [];
+  }
 
   // ───────── form inline ─────────
   const handleFormChange = (e) =>
@@ -93,36 +103,94 @@ export default function IncidentesList() {
   const removePhoto = (idx) =>
     setPhotos((prev) => prev.filter((_, i) => i !== idx));
 
+  const resetForm = () => {
+    setForm({
+      type: "Acceso no autorizado",
+      description: "",
+      reportedBy: "",
+      zone: "",
+      priority: "alta",
+      status: "abierto",
+    });
+    setPhotos([]);
+    setEditingId(null);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
       const payload = {
         ...form,
         photosBase64: photos,
-        status: "abierto",
       };
 
-      const res = await axios.post(`${API_BASE}/api/incidentes`, payload, {
-        withCredentials: true,
-      });
+      if (editingId) {
+        // UPDATE
+        const res = await axios.put(
+          `${API_BASE}/api/incidentes/${editingId}`,
+          payload,
+          { withCredentials: true }
+        );
+        const actualizado = res.data || {};
+        const next = incidentes.map((i) =>
+          i._id === editingId ? { ...i, ...actualizado } : i
+        );
+        setIncidentes(next);
+        recomputeStats(next);
+      } else {
+        // CREATE
+        const res = await axios.post(`${API_BASE}/api/incidentes`, payload, {
+          withCredentials: true,
+        });
+        const creado = res.data?.item || res.data;
+        const next = [creado, ...incidentes];
+        setIncidentes(next);
+        recomputeStats(next);
+      }
 
-      const creado = res.data?.item || res.data;
-      const next = [creado, ...incidentes];
-      setIncidentes(next);
-      recomputeStats(next);
-
-      setForm({
-        type: "Acceso no autorizado",
-        description: "",
-        reportedBy: "",
-        zone: "",
-        priority: "alta",
-      });
-      setPhotos([]);
+      resetForm();
       setShowForm(false);
     } catch (err) {
-      console.error("Error creando incidente", err);
-      alert("No se pudo crear el incidente");
+      console.error("Error guardando incidente", err);
+      alert("No se pudo guardar el incidente");
+    }
+  };
+
+  const startCreate = () => {
+    resetForm();
+    setShowForm(true);
+  };
+
+  const startEdit = (incidente) => {
+    setShowForm(true);
+    setEditingId(incidente._id);
+    setForm({
+      type: incidente.type || "Acceso no autorizado",
+      description: incidente.description || "",
+      reportedBy: incidente.reportedBy || "",
+      zone: incidente.zone || "",
+      priority: incidente.priority || "alta",
+      status: incidente.status || "abierto",
+    });
+    setPhotos(extractPhotos(incidente));
+  };
+
+  const handleDelete = async (id) => {
+    const ok = window.confirm(
+      "¿Seguro que deseas eliminar este incidente? Esta acción no se puede deshacer."
+    );
+    if (!ok) return;
+
+    try {
+      await axios.delete(`${API_BASE}/api/incidentes/${id}`, {
+        withCredentials: true,
+      });
+      const next = incidentes.filter((i) => i._id !== id);
+      setIncidentes(next);
+      recomputeStats(next);
+    } catch (err) {
+      console.error("Error eliminando incidente", err);
+      alert("No se pudo eliminar el incidente");
     }
   };
 
@@ -140,14 +208,18 @@ export default function IncidentesList() {
         </div>
 
         <button
-          onClick={() => setShowForm((v) => !v)}
+          onClick={startCreate}
           className="self-start bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
                      border border-red-400/40 
                      shadow-[0_0_20px_rgba(255,0,0,0.4)] 
                      hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
                      transition-all duration-300"
         >
-          {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
+          {showForm && !editingId
+            ? "Cerrar formulario"
+            : editingId
+            ? "Editar incidente"
+            : "+ Reportar Incidente"}
         </button>
       </div>
 
@@ -155,7 +227,7 @@ export default function IncidentesList() {
       {showForm && (
         <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
-            Reportar Nuevo Incidente
+            {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
           <form onSubmit={handleSubmit} className="space-y-6 text-sm">
             {/* Tipo */}
@@ -305,7 +377,7 @@ export default function IncidentesList() {
                 type="button"
                 onClick={() => {
                   setShowForm(false);
-                  setPhotos([]);
+                  resetForm();
                 }}
                 className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
@@ -315,7 +387,7 @@ export default function IncidentesList() {
                 type="submit"
                 className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
               >
-                Guardar incidente
+                {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>
             </div>
           </form>
@@ -505,7 +577,8 @@ export default function IncidentesList() {
                           <span className="text-xs text-gray-500">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
+                        {/* botones de flujo */}
                         {i.status === "abierto" && (
                           <button
                             onClick={() =>
@@ -526,6 +599,20 @@ export default function IncidentesList() {
                             Resolver
                           </button>
                         )}
+
+                        {/* nuevo: editar / eliminar */}
+                        <button
+                          onClick={() => startEdit(i)}
+                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDelete(i._id)}
+                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
+                        >
+                          Eliminar
+                        </button>
                       </td>
                     </tr>
                   );
@@ -537,7 +624,7 @@ export default function IncidentesList() {
 
         <div className="flex justify-end p-4 border-t border-cyan-400/10">
           <button
-            onClick={() => setShowForm((v) => !v)}
+            onClick={startCreate}
             className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all duration-300"
           >
             {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}

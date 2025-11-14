@@ -42,7 +42,12 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     }
   }
 
-  const doc = await IamRole.create({ code, name: String(name).trim(), description, permissions: cleanPerms });
+  const doc = await IamRole.create({
+    code,
+    name: String(name).trim(),
+    description,
+    permissions: cleanPerms,
+  });
 
   // 🔎 AUDIT: creación de rol
   await writeAudit(req, {
@@ -50,7 +55,12 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     entity: "role",
     entityId: doc._id.toString(),
     before: null,
-    after: { code: doc.code, name: doc.name, description: doc.description ?? null, permissions: doc.permissions || [] },
+    after: {
+      code: doc.code,
+      name: doc.name,
+      description: doc.description ?? null,
+      permissions: doc.permissions || [],
+    },
   });
 
   res.status(201).json(doc);
@@ -86,9 +96,17 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     entity: "role",
     entityId: id,
     before: before
-      ? { code: before.code, name: before.name, description: before.description ?? null }
+      ? {
+          code: before.code,
+          name: before.name,
+          description: before.description ?? null,
+        }
       : null,
-    after: { code: doc.code, name: doc.name, description: doc.description ?? null },
+    after: {
+      code: doc.code,
+      name: doc.name,
+      description: doc.description ?? null,
+    },
   });
 
   res.json(doc);
@@ -115,7 +133,12 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     action: "delete",
     entity: "role",
     entityId: id,
-    before: { code: role.code, name: role.name, description: role.description ?? null, permissions: role.permissions || [] },
+    before: {
+      code: role.code,
+      name: role.name,
+      description: role.description ?? null,
+      permissions: role.permissions || [],
+    },
     after: null,
   });
 
@@ -163,7 +186,7 @@ r.put("/:id/permissions", devOr(requirePerm("iam.roles.manage")), async (req, re
     entity: "role",
     entityId: req.params.id,
     before: { permissions: before?.permissions || [] },
-    after:  { permissions: doc.permissions || [] },
+    after: { permissions: doc.permissions || [] },
   });
 
   res.json(doc);

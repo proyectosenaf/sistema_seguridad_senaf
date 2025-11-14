@@ -1,4 +1,4 @@
-// src/auth0/Auth0ProviderWithHistory.jsx
+// client/src/auth/auth0-provider-with-history.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
@@ -11,7 +11,8 @@ export default function Auth0ProviderWithHistory({ children }) {
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 
   const onRedirectCallback = (appState) => {
-    navigate(appState?.returnTo || "/start");
+    // Respetar returnTo si viene desde loginWithRedirect({ appState: { returnTo: ... } })
+    navigate(appState?.returnTo || "/start", { replace: true });
   };
 
   if (!(domain && clientId)) {
@@ -28,7 +29,7 @@ export default function Auth0ProviderWithHistory({ children }) {
         scope: "openid profile email offline_access",
       }}
       onRedirectCallback={onRedirectCallback}
-      useRefreshTokens
+      useRefreshTokens={true}
       cacheLocation="localstorage"
     >
       {children}
