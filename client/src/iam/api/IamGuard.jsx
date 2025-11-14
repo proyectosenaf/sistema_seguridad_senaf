@@ -2,6 +2,20 @@
 import React, { useEffect, useState } from "react";
 import { iamApi } from "../api/iamApi";
 
+// 🌍 Detectar si estamos en localhost
+const IS_LOCALHOST =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1");
+
+// 🔓 Modo “sin restricciones” en localhost SIEMPRE.
+// Además puedes seguir usando las envs si quieres forzar bypass en otros entornos.
+const SKIP_IAM =
+  IS_LOCALHOST ||
+  String(import.meta.env.VITE_SKIP_VERIFY || "") === "1" ||
+  String(import.meta.env.VITE_DISABLE_AUTH || "") === "1" ||
+  String(import.meta.env.VITE_FORCE_DEV_IAM || "") === "1";
+
 /**
  * IamGuard
  * Props:
@@ -10,13 +24,6 @@ import { iamApi } from "../api/iamApi";
  * - allOf: string | string[]
  * - requireRole: string | string[]
  * - fallback: ReactNode (opcional) -> contenido si NO autorizado
- *
- * Lógica:
- * - Lee /me usando iamApi.me() (que ya maneja headers DEV si aplica)
- * - Soporta diferentes formas de respuesta: {roles, perms} o {user:{roles}, permissions}
- * - Concede "wildcard" si:
- *    - el set de permisos contiene "*"  O
- *    - el usuario pertenece al rol "admin" (case-insensitive)
  */
 export default function IamGuard({
   requirePerm,
@@ -26,13 +33,21 @@ export default function IamGuard({
   fallback = null,
   children,
 }) {
-  const [state, setState] = useState({ loading: true, roles: [], perms: [] });
+  // 👇 Si estamos en modo "skip", arrancamos como admin con wildcard
+  const [state, setState] = useState(
+    SKIP_IAM
+      ? { loading: false, roles: ["admin"], perms: ["*"] }
+      : { loading: true, roles: [], perms: [] }
+  );
 
   useEffect(() => {
+    // En localhost con bypass → no llamamos al backend
+    if (SKIP_IAM) return;
+
     let cancel = false;
     (async () => {
       try {
-        const me = await iamApi.me(); // <-- usa /api/iam/v1/auth/me (con fallback) y headers dev
+        const me = await iamApi.me(); // usa /api/iam/v1/auth/me (con fallback)
         const roles =
           me?.roles ||
           me?.user?.roles ||
@@ -63,7 +78,7 @@ export default function IamGuard({
   // Wildcard si trae "*" o si el usuario es admin
   const hasWildcard = permSet.has("*") || roleSet.has("admin");
 
-  // Normalizadores de props
+  // Normalizador de props
   const asArr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
 
   // Checks
