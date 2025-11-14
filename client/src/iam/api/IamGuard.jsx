@@ -1,5 +1,6 @@
 // client/src/iam/api/IamGuard.jsx
 import React, { useEffect, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../api/iamApi";
 
 // 🌍 Detectar si estamos en localhost
@@ -7,6 +8,9 @@ const IS_LOCALHOST =
   typeof window !== "undefined" &&
   (window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1");
+
+// 📧 Super-admin por correo (configurable por env)
+const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "").toLowerCase();
 
 // 🔓 Modo “sin restricciones” en localhost SIEMPRE.
 // Además puedes seguir usando las envs si quieres forzar bypass en otros entornos.
@@ -33,7 +37,9 @@ export default function IamGuard({
   fallback = null,
   children,
 }) {
-  // 👇 Si estamos en modo "skip", arrancamos como admin con wildcard
+  const { user } = useAuth0(); // 👈 correo que viene de Auth0
+
+  // 👇 Estado base: si estamos en modo "skip", arrancamos como admin con wildcard
   const [state, setState] = useState(
     SKIP_IAM
       ? { loading: false, roles: ["admin"], perms: ["*"] }
@@ -45,29 +51,70 @@ export default function IamGuard({
     if (SKIP_IAM) return;
 
     let cancel = false;
+
     (async () => {
       try {
-        const me = await iamApi.me(); // usa /api/iam/v1/auth/me (con fallback)
-        const roles =
+        const me = await iamApi.me(); // /api/iam/v1/me
+
+        // ----- email que viene del microservicio IAM -----
+        const emailFromMe =
+          (me?.email ||
+            me?.user?.email ||
+            me?.data?.email ||
+            me?.profile?.email ||
+            "").toLowerCase();
+
+        // ----- email desde Auth0 (por si IAM falla o no trae email) -----
+        const emailFromAuth0 = String(user?.email || "").toLowerCase();
+
+        // ----- roles / permisos básicos que vengan del backend -----
+        let roles =
           me?.roles ||
           me?.user?.roles ||
           me?.data?.roles ||
           [];
-        const perms =
+        let perms =
           me?.perms ||
           me?.permissions ||
           me?.data?.perms ||
           [];
 
-        if (!cancel) setState({ loading: false, roles, perms });
+        // ⭐ Si el email del token o de Auth0 coincide con el SUPERADMIN_EMAIL,
+        //    convertimos al usuario en admin con wildcard, aunque IAM no mande nada.
+        const isSuperadmin =
+          SUPERADMIN_EMAIL &&
+          (emailFromMe === SUPERADMIN_EMAIL ||
+            emailFromAuth0 === SUPERADMIN_EMAIL);
+
+        if (isSuperadmin) {
+          roles = Array.from(new Set([...(roles || []), "admin"]));
+          perms = Array.from(new Set([...(perms || []), "*"]));
+        }
+
+        if (!cancel) {
+          setState({ loading: false, roles, perms });
+        }
       } catch (e) {
-        if (!cancel) setState({ loading: false, roles: [], perms: [] });
+        // Si IAM falla PERO el usuario de Auth0 es el super-admin,
+        // igual le damos admin + wildcard para no dejarlo "No autorizado".
+        const emailFromAuth0 = String(user?.email || "").toLowerCase();
+        const isSuperadmin =
+          SUPERADMIN_EMAIL && emailFromAuth0 === SUPERADMIN_EMAIL;
+
+        if (!cancel) {
+          if (isSuperadmin) {
+            setState({ loading: false, roles: ["admin"], perms: ["*"] });
+          } else {
+            setState({ loading: false, roles: [], perms: [] });
+          }
+        }
       }
     })();
+
     return () => {
       cancel = true;
     };
-  }, []);
+  }, [user]);
 
   if (state.loading) return <div className="p-6">Cargando…</div>;
 
