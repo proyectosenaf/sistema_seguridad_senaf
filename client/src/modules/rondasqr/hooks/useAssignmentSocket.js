@@ -1,7 +1,7 @@
 // client/src/modules/rondasqr/hooks/useAssignmentSocket.js
 import { useEffect } from "react";
 import { io } from "socket.io-client";
-import { API } from "../../../lib/api.js";
+import { SOCKET_BASE } from "../../lib/api.js";
 
 /**
  * Hook de socket para rondas:
@@ -13,11 +13,11 @@ export function useAssignmentSocket(user, onNotify, onCount) {
     const userId = user?.sub;
     if (!userId) return;
 
-    // API = https://urchin-app-fuirh.ondigitalocean.app (prod)
-    // o http://localhost:4000 (dev)
-    let base = API || window.location.origin;
-    // Por si algún día pones /api en el env, lo limpiamos:
-    base = base.replace(/\/$/, "").replace(/\/api$/, "");
+    // Base de socket: mismo host que la API pero sin /api
+    const base =
+      SOCKET_BASE ||
+      (import.meta.env.VITE_API_BASE_URL || "").replace(/\/api\/?$/, "") ||
+      window.location.origin;
 
     // Reutiliza una sola conexión global
     if (!window.__senafSocket) {
@@ -28,21 +28,27 @@ export function useAssignmentSocket(user, onNotify, onCount) {
     }
     const socket = window.__senafSocket;
 
-    // Une al usuario a las rooms de guardia y usuario
-    socket.emit("join", { userId, rooms: [`user-${userId}`, `guard-${userId}`] });
+    // 🔁 Une al usuario a las rooms de guardia y usuario
+    //   (el server escucha "join-room")
+    socket.emit("join-room", { userId });
 
     // Nueva asignación
     const handleAssignment = (payload) => {
       try {
         onNotify?.(payload);
 
+        // Notificación del navegador
         if ("Notification" in window) {
           if (Notification.permission === "granted") {
-            new Notification(payload.title || "Asignación", { body: payload.body || "" });
+            new Notification(payload.title || "Asignación", {
+              body: payload.body || "",
+            });
           } else if (Notification.permission !== "denied") {
             Notification.requestPermission().then((perm) => {
               if (perm === "granted") {
-                new Notification(payload.title || "Asignación", { body: payload.body || "" });
+                new Notification(payload.title || "Asignación", {
+                  body: payload.body || "",
+                });
               }
             });
           }
@@ -50,17 +56,21 @@ export function useAssignmentSocket(user, onNotify, onCount) {
           alert(`${payload.title || "Asignación"}\n${payload.body || ""}`);
         }
 
+        // Sonido
         const audio = new Audio("/sounds/notify.mp3");
         audio.play().catch(() => {});
-      } catch {}
+      } catch {
+        // ignorar fallo
+      }
     };
 
-    // Contador
+    // Contador de notificaciones
     const handleCount = ({ count }) => onCount?.(count);
 
     // Alertas de pánico
     const handlePanic = (payload) => onNotify?.({ type: "panic", payload });
-    const handleRondasPanic = (payload) => onNotify?.({ type: "rondasqr:panic", payload });
+    const handleRondasPanic = (payload) =>
+      onNotify?.({ type: "rondasqr:panic", payload });
 
     socket.on("rondasqr:nueva-asignacion", handleAssignment);
     socket.on("notifications:count-updated", handleCount);
