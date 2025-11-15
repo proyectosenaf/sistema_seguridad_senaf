@@ -5,12 +5,12 @@ import { makeNotifier } from "./notify.js";
 const router = express.Router();
 
 /**
- * Debes montar este router con un middleware que ponga req.user
- * (o adaptar a tu auth actual). Aquí asumimos req.user.sub/email.
+ * Este router asume que, si hay autenticación,
+ * algún middleware previo habrá puesto req.user (con .sub / .email).
  *
- * Ejemplo en server.js:
- *   import notificationsRoutes from "./core/notifications.routes.js";
- *   app.use("/api/notifications", requireAuth, authBridgeToReqUser, notificationsRoutes);
+ * En server.js lo montas así:
+ *   app.set("notifier", notifier);
+ *   app.use("/api/notifications", notificationsRoutes);
  */
 
 // ─────────── Helpers ───────────
@@ -59,7 +59,9 @@ router.post("/read-all", async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("[notifications/read-all] error:", err);
-    res.status(500).json({ ok: false, error: err?.message || "error" });
+    res
+      .status(500)
+      .json({ ok: false, error: err?.message || "error" });
   }
 });
 

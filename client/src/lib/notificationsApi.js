@@ -6,11 +6,16 @@ import api from "./api.js";
  * - getCount() -> número (0 si falla)
  * - onRealtime(socket, cb) -> subscribe; retorna un unsubscribe()
  * - markAllRead() -> boolean
+ *
+ * Backend actual:
+ *   GET  /api/notifications/count     -> { count }
+ *   POST /api/notifications/read-all  -> { ok, updated }
  */
 const NotificationsAPI = {
   async getCount() {
     try {
-      const r = await api.get("/api/notifications/count");
+      // baseURL = http://localhost:4000/api → /notifications/count
+      const r = await api.get("/notifications/count");
       return r?.data?.count ?? 0;
     } catch {
       return 0; // cascarón: no hay backend, devolvemos 0
@@ -28,7 +33,7 @@ const NotificationsAPI = {
 
   async markAllRead() {
     try {
-      await api.post("/api/notifications/read-all");
+      await api.post("/notifications/read-all");
       return true;
     } catch {
       return false; // cascarón: ignora fallo
