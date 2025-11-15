@@ -34,11 +34,49 @@ const Supervision   = React.lazy(() => import("./pages/Supervision/Supervision.j
 const Evaluacion    = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat          = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
+const AuthCallback  = React.lazy(() => import("./pages/Auth/AuthCallback.jsx")); // 👈 NUEVO
 
 /* 👇 NUEVO: páginas del módulo Control de Visitas */
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 /* FIN NUEVO */
+
+/* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
+
+// Varios correos separados por coma: VITE_ROOT_ADMINS=correo1@x.com,correo2@y.com
+const ROOT_ADMINS = (import.meta.env.VITE_ROOT_ADMINS || "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+/**
+ * Devuelve true si el usuario actual es un "root admin" por correo.
+ * Esto funciona igual en localhost y producción mientras el correo sea el mismo.
+ */
+function isSuperAdminUser(user) {
+  if (!user) return false;
+  const email = (user.email || "").toLowerCase();
+  if (!email) return false;
+  return ROOT_ADMINS.includes(email);
+}
+
+/**
+ * Wrapper sobre IamGuard que:
+ *  - Si eres super admin → SIEMPRE muestra children (ignora anyOf, fallback, etc.).
+ *  - Si no → delega al IamGuard original.
+ */
+function IamGuardSuper(props) {
+  const { user } = useAuth0();
+
+  if (isSuperAdminUser(user)) {
+    // ignoramos fallback/redirecciones: el dueño del sistema ve TODO
+    return <>{props.children}</>;
+  }
+
+  return <IamGuard {...props} />;
+}
+
+/* ───────────────── LÓGICA EXISTENTE ───────────────── */
 
 /** Decide home por rol/permisos */
 function pickHome({ roles = [], perms = [] }) {
@@ -109,18 +147,16 @@ function AuthTokenBridge({ children }) {
         attachRondasAuth(null);
         return;
       }
-      // ⚠️ No solicitamos offline_access; si no hay refresh token, no es error.
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
             authorizationParams: {
               audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              scope: "openid profile email" // ← sin offline_access para evitar "Missing Refresh Token"
-            }
+              scope: "openid profile email",
+            },
           });
           return token || null;
         } catch (err) {
-          // No spamear consola si sólo falta refresh; seguimos sin token.
           const msg = (err && (err.error || err.message)) || String(err);
           console.debug("[AuthTokenBridge] getAccessTokenSilently:", msg);
           return null;
@@ -140,14 +176,14 @@ function RondasRouterInline() {
   return (
     <>
       {/* Admin → Hub */}
-      <IamGuard anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]} fallback={null}>
+      <IamGuardSuper anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]} fallback={null}>
         <Navigate to="/rondasqr/admin" replace />
-      </IamGuard>
+      </IamGuardSuper>
 
       {/* Guardia → Scan */}
-      <IamGuard anyOf={["guardia"]} fallback={null}>
+      <IamGuardSuper anyOf={["guardia"]} fallback={null}>
         <Navigate to="/rondasqr/scan" replace />
-      </IamGuard>
+      </IamGuardSuper>
 
       {/* Por defecto → Panel unificado */}
       <Navigate to="/rondasqr/scan" replace />
@@ -161,18 +197,33 @@ export default function App() {
       <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
-            {/* Pública */}
+            {/* 🔹 Callback de Auth0: SOLO termina login y redirige */}
+            <Route path="/callback" element={<AuthCallback />} />
+
+            {/* Pública: ruta /login manual (siempre fuerza login) */}
             <Route path="/login" element={<LoginRedirect />} />
 
             {/* Protegidas */}
             <Route
               path="/"
-              element={<ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Home />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             <Route
               path="/start"
-              element={<ProtectedRoute><Layout><RoleRedirectInline /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <RoleRedirectInline />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             {/* Incidentes */}
@@ -181,9 +232,22 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
+                    <IamGuardSuper anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
                       <IncidentesList />
-                    </IamGuard>
+                    </IamGuardSuper>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            {/* 👉 alias para que /incidentes/lista no dé 404 */}
+            <Route
+              path="/incidentes/lista"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuardSuper anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
+                      <IncidentesList />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -193,46 +257,57 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["incidentes.create","*"]}>
+                    <IamGuardSuper anyOf={["incidentes.create","*"]}>
                       <IncidenteForm />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
 
             {/* IAM */}
-            <Route path="/iam" element={<ProtectedRoute><Navigate to="/iam/admin" replace /></ProtectedRoute>} />
+            <Route
+              path="/iam"
+              element={
+                <ProtectedRoute>
+                  <Navigate to="/iam/admin" replace />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/iam/admin"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["iam.users.manage","iam.roles.manage","*"]}>
+                    <IamGuardSuper anyOf={["iam.users.manage","iam.roles.manage","*"]}>
                       <IamAdminPage />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
 
             {/* ✅ RONDAS QR */}
-            {/* Entrada única → router inteligente (por defecto /rondasqr/scan) */}
             <Route
               path="/rondasqr"
-              element={<ProtectedRoute><Layout><RondasRouterInline /></Layout></ProtectedRoute>}
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <RondasRouterInline />
+                  </Layout>
+                </ProtectedRoute>
+              }
             />
 
             {/* Panel unificado (Scan) */}
-            {/* ⬇⬇⬇ COMODÍN para permitir /rondasqr/scan/qr, /msg, /fotos */}
             <Route
               path="/rondasqr/scan/*"
               element={
                 <ProtectedRoute>
                   <Layout hideSidebar>
-                    <IamGuard anyOf={["guardia","rondasqr.view","admin","iam.users.manage","*"]}>
+                    <IamGuardSuper anyOf={["guardia","rondasqr.view","admin","iam.users.manage","*"]}>
                       <RondasScan />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -244,9 +319,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["rondasqr.reports","rondasqr.view","rondasqr.admin","admin","iam.users.manage","*"]}>
+                    <IamGuardSuper anyOf={["rondasqr.reports","rondasqr.view","rondasqr.admin","admin","iam.users.manage","*"]}>
                       <RondasDashboard />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -258,9 +333,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["rondasqr.admin","admin","iam.users.manage","*"]}>
+                    <IamGuardSuper anyOf={["rondasqr.admin","admin","iam.users.manage","*"]}>
                       <AdminHub />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -287,37 +362,36 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["accesos.read","accesos.write","accesos.export","*"]}>
-                      <Accesos/>
-                    </IamGuard>
+                    <IamGuardSuper anyOf={["accesos.read","accesos.write","accesos.export","*"]}>
+                      <Accesos />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
 
-            {/* ⬇⬇⬇ ACTUALIZADO AQUÍ ⬇⬇⬇ */}
+            {/* Control de visitas (moderno) */}
             <Route
               path="/visitas"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
-                      <VisitsPageCore /> {/* ← antes era <Visitas /> */}
-                    </IamGuard>
+                    <IamGuardSuper anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                      <VisitsPageCore />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
-            {/* ⬆⬆⬆ ACTUALIZADO AQUÍ ⬆⬆⬆ */}
 
             <Route
               path="/bitacora"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}>
-                      <Bitacora/>
-                    </IamGuard>
+                    <IamGuardSuper anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}>
+                      <Bitacora />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -327,9 +401,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}>
-                      <Supervision/>
-                    </IamGuard>
+                    <IamGuardSuper anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}>
+                      <Supervision />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -339,9 +413,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}>
-                      <Evaluacion/>
-                    </IamGuard>
+                    <IamGuardSuper anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}>
+                      <Evaluacion />
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -363,9 +437,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                    <IamGuardSuper anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
                       <VisitsPageCore />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
@@ -377,9 +451,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuard anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                    <IamGuardSuper anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
                       <AgendaPageCore />
-                    </IamGuard>
+                    </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }

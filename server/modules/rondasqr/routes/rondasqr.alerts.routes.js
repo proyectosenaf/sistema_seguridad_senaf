@@ -1,3 +1,4 @@
+// server/modules/rondasqr/routes/alerts.routes.js (o como lo tengas)
 import express from "express";
 import RqAlert from "../models/RqAlert.model.js";
 import RqMark from "../models/RqMark.model.js";

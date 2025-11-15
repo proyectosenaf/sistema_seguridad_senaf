@@ -21,17 +21,76 @@ import { requireAuth } from "./middleware/auth.js";
 import { makeNotifier } from "./core/notify.js";
 import notificationsRoutes from "./core/notifications.routes.js";
 
-// Módulo Rondas QR
+// Módulo Rondas QR (el index viejo que ya tenías)
 import rondasqr from "../modules/rondasqr/index.js";
 
 // ✅ Evaluaciones (rutas)
 import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
+
+// ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
+import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
+
+// ✅ Reports de Rondas (el archivo largo que pegaste)
+import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
+
+// ✅ NUEVO: rutas offline de rondasqr (para /offline/dump)
+import rondasOfflineRoutes from "../modules/rondasqr/routes/rondasqr.offline.routes.js";
 
 // Cron de asignaciones (DIARIO)
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 
 const app = express();
 app.set("trust proxy", 1);
+
+/* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
+
+// Namespace IAM para roles
+const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+
+// Correos que serán super administradores en TODOS los módulos.
+// Combina ROOT_ADMINS y SUPERADMIN_EMAIL para compatibilidad.
+const ROOT_ADMINS = Array.from(
+  new Set(
+    [
+      ...(process.env.ROOT_ADMINS || "").split(","),
+      process.env.SUPERADMIN_EMAIL || "",
+    ]
+      .map((s) => String(s).trim().toLowerCase())
+      .filter(Boolean)
+  )
+);
+
+console.log("[iam] ROOT_ADMINS:", ROOT_ADMINS);
+
+/**
+ * Dado un email + roles/permisos actuales, fuerza rol admin y permisos globales
+ * si el email está en ROOT_ADMINS.
+ */
+function applyRootAdmin(email, rolesArr = [], permsArr = []) {
+  const emailNorm = (email || "").toLowerCase();
+  const roles = new Set(Array.isArray(rolesArr) ? rolesArr : []);
+  const perms = new Set(Array.isArray(permsArr) ? permsArr : []);
+
+  if (emailNorm && ROOT_ADMINS.includes(emailNorm)) {
+    roles.add("admin");
+    perms.add("*");
+    // permisos clave que ya usas en el frontend
+    perms.add("iam.users.manage");
+    perms.add("iam.roles.manage");
+    perms.add("rondasqr.admin");
+    perms.add("rondasqr.view");
+    perms.add("rondasqr.reports");
+    perms.add("incidentes.read");
+    perms.add("incidentes.create");
+    perms.add("incidentes.edit");
+    perms.add("incidentes.reports");
+  }
+
+  return {
+    roles: Array.from(roles),
+    permissions: Array.from(perms),
+  };
+}
 
 /* ───────────────────────────── CORS ───────────────────────────── */
 function parseOrigins(str) {
@@ -75,14 +134,18 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
-const RONDAS_UPLOADS_DIR = path.resolve(
-  process.cwd(),
-  "modules",
-  "rondasqr",
-  "uploads"
-);
-if (!fs.existsSync(RONDAS_UPLOADS_DIR))
+// 📁 uploads de incidentes (para las fotos que vienen de /api/incidentes)
+const INCIDENT_UPLOADS_DIR = path.resolve(process.cwd(), "uploads", "incidentes");
+if (!fs.existsSync(INCIDENT_UPLOADS_DIR)) {
+  fs.mkdirSync(INCIDENT_UPLOADS_DIR, { recursive: true });
+}
+app.use("/uploads/incidentes", express.static(INCIDENT_UPLOADS_DIR));
+
+// 📁 uploads del módulo Rondas QR (los que ya tenías)
+const RONDAS_UPLOADS_DIR = path.resolve(process.cwd(), "modules", "rondasqr", "uploads");
+if (!fs.existsSync(RONDAS_UPLOADS_DIR)) {
   fs.mkdirSync(RONDAS_UPLOADS_DIR, { recursive: true });
+}
 app.use("/uploads", express.static(RONDAS_UPLOADS_DIR));
 
 /* ───────────────────────── Health checks ──────────────────────── */
@@ -130,19 +193,10 @@ try {
     console.warn("[iamusers] index username_1 (unique) eliminado");
   }
 } catch (e) {
-  console.warn(
-    "[iamusers] no se pudo revisar/eliminar username_1:",
-    e.message
-  );
+  console.warn("[iamusers] no se pudo revisar/eliminar username_1:", e.message);
 }
 
-/* ───────────── DEV headers → payload IAM + req.user (bridge) ─────────────
-   En local queremos poder simular un usuario sin Auth0.
-   Reglas:
-   - Sólo se activa si IAM_ALLOW_DEV_HEADERS=1
-   - Usa headers x-user-email, x-roles, x-perms
-   - Nunca debe explotar si faltan headers
-*/
+/* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
 function iamDevMerge(req, _res, next) {
   const allow = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
   if (!allow) return next();
@@ -157,43 +211,34 @@ function iamDevMerge(req, _res, next) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Asegura estructura base
   req.auth = req.auth || { payload: {} };
   const p = req.auth.payload;
 
-  // email simulado
   if (devEmail && !p.email) p.email = devEmail;
 
-  // namespace de los roles
-  const NS =
-    process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
-
-  // fusionar roles
-  const mergedRoles = new Set([
-    ...((p[NS] || p.roles || []) ?? []),
-    ...devRolesArr,
-  ]);
+  const mergedRoles = new Set([...(p[IAM_NS] || p.roles || []), ...devRolesArr]);
   if (mergedRoles.size) {
-    p[NS] = Array.from(mergedRoles);
+    p[IAM_NS] = Array.from(mergedRoles);
     p.roles = Array.from(mergedRoles);
   }
 
-  // fusionar permisos
-  const mergedPerms = new Set([
-    ...((p.permissions || []) ?? []),
-    ...devPermsArr,
-  ]);
+  const mergedPerms = new Set([...(p.permissions || []), ...devPermsArr]);
   if (mergedPerms.size) {
     p.permissions = Array.from(mergedPerms);
   }
 
-  // Exponer req.user también (varios handlers esperan req.user directo)
+  // Aplicar super admin si el correo está en ROOT_ADMINS
+  const applied = applyRootAdmin(devEmail, p[IAM_NS] || p.roles || [], p.permissions || []);
+  p[IAM_NS] = applied.roles;
+  p.roles = applied.roles;
+  p.permissions = applied.permissions;
+
   if (!req.user) {
     req.user = {
       sub: req.headers["x-user-id"] || "dev|local",
       email: devEmail || "dev@local",
-      [NS]: Array.from(mergedRoles),
-      permissions: Array.from(mergedPerms),
+      [IAM_NS]: applied.roles,
+      permissions: applied.permissions,
     };
   }
 
@@ -202,39 +247,47 @@ function iamDevMerge(req, _res, next) {
 
 /* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
 function authBridgeToReqUser(req, _res, next) {
-  if (!req.user && req?.auth?.payload) {
-    const p = req.auth.payload;
-    const NS =
-      process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
+  if (!req?.auth?.payload) return next();
+
+  const p = req.auth.payload;
+  const email =
+    p.email ||
+    p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
+    null;
+
+  let roles =
+    Array.isArray(p[IAM_NS]) ? p[IAM_NS] :
+    Array.isArray(p.roles)   ? p.roles   :
+    [];
+
+  let permissions = Array.isArray(p.permissions) ? p.permissions : [];
+
+  // Forzar super admin si corresponde
+  const applied = applyRootAdmin(email, roles, permissions);
+  roles = applied.roles;
+  permissions = applied.permissions;
+
+  p[IAM_NS] = roles;
+  p.roles = roles;
+  p.permissions = permissions;
+
+  if (!req.user) {
     req.user = {
       sub: p.sub || "auth|user",
-      email:
-        p.email ||
-        p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
-        null,
-      [NS]: Array.isArray(p[NS])
-        ? p[NS]
-        : Array.isArray(p.roles)
-        ? p.roles
-        : [],
-      permissions: Array.isArray(p.permissions)
-        ? p.permissions
-        : [],
+      email,
+      [IAM_NS]: roles,
+      permissions,
     };
   }
+
   next();
 }
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  // Si viene Authorization y NO estamos en modo "DISABLE_AUTH=1", validamos JWT.
-  if (
-    req.headers.authorization &&
-    String(process.env.DISABLE_AUTH || "0") !== "1"
-  ) {
+  if (req.headers.authorization && String(process.env.DISABLE_AUTH || "0") !== "1") {
     return requireAuth(req, res, next);
   }
-  // En dev sin token, sigue.
   return next();
 }
 
@@ -243,12 +296,6 @@ app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
-app.get("/api/incidentes", (_req, res) =>
-  res.json({ items: [], total: 0 })
-);
-app.post("/api/incidentes", (_req, res) =>
-  res.status(201).json({ ok: true })
-);
 app.get("/api/chat/messages", (_req, res) => res.json([]));
 
 /* ───────────── IAM principal + /me ───────────── */
@@ -256,23 +303,23 @@ await registerIAMModule({ app, basePath: "/api/iam/v1" });
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
-  const NS =
-    process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
   const email =
     p.email ||
     p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
     null;
 
-  const roles = Array.isArray(p[NS])
-    ? p[NS]
-    : Array.isArray(p.roles)
-    ? p.roles
-    : [];
+  let roles =
+    Array.isArray(p[IAM_NS]) ? p[IAM_NS] :
+    Array.isArray(p.roles)   ? p.roles   :
+    [];
 
-  const permissions = Array.isArray(p.permissions)
-    ? p.permissions
-    : [];
+  let permissions = Array.isArray(p.permissions) ? p.permissions : [];
+
+  // Aplicar super admin también en la respuesta de /me
+  const applied = applyRootAdmin(email, roles, permissions);
+  roles = applied.roles;
+  permissions = applied.permissions;
 
   return {
     ok: true,
@@ -286,7 +333,7 @@ function pickMe(req) {
     _debug:
       process.env.NODE_ENV !== "production"
         ? {
-            NS,
+            NS: IAM_NS,
             hasAuthHeader: !!req.headers.authorization,
             fromDevHeaders:
               String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1",
@@ -322,8 +369,7 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       ? nodemailer.createTransport({
           host: process.env.MAIL_HOST,
           port: Number(process.env.MAIL_PORT || 587),
-          secure:
-            String(process.env.MAIL_SECURE || "false") === "true",
+          secure: String(process.env.MAIL_SECURE || "false") === "true",
           auth: {
             user: process.env.MAIL_USER,
             pass: process.env.MAIL_PASS,
@@ -356,7 +402,6 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       `"SENAF Seguridad" <${
         process.env.GMAIL_USER || process.env.MAIL_USER
       }>`;
-
     const link = process.env.VERIFY_BASE_URL
       ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
           id
@@ -386,12 +431,10 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 
     const info = await smtpTransport.sendMail(mailOptions);
     if (info.rejected && info.rejected.length) {
-      return res
-        .status(502)
-        .json({
-          error: "El servidor SMTP rechazó el correo",
-          detail: info.rejected,
-        });
+      return res.status(502).json({
+        error: "El servidor SMTP rechazó el correo",
+        detail: info.rejected,
+      });
     }
     return res.json({
       ok: true,
@@ -408,7 +451,6 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 /* ─────────────────── Notificaciones globales ──────────────────── */
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
-// Endpoints usados por client/src/lib/notificationsApi.js
 app.use("/api/notifications", notificationsRoutes);
 
 // ⏰ Inicia cron de asignaciones (diario)
@@ -451,7 +493,16 @@ app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
 );
 app.use("/api/rondasqr/v1", rondasqr);
 
-/* ✅ ─────────────── Módulo Evaluaciones (montado en ambos prefijos) ─────────────── */
+/* ✅ Módulo de REPORTES de Rondas */
+app.use("/api/rondasqr/v1", rondasReportsRoutes);
+
+/* ✅ Módulo OFFLINE de Rondas */
+app.use("/api/rondasqr/v1", rondasOfflineRoutes);
+
+/* ✅ Módulo de INCIDENTES (ahora sí en /api/incidentes) */
+app.use("/api/incidentes", incidentesRoutes);
+
+/* ✅ Evaluaciones */
 app.use("/evaluaciones", evaluacionesRoutes);
 app.use("/api/evaluaciones", evaluacionesRoutes);
 
@@ -460,10 +511,7 @@ app.use((err, _req, res, _next) => {
   console.error("[api] error:", err?.stack || err?.message || err);
   res
     .status(err.status || 500)
-    .json({
-      ok: false,
-      error: err?.message || "Internal Server Error",
-    });
+    .json({ ok: false, error: err?.message || "Internal Server Error" });
 });
 
 /* ─────────────────────────── 404 final ────────────────────────── */
@@ -472,13 +520,11 @@ app.use((_req, res) =>
 );
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
-const PORT = Number(process.env.API_PORT || process.env.PORT || 4000);
-server.listen(PORT, () => {
+const PORT = Number(process.env.PORT || 8080);
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(
-    `[cors] origins: ${
-      origins ? origins.join(", ") : "(allow all)"
-    }`
+    `[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`
   );
 });
 
@@ -489,15 +535,13 @@ io.on("connection", (s) => {
   s.on("join-room", ({ userId }) => {
     if (userId) {
       s.join(`user-${userId}`);
-      s.join(`guard-${userId}`); // compat con módulo rondas
+      s.join(`guard-${userId}`);
       console.log(
         `[io] ${s.id} joined rooms user-${userId} & guard-${userId}`
       );
     }
   });
-  s.on("disconnect", () =>
-    console.log("[io] bye:", s.id)
-  );
+  s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
 
 /* ────────────────────────── Shutdown ──────────────────────────── */
@@ -518,4 +562,3 @@ process.on("unhandledRejection", (err) =>
 process.on("uncaughtException", (err) =>
   console.error("[api] UncaughtException:", err)
 );
-

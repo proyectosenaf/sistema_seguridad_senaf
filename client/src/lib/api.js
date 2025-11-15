@@ -1,18 +1,20 @@
 // client/src/lib/api.js
 import axios from "axios";
 
-// Base URL SIN "/api" (el código de cada módulo añade /api en sus rutas)
-const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+// En producción VITE_API_BASE_URL = "https://urchin-app-fuirh.ondigitalocean.app/api"
+// En dev, si no hay env, usamos "http://localhost:4000/api"
+const API_ROOT =
+  (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").replace(/\/$/, "");
 
-// Prefijo común de API, útil para módulos que usan fetch
-export const API = `${API_ROOT}/api`;
+// 👉 Este es el endpoint base de la API
+export const API = API_ROOT;
 
 const api = axios.create({
-  baseURL: API_ROOT, // mantenemos para compatibilidad
+  baseURL: API_ROOT,
   withCredentials: true,
 });
 
-// Guardamos un proveedor de token (Auth0 u otro)
+// Guardamos un proveedor de token (Auth0)
 let tokenProvider = null;
 
 /** Conecta tu proveedor de tokens (Auth0) */
@@ -30,7 +32,9 @@ api.interceptors.request.use(async (config) => {
   if (tokenProvider) {
     try {
       const token = await tokenProvider();
-      if (token) config.headers.Authorization = `Bearer ${token}`;
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     } catch {
       // silencioso
     }
@@ -39,5 +43,4 @@ api.interceptors.request.use(async (config) => {
 });
 
 export default api;
-// 👇 también exporto como named para que no fallen imports antiguos
 export { api };

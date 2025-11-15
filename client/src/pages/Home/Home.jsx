@@ -19,7 +19,8 @@ import {
 /* ===========================
    Normaliza API y SOCKET_URL
    =========================== */
-const RAW_API = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
+const RAW_API =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 const API_BASE =
   typeof RAW_API === "string" && RAW_API.trim()
     ? RAW_API.trim()
@@ -35,7 +36,6 @@ const SOCKET_URL = API_NORM.replace(/\/api\/?$/, "");
    =============== */
 const ICONS = {
   accesos: DoorOpen,
-  // ✅ soporta ambos keys por compatibilidad
   rondas: Footprints,
   rondasqr: Footprints,
   incidentes: AlertTriangle,
@@ -48,14 +48,25 @@ const ICONS = {
 
 /* ==========================================
    Permisos requeridos por sección (anyOf)
-   - Se da compatibilidad a "rondas" legacy
    ========================================== */
 const PERMS_BY_SECTION = {
   accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
-  // ✅ NUEVO módulo
-  rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
-  // ✅ COMPATibilidad con permisos antiguos si aún existen en IAM
-  rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "rondas.read", "rondas.reports", "guardia", "*"],
+  rondasqr: [
+    "rondasqr.view",
+    "rondasqr.admin",
+    "rondasqr.reports",
+    "guardia",
+    "*",
+  ],
+  rondas: [
+    "rondasqr.view",
+    "rondasqr.admin",
+    "rondasqr.reports",
+    "rondas.read",
+    "rondas.reports",
+    "guardia",
+    "*",
+  ],
   incidentes: [
     "incidentes.read",
     "incidentes.create",
@@ -86,9 +97,16 @@ const PERMS_BY_SECTION = {
 export default function Home() {
   const nav = useNavigate();
   const { getAccessTokenSilently } = useAuth0();
-  const [incStats, setIncStats] = React.useState({ total: 0, abiertos: 0, alta: 0 });
 
-  // Ref para mantener una sola instancia de socket (evita duplicados con HMR)
+  // ✅ Agregamos los mismos contadores que el módulo de incidentes
+  const [incStats, setIncStats] = React.useState({
+    total: 0,
+    abiertos: 0,
+    enProceso: 0,
+    resueltos: 0,
+    alta: 0,
+  });
+
   const socketRef = React.useRef(null);
 
   /* -------------------------
@@ -104,17 +122,15 @@ export default function Home() {
     const socket = socketRef.current;
 
     const onCheck = () => {
-      // aquí puedes actualizar KPIs en vivo si quieres
+      // Aquí podrías actualizar KPIs en tiempo real si deseas
     };
 
-    // ✅ escuchar evento nuevo y legacy
     socket.on("rondasqr:check", onCheck);
     socket.on("rondas:check", onCheck);
 
     return () => {
       socket.off("rondasqr:check", onCheck);
       socket.off("rondas:check", onCheck);
-      // socket.close(); // si prefieres cerrar al desmontar
     };
   }, []);
 
@@ -138,43 +154,38 @@ export default function Home() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await api.get("/api/incidentes", { params: { limit: 100 } });
-        const items = Array.isArray(r.data) ? r.data : r.data?.items || [];
-        setIncStats({
-          total: items.length,
-          abiertos: items.filter((i) => i.estado !== "cerrado").length,
-          alta: items.filter((i) => i.prioridad === "alta").length,
-        });
-      } catch {
-        // Silencioso en Home
+        const r = await api.get("/api/incidentes", { params: { limit: 500 } });
+        const data = Array.isArray(r.data)
+          ? r.data
+          : Array.isArray(r.data?.items)
+          ? r.data.items
+          : [];
+
+        // ✅ Mismos criterios que en la tabla de incidentes
+        const total = data.length;
+        const abiertos = data.filter((i) => i.status === "abierto").length;
+        const enProceso = data.filter((i) => i.status === "en_proceso").length;
+        const resueltos = data.filter((i) => i.status === "resuelto").length;
+        const alta = data.filter((i) => i.priority === "alta").length;
+
+        setIncStats({ total, abiertos, enProceso, resueltos, alta });
+      } catch (err) {
+        console.warn("Error cargando incidentes:", err);
       }
     })();
   }, []);
 
   /* ---------------------------------------------
      Secciones: alias y normalización de "rondas"
-     - Si viene key "rondas": forzamos path /rondasqr
-     - Si no existe IAM en NAV_SECTIONS: lo agregamos
      --------------------------------------------- */
   const SECTIONS = React.useMemo(() => {
     const base = NAV_SECTIONS.map((s) => {
-      // normaliza clave y path de rondas
-      if (s.key === "rondas") {
-        return {
-          ...s,
-          // conservamos label e icono; solo cambiamos path
-          path: "/rondasqr",
-        };
-      }
-      // si ya viene como rondasqr, nos aseguramos del path correcto
-      if (s.key === "rondasqr") {
-        return { ...s, path: "/rondasqr" };
-      }
+      if (s.key === "rondas") return { ...s, path: "/rondasqr" };
+      if (s.key === "rondasqr") return { ...s, path: "/rondasqr" };
       return s;
     });
 
-    const hasIAM = base.some((s) => s.key === "iam");
-    if (!hasIAM) {
+    if (!base.some((s) => s.key === "iam")) {
       base.push({
         key: "iam",
         label: "Usuarios y Permisos",
@@ -187,39 +198,59 @@ export default function Home() {
   return (
     <div className="space-y-6">
       {/* KPIs */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-5">
         <div className="fx-kpi">
           <div className="text-sm opacity-75">Incidentes</div>
           <div className="text-3xl font-extrabold">{incStats.total}</div>
         </div>
         <div className="fx-kpi">
           <div className="text-sm opacity-75">Abiertos</div>
-          <div className="text-3xl font-extrabold">{incStats.abiertos}</div>
+          <div className="text-3xl font-extrabold text-red-400">
+            {incStats.abiertos}
+          </div>
         </div>
         <div className="fx-kpi">
-          <div className="text-sm opacity-75">Alta prioridad</div>
-          <div className="text-3xl font-extrabold">{incStats.alta}</div>
+          <div className="text-sm opacity-75">En Proceso</div>
+          <div className="text-3xl font-extrabold text-blue-400">
+            {incStats.enProceso}
+          </div>
+        </div>
+        <div className="fx-kpi">
+          <div className="text-sm opacity-75">Resueltos</div>
+          <div className="text-3xl font-extrabold text-green-400">
+            {incStats.resueltos}
+          </div>
+        </div>
+        <div className="fx-kpi">
+          <div className="text-sm opacity-75">Alta Prioridad</div>
+          <div className="text-3xl font-extrabold text-yellow-400">
+            {incStats.alta}
+          </div>
         </div>
       </div>
 
-      {/* Secciones (visibles solo si el usuario tiene permisos) */}
+      {/* Secciones */}
       <div className="card fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SECTIONS.map((s) => {
-            // Si llega "rondas" la tratamos como "rondasqr" para permisos e icono
             const sectionKey = s.key === "rondas" ? "rondasqr" : s.key;
             const Icon = ICONS[sectionKey] || ICONS[s.key];
             const anyOf = PERMS_BY_SECTION[sectionKey] || ["*"];
 
             return (
               <IamGuard key={s.key} anyOf={anyOf} fallback={null}>
-                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
+                <button
+                  onClick={() => nav(s.path)}
+                  className="fx-tile text-left p-4"
+                >
                   <div className="flex items-center gap-3">
                     {Icon && <Icon className="w-5 h-5 opacity-80" />}
                     <div className="font-medium">{s.label}</div>
                   </div>
-                  <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
+                  <div className="text-xs mt-1 opacity-70">
+                    Ir a {s.label}
+                  </div>
                 </button>
               </IamGuard>
             );

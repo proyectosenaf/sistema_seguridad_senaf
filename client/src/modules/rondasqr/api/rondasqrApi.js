@@ -1,6 +1,13 @@
 // client/src/modules/rondasqr/api/rondasqrApi.js
-const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
-const BASE = `${ROOT}/api/rondasqr/v1`;
+
+// 👉 Convención: VITE_API_BASE_URL YA incluye /api
+//    ej. https://urchin-app-fuirh.ondigitalocean.app/api
+const ROOT = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+).replace(/\/$/, "");
+
+// Base de RondasQR: /api/rondasqr/v1
+const BASE = `${ROOT}/rondasqr/v1`;
 
 /** Permite inyectar un proveedor de token (Auth0, etc.) */
 let tokenProvider = null;
@@ -15,45 +22,31 @@ function toQS(o = {}) {
     .join("&");
 }
 
-/* ───────────── helpers de normalización ───────────── */
+/* ───────────── helpers ───────────── */
 function toId(v) {
   if (v == null) return null;
   if (typeof v === "string") return v.trim() || null;
-  if (typeof v === "object") {
-    // común: {_id: "…"} o {id: "…"}
-    return v._id || v.id || null;
-  }
+  if (typeof v === "object") return v._id || v.id || null;
   return null;
 }
 
-/** Acepta points como:
- *  - ["653..a1", "653..b2"]
- *  - [{pointId:"..", order:1}, {pointId:"..", order:2}]
- *  - [{_id:"..", name:"A"}, {_id:"..", name:"B"}]
- *  - [{id:".."}, "653..x"]
- *  - ⚠️ y también `pointIds: ["..",".."]`
- */
 function normalizePlanBody(body = {}) {
   const siteId = toId(body.siteId ?? body.site ?? body.site_id);
   const roundId = toId(body.roundId ?? body.round ?? body.round_id);
 
-  // Soporta distintas formas de entrada
-  const rawArray =
-    Array.isArray(body.points)
-      ? body.points
-      : Array.isArray(body.items)
-      ? body.items
-      : Array.isArray(body.pointIds)
-      ? body.pointIds
-      : [];
+  const rawArray = Array.isArray(body.points)
+    ? body.points
+    : Array.isArray(body.items)
+    ? body.items
+    : Array.isArray(body.pointIds)
+    ? body.pointIds
+    : [];
 
   const points = rawArray
     .map((p, idx) => {
       if (typeof p === "string") return { pointId: p, order: idx + 1 };
       if (typeof p === "object") {
-        const pid =
-          toId(p.pointId ?? p.point_id ?? p._id ?? p.id) ??
-          (Array.isArray(body.pointIds) ? null : null);
+        const pid = toId(p.pointId ?? p.point_id ?? p._id ?? p.id);
         const ord = Number.isFinite(p.order) ? p.order : idx + 1;
         return pid ? { pointId: pid, order: ord } : null;
       }
@@ -78,7 +71,6 @@ async function buildHeaders(json = true) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
 
-  // Auth Bearer (si fue inyectado)
   if (typeof tokenProvider === "function") {
     try {
       const token = await tokenProvider();
@@ -86,7 +78,6 @@ async function buildHeaders(json = true) {
     } catch {}
   }
 
-  // Headers DEV (si IAM_ALLOW_DEV_HEADERS=1)
   if (import.meta.env.DEV) {
     const devEmail =
       (typeof localStorage !== "undefined" &&
@@ -97,9 +88,8 @@ async function buildHeaders(json = true) {
 
     const devRoles =
       (typeof localStorage !== "undefined" &&
-        localStorage.getItem("iamDevRoles")) ||
-      "";
-    if (devRoles) h["x-roles"] = devRoles; // p.ej. "admin,rondasqr.admin"
+        localStorage.getItem("iamDevRoles")) || "";
+    if (devRoles) h["x-roles"] = devRoles;
   }
 
   return h;
@@ -125,10 +115,11 @@ async function fetchJson(url, opts = {}) {
   try {
     return await r.json();
   } catch {
-    return null; // Maneja respuestas vacías (204)
+    return null;
   }
 }
 
+/* ───────────── API principal ───────────── */
 export const rondasqrApi = {
   // -------- Reportes --------
   async getSummary(q) {
@@ -138,7 +129,6 @@ export const rondasqrApi = {
     return fetchJson(`${BASE}/reports/detailed?${toQS(q)}`);
   },
 
-  // Descargas
   csvUrl(q) {
     return `${BASE}/reports/export/csv?${toQS(q)}`;
   },
@@ -151,6 +141,7 @@ export const rondasqrApi = {
   pdfUrl(q) {
     return `${BASE}/reports/export/pdf?${toQS(q)}`;
   },
+
   async ping(url) {
     try {
       const r = await fetch(url, {
@@ -171,18 +162,46 @@ export const rondasqrApi = {
       body: JSON.stringify(payload || {}),
     });
   },
+
+  // Incidente desde rondas → módulo central de incidentes
   async postIncident(payload) {
-    return fetchJson(`${BASE}/checkin/incidents`, {
+    const url = `${ROOT}/incidentes`; // /api/incidentes
+    return fetchJson(url, {
       method: "POST",
       body: JSON.stringify(payload || {}),
     });
   },
+
   async panic(gps) {
-    return fetchJson(`${BASE}/checkin/panic`, {
-      method: "POST",
-      body: JSON.stringify({ gps }),
-    });
+    const body =
+      gps && typeof gps === "object"
+        ? "gps" in gps
+          ? gps
+          : { gps }
+        : { gps: null };
+
+    const urls = [
+      `${BASE}/checkin/panic`,
+      `${BASE}/panic`,
+      `${ROOT}/rondasqr/panic`,
+      `${ROOT}/panic`,
+    ];
+
+    let lastErr;
+    for (const url of urls) {
+      try {
+        return await fetchJson(url, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        lastErr = err;
+        if (err.status !== 404 && err.status !== 405) break;
+      }
+    }
+    throw lastErr || new Error("No se pudo enviar el pánico: ninguna ruta coincidió");
   },
+
   async postInactivity(payload) {
     return fetchJson(`${BASE}/checkin/inactivity`, {
       method: "POST",
@@ -196,7 +215,21 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- Catálogos / Admin CRUD --------
+  // -------- OFFLINE --------
+  async offlineCheckin(item) {
+    return fetchJson(`${BASE}/offline/checkin`, {
+      method: "POST",
+      body: JSON.stringify(item || {}),
+    });
+  },
+  async offlineDump(payload) {
+    return fetchJson(`${BASE}/offline/dump`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  // -------- Admin CRUD --------
   async listSites() {
     return fetchJson(`${BASE}/admin/sites`);
   },
@@ -218,7 +251,7 @@ export const rondasqrApi = {
     });
   },
 
-  // Rounds
+  // Rondas
   async listRounds(siteId) {
     const q = siteId ? `?${toQS({ siteId })}` : "";
     return fetchJson(`${BASE}/admin/rounds${q}`);
@@ -241,7 +274,7 @@ export const rondasqrApi = {
     });
   },
 
-  // Points
+  // Puntos
   async listPoints({ siteId, roundId } = {}) {
     const q = toQS({ siteId, roundId });
     return fetchJson(`${BASE}/admin/points${q ? `?${q}` : ""}`);
@@ -270,10 +303,30 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- Plans (robusto con fallback y reload automático) --------
+  // -------- Plans --------
   async getPlan(q = {}) {
     const qs = toQS(q);
-    return fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`);
+    const mainUrl = `${BASE}/admin/plans${qs ? `?${qs}` : ""}`;
+    // Ruta legacy posible: /api/rondasqr/admin/plans
+    const legacyUrl = `${ROOT}/rondasqr/admin/plans${qs ? `?${qs}` : ""}`;
+
+    try {
+      return await fetchJson(mainUrl);
+    } catch (err) {
+      if (err.status === 404 || err.status === 405) {
+        // probar ruta antigua
+        try {
+          return await fetchJson(legacyUrl);
+        } catch (err2) {
+          if (err2.status === 404 || err2.status === 405) {
+            // no hay endpoint de planes en el backend → devolvemos lista vacía
+            return { items: [], count: 0 };
+          }
+          throw err2;
+        }
+      }
+      throw err;
+    }
   },
 
   async createOrUpdatePlan(body) {
@@ -296,13 +349,20 @@ export const rondasqrApi = {
       if (body[k] != null && body[k] !== "") extras[k] = body[k];
     }
 
-    const pointIds = base.points.map(p => String(p.pointId));
+    const pointIds = base.points.map((p) => String(p.pointId));
     const payload = { ...base, ...extras, pointIds };
 
     const tryAndReload = async (url, method) => {
-      const res = await fetchJson(url, { method, body: JSON.stringify(payload) });
+      const res = await fetchJson(url, {
+        method,
+        body: JSON.stringify(payload),
+      });
       return res == null
-        ? this.getPlan({ siteId: base.siteId, roundId: base.roundId })
+        ? this.getPlan({
+            siteId: base.siteId,
+            roundId: base.roundId,
+            shift: payload.shift,
+          })
         : res;
     };
 
@@ -340,20 +400,18 @@ export const rondasqrApi = {
     }
   },
 
-  // --- Aliases de compatibilidad ---
+  // --- aliases
   async listPlans(q = {}) {
     return this.getPlan(q);
   },
   async createPlan(body) {
     return this.createOrUpdatePlan(body);
   },
-  async updatePlan(_idIgnored, body) {
+  async updatePlan(_, body) {
     return this.createOrUpdatePlan(body);
   },
   async deletePlan(arg) {
-    if (arg && typeof arg === "object") {
-      return this.deletePlanByQuery(arg);
-    }
+    if (arg && typeof arg === "object") return this.deletePlanByQuery(arg);
     const e = new Error(
       "deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})"
     );
@@ -361,7 +419,7 @@ export const rondasqrApi = {
     throw e;
   },
 
-  // -------- ASIGNACIONES --------
+  // -------- Asignaciones --------
   async listAssignments(date) {
     const qs = toQS(date ? { date } : {});
     return fetchJson(`${BASE}/admin/assignments${qs ? `?${qs}` : ""}`);
@@ -376,6 +434,14 @@ export const rondasqrApi = {
     return fetchJson(`${BASE}/admin/assignments/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  },
+
+  // ✅ alias para ScanPage
+  async checkinScan(payload) {
+    return this.postScan(payload);
+  },
+  async scan(payload) {
+    return this.postScan(payload);
   },
 };
 

@@ -1,3 +1,4 @@
+// client/src/modules/rondasqr/pages/QrScanner.jsx
 import React from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 
@@ -29,7 +30,7 @@ export default function QrScanner({
   const [torchOn, setTorchOn] = React.useState(false);
   const [canTorch, setCanTorch] = React.useState(false);
 
-  // Beep corto por WebAudio
+  // 🔔 Beep corto por WebAudio
   const beep = React.useCallback(() => {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -41,19 +42,24 @@ export default function QrScanner({
       o.connect(g);
       g.connect(ctx.destination);
       o.start();
-      setTimeout(() => { o.stop(); ctx.close(); }, 120);
+      setTimeout(() => {
+        o.stop();
+        ctx.close();
+      }, 120);
     } catch {}
-    try { navigator.vibrate?.(80); } catch {}
+    try {
+      navigator.vibrate?.(80);
+    } catch {}
   }, []);
 
-  // Enumerar cámaras
+  // 📷 Enumerar cámaras disponibles
   const refreshDevices = React.useCallback(async () => {
     try {
       const list = await BrowserMultiFormatReader.listVideoInputDevices();
       setDevices(list || []);
       if (!list || !list.length) return;
 
-      // Elegir cámara por facingMode si hay indicio
+      // Seleccionar por facingMode (trasera preferida)
       if (!deviceId) {
         if (facingMode === "environment") {
           const back =
@@ -69,7 +75,7 @@ export default function QrScanner({
     }
   }, [deviceId, facingMode]);
 
-  // Torch (si el track lo permite)
+  // 🔦 Torch (linterna)
   const applyTorch = React.useCallback(async (on) => {
     try {
       const stream = videoRef.current?.srcObject;
@@ -90,93 +96,110 @@ export default function QrScanner({
     }
   }, []);
 
-  // Arranque / parada de ZXing
+  // 🧹 Detener lector y limpiar
   const stopReader = React.useCallback(() => {
-    try { controlsRef.current?.stop(); } catch {}
-    try { codeReaderRef.current?.reset(); } catch {}
-    const v = videoRef.current;
-    const stream = v?.srcObject;
-    if (stream && typeof stream.getTracks === "function") {
-      stream.getTracks().forEach((t) => t.stop());
-    }
-    if (v) v.srcObject = null;
+    try {
+      controlsRef.current?.stop?.();
+      codeReaderRef.current?.reset?.();
+    } catch {}
+    try {
+      const stream = videoRef.current?.srcObject;
+      const tracks = stream?.getTracks?.() || [];
+      tracks.forEach((t) => {
+        if (t.readyState === "live") t.stop();
+      });
+    } catch {}
+    if (videoRef.current) videoRef.current.srcObject = null;
     setTorchOn(false);
     setStatus("stopped");
   }, []);
 
-  const startReader = React.useCallback(async (explicitDevice) => {
-    stopReader();
-    setStatus("starting");
-    setErrMsg("");
-    try {
-      await refreshDevices();
+  // ▶️ Iniciar lector
+  const startReader = React.useCallback(
+    async (explicitDevice) => {
+      stopReader();
+      setStatus("starting");
+      setErrMsg("");
+      try {
+        await refreshDevices();
 
-      const selected = explicitDevice || deviceId;
-      const codeReader = new BrowserMultiFormatReader();
-      codeReaderRef.current = codeReader;
+        const selected = explicitDevice || deviceId;
+        const codeReader = new BrowserMultiFormatReader();
+        codeReaderRef.current = codeReader;
 
-      const vc = selected ? { deviceId: { exact: selected } } : { facingMode };
-      const streamConstraints = {
-        video: { ...vc, ...constraints },
-        audio: false,
-      };
+        const vc = selected ? { deviceId: { exact: selected } } : { facingMode };
+        const streamConstraints = {
+          video: { ...vc, ...constraints },
+          audio: false,
+        };
 
-      // Creamos stream manual para detectar torch y errores
-      const stream = await navigator.mediaDevices.getUserMedia(streamConstraints);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => {});
-      }
-      // Chequear soporte de torch
-      await applyTorch(torchOn);
-
-      setStatus("running");
-      const controls = await codeReader.decodeFromVideoDevice(
-        selected || null,
-        videoRef.current,
-        (result, err, _controls) => {
-          controlsRef.current = _controls;
-          if (result) {
-            const text = String(result.getText());
-            beep();
-            onResult?.(text);
-            if (once) {
-              _controls?.stop();
-              setStatus("stopped");
-              try {
-                const st = videoRef.current?.srcObject;
-                st?.getTracks?.().forEach((t) => t.stop());
-                videoRef.current.srcObject = null;
-              } catch {}
-            }
-          } else if (err) {
-            // Errores de frame: ignorar
-          }
+        const stream = await navigator.mediaDevices.getUserMedia(streamConstraints);
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
         }
-      );
-      controlsRef.current = controls;
-    } catch (e) {
-      console.warn("[QrScanner] start error", e);
-      setStatus("error");
-      const msg =
-        e?.name === "NotAllowedError"
-          ? "El navegador bloqueó el acceso a la cámara. Dale permiso y recarga."
-          : e?.name === "NotFoundError"
-          ? "No se encontró cámara en el dispositivo."
-          : e?.message || "No se pudo iniciar la cámara.";
-      setErrMsg(msg);
-      onError?.(e);
-    }
-  }, [applyTorch, beep, constraints, deviceId, facingMode, onError, onResult, once, refreshDevices, stopReader, torchOn]);
 
-  // montar / desmontar
+        // Torch disponible
+        await applyTorch(torchOn);
+        setStatus("running");
+
+        const controls = await codeReader.decodeFromVideoDevice(
+          selected || null,
+          videoRef.current,
+          (result, err, _controls) => {
+            controlsRef.current = _controls;
+            if (result) {
+              const text = String(result.getText());
+              beep();
+              onResult?.(text);
+              if (once) {
+                _controls?.stop?.();
+                setStatus("stopped");
+                try {
+                  const st = videoRef.current?.srcObject;
+                  st?.getTracks?.().forEach((t) => t.stop());
+                  videoRef.current.srcObject = null;
+                } catch {}
+              }
+            }
+          }
+        );
+
+        controlsRef.current = controls;
+      } catch (e) {
+        console.warn("[QrScanner] start error", e);
+        setStatus("error");
+        const msg =
+          e?.name === "NotAllowedError"
+            ? "El navegador bloqueó el acceso a la cámara. Habilítalo y recarga."
+            : e?.name === "NotFoundError"
+            ? "No se encontró cámara en el dispositivo."
+            : e?.message || "No se pudo iniciar la cámara.";
+        setErrMsg(msg);
+        onError?.(e);
+        if (e.name === "NotAllowedError") {
+          alert("❌ Acceso a cámara bloqueado. Habilítalo y recarga la página.");
+        }
+      }
+    },
+    [applyTorch, beep, constraints, deviceId, facingMode, onError, onResult, once, refreshDevices, stopReader, torchOn]
+  );
+
+  // 🧩 Escucha global de parada ("qrscanner:stop")
+  React.useEffect(() => {
+    const stop = () => stopReader();
+    window.addEventListener("qrscanner:stop", stop);
+    return () => window.removeEventListener("qrscanner:stop", stop);
+  }, [stopReader]);
+
+  // Montaje/desmontaje automático
   React.useEffect(() => {
     startReader();
     return () => stopReader();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, facingMode]);
 
-  // UI: cambiar dispositivo
+  // 🔁 Cambiar cámara
   const flipCamera = async () => {
     if (!devices.length) return;
     const idx = devices.findIndex((d) => d.deviceId === deviceId);
@@ -185,6 +208,7 @@ export default function QrScanner({
     await startReader(next.deviceId);
   };
 
+  // 🎨 UI
   return (
     <div className={`relative w-full h-full ${className}`}>
       <video
@@ -193,8 +217,9 @@ export default function QrScanner({
         playsInline
         muted
       />
-      {/* Marco */}
-      <div className="pointer-events-none absolute inset-0 rounded-xl border-4 border-amber-500" />
+
+      {/* Marco visual */}
+      <div className="pointer-events-none absolute inset-0 rounded-xl border-[3px] border-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.5)]" />
 
       {/* Overlay de estado */}
       {status === "starting" && (
@@ -211,7 +236,7 @@ export default function QrScanner({
         </div>
       )}
 
-      {/* Controles */}
+      {/* Controles (torch / flip) */}
       {(enableTorch || enableFlip) && status === "running" && (
         <div className="absolute right-2 bottom-2 flex gap-2">
           {enableTorch && canTorch && (
