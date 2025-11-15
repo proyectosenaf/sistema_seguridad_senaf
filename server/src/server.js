@@ -302,7 +302,9 @@ app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
-app.get("/api/chat/messages", (_req, res) => res.json([]));
+const chatMessagesHandler = (_req, res) => res.json([]);
+app.get("/api/chat/messages", chatMessagesHandler);
+app.get("/chat/messages", chatMessagesHandler); // alias sin /api
 
 /* ───────────── IAM principal + /me ───────────── */
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
@@ -458,6 +460,7 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/notifications", notificationsRoutes); // alias sin /api
 
 // ⏰ Inicia cron de asignaciones (diario)
 startDailyAssignmentCron(app);
@@ -491,22 +494,28 @@ app.get("/api/_debug/ping-assign", (req, res) => {
 });
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
-app.get("/api/rondasqr/v1/ping", (_req, res) =>
-  res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
-);
-app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
-  res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
-);
+const pingHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingCheckinHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
+
+// Con /api (compatibilidad)
+app.get("/api/rondasqr/v1/ping", pingHandler);
+app.get("/api/rondasqr/v1/checkin/ping", pingCheckinHandler);
 app.use("/api/rondasqr/v1", rondasqr);
-
-/* ✅ Módulo de REPORTES de Rondas */
 app.use("/api/rondasqr/v1", rondasReportsRoutes);
-
-/* ✅ Módulo OFFLINE de Rondas */
 app.use("/api/rondasqr/v1", rondasOfflineRoutes);
 
-/* ✅ Módulo de INCIDENTES (ahora sí en /api/incidentes) */
-app.use("/api/incidentes", incidentesRoutes);
+// Sin /api (para cuando el cliente no usa /api)
+app.get("/rondasqr/v1/ping", pingHandler);
+app.get("/rondasqr/v1/checkin/ping", pingCheckinHandler);
+app.use("/rondasqr/v1", rondasqr);
+app.use("/rondasqr/v1", rondasReportsRoutes);
+app.use("/rondasqr/v1", rondasOfflineRoutes);
+
+/* ✅ Módulo de INCIDENTES */
+app.use("/api/incidentes", incidentesRoutes); // compatibilidad
+app.use("/incidentes", incidentesRoutes);     // sin /api
 
 /* ✅ Evaluaciones */
 app.use("/evaluaciones", evaluacionesRoutes);
@@ -538,15 +547,20 @@ server.listen(PORT, "0.0.0.0", () => {
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
   s.emit("hello", { ok: true, ts: Date.now() });
-  s.on("join-room", ({ userId }) => {
-    if (userId) {
-      s.join(`user-${userId}`);
-      s.join(`guard-${userId}`);
-      console.log(
-        `[io] ${s.id} joined rooms user-${userId} & guard-${userId}`
-      );
-    }
-  });
+
+  const joinRooms = (userId) => {
+    if (!userId) return;
+    s.join(`user-${userId}`);
+    s.join(`guard-${userId}`);
+    console.log(
+      `[io] ${s.id} joined rooms user-${userId} & guard-${userId}`
+    );
+  };
+
+  // compatibilidad con cliente viejo y nuevo
+  s.on("join-room", ({ userId }) => joinRooms(userId));
+  s.on("join", ({ userId }) => joinRooms(userId));
+
   s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
 

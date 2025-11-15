@@ -1,6 +1,7 @@
 // client/src/modules/rondasqr/hooks/useAssignmentSocket.js
 import { useEffect } from "react";
 import { io } from "socket.io-client";
+import { API } from "../../../lib/api.js";
 
 /**
  * Hook de socket para rondas:
@@ -12,9 +13,11 @@ export function useAssignmentSocket(user, onNotify, onCount) {
     const userId = user?.sub;
     if (!userId) return;
 
-    const base =
-      (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE || "").replace(/\/$/, "") ||
-      window.location.origin;
+    // API = https://urchin-app-fuirh.ondigitalocean.app (prod)
+    // o http://localhost:4000 (dev)
+    let base = API || window.location.origin;
+    // Por si algún día pones /api en el env, lo limpiamos:
+    base = base.replace(/\/$/, "").replace(/\/api$/, "");
 
     // Reutiliza una sola conexión global
     if (!window.__senafSocket) {
@@ -32,6 +35,7 @@ export function useAssignmentSocket(user, onNotify, onCount) {
     const handleAssignment = (payload) => {
       try {
         onNotify?.(payload);
+
         if ("Notification" in window) {
           if (Notification.permission === "granted") {
             new Notification(payload.title || "Asignación", { body: payload.body || "" });

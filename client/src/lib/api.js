@@ -1,16 +1,16 @@
 // client/src/lib/api.js
 import axios from "axios";
 
-// En producción VITE_API_BASE_URL = "https://urchin-app-fuirh.ondigitalocean.app/api"
-// En dev, si no hay env, usamos "http://localhost:4000/api"
-const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+// En producción VITE_API_BASE_URL = "https://urchin-app-fuirh.ondigitalocean.app"
+// En dev, si no hay env, usamos "http://localhost:4000"
+const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
-// Quitamos solo el slash final, NO el /api
+// Quitamos solo el slash final, no más
 const API_ROOT = RAW.replace(/\/$/, "");
 
 // 👉 Este es el endpoint base de la API, tipo:
-//    http://localhost:4000/api
-//    https://urchin-app-fuirh.ondigitalocean.app/api
+//    http://localhost:4000
+//    https://urchin-app-fuirh.ondigitalocean.app
 export const API = API_ROOT;
 
 const api = axios.create({
