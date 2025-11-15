@@ -84,9 +84,7 @@ export function getUserFromReq(req) {
     roles = [roles].filter(Boolean);
   }
 
-  const permissions = Array.isArray(p.permissions)
-    ? p.permissions
-    : [];
+  const permissions = Array.isArray(p.permissions) ? p.permissions : [];
 
   return {
     sub: p.sub ?? null,
@@ -95,6 +93,25 @@ export function getUserFromReq(req) {
     roles,
     permissions,
   };
+}
+
+/**
+ * Middleware: exige que el usuario sea Admin (o tenga permiso "*").
+ * Si no, responde 403.
+ */
+export function requireAdmin(req, res, next) {
+  const user = getUserFromReq(req);
+
+  const isAdmin =
+    user.roles.includes("Admin") || user.permissions.includes("*");
+
+  if (!isAdmin) {
+    return res
+      .status(403)
+      .json({ message: "Acceso restringido a administradores." });
+  }
+
+  return next();
 }
 
 /**

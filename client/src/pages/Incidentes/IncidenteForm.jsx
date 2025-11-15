@@ -363,5 +363,5 @@ function fileToBase64(file) {
     r.onload = () => resolve(r.result);
     r.onerror = reject;
     r.readAsDataURL(file);
-    });
+  });
 }

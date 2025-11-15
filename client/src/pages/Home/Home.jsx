@@ -154,7 +154,10 @@ export default function Home() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await api.get("/api/incidentes", { params: { limit: 500 } });
+        // 🔴 ANTES: api.get("/api/incidentes", ...)
+        // 🟢 AHORA: solo /incidentes porque baseURL ya tiene /api
+        const r = await api.get("/incidentes", { params: { limit: 500 } });
+
         const data = Array.isArray(r.data)
           ? r.data
           : Array.isArray(r.data?.items)

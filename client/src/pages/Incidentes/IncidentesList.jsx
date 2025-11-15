@@ -28,8 +28,13 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-  const API_HOST = API_BASE;
+  // ========= BASE API SIMILAR A IncidenteForm =========
+  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+  const BASE_CLEAN = RAW.replace(/\/+$/, "");
+  const API_ROOT = /\/api$/.test(BASE_CLEAN)
+    ? BASE_CLEAN
+    : `${BASE_CLEAN}/api`; // para /api/incidentes
+  const API_HOST = BASE_CLEAN; // para servir imágenes tipo /uploads/...
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -41,7 +46,7 @@ export default function IncidentesList() {
 
   useEffect(() => {
     axios
-      .get(`${API_BASE}/api/incidentes`, { withCredentials: true })
+      .get(`${API_ROOT}/incidentes`, { withCredentials: true })
       .then((res) => {
         const data = Array.isArray(res.data)
           ? res.data
@@ -54,19 +59,17 @@ export default function IncidentesList() {
       .catch((err) => {
         console.error("Error cargando incidentes", err);
       });
-  }, [API_BASE]);
+  }, [API_ROOT]);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
       const res = await axios.put(
-        `${API_BASE}/api/incidentes/${id}`,
+        `${API_ROOT}/incidentes/${id}`,
         { status: nuevoEstado },
         { withCredentials: true }
       );
 
-      // si el backend devuelve { ok, item }, usamos item; si no, el cuerpo completo.
       const serverItem = res.data?.item || res.data || {};
-      // si por alguna razón no viene nada útil, al menos forzamos el status localmente
       const patch =
         serverItem && Object.keys(serverItem).length > 0
           ? serverItem
@@ -136,7 +139,7 @@ export default function IncidentesList() {
       if (editingId) {
         // UPDATE
         const res = await axios.put(
-          `${API_BASE}/api/incidentes/${editingId}`,
+          `${API_ROOT}/incidentes/${editingId}`,
           payload,
           { withCredentials: true }
         );
@@ -150,7 +153,7 @@ export default function IncidentesList() {
         });
       } else {
         // CREATE
-        const res = await axios.post(`${API_BASE}/api/incidentes`, payload, {
+        const res = await axios.post(`${API_ROOT}/incidentes`, payload, {
           withCredentials: true,
         });
         const creado = res.data?.item || res.data;
@@ -195,7 +198,7 @@ export default function IncidentesList() {
     if (!ok) return;
 
     try {
-      await axios.delete(`${API_BASE}/api/incidentes/${id}`, {
+      await axios.delete(`${API_ROOT}/incidentes/${id}`, {
         withCredentials: true,
       });
       setIncidentes((prev) => {
@@ -593,7 +596,6 @@ export default function IncidentesList() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                        {/* botones de flujo */}
                         {i.status === "abierto" && (
                           <button
                             onClick={() =>
@@ -615,7 +617,6 @@ export default function IncidentesList() {
                           </button>
                         )}
 
-                        {/* nuevo: editar / eliminar */}
                         <button
                           onClick={() => startEdit(i)}
                           className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
