@@ -5,7 +5,7 @@ import axios from "axios";
 // En dev, si no hay env, usamos "http://localhost:4000/api"
 const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
 
-// Quitamos solo el slash final, no el /api
+// Quitamos solo el slash final, NO el /api
 const API_ROOT = RAW.replace(/\/$/, "");
 
 // 👉 Este es el endpoint base de la API, tipo:

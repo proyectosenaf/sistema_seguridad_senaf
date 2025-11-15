@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
-import api from "../../lib/api.js"; // 👈 usamos el cliente con Auth
+import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
 
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
@@ -28,9 +28,10 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
-  // ========= BASE para imágenes (solo host) =========
-  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-  const API_HOST = RAW.replace(/\/+$/, "");
+  // ========= BASE para imágenes (solo host, sin /api) =========
+  // API viene como: http://localhost:4000/api o https://urchin-app.../api
+  // Le quitamos el /api del final para servir /uploads correctamente
+  const API_HOST = (API || "").replace(/\/api$/, "");
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -457,7 +458,7 @@ export default function IncidentesList() {
               className="w-full bg-[#1e2a3f] text-white text-sm rounded-md px-3 py-2 
                          border border-cyan-400/20 placeholder-gray-500 
                          focus:outline-none focus:ring-2 focus:ring-cyan-400/40 
-                         transition-all duration-200"
+                         transition-all duración-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
           </div>
@@ -555,7 +556,8 @@ export default function IncidentesList() {
                             {photos.slice(0, 3).map((p, idx) => {
                               const src =
                                 typeof p === "string" &&
-                                (p.startsWith("http") || p.startsWith("data:"))
+                                (p.startsWith("http") ||
+                                  p.startsWith("data:"))
                                   ? p
                                   : `${API_HOST}${p}`;
                               return (
@@ -590,7 +592,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "en_proceso")
                             }
-                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duración-300"
                           >
                             Procesar
                           </button>
@@ -600,7 +602,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "resuelto")
                             }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transición-all duración-300"
                           >
                             Resolver
                           </button>
@@ -608,13 +610,13 @@ export default function IncidentesList() {
 
                         <button
                           onClick={() => startEdit(i)}
-                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transición-all duración-300"
                         >
                           Editar
                         </button>
                         <button
                           onClick={() => handleDelete(i._id)}
-                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transición-all duración-300"
                         >
                           Eliminar
                         </button>
@@ -630,7 +632,7 @@ export default function IncidentesList() {
         <div className="flex justify-end p-4 border-t border-cyan-400/10">
           <button
             onClick={startCreate}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all duration-300"
+            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transición-all duración-300"
           >
             {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
           </button>
@@ -640,7 +642,7 @@ export default function IncidentesList() {
       <div className="text-xs text-gray-500">
         <Link
           to="/"
-          className="hover:text-white hover:underline underline-offset-4 transition-colors"
+          className="hover:text-white hover:underline underline-offset-4 transición-colors"
         >
           ← Volver al panel principal
         </Link>
