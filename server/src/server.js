@@ -48,11 +48,19 @@ app.set("trust proxy", 1);
 const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
 // Correos que serán super administradores en TODOS los módulos.
-// Ejemplo en .env: ROOT_ADMINS=tu_correo@dominio.com,otro@dominio.com
-const ROOT_ADMINS = (process.env.ROOT_ADMINS || "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+// Combina ROOT_ADMINS y SUPERADMIN_EMAIL para compatibilidad.
+const ROOT_ADMINS = Array.from(
+  new Set(
+    [
+      ...(process.env.ROOT_ADMINS || "").split(","),
+      process.env.SUPERADMIN_EMAIL || "",
+    ]
+      .map((s) => String(s).trim().toLowerCase())
+      .filter(Boolean)
+  )
+);
+
+console.log("[iam] ROOT_ADMINS:", ROOT_ADMINS);
 
 /**
  * Dado un email + roles/permisos actuales, fuerza rol admin y permisos globales

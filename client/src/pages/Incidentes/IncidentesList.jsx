@@ -64,12 +64,21 @@ export default function IncidentesList() {
         { withCredentials: true }
       );
 
-      const actualizado = res.data || {};
-      const next = incidentes.map((inc) =>
-        inc._id === id ? { ...inc, ...actualizado } : inc
-      );
-      setIncidentes(next);
-      recomputeStats(next);
+      // si el backend devuelve { ok, item }, usamos item; si no, el cuerpo completo.
+      const serverItem = res.data?.item || res.data || {};
+      // si por alguna razón no viene nada útil, al menos forzamos el status localmente
+      const patch =
+        serverItem && Object.keys(serverItem).length > 0
+          ? serverItem
+          : { status: nuevoEstado };
+
+      setIncidentes((prev) => {
+        const next = prev.map((inc) =>
+          inc._id === id ? { ...inc, ...patch } : inc
+        );
+        recomputeStats(next);
+        return next;
+      });
     } catch (err) {
       console.error("Error actualizando incidente", err);
       alert("No se pudo actualizar el estado");
@@ -131,21 +140,25 @@ export default function IncidentesList() {
           payload,
           { withCredentials: true }
         );
-        const actualizado = res.data || {};
-        const next = incidentes.map((i) =>
-          i._id === editingId ? { ...i, ...actualizado } : i
-        );
-        setIncidentes(next);
-        recomputeStats(next);
+        const actualizado = res.data?.item || res.data || {};
+        setIncidentes((prev) => {
+          const next = prev.map((i) =>
+            i._id === editingId ? { ...i, ...actualizado } : i
+          );
+          recomputeStats(next);
+          return next;
+        });
       } else {
         // CREATE
         const res = await axios.post(`${API_BASE}/api/incidentes`, payload, {
           withCredentials: true,
         });
         const creado = res.data?.item || res.data;
-        const next = [creado, ...incidentes];
-        setIncidentes(next);
-        recomputeStats(next);
+        setIncidentes((prev) => {
+          const next = [creado, ...prev];
+          recomputeStats(next);
+          return next;
+        });
       }
 
       resetForm();
@@ -185,9 +198,11 @@ export default function IncidentesList() {
       await axios.delete(`${API_BASE}/api/incidentes/${id}`, {
         withCredentials: true,
       });
-      const next = incidentes.filter((i) => i._id !== id);
-      setIncidentes(next);
-      recomputeStats(next);
+      setIncidentes((prev) => {
+        const next = prev.filter((i) => i._id !== id);
+        recomputeStats(next);
+        return next;
+      });
     } catch (err) {
       console.error("Error eliminando incidente", err);
       alert("No se pudo eliminar el incidente");

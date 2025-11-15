@@ -306,7 +306,27 @@ export const rondasqrApi = {
   // -------- Plans --------
   async getPlan(q = {}) {
     const qs = toQS(q);
-    return fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`);
+    const mainUrl = `${BASE}/admin/plans${qs ? `?${qs}` : ""}`;
+    // Ruta legacy posible: /api/rondasqr/admin/plans
+    const legacyUrl = `${ROOT}/rondasqr/admin/plans${qs ? `?${qs}` : ""}`;
+
+    try {
+      return await fetchJson(mainUrl);
+    } catch (err) {
+      if (err.status === 404 || err.status === 405) {
+        // probar ruta antigua
+        try {
+          return await fetchJson(legacyUrl);
+        } catch (err2) {
+          if (err2.status === 404 || err2.status === 405) {
+            // no hay endpoint de planes en el backend → devolvemos lista vacía
+            return { items: [], count: 0 };
+          }
+          throw err2;
+        }
+      }
+      throw err;
+    }
   },
 
   async createOrUpdatePlan(body) {

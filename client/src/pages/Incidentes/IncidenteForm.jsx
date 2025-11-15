@@ -1,5 +1,6 @@
 // src/modules/incidentes/IncidenteForm.jsx
-import React, { useState, useRef, useLocation, useNavigate, Link, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { useLocation, useNavigate, Link } from "react-router-dom";
 import axios from "axios";
 import CameraCapture from "../../components/CameraCapture.jsx";
 
@@ -38,8 +39,13 @@ export default function IncidenteForm({
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
 
-  const API_BASE =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+  // ========= BASE API (tanto si el .env tiene /api como si no) =========
+  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+  const BASE_CLEAN = RAW.replace(/\/+$/, "");
+  const API_BASE = /\/api$/.test(BASE_CLEAN)
+    ? BASE_CLEAN
+    : `${BASE_CLEAN}/api`;
+  // ahora API_BASE SIEMPRE termina en /api (ej. https://...../api)
 
   // si viene en modo edición, precargar datos
   useEffect(() => {
@@ -101,8 +107,8 @@ export default function IncidenteForm({
       };
 
       const url = editingIncident
-        ? `${API_BASE}/api/incidentes/${editingIncident._id}`
-        : `${API_BASE}/api/incidentes`;
+        ? `${API_BASE}/incidentes/${editingIncident._id}`
+        : `${API_BASE}/incidentes`;
 
       const method = editingIncident ? "put" : "post";
 
@@ -172,7 +178,7 @@ export default function IncidenteForm({
       )}
 
       {/* tarjeta principal */}
-      <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg白/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
+      <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-black/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6">
           {editing ? "Editar incidente" : "Reportar Nuevo Incidente"}
         </h2>
@@ -357,5 +363,5 @@ function fileToBase64(file) {
     r.onload = () => resolve(r.result);
     r.onerror = reject;
     r.readAsDataURL(file);
-  });
+    });
 }

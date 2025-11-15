@@ -25,7 +25,8 @@ router.use((req, _res, next) => {
 
 /* ───────────────── Auth liviano ───────────────── */
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
-const IAM_ALLOW_DEV_HEADERS = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+const IAM_ALLOW_DEV_HEADERS =
+  String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
 function auth(req, _res, next) {
   if (DISABLE_AUTH) {
@@ -68,7 +69,9 @@ async function nextOrderForRound(roundId) {
 const isId = (v) => typeof v === "string" && mongoose.Types.ObjectId.isValid(v);
 
 /* ───────────────── PING/DEBUG ───────────────── */
-router.get("/ping", (_req, res) => res.json({ ok: true, where: "/api/rondasqr/v1/ping" }));
+router.get("/ping", (_req, res) =>
+  res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
+);
 router.get("/checkin/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
 );

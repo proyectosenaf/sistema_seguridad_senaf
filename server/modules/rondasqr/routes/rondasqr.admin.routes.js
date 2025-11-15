@@ -11,13 +11,18 @@ const router = express.Router();
 
 /* --------------------------- Helpers --------------------------- */
 const toId = (v) => {
-  try { return new mongoose.Types.ObjectId(String(v)); } catch { return null; }
+  try {
+    return new mongoose.Types.ObjectId(String(v));
+  } catch {
+    return null;
+  }
 };
 const norm = (s) => (typeof s === "string" ? s.trim() : s);
 const slug = (s) =>
   String(s || "")
     .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
@@ -53,7 +58,9 @@ router.get("/sites", async (req, res, next) => {
 
     const items = await RqSite.find(filter).sort({ name: 1 }).lean();
     res.json({ items });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post("/sites", async (req, res, next) => {
@@ -84,7 +91,9 @@ router.post("/sites", async (req, res, next) => {
     }
     if (e?.code === 11000) {
       const field = Object.keys(e.keyValue || {})[0] || "campo";
-      return res.status(409).json({ error: "duplicado", field, value: e.keyValue?.[field] });
+      return res
+        .status(409)
+        .json({ error: "duplicado", field, value: e.keyValue?.[field] });
     }
     next(e);
   }
@@ -111,27 +120,47 @@ router.put("/sites/:id", async (req, res, next) => {
       }
     }
 
-    const item = await RqSite.findByIdAndUpdate(id, { $set }, { new: true, lean: true });
+    const item = await RqSite.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.patch("/sites/:id/off", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqSite.findByIdAndUpdate(id, { $set: { active: false } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqSite.findByIdAndUpdate(
+      id,
+      { $set: { active: false } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 router.patch("/sites/:id/on", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqSite.findByIdAndUpdate(id, { $set: { active: true } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqSite.findByIdAndUpdate(
+      id,
+      { $set: { active: true } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.delete("/sites/:id", async (req, res, next) => {
@@ -141,7 +170,9 @@ router.delete("/sites/:id", async (req, res, next) => {
     const del = await RqSite.findByIdAndDelete(id).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 /* =================================================================
@@ -168,7 +199,9 @@ router.get("/rounds", async (req, res, next) => {
 
     const items = await RqRound.find(filter).sort({ name: 1 }).lean();
     res.json({ items });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post("/rounds", async (req, res, next) => {
@@ -185,7 +218,9 @@ router.post("/rounds", async (req, res, next) => {
       active: typeof active === "boolean" ? active : true,
     });
     res.status(201).json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.put("/rounds/:id", async (req, res, next) => {
@@ -204,27 +239,47 @@ router.put("/rounds/:id", async (req, res, next) => {
     if (code != null) $set.code = norm(code) || null;
     if (active != null) $set.active = !!active;
 
-    const item = await RqRound.findByIdAndUpdate(id, { $set }, { new: true, lean: true });
+    const item = await RqRound.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.patch("/rounds/:id/off", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqRound.findByIdAndUpdate(id, { $set: { active: false } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqRound.findByIdAndUpdate(
+      id,
+      { $set: { active: false } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 router.patch("/rounds/:id/on", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqRound.findByIdAndUpdate(id, { $set: { active: true } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqRound.findByIdAndUpdate(
+      id,
+      { $set: { active: true } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.delete("/rounds/:id", async (req, res, next) => {
@@ -234,7 +289,9 @@ router.delete("/rounds/:id", async (req, res, next) => {
     const del = await RqRound.findByIdAndDelete(id).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 /* =================================================================
@@ -246,11 +303,13 @@ router.get("/points", async (req, res, next) => {
     const { siteId, roundId, q, active } = req.query;
     const filter = {};
     if (siteId) {
-      const sid = toId(siteId); if (!sid) return res.status(400).json({ error: "siteId inválido" });
+      const sid = toId(siteId);
+      if (!sid) return res.status(400).json({ error: "siteId inválido" });
       filter.siteId = sid;
     }
     if (roundId) {
-      const rid = toId(roundId); if (!rid) return res.status(400).json({ error: "roundId inválido" });
+      const rid = toId(roundId);
+      if (!rid) return res.status(400).json({ error: "roundId inválido" });
       filter.roundId = rid;
     }
     if (q) {
@@ -264,7 +323,9 @@ router.get("/points", async (req, res, next) => {
 
     const items = await RqPoint.find(filter).sort({ order: 1, name: 1 }).lean();
     res.json({ items });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post("/points", async (req, res, next) => {
@@ -296,7 +357,9 @@ router.post("/points", async (req, res, next) => {
 
     const item = await RqPoint.create(payload);
     res.status(201).json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.put("/points/:id", async (req, res, next) => {
@@ -307,11 +370,13 @@ router.put("/points/:id", async (req, res, next) => {
     const { siteId, roundId, name, qr, order, gps, active } = req.body || {};
     const $set = {};
     if (siteId != null) {
-      const sid = toId(siteId); if (!sid) return res.status(400).json({ error: "siteId inválido" });
+      const sid = toId(siteId);
+      if (!sid) return res.status(400).json({ error: "siteId inválido" });
       $set.siteId = sid;
     }
     if (roundId != null) {
-      const rid = toId(roundId); if (!rid) return res.status(400).json({ error: "roundId inválido" });
+      const rid = toId(roundId);
+      if (!rid) return res.status(400).json({ error: "roundId inválido" });
       $set.roundId = rid;
     }
     if (name != null) $set.name = norm(name);
@@ -332,27 +397,47 @@ router.put("/points/:id", async (req, res, next) => {
 
     if (active != null) $set.active = !!active;
 
-    const item = await RqPoint.findByIdAndUpdate(id, { $set }, { new: true, lean: true });
+    const item = await RqPoint.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.patch("/points/:id/off", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqPoint.findByIdAndUpdate(id, { $set: { active: false } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqPoint.findByIdAndUpdate(
+      id,
+      { $set: { active: false } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 router.patch("/points/:id/on", async (req, res, next) => {
   try {
-    const id = toId(req.params.id); if (!id) return res.status(400).json({ error: "id inválido" });
-    const item = await RqPoint.findByIdAndUpdate(id, { $set: { active: true } }, { new: true, lean: true });
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+    const item = await RqPoint.findByIdAndUpdate(
+      id,
+      { $set: { active: true } },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.delete("/points/:id", async (req, res, next) => {
@@ -362,7 +447,9 @@ router.delete("/points/:id", async (req, res, next) => {
     const del = await RqPoint.findByIdAndDelete(id).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 /* =================================================================
@@ -404,13 +491,16 @@ router.get("/plans", async (req, res, next) => {
     // listado
     const items = await RqPlan.find(filter).lean();
     res.json({ items });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 // UPSERT por (siteId, roundId, shift)
 router.post("/plans", async (req, res, next) => {
   try {
-    const { siteId, roundId, shift, pointIds = [], windows = [], active } = req.body || {};
+    const { siteId, roundId, shift, pointIds = [], windows = [], active } =
+      req.body || {};
     const sid = toId(siteId);
     const rid = toId(roundId);
     if (!sid) return res.status(400).json({ error: "siteId requerido/valido" });
@@ -427,8 +517,12 @@ router.post("/plans", async (req, res, next) => {
       windows: Array.isArray(windows)
         ? windows.map((w) => ({
             label: norm(w?.label) || undefined,
-            startMin: Number.isFinite(Number(w?.startMin)) ? Number(w.startMin) : undefined,
-            endMin: Number.isFinite(Number(w?.endMin)) ? Number(w.endMin) : undefined,
+            startMin: Number.isFinite(Number(w?.startMin))
+              ? Number(w.startMin)
+              : undefined,
+            endMin: Number.isFinite(Number(w?.endMin))
+              ? Number(w.endMin)
+              : undefined,
           }))
         : [],
     };
@@ -440,7 +534,9 @@ router.post("/plans", async (req, res, next) => {
       { upsert: true, new: true, lean: true }
     );
     res.status(201).json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.put("/plans/:id", async (req, res, next) => {
@@ -465,16 +561,26 @@ router.put("/plans/:id", async (req, res, next) => {
     if (Array.isArray(windows)) {
       $set.windows = windows.map((w) => ({
         label: norm(w?.label) || undefined,
-        startMin: Number.isFinite(Number(w?.startMin)) ? Number(w.startMin) : undefined,
-        endMin: Number.isFinite(Number(w?.endMin)) ? Number(w.endMin) : undefined,
+        startMin: Number.isFinite(Number(w?.startMin))
+          ? Number(w.startMin)
+          : undefined,
+        endMin: Number.isFinite(Number(w?.endMin))
+          ? Number(w.endMin)
+          : undefined,
       }));
     }
     if (active != null) $set.active = !!active;
 
-    const item = await RqPlan.findByIdAndUpdate(id, { $set }, { new: true, lean: true });
+    const item = await RqPlan.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, lean: true }
+    );
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 // DELETE por query (siteId+roundId+shift)
@@ -484,12 +590,19 @@ router.delete("/plans", async (req, res, next) => {
     const sid = toId(siteId);
     const rid = toId(roundId);
     const sh = normShift(shift);
-    if (!sid || !rid) return res.status(400).json({ error: "siteId y roundId requeridos" });
+    if (!sid || !rid)
+      return res.status(400).json({ error: "siteId y roundId requeridos" });
 
-    const del = await RqPlan.findOneAndDelete({ siteId: sid, roundId: rid, ...(sh ? { shift: sh } : {}) }).lean();
+    const del = await RqPlan.findOneAndDelete({
+      siteId: sid,
+      roundId: rid,
+      ...(sh ? { shift: sh } : {}),
+    }).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 // DELETE por id (sigue disponible)
@@ -500,7 +613,9 @@ router.delete("/plans/:id", async (req, res, next) => {
     const del = await RqPlan.findByIdAndDelete(id).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 export default router;
