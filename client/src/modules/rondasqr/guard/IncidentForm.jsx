@@ -25,9 +25,7 @@ export default function IncidentForm() {
           () => res(null)
         )
       );
-    } catch {
-      // ignoramos error de geolocalización
-    }
+    } catch (_) {}
 
     // 2️⃣ Enviar solo al módulo de RONDAS
     try {
@@ -55,9 +53,7 @@ export default function IncidentForm() {
 
   return (
     <div className="p-4 bg-slate-900/30 rounded-xl border border-slate-800">
-      <h2 className="font-medium text-white mb-3">
-        Registrar incidente de ronda
-      </h2>
+      <h2 className="font-medium text-white mb-3">Registrar incidente de ronda</h2>
 
       <form onSubmit={submit} className="space-y-3">
         <textarea

@@ -172,6 +172,15 @@ export const rondasqrApi = {
     });
   },
 
+  // Actualizar incidente existente (módulo central)
+  async updateIncident(id, payload) {
+    const url = `${ROOT}/incidentes/${encodeURIComponent(id)}`; // /api/incidentes/:id
+    return fetchJson(url, {
+      method: "PUT",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
   async panic(gps) {
     const body =
       gps && typeof gps === "object"

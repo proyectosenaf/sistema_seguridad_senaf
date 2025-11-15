@@ -1,6 +1,5 @@
 // src/modules/rondasqr/supervisor/ReportsPage.jsx
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useEffect, useState } from "react";
 import { rondasqrApi } from "../api/rondasqrApi";
 import ReportSummary from "./ReportSummary";
 import OmissionsTable from "./OmissionsTable";
@@ -30,59 +29,6 @@ function readVar(name, fallback) {
 }
 /* =========================================================== */
 
-/** Portal simple que posiciona un menú justo debajo de un anchor */
-function DropdownPortal({ anchorRef, open, onClose, children, gap = 8 }) {
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 240 });
-
-  useLayoutEffect(() => {
-    if (!open || !anchorRef?.current) return;
-    const rect = anchorRef.current.getBoundingClientRect();
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
-    const maxWidth = 300;
-    const width = Math.min(Math.max(rect.width, 176), maxWidth);
-    setPos({
-      top: rect.bottom + gap + scrollY,
-      left: rect.right - width + scrollX,
-      width,
-    });
-  }, [open, anchorRef, gap]);
-
-  useEffect(() => {
-    if (!open) return;
-    const recalc = () => {
-      if (!anchorRef?.current) return;
-      const rect = anchorRef.current.getBoundingClientRect();
-      const scrollX = window.scrollX || window.pageXOffset;
-      const scrollY = window.scrollY || window.pageYOffset;
-      const width = Math.min(Math.max(rect.width, 176), 300);
-      setPos({ top: rect.bottom + gap + scrollY, left: rect.right - width + scrollX, width });
-    };
-    window.addEventListener("resize", recalc);
-    window.addEventListener("scroll", recalc, true);
-    return () => {
-      window.removeEventListener("resize", recalc);
-      window.removeEventListener("scroll", recalc, true);
-    };
-  }, [open, anchorRef, gap]);
-
-  if (!open) return null;
-
-  return createPortal(
-    <>
-      <div onClick={onClose} className="fixed inset-0 z-[1990] bg-black/40" aria-hidden="true" />
-      <div
-        className="fixed z-[2001] rounded-md border border-white/15 bg-neutral-900 text-white
-                   shadow-2xl ring-1 ring-black/40 overflow-hidden"
-        style={{ top: pos.top, left: pos.left, width: pos.width }}
-      >
-        {children}
-      </div>
-    </>,
-    document.body
-  );
-}
-
 export default function ReportsPage() {
   // Filtros (el backend espera la clave 'officer')
   const [f, setF] = useState({
@@ -91,6 +37,14 @@ export default function ReportsPage() {
     siteId: "",
     roundId: "",
     officer: "",
+    // tipo de reporte
+    reportType: "all", // all | rounds | omissions | messages | detail | map
+    // qué secciones incluir
+    includeSummary: true,
+    includeOmissions: true,
+    includeMessages: true,
+    includeDetail: true,
+    includeMap: true,
   });
 
   const [data, setData] = useState({
@@ -139,6 +93,7 @@ export default function ReportsPage() {
   async function load() {
     setLoading(true);
     try {
+      // Se envían todos los filtros; el backend puede ignorar los nuevos si no los soporta
       const s = await rondasqrApi.getSummary(f);
       const d = await rondasqrApi.getDetailed(f);
       setData({
@@ -162,10 +117,92 @@ export default function ReportsPage() {
 
   const setField = (k) => (e) => setF((prev) => ({ ...prev, [k]: e.target.value }));
 
-  /* ---------- Menú Exportar ---------- */
-  const [openMenu, setOpenMenu] = useState(false);
-  const exportBtnRef = useRef(null);
+  function resetOptionalFilters() {
+    setF((prev) => ({
+      ...prev,
+      siteId: "",
+      roundId: "",
+      officer: "",
+    }));
+    setRounds([]);
+  }
 
+  function handleToggleInclude(key) {
+    setF((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function handleReportTypeChange(type) {
+    // Ajusta automáticamente qué secciones se incluyen según el tipo
+    setF((prev) => {
+      if (type === "all") {
+        return {
+          ...prev,
+          reportType: type,
+          includeSummary: true,
+          includeOmissions: true,
+          includeMessages: true,
+          includeDetail: true,
+          includeMap: true,
+        };
+      }
+      if (type === "omissions") {
+        return {
+          ...prev,
+          reportType: type,
+          includeSummary: false,
+          includeOmissions: true,
+          includeMessages: false,
+          includeDetail: false,
+          includeMap: false,
+        };
+      }
+      if (type === "messages") {
+        return {
+          ...prev,
+          reportType: type,
+          includeSummary: false,
+          includeOmissions: false,
+          includeMessages: true,
+          includeDetail: false,
+          includeMap: false,
+        };
+      }
+      if (type === "detail") {
+        return {
+          ...prev,
+          reportType: type,
+          includeSummary: false,
+          includeOmissions: false,
+          includeMessages: false,
+          includeDetail: true,
+          includeMap: false,
+        };
+      }
+      if (type === "map") {
+        return {
+          ...prev,
+          reportType: type,
+          includeSummary: false,
+          includeOmissions: false,
+          includeMessages: false,
+          includeDetail: false,
+          includeMap: true,
+        };
+      }
+      // "rounds" u otros: resumen + detalle (y mapa opcional)
+      return {
+        ...prev,
+        reportType: type,
+        includeSummary: true,
+        includeOmissions: false,
+        includeMessages: false,
+        includeDetail: true,
+        includeMap: true,
+      };
+    });
+  }
+
+  /* ---------- Exportar ---------- */
   async function openFirstOk(urls) {
     for (const url of urls) {
       try {
@@ -174,7 +211,9 @@ export default function ReportsPage() {
           window.open(url, "_blank", "noreferrer");
           return true;
         }
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
     return false;
   }
@@ -193,7 +232,6 @@ export default function ReportsPage() {
       if (!ok) alert("HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor.");
     } finally {
       setDownloading(false);
-      setOpenMenu(false);
     }
   }
 
@@ -210,17 +248,12 @@ export default function ReportsPage() {
       if (!ok) alert("HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor.");
     } finally {
       setDownloading(false);
-      setOpenMenu(false);
     }
   }
 
-  function doCsv() {
-    window.open(rondasqrApi.csvUrl(f), "_blank", "noreferrer");
-    setOpenMenu(false);
-  }
-  function doKml() {
-    window.open(rondasqrApi.kmlUrl(f), "_blank", "noreferrer");
-    setOpenMenu(false);
+  function doPrint() {
+    // Imprime la vista actual; puedes cambiar a una ruta /print si luego haces una vista especial
+    window.print();
   }
   /* ----------------------------------- */
 
@@ -241,8 +274,87 @@ export default function ReportsPage() {
       </div>
 
       {/* Filtros */}
-      <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
-        <div className="grid md:grid-cols-6 gap-2 items-end">
+      <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg space-y-3">
+        {/* Fila 1: Tipo de reporte + acciones */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-white/70 uppercase tracking-wide">Tipo de reporte</span>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: "all", label: "Todos" },
+                { id: "rounds", label: "Rondas" },
+                { id: "omissions", label: "Omisiones" },
+                { id: "messages", label: "Mensajes / Incidentes" },
+                { id: "detail", label: "Detalle" },
+                { id: "map", label: "Mapa" },
+              ].map((opt) => {
+                const active = f.reportType === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleReportTypeChange(opt.id)}
+                    className={[
+                      "px-3 py-1.5 rounded-full text-[11px] border transition",
+                      active
+                        ? "bg-emerald-500 text-black border-emerald-400 shadow"
+                        : "bg-black/30 border-white/15 text-white/80 hover:border-emerald-400/70 hover:text-emerald-200",
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={load}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm shadow disabled:opacity-70"
+              disabled={loading}
+            >
+              {loading ? "Consultando…" : "Consultar"}
+            </button>
+
+            <button
+              type="button"
+              onClick={resetOptionalFilters}
+              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white/80 text-xs hover:bg-white/10"
+            >
+              Limpiar filtros
+            </button>
+
+            <button
+              type="button"
+              onClick={doPdf}
+              disabled={downloading}
+              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10 disabled:opacity-70"
+            >
+              {downloading ? "PDF…" : "PDF"}
+            </button>
+
+            <button
+              type="button"
+              onClick={doExcel}
+              disabled={downloading}
+              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10 disabled:opacity-70"
+            >
+              {downloading ? "Excel…" : "Excel"}
+            </button>
+
+            <button
+              type="button"
+              onClick={doPrint}
+              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10"
+            >
+              Imprimir
+            </button>
+          </div>
+        </div>
+
+        {/* Fila 2: filtros principales */}
+        <div className="grid md:grid-cols-5 gap-2 items-end">
           <div className="flex flex-col">
             <label className="text-[11px] text-white/70 mb-1">Desde</label>
             <input
@@ -305,59 +417,76 @@ export default function ReportsPage() {
               className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
             />
           </div>
+        </div>
 
-          <div className="flex gap-2 items-end">
-            <button
-              onClick={load}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm shadow disabled:opacity-70"
-              disabled={loading}
-            >
-              {loading ? "Consultando…" : "Consultar"}
-            </button>
+        {/* Fila 3: qué secciones incluir */}
+        <div className="flex flex-wrap gap-3 pt-2 border-t border-white/10">
+          <span className="text-[11px] text-white/60 uppercase tracking-wide pt-1">Incluir en el reporte:</span>
 
-            {/* Botón Exportar con caret (anchor del portal) */}
-            <button
-              ref={exportBtnRef}
-              type="button"
-              onClick={() => setOpenMenu((o) => !o)}
-              disabled={downloading}
-              className="px-3 py-1.5 rounded-lg border border-white/20 bg-white/10 hover:bg-white/20 text-white text-sm"
-              title="Exportar"
-            >
-              {downloading ? "Exportando…" : "Exportar ▾"}
-            </button>
-          </div>
+          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={f.includeSummary}
+              onChange={() => handleToggleInclude("includeSummary")}
+              className="rounded border-white/20 bg-black/60"
+            />
+            Resumen
+          </label>
+
+          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={f.includeOmissions}
+              onChange={() => handleToggleInclude("includeOmissions")}
+              className="rounded border-white/20 bg-black/60"
+            />
+            Omisiones
+          </label>
+
+          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={f.includeMessages}
+              onChange={() => handleToggleInclude("includeMessages")}
+              className="rounded border-white/20 bg-black/60"
+            />
+            Mensajes / Incidentes
+          </label>
+
+          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={f.includeDetail}
+              onChange={() => handleToggleInclude("includeDetail")}
+              className="rounded border-white/20 bg-black/60"
+            />
+            Detalle
+          </label>
+
+          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={f.includeMap}
+              onChange={() => handleToggleInclude("includeMap")}
+              className="rounded border-white/20 bg-black/60"
+            />
+            Mapa
+          </label>
         </div>
       </div>
 
-      {/* Menú exportar en PORTAL */}
-      <DropdownPortal anchorRef={exportBtnRef} open={openMenu} onClose={() => setOpenMenu(false)}>
-        <button className="w-full text-left px-3 py-2 hover:bg-neutral-800 text-sm" onClick={doExcel} disabled={downloading}>
-          Excel (.xlsx)
-        </button>
-        <button className="w-full text-left px-3 py-2 hover:bg-neutral-800 text-sm" onClick={doPdf} disabled={downloading}>
-          PDF (.pdf)
-        </button>
-        <button className="w-full text-left px-3 py-2 hover:bg-neutral-800 text-sm" onClick={doCsv}>
-          CSV (.csv)
-        </button>
-        <button className="w-full text-left px-3 py-2 hover:bg-neutral-800 text-sm" onClick={doKml}>
-          KML (.kml)
-        </button>
-      </DropdownPortal>
+      {/* Secciones de reporte (controladas por flags) */}
+      {f.includeSummary && <ReportSummary stats={data.stats} />}
+      {f.includeOmissions && <OmissionsTable items={data.omissions} />}
+      {f.includeMessages && <MessagesTable items={data.messages} />}
+      {f.includeDetail && <DetailedMarks items={data.detailed} />}
 
-      {/* Secciones de reporte */}
-      <ReportSummary stats={data.stats} />
-      <OmissionsTable items={data.omissions} />
-      <MessagesTable items={data.messages} />
-      {/* DetailedMarks debe ya mostrar startTime, endTime y onWindow que trae el backend */}
-      <DetailedMarks items={data.detailed} />
-
-      {/* Mapa embebido */}
-      <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
-        <h3 className="font-semibold text-base mb-2">Mapa</h3>
-        <MapView items={data.detailed} />
-      </div>
+      {f.includeMap && (
+        <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
+          <h3 className="font-semibold text-base mb-2">Mapa</h3>
+          <MapView items={data.detailed} />
+        </div>
+      )}
     </div>
   );
 }
