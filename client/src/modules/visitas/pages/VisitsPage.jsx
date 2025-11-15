@@ -1,6 +1,12 @@
+// src/modules/visitas/VisitsPage.jsx
 import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
+
+// IMPORTS ESTÁTICOS (asegúrate de tener instaladas las dependencias)
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
@@ -34,8 +40,7 @@ export default function VisitsPage() {
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
 
-  // 🔧 ahora trabajamos con nombre libre del empleado (texto)
-  const sendEmpleadoAsId = false;
+  const sendEmpleadoAsId = false; // (no se modificó)
 
   useEffect(() => {
     let alive = true;
@@ -75,11 +80,10 @@ export default function VisitsPage() {
               name: v.nombre,
               document: v.documento,
               company: v.empresa || "—",
-              employee: v.empleado || "—", // <- texto
+              employee: v.empleado || "—",
               entry: fmt(entryDate),
               exit: fmt(exitDate),
               status: v.estado,
-              // ✅ guardo fechas crudas para cálculos (no visibles)
               entryAt: entryDate,
               exitAt: exitDate,
             };
@@ -106,7 +110,6 @@ export default function VisitsPage() {
     [visitors]
   );
 
-  // ✅ “Total Hoy” solo cuenta visitas con fechaEntrada dentro del día local de HOY
   const kpiTotalHoy = useMemo(() => {
     const { start, end } = getTodayRange();
     return visitors.filter(
@@ -114,7 +117,6 @@ export default function VisitsPage() {
     ).length;
   }, [visitors]);
 
-  // ✅ “Empresas Visitantes” también por HOY (únicas del día)
   const kpiEmpresas = useMemo(() => {
     const { start, end } = getTodayRange();
     const empresasDeHoy = visitors
@@ -135,13 +137,12 @@ export default function VisitsPage() {
     });
   }, [visitors, search, statusFilter]);
 
-  // ✅ ahora enviamos 'empleado' (texto)
   async function handleAddVisitor(formData) {
     const payload = {
       nombre: formData.name?.trim(),
       documento: formData.document?.trim(),
       empresa: formData.company?.trim() || undefined,
-      empleado: formData.employee?.trim(), // <- texto libre
+      empleado: formData.employee?.trim(),
       motivo: formData.reason?.trim(),
       telefono: formData.phone?.trim() || undefined,
       correo: formData.email?.trim() || undefined,
@@ -182,7 +183,6 @@ export default function VisitsPage() {
         entry: fmtEntry,
         exit: "-",
         status: v.estado || "Dentro",
-        // ✅ para KPI de hoy
         entryAt: entryDate,
         exitAt: null,
       };
@@ -237,12 +237,139 @@ export default function VisitsPage() {
     }
   }
 
+  // ------------------------------
+  // Export helpers
+  // ------------------------------
+  function buildExportRows(list) {
+    return list.map((v) => ({
+      Visitante: v.name || "",
+      Documento: v.document || "",
+      Empresa: v.company || "",
+      Empleado: v.employee || "",
+      Entrada: v.entry || "",
+      Salida: v.exit || "",
+      Estado: v.status || "",
+    }));
+  }
+
+  // CSV export (universal)
+  function exportCSV(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    const headers = Object.keys(rows[0]);
+    const csvLines = [
+      headers.join(","),
+      ...rows.map((r) =>
+        headers
+          .map((h) => {
+            const cell = String(r[h] ?? "");
+            if (cell.includes('"') || cell.includes(",") || cell.includes("\n")) {
+              return `"${cell.replace(/"/g, '""')}"`;
+            }
+            return cell;
+          })
+          .join(",")
+      ),
+    ];
+    const csv = csvLines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.download = `visitas-${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // XLSX export using SheetJS
+  async function exportExcel(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+    try {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Visitas");
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbout], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.download = `visitas-${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn("Error generando XLSX:", err);
+      exportCSV(list);
+    }
+  }
+
+  // PDF export using jsPDF + autotable (descarga directa, sin popups)
+  function exportPDF(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      const title = "Reporte de Visitantes";
+      doc.setFontSize(14);
+      doc.text(title, 40, 40);
+
+      const headers = Object.keys(rows[0]);
+      const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
+
+      // jspdf-autotable usage
+      // autoTable was added to jsPDF prototype by importing "jspdf-autotable"
+      doc.autoTable({
+        startY: 60,
+        head: [headers],
+        body,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [30, 30, 30], textColor: 255 },
+        theme: "grid",
+        margin: { left: 20, right: 20 },
+      });
+
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      doc.save(`visitas-${ts}.pdf`);
+    } catch (err) {
+      console.error("Error generando PDF con jsPDF:", err);
+      alert("No se pudo generar PDF automáticamente. Revisa las dependencias (jspdf, jspdf-autotable).");
+    }
+  }
+
+  // ------------------------------
+  // Render
+  // ------------------------------
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
+      {/* Header / botones superior (solo Registrar + Agenda) */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div className="flex flex-col">
           <h1 className="text-xl md:text-2xl font-bold text-neutral-100 dark:text-neutral-100">
@@ -253,7 +380,7 @@ export default function VisitsPage() {
           </p>
         </div>
 
-        <div className="flex flex-col items-start md:items-end gap-2">
+        <div className="flex flex-row gap-3 items-center">
           <button
             onClick={() => setShowModal(true)}
             className="btn-neon flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
@@ -263,18 +390,18 @@ export default function VisitsPage() {
 
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="text-xs text-blue-400 hover:underline"
+            className="btn-neon-alt flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
           >
-            Ir a Agenda de Citas →
+            <span className="font-semibold">Agenda de Citas</span> →
           </button>
         </div>
       </div>
 
+      {/* KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="user">👤</span>{" "}
-            Visitantes Activos
+            👤 Visitantes Activos
           </div>
           <div className="text-2xl font-semibold text-green-400">
             {loading ? "…" : kpiActivos}
@@ -283,8 +410,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="clock">⏰</span>{" "}
-            Total Hoy
+            ⏰ Total Hoy
           </div>
           <div className="text-2xl font-semibold text-blue-400">
             {loading ? "…" : kpiTotalHoy}
@@ -293,8 +419,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="building">🏢</span>{" "}
-            Empresas Visitantes
+            🏢 Empresas Visitantes
           </div>
           <div className="text-2xl font-semibold text-purple-400">
             {loading ? "…" : kpiEmpresas}
@@ -302,6 +427,7 @@ export default function VisitsPage() {
         </div>
       </div>
 
+      {/* TABLA */}
       <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
           <div className="font-semibold text-neutral-200 text-base">
@@ -348,11 +474,15 @@ export default function VisitsPage() {
           <tbody className="text-neutral-200">
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Cargando…</td>
+                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">
+                  Cargando…
+                </td>
               </tr>
             ) : filteredVisitors.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Sin resultados</td>
+                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">
+                  Sin resultados
+                </td>
               </tr>
             ) : (
               filteredVisitors.map((v) => (
@@ -388,6 +518,25 @@ export default function VisitsPage() {
             )}
           </tbody>
         </table>
+
+        {/* FOOTER: Export buttons moved here (debajo de la tabla) */}
+        <div className="mt-4 flex justify-end gap-3">
+          <button
+            onClick={() => exportExcel(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar lista (xlsx)"
+          >
+            Exportar Excel
+          </button>
+
+          <button
+            onClick={() => exportPDF(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar PDF"
+          >
+            Exportar PDF
+          </button>
+        </div>
       </section>
 
       {showModal && (
