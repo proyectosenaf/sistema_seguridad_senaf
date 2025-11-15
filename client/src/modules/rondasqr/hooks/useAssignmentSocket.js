@@ -2,6 +2,10 @@
 import { useEffect } from "react";
 import { io } from "socket.io-client";
 import { SOCKET_BASE } from "../../../lib/api.js";
+<<<<<<< HEAD
+=======
+
+>>>>>>> 4039064d3f95ba88e7eabccb3f5afd1845fcd7da
 
 /**
  * Hook de socket para rondas:
