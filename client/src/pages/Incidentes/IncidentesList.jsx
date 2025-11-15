@@ -1,8 +1,8 @@
 // src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef } from "react";
-import axios from "axios";
 import { Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import api from "../../lib/api.js"; // 👈 usamos el cliente con Auth
 
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
@@ -28,13 +28,9 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
-  // ========= BASE API SIMILAR A IncidenteForm =========
+  // ========= BASE para imágenes (solo host) =========
   const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-  const BASE_CLEAN = RAW.replace(/\/+$/, "");
-  const API_ROOT = /\/api$/.test(BASE_CLEAN)
-    ? BASE_CLEAN
-    : `${BASE_CLEAN}/api`; // para /api/incidentes
-  const API_HOST = BASE_CLEAN; // para servir imágenes tipo /uploads/...
+  const API_HOST = RAW.replace(/\/+$/, "");
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -44,10 +40,15 @@ export default function IncidentesList() {
     setStats({ abiertos, enProceso, resueltos, alta });
   }
 
+  // ───────── cargar incidentes ─────────
   useEffect(() => {
-    axios
-      .get(`${API_ROOT}/incidentes`, { withCredentials: true })
-      .then((res) => {
+    (async () => {
+      try {
+        // 👇 api ya tiene baseURL tipo http://localhost:4000/api
+        const res = await api.get("/incidentes", {
+          params: { limit: 500 },
+        });
+
         const data = Array.isArray(res.data)
           ? res.data
           : Array.isArray(res.data?.items)
@@ -55,19 +56,15 @@ export default function IncidentesList() {
           : [];
         setIncidentes(data);
         recomputeStats(data);
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error("Error cargando incidentes", err);
-      });
-  }, [API_ROOT]);
+      }
+    })();
+  }, []);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
-      const res = await axios.put(
-        `${API_ROOT}/incidentes/${id}`,
-        { status: nuevoEstado },
-        { withCredentials: true }
-      );
+      const res = await api.put(`/incidentes/${id}`, { status: nuevoEstado });
 
       const serverItem = res.data?.item || res.data || {};
       const patch =
@@ -138,11 +135,7 @@ export default function IncidentesList() {
 
       if (editingId) {
         // UPDATE
-        const res = await axios.put(
-          `${API_ROOT}/incidentes/${editingId}`,
-          payload,
-          { withCredentials: true }
-        );
+        const res = await api.put(`/incidentes/${editingId}`, payload);
         const actualizado = res.data?.item || res.data || {};
         setIncidentes((prev) => {
           const next = prev.map((i) =>
@@ -153,9 +146,7 @@ export default function IncidentesList() {
         });
       } else {
         // CREATE
-        const res = await axios.post(`${API_ROOT}/incidentes`, payload, {
-          withCredentials: true,
-        });
+        const res = await api.post("/incidentes", payload);
         const creado = res.data?.item || res.data;
         setIncidentes((prev) => {
           const next = [creado, ...prev];
@@ -198,9 +189,7 @@ export default function IncidentesList() {
     if (!ok) return;
 
     try {
-      await axios.delete(`${API_ROOT}/incidentes/${id}`, {
-        withCredentials: true,
-      });
+      await api.delete(`/incidentes/${id}`);
       setIncidentes((prev) => {
         const next = prev.filter((i) => i._id !== id);
         recomputeStats(next);
@@ -241,7 +230,7 @@ export default function IncidentesList() {
         </button>
       </div>
 
-      {/* FORM inline con el MISMO estilo del IncidenteForm */}
+      {/* FORM inline */}
       {showForm && (
         <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
@@ -351,7 +340,7 @@ export default function IncidentesList() {
                   📷 Tomar foto
                 </button>
 
-                <p className="text-xs text-gray-500 dark:text-white/40 self-center">
+                <p className="text-xs text-gray-500 dark:text:white/40 self-center">
                   Puede adjuntar varias imágenes como evidencia.
                 </p>
               </div>
@@ -397,13 +386,13 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border:white/10 text-gray-600 dark:text:white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text:white transition-all"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
+                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text:white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
               >
                 {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>
