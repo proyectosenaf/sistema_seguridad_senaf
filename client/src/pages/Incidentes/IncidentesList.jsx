@@ -1,4 +1,4 @@
-// src/modules/incidentes/IncidentesList.jsx
+// client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
@@ -340,7 +340,7 @@ export default function IncidentesList() {
                   📷 Tomar foto
                 </button>
 
-                <p className="text-xs text-gray-500 dark:text:white/40 self-center">
+                <p className="text-xs text-gray-500 dark:text-white/40 self-center">
                   Puede adjuntar varias imágenes como evidencia.
                 </p>
               </div>
@@ -386,13 +386,13 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border:white/10 text-gray-600 dark:text:white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text:white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text:white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
+                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
               >
                 {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>

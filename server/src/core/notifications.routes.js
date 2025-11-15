@@ -7,6 +7,10 @@ const router = express.Router();
 /**
  * Debes montar este router con un middleware que ponga req.user
  * (o adaptar a tu auth actual). Aquí asumimos req.user.sub/email.
+ *
+ * Ejemplo en server.js:
+ *   import notificationsRoutes from "./core/notifications.routes.js";
+ *   app.use("/api/notifications", requireAuth, authBridgeToReqUser, notificationsRoutes);
  */
 
 // ─────────── Helpers ───────────

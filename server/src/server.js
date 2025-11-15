@@ -134,19 +134,25 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
-// 📁 uploads de incidentes (para las fotos que vienen de /api/incidentes)
-const INCIDENT_UPLOADS_DIR = path.resolve(process.cwd(), "uploads", "incidentes");
-if (!fs.existsSync(INCIDENT_UPLOADS_DIR)) {
-  fs.mkdirSync(INCIDENT_UPLOADS_DIR, { recursive: true });
+/**
+ * Unificamos todo en una sola carpeta raíz:
+ *   <root>/uploads
+ *
+ * Desde el frontend las rutas pueden venir como:
+ *   /uploads/incidentes/archivo.png
+ *   /api/uploads/incidentes/archivo.png
+ *
+ * Ambas funcionarán porque montamos dos prefijos.
+ */
+const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOADS_ROOT)) {
+  fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 }
-app.use("/uploads/incidentes", express.static(INCIDENT_UPLOADS_DIR));
 
-// 📁 uploads del módulo Rondas QR (los que ya tenías)
-const RONDAS_UPLOADS_DIR = path.resolve(process.cwd(), "modules", "rondasqr", "uploads");
-if (!fs.existsSync(RONDAS_UPLOADS_DIR)) {
-  fs.mkdirSync(RONDAS_UPLOADS_DIR, { recursive: true });
-}
-app.use("/uploads", express.static(RONDAS_UPLOADS_DIR));
+// Servir archivos sin /api (ej: http://localhost:4000/uploads/...)
+app.use("/uploads", express.static(UPLOADS_ROOT));
+// Servir archivos también con /api (ej: http://localhost:4000/api/uploads/...)
+app.use("/api/uploads", express.static(UPLOADS_ROOT));
 
 /* ───────────────────────── Health checks ──────────────────────── */
 app.get("/api/health", (_req, res) =>
