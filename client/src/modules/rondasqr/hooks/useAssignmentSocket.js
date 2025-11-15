@@ -26,13 +26,10 @@ export function useAssignmentSocket(user, onNotify, onCount) {
         transports: ["websocket", "polling"],
       });
     }
+
     const socket = window.__senafSocket;
 
-    // 🔁 Une al usuario a las rooms de guardia y usuario
-    //   (el server escucha "join-room")
-    socket.emit("join-room", { userId });
-
-    // Nueva asignación
+    // 🔔 Nueva asignación de rondas
     const handleAssignment = (payload) => {
       try {
         onNotify?.(payload);
