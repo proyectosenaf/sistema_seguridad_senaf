@@ -229,6 +229,12 @@ export default function ReportsPage() {
   function exportOmissionsPdf() {
     const rows = omissionsToExport;
     const win = window.open("", "_blank");
+
+    if (!win) {
+      alert("El navegador ha bloqueado la ventana emergente. Permite pop-ups para descargar/imprimir el reporte.");
+      return;
+    }
+
     const fechaHora = new Date();
 
     const style = `
@@ -317,7 +323,7 @@ export default function ReportsPage() {
 
     const headerHtml = `
       <header>
-        <div class="brand">Seguridad SENAF</div>
+        <div class="brand">SEGURIDAD SENAF</div>
         <div class="title">Informe de Omisiones de Rondas</div>
         <p class="subtitle">Rondas omitidas dentro del rango seleccionado</p>
         <div class="meta">
@@ -366,7 +372,11 @@ export default function ReportsPage() {
     const html = `
       <!doctype html>
       <html>
-        <head><meta charset="utf-8" />${style}</head>
+        <head>
+          <meta charset="utf-8" />
+          <title>Informe de Omisiones de Rondas - Seguridad SENAF</title>
+          ${style}
+        </head>
         <body>
           ${headerHtml}
 
@@ -388,6 +398,14 @@ export default function ReportsPage() {
     win.onload = () => {
       win.focus();
       win.print();
+    };
+    // Cierra la ventana auxiliar después de imprimir (cuando el navegador lo soporte)
+    win.onafterprint = () => {
+      try {
+        win.close();
+      } catch {
+        // ignore
+      }
     };
   }
 
@@ -455,7 +473,7 @@ export default function ReportsPage() {
       <!DOCTYPE html>
       <html><head><meta charset="utf-8"/>${style}</head>
       <body>
-        <div class="brand">Seguridad SENAF</div>
+        <div class="brand">SEGURIDAD SENAF</div>
         <div class="subtitle">Informe de Omisiones de Rondas</div>
         ${resumenHtml}
         ${table}
@@ -511,7 +529,7 @@ export default function ReportsPage() {
   }
 
   async function doPdf() {
-    // Si el usuario está en modo "Omisiones", generamos el PDF en el front
+    // Si el usuario está en modo "Omisiones", generamos el diseño especial en el front
     if (f.reportType === "omissions") {
       exportOmissionsPdf();
       return;
@@ -533,7 +551,7 @@ export default function ReportsPage() {
   }
 
   function doPrint() {
-    // Imprime la vista actual (el encabezado "Seguridad SENAF" ya se muestra arriba)
+    // Imprime la vista actual; el encabezado "Seguridad SENAF" ya se muestra arriba
     window.print();
   }
   /* ----------------------------------- */
