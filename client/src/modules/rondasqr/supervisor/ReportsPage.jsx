@@ -4,8 +4,10 @@ import { rondasqrApi } from "../api/rondasqrApi";
 import ReportSummary from "./ReportSummary";
 import OmissionsTable from "./OmissionsTable";
 import MessagesTable from "./MessagesTable";
-import DetailedMarks from "./DetailedMarks";
 import MapView from "./MapView";
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 
@@ -69,6 +71,10 @@ export default function ReportsPage() {
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
 
+  // NUEVO: catálogo de oficiales (guardias) y texto en el input buscable
+  const [officers, setOfficers] = useState([]);
+  const [officerQuery, setOfficerQuery] = useState("");
+
   // Cargar sitios al montar
   useEffect(() => {
     (async () => {
@@ -97,6 +103,44 @@ export default function ReportsPage() {
       }
     })();
   }, [f.siteId]);
+
+  // NUEVO: cargar guardias (rol Guardia)
+  useEffect(() => {
+    (async () => {
+      try {
+        // Ajusta esta llamada al endpoint real que tengas para listar guardias
+        const resp = await rondasqrApi.listOfficers();
+        const items = resp?.items || resp || [];
+
+        const normalized = items.map((u) => {
+          const name =
+            u.name ||
+            `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+            u.fullName ||
+            u.email ||
+            u.username ||
+            "Sin nombre";
+
+          return {
+            id: u._id || u.id || u.guardId || u.userId,
+            name,
+            email: u.email || u.username || "",
+            guardId: u.guardId || u.employeeId || u._id || u.id,
+          };
+        });
+
+        setOfficers(normalized);
+      } catch (e) {
+        console.warn("[ReportsPage] listOfficers error:", e);
+      }
+    })();
+  }, []);
+
+  function getOfficerLabel(o) {
+    if (!o) return "";
+    if (o.email) return `${o.name} (${o.email})`;
+    return o.name;
+  }
 
   async function load() {
     setLoading(true);
@@ -133,6 +177,7 @@ export default function ReportsPage() {
       officer: "",
     }));
     setRounds([]);
+    setOfficerQuery("");
   }
 
   function handleToggleInclude(key) {
@@ -210,7 +255,7 @@ export default function ReportsPage() {
     });
   }
 
-  /* ---------- Exportar helper: encabezados y dataset de omisiones ---------- */
+  /* ---------- Exportar helper: encabezados y dataset ---------- */
 
   // Nombre legible de sitio/ronda para encabezados
   const siteLabel =
@@ -226,200 +271,484 @@ export default function ReportsPage() {
   // dataset de omisiones a exportar (ya viene filtrado por backend según f)
   const omissionsToExport = data.omissions || [];
 
-  function exportOmissionsPdf() {
-    const rows = omissionsToExport;
-    const win = window.open("", "_blank");
+  /* ===================== PDF helpers (descargar / imprimir) ===================== */
+  function finalizePdf(doc, filename, mode) {
+    if (mode === "print") {
+      doc.autoPrint();
+      const blobUrl = doc.output("bloburl");
+      window.open(blobUrl, "_blank");
+    } else {
+      doc.save(filename);
+    }
+  }
 
-    if (!win) {
-      alert("El navegador ha bloqueado la ventana emergente. Permite pop-ups para descargar/imprimir el reporte.");
+  /* ===================== PDF: OMISIONES ===================== */
+  function exportOmissionsPdf(mode = "download") {
+    const rows = omissionsToExport || [];
+    if (!rows.length) {
+      alert("No hay omisiones para exportar con los filtros actuales.");
       return;
     }
 
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
     const fechaHora = new Date();
 
-    const style = `
-      <style>
-        @page { margin: 16mm; }
-        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        body{
-          font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          margin:0; color:#0f172a;
-        }
-        header{
-          padding:4px 0 12px 0;
-          margin-bottom:8px;
-          border-bottom:2px solid #e2e8f0;
-        }
-        .brand{
-          font-weight:900;
-          font-size:26px;
-          margin:0 0 2px 0;
-          letter-spacing:.12em;
-          text-transform:uppercase;
-        }
-        .title{
-          font-size:20px;
-          font-weight:800;
-          margin:4px 0 2px 0;
-        }
-        .subtitle{
-          font-size:13px;
-          margin:0;
-          color:#475569;
-        }
-        .meta{
-          font-size:11px;
-          margin-top:6px;
-          color:#64748b;
-        }
-        h2.section{
-          font-size:17px;
-          font-weight:800;
-          margin:16px 0 8px;
-        }
-        table{
-          width:100%;
-          border-collapse:separate;
-          border-spacing:0;
-          font-size:11px;
-        }
-        thead th{
-          background:#0f172a;
-          color:#f9fafb;
-          font-weight:700;
-          text-align:left;
-          padding:6px 8px;
-          border-right:1px solid #111827;
-        }
-        thead th:first-child{border-top-left-radius:10px;}
-        thead th:last-child{border-top-right-radius:10px;border-right:none;}
-        tbody td{
-          padding:6px 8px;
-          border-bottom:1px solid #e2e8f0;
-          border-right:1px solid #e2e8f0;
-        }
-        tbody td:last-child{border-right:none;}
-        tbody tr:nth-child(even) td{background:#f9fafb;}
-        .chip{
-          display:inline-block;
-          padding:2px 8px;
-          border-radius:999px;
-          background:#fbbf24;
-          color:#1f2937;
-          font-size:10px;
-          font-weight:600;
-        }
-        footer{
-          position:fixed;
-          bottom:12mm;
-          left:0; right:0;
-          text-align:center;
-          color:#94a3b8;
-          font-size:11px;
-        }
-        table, tr, td, th { page-break-inside: avoid; }
-      </style>
-    `;
+    // Encabezado
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("SEGURIDAD SENAF", 14, 14);
 
-    const headerHtml = `
-      <header>
-        <div class="brand">SEGURIDAD SENAF</div>
-        <div class="title">Informe de Omisiones de Rondas</div>
-        <p class="subtitle">Rondas omitidas dentro del rango seleccionado</p>
-        <div class="meta">
-          <div><b>Rango:</b> ${f.from || "—"} — ${f.to || "—"}</div>
-          <div><b>Sitio:</b> ${siteLabel} · <b>Ronda:</b> ${roundLabel}</div>
-          <div><b>Oficial:</b> ${f.officer || "Todos"}</div>
-          <div><b>Generado:</b> ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}</div>
-          <div><b>Total omisiones:</b> ${rows.length}</div>
-        </div>
-      </header>
-    `;
+    doc.setFontSize(16);
+    doc.text("Informe de Omisiones de Rondas", 14, 22);
 
-    const headerRow = `
-      <tr>
-        <th>#</th>
-        <th>Ronda</th>
-        <th>Fecha/Hora esperada</th>
-        <th>Punto</th>
-        <th>Oficial</th>
-        <th>Estado</th>
-      </tr>
-    `;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Rondas omitidas dentro del rango seleccionado", 14, 28);
 
-    const bodyRows = rows
-      .map((o, i) => {
-        const fecha = formatDateTime(
-          o.expectedAt || o.expectedTime || o.date || o.ts
+    // Meta
+    const metaLines = [
+      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
+      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
+      `Oficial: ${f.officer || "Todos"}`,
+      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
+      `Total omisiones: ${rows.length}`,
+    ];
+
+    let y = 34;
+    doc.setFontSize(9);
+    metaLines.forEach((line) => {
+      doc.text(line, 14, y);
+      y += 4;
+    });
+
+    const tableBody = rows.map((o, i) => {
+      const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
+      const ronda = o.roundName || o.roundId || "—";
+      const punto = o.pointName || o.point || o.pointId || "—";
+      const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+
+      return [i + 1, ronda, fecha, punto, oficial, "Omitido"];
+    });
+
+    autoTable(doc, {
+      startY: y + 2,
+      head: [["#", "Ronda", "Fecha/Hora esperada", "Punto", "Oficial", "Estado"]],
+      body: tableBody,
+      styles: {
+        fontSize: 8,
+        cellPadding: 1.5,
+      },
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: 255,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      didDrawPage: (data) => {
+        const pageHeight =
+          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+        const pageWidth =
+          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
+
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          "Generado por el módulo de Rondas QR — Seguridad SENAF",
+          data.settings.margin.left,
+          pageHeight - 8
         );
-        const ronda = o.roundName || o.roundId || "—";
-        const punto = o.pointName || o.point || o.pointId || "—";
-        const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+        const pageNumber = doc.internal.getNumberOfPages();
+        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
+      },
+    });
 
-        return `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${ronda}</td>
-            <td>${fecha}</td>
-            <td>${punto}</td>
-            <td>${oficial}</td>
-            <td><span class="chip">Omitido</span></td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Informe de Omisiones de Rondas - Seguridad SENAF</title>
-          ${style}
-        </head>
-        <body>
-          ${headerHtml}
-
-          <h2 class="section">Detalle de omisiones</h2>
-
-          <table>
-            <thead>${headerRow}</thead>
-            <tbody>${bodyRows}</tbody>
-          </table>
-
-          <footer>Generado por el módulo de Rondas QR — Seguridad SENAF</footer>
-        </body>
-      </html>
-    `;
-
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => {
-      win.focus();
-      win.print();
-    };
-    // Cierra la ventana auxiliar después de imprimir (cuando el navegador lo soporte)
-    win.onafterprint = () => {
-      try {
-        win.close();
-      } catch {
-        // ignore
-      }
-    };
+    const filename = `omisiones-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
+    finalizePdf(doc, filename, mode);
   }
 
+  /* ==================== PDF: RONDAS ==================== */
+  function exportRoundsPdf(mode = "download") {
+    const rows = data.stats || [];
+    if (!rows.length) {
+      alert("No hay datos de rondas para exportar con los filtros actuales.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const fechaHora = new Date();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("SEGURIDAD SENAF", 14, 14);
+
+    doc.setFontSize(16);
+    doc.text("Informe de Rondas", 14, 22);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Resumen de rondas ejecutadas dentro del rango seleccionado", 14, 28);
+
+    const metaLines = [
+      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
+      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
+      `Oficial: ${f.officer || "Todos"}`,
+      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
+      `Total filas: ${rows.length}`,
+    ];
+
+    let y = 34;
+    doc.setFontSize(9);
+    metaLines.forEach((line) => {
+      doc.text(line, 14, y);
+      y += 4;
+    });
+
+    const tableBody = rows.map((r, i) => {
+      const guard =
+        r.guardName || r.officerName || r.officerEmail || r.guardId || "—";
+      const site = r.siteName || r.site || "—";
+      const round = r.roundName || r.round || r.roundId || "—";
+
+      const programadas = r.totalRounds ?? r.programadas ?? r.total ?? 0;
+      const realizadas = r.completed ?? r.realizadas ?? r.done ?? 0;
+      const omitidas = r.missed ?? r.omitidas ?? r.omissions ?? 0;
+
+      const cumplimientoRaw =
+        r.compliancePct ??
+        r.compliance ??
+        r.pct ??
+        (programadas ? Math.round((realizadas / programadas) * 100) : 0);
+
+      const cumplimiento = Number.isFinite(cumplimientoRaw)
+        ? `${Math.round(cumplimientoRaw)}%`
+        : "—";
+
+      return [
+        i + 1,
+        guard,
+        site,
+        round,
+        programadas,
+        realizadas,
+        omitidas,
+        cumplimiento,
+      ];
+    });
+
+    autoTable(doc, {
+      startY: y + 2,
+      head: [
+        [
+          "#",
+          "Oficial",
+          "Sitio",
+          "Ronda",
+          "Programadas",
+          "Realizadas",
+          "Omitidas",
+          "Cumplimiento",
+        ],
+      ],
+      body: tableBody,
+      styles: {
+        fontSize: 8,
+        cellPadding: 1.5,
+      },
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: 255,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      didDrawPage: (data) => {
+        const pageHeight =
+          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+        const pageWidth =
+          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
+
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          "Generado por el módulo de Rondas QR — Seguridad SENAF",
+          data.settings.margin.left,
+          pageHeight - 8
+        );
+        const pageNumber = doc.internal.getNumberOfPages();
+        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
+      },
+    });
+
+    const filename = `rondas-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
+    finalizePdf(doc, filename, mode);
+  }
+
+  /* ==================== PDF: ALERTAS DE PÁNICO (antes Mensajes / Incidentes) ==================== */
+  function exportMessagesPdf(mode = "download") {
+    const rows = data.messages || [];
+    if (!rows.length) {
+      alert("No hay alertas de pánico para exportar con los filtros actuales.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const fechaHora = new Date();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("SEGURIDAD SENAF", 14, 14);
+
+    doc.setFontSize(16);
+    doc.text("Informe de Alertas de pánico", 14, 22);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(
+      "Alertas de pánico generadas dentro del rango seleccionado",
+      14,
+      28
+    );
+
+    const metaLines = [
+      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
+      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
+      `Oficial: ${f.officer || "Todos"}`,
+      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
+      `Total alertas de pánico: ${rows.length}`,
+    ];
+
+    let y = 34;
+    doc.setFontSize(9);
+    metaLines.forEach((line) => {
+      doc.text(line, 14, y);
+      y += 4;
+    });
+
+    const tableBody = rows.map((m, i) => {
+      const tipo = m.type || m.kind || m.level || "—";
+      const fecha = formatDateTime(m.ts || m.date || m.createdAt);
+      const sitio = m.siteName || m.site || "—";
+      const ronda = m.roundName || m.round || "—";
+      const oficial = m.officerName || m.officerEmail || m.guardId || "—";
+      const detalle = m.message || m.description || m.detail || "—";
+      const gps = m.gps || m.coordinates || m.location || "—";
+
+      return [i + 1, tipo, fecha, sitio, ronda, oficial, detalle, gps];
+    });
+
+    autoTable(doc, {
+      startY: y + 2,
+      head: [
+        [
+          "#",
+          "Tipo",
+          "Fecha / Hora",
+          "Sitio",
+          "Ronda",
+          "Oficial",
+          "Detalle",
+          "GPS",
+        ],
+      ],
+      body: tableBody,
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+      },
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: 255,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      columnStyles: {
+        0: { cellWidth: 7 },
+        1: { cellWidth: 18 },
+        2: { cellWidth: 28 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 22 },
+        5: { cellWidth: 26 },
+        6: { cellWidth: 45 },
+        7: { cellWidth: 25 },
+      },
+      didDrawPage: (data) => {
+        const pageHeight =
+          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+        const pageWidth =
+          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
+
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          "Generado por el módulo de Rondas QR — Seguridad SENAF",
+          data.settings.margin.left,
+          pageHeight - 8
+        );
+        const pageNumber = doc.internal.getNumberOfPages();
+        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
+      },
+    });
+
+    const filename = `alertas-panico-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
+    finalizePdf(doc, filename, mode);
+  }
+
+  /* ==================== PDF: DETALLE DE MARCAS ==================== */
+  function exportDetailPdf(mode = "download") {
+    const rows = data.detailed || [];
+    if (!rows.length) {
+      alert("No hay detalle de marcas para exportar con los filtros actuales.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "landscape", // más ancho → más columnas cómodas
+      unit: "mm",
+      format: "a4",
+    });
+
+    const fechaHora = new Date();
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("SEGURIDAD SENAF", 14, 14);
+
+    doc.setFontSize(16);
+    doc.text("Detalle de Rondas y Marcas", 14, 22);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(
+      "Marcas realizadas por los guardias dentro del rango seleccionado",
+      14,
+      28
+    );
+
+    const metaLines = [
+      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
+      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
+      `Oficial: ${f.officer || "Todos"}`,
+      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
+      `Total registros: ${rows.length}`,
+    ];
+
+    let y = 34;
+    doc.setFontSize(9);
+    metaLines.forEach((line) => {
+      doc.text(line, 14, y);
+      y += 4;
+    });
+
+    const tableBody = rows.map((r, i) => {
+      const fecha = formatDateTime(r.ts || r.date || r.createdAt);
+      const sitio = r.siteName || r.site || "—";
+      const ronda = r.roundName || r.round || "—";
+      const punto = r.pointName || r.point || r.pointId || "—";
+      const oficial = r.officerName || r.officerEmail || r.guardId || "—";
+      const enVentana =
+        typeof r.inWindow === "boolean" ? (r.inWindow ? "Sí" : "No") : "—";
+      const estado = r.status || r.state || r.result || "—";
+
+      return [i + 1, fecha, sitio, ronda, punto, oficial, enVentana, estado];
+    });
+
+    autoTable(doc, {
+      startY: y + 2,
+      head: [
+        [
+          "#",
+          "Fecha / Hora",
+          "Sitio",
+          "Ronda",
+          "Punto",
+          "Oficial",
+          "En ventana",
+          "Estado",
+        ],
+      ],
+      body: tableBody,
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+      },
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: 255,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      didDrawPage: (data) => {
+        const pageHeight =
+          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
+        const pageWidth =
+          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
+
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          "Generado por el módulo de Rondas QR — Seguridad SENAF",
+          data.settings.margin.left,
+          pageHeight - 8
+        );
+        const pageNumber = doc.internal.getNumberOfPages();
+        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
+      },
+    });
+
+    const filename = `detalle-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
+    finalizePdf(doc, filename, mode);
+  }
+
+  /* ================= EXCEL: OMISIONES ================= */
   function exportOmissionsExcel() {
     const rows = omissionsToExport;
     const fechaHora = new Date();
 
     const style = `
       <style>
-        body { font-family: Calibri, "Segoe UI", Arial, sans-serif; }
-        .brand { font-size:20px; font-weight:800; margin:4px 0 2px 0; text-transform:uppercase; letter-spacing:.12em; }
-        .subtitle { font-size:14px; font-weight:700; margin:0 0 6px 0; }
-        .meta { margin:4px 0 8px 0; font-size:11px; }
-        table { width:100%; border-collapse:collapse; font-size:11px; }
+        html, body {
+          font-family: Calibri, "Segoe UI", Arial, sans-serif;
+          font-size: 12pt;
+        }
+        .brand {
+          font-size:20pt;
+          font-weight:800;
+          margin:4px 0 2px 0;
+          text-transform:uppercase;
+          letter-spacing:.12em;
+        }
+        .subtitle {
+          font-size:14pt;
+          font-weight:700;
+          margin:0 0 6px 0;
+        }
+        .meta {
+          margin:4px 0 8px 0;
+          font-size:11pt;
+        }
+        table {
+          width:100%;
+          border-collapse:collapse;
+          font-size:10pt;
+        }
         thead th{
           background:#0f172a; color:#fff; text-align:left; padding:6px;
           border:1px solid #0f172a; font-weight:700;
@@ -427,6 +756,25 @@ export default function ReportsPage() {
         tbody td{ padding:5px; border:1px solid #e5e7eb; }
         tbody tr:nth-child(even){ background:#f9fafb; }
       </style>
+    `;
+
+    // Zoom 120% para que no se vea "mini" en Excel
+    const excelXml = `
+      <!--[if gte mso 9]><xml>
+      <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">
+        <ExcelWorksheets>
+          <ExcelWorksheet>
+            <Name>Omisiones</Name>
+            <WorksheetOptions>
+              <Selected/>
+              <ProtectObjects>False</ProtectObjects>
+              <ProtectScenarios>False</ProtectScenarios>
+              <Zoom>120</Zoom>
+            </WorksheetOptions>
+          </ExcelWorksheet>
+        </ExcelWorksheets>
+      </ExcelWorkbook>
+      </xml><![endif]-->
     `;
 
     const resumenHtml = `
@@ -443,9 +791,7 @@ export default function ReportsPage() {
 
     const body = rows
       .map((o, i) => {
-        const fecha = formatDateTime(
-          o.expectedAt || o.expectedTime || o.date || o.ts
-        );
+        const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
         const ronda = o.roundName || o.roundId || "—";
         const punto = o.pointName || o.point || o.pointId || "—";
         const oficial = o.officerName || o.officerEmail || o.guardId || "—";
@@ -471,13 +817,19 @@ export default function ReportsPage() {
 
     const html = `
       <!DOCTYPE html>
-      <html><head><meta charset="utf-8"/>${style}</head>
-      <body>
-        <div class="brand">SEGURIDAD SENAF</div>
-        <div class="subtitle">Informe de Omisiones de Rondas</div>
-        ${resumenHtml}
-        ${table}
-      </body></html>
+      <html xmlns:x="urn:schemas-microsoft-com:office:excel">
+        <head>
+          <meta charset="utf-8"/>
+          ${style}
+          ${excelXml}
+        </head>
+        <body>
+          <div class="brand">SEGURIDAD SENAF</div>
+          <div class="subtitle">Informe de Omisiones de Rondas</div>
+          ${resumenHtml}
+          ${table}
+        </body>
+      </html>
     `;
 
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
@@ -489,7 +841,7 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
-  /* ---------- Exportar (backend + overrides para omisiones) ---------- */
+  /* ---------- Exportar (backend + overrides) ---------- */
   async function openFirstOk(urls) {
     for (const url of urls) {
       try {
@@ -522,21 +874,36 @@ export default function ReportsPage() {
         `${ROOT}/api/rondasqr/v1/reports/excel?${qs}`,
       ];
       const ok = await openFirstOk(candidates);
-      if (!ok) alert("HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor.");
+      if (!ok)
+        alert("HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor.");
     } finally {
       setDownloading(false);
     }
   }
 
   async function doPdf() {
-    // Si el usuario está en modo "Omisiones", generamos el diseño especial en el front
-    if (f.reportType === "omissions") {
-      exportOmissionsPdf();
-      return;
-    }
-
+    // Para tipos específicos generamos el PDF en el front (descargable)
     try {
       setDownloading(true);
+
+      if (f.reportType === "omissions") {
+        exportOmissionsPdf("download");
+        return;
+      }
+      if (f.reportType === "rounds") {
+        exportRoundsPdf("download");
+        return;
+      }
+      if (f.reportType === "messages") {
+        exportMessagesPdf("download");
+        return;
+      }
+      if (f.reportType === "detail") {
+        exportDetailPdf("download");
+        return;
+      }
+
+      // Para "all" o "map" seguimos intentando el endpoint del backend
       const qs = new URLSearchParams(f).toString();
       const candidates = [
         rondasqrApi.pdfUrl(f),
@@ -544,15 +911,38 @@ export default function ReportsPage() {
         `${ROOT}/api/rondasqr/v1/reports/export/report.pdf?${qs}`,
       ];
       const ok = await openFirstOk(candidates);
-      if (!ok) alert("HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor.");
+      if (!ok)
+        alert("HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor.");
     } finally {
       setDownloading(false);
     }
   }
 
   function doPrint() {
-    // Imprime la vista actual; el encabezado "Seguridad SENAF" ya se muestra arriba
-    window.print();
+    // Imprimir usando el MISMO formato del PDF (abre el PDF en modo impresión)
+    if (f.reportType === "omissions") {
+      exportOmissionsPdf("print");
+      return;
+    }
+    if (f.reportType === "rounds") {
+      exportRoundsPdf("print");
+      return;
+    }
+    if (f.reportType === "messages") {
+      exportMessagesPdf("print");
+      return;
+    }
+    if (f.reportType === "detail") {
+      exportDetailPdf("print");
+      return;
+    }
+
+    // Para "all" o "map" intentamos el backend (PDF ya maquetado del servidor)
+    const qs = new URLSearchParams(f).toString();
+    const url =
+      rondasqrApi.pdfUrl?.(f) ||
+      `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`;
+    window.open(url, "_blank");
   }
   /* ----------------------------------- */
 
@@ -566,6 +956,29 @@ export default function ReportsPage() {
       alphaVar
     )} 100%)`,
   };
+
+  // ====== lógica para combo buscable de oficiales ======
+  const filteredOfficers =
+    officerQuery.trim().length === 0
+      ? officers
+      : officers.filter((o) =>
+          getOfficerLabel(o).toLowerCase().includes(officerQuery.toLowerCase())
+        );
+
+  function handleOfficerInputChange(e) {
+    const value = e.target.value;
+    setOfficerQuery(value);
+    setF((prev) => ({ ...prev, officer: value }));
+  }
+
+  function handleOfficerSelect(officer) {
+    const label = getOfficerLabel(officer);
+    setOfficerQuery(label);
+    setF((prev) => ({
+      ...prev,
+      officer: officer.guardId || officer.email || officer.id || label,
+    }));
+  }
 
   return (
     <div className="px-4 py-5 space-y-5">
@@ -595,7 +1008,7 @@ export default function ReportsPage() {
                 { id: "all", label: "Todos" },
                 { id: "rounds", label: "Rondas" },
                 { id: "omissions", label: "Omisiones" },
-                { id: "messages", label: "Mensajes / Incidentes" },
+                { id: "messages", label: "Alertas de pánico" },
                 { id: "detail", label: "Detalle" },
                 { id: "map", label: "Mapa" },
               ].map((opt) => {
@@ -719,14 +1132,37 @@ export default function ReportsPage() {
             </select>
           </div>
 
-          <div className="flex flex-col">
+          {/* Oficial buscable */}
+          <div className="flex flex-col relative">
             <label className="text-[11px] text-white/70 mb-1">Oficial (opcional)</label>
             <input
               placeholder="correo / nombre / guardId"
-              value={f.officer}
-              onChange={setField("officer")}
+              value={officerQuery}
+              onChange={handleOfficerInputChange}
               className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
             />
+            {filteredOfficers.length > 0 && officerQuery !== "" && (
+              <div className="absolute z-20 top-full mt-1 left-0 right-0 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-slate-900/95 backdrop-blur shadow-lg">
+                {filteredOfficers.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handleOfficerSelect(o);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700/80"
+                  >
+                    <div className="font-medium">{o.name}</div>
+                    {(o.email || o.guardId) && (
+                      <div className="text-[10px] text-slate-300">
+                        {o.email} {o.guardId && `· ${o.guardId}`}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -763,7 +1199,7 @@ export default function ReportsPage() {
               onChange={() => handleToggleInclude("includeMessages")}
               className="rounded border-white/20 bg-black/60"
             />
-            Mensajes / Incidentes
+            Alertas de pánico
           </label>
 
           <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
@@ -792,7 +1228,7 @@ export default function ReportsPage() {
       {f.includeSummary && <ReportSummary stats={data.stats} />}
       {f.includeOmissions && <OmissionsTable items={data.omissions} />}
       {f.includeMessages && <MessagesTable items={data.messages} />}
-      {f.includeDetail && <DetailedMarks items={data.detailed} />}
+      {f.includeDetail && <MapView items={data.detailed} /> && <></>}
 
       {f.includeMap && (
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
