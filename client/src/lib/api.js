@@ -18,6 +18,36 @@ export const API = API_ROOT;
 //    https://urchin-app-fuirh.ondigitalocean.app
 export const SOCKET_BASE = API_ROOT.replace(/\/api\/?$/, "");
 
+// Flags de modo dev / auth
+const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
+// opcional: si algún día quieres forzar dev sólo para API
+const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
+
+// Identidad DEV (igual idea que en iamApi)
+function getDevIdentity() {
+  let email =
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevEmail")) ||
+    import.meta.env.VITE_DEV_IAM_EMAIL ||
+    "";
+  let roles =
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevRoles")) ||
+    import.meta.env.VITE_DEV_IAM_ROLES ||
+    "";
+  let perms =
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevPerms")) ||
+    import.meta.env.VITE_DEV_IAM_PERMS ||
+    "*";
+
+  return {
+    email: String(email || "").trim(),
+    roles: String(roles || "").trim(),
+    perms: String(perms || "*").trim() || "*",
+  };
+}
+
 const api = axios.create({
   baseURL: API_ROOT,
   // Usamos Bearer token, no cookies de sesión.
@@ -39,19 +69,32 @@ export function setAuthToken(provider) {
 }
 
 // Interceptor: agrega Authorization si hay token
+// y, si NO hay token, puede enviar cabeceras DEV (x-user-*)
 api.interceptors.request.use(
   async (config) => {
+    config.headers = config.headers || {};
+
+    let token = null;
+
     if (tokenProvider) {
       try {
-        const token = await tokenProvider();
-        if (token) {
-          config.headers = config.headers || {};
-          config.headers.Authorization = `Bearer ${token}`;
-        }
+        token = await tokenProvider();
       } catch {
-        // silencioso en caso de error al obtener token
+        token = null;
       }
     }
+
+    if (token) {
+      // Modo normal: JWT real
+      config.headers.Authorization = `Bearer ${token}`;
+    } else if (DISABLE_AUTH || FORCE_DEV_API) {
+      // Modo DEV local: usamos x-user-headers, que server fusiona con iamDevMerge
+      const { email, roles, perms } = getDevIdentity();
+      if (email) config.headers["x-user-email"] = email;
+      if (roles) config.headers["x-roles"] = roles;
+      if (perms) config.headers["x-perms"] = perms;
+    }
+
     return config;
   },
   (error) => Promise.reject(error)

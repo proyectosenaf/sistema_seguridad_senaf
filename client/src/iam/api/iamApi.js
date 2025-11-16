@@ -1,5 +1,5 @@
 // client/src/iam/api/iamApi.js
-import { API } from "../../lib/api";
+import { API } from "../../lib/api.js";
 
 // Normaliza raíz de API para evitar dobles slashes
 const API_ROOT = String(API || "").replace(/\/$/, "");
@@ -12,17 +12,20 @@ const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 /** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevEmail")) ||
     import.meta.env.VITE_DEV_IAM_EMAIL ||
     "";
   const roles =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevRoles")) ||
     import.meta.env.VITE_DEV_IAM_ROLES ||
     "";
   const perms =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
+    (typeof localStorage !== "undefined" &&
+      localStorage.getItem("iamDevPerms")) ||
     import.meta.env.VITE_DEV_IAM_PERMS ||
-    "";
+    "*";
   return {
     email: email.trim(),
     roles: roles.trim(),
@@ -49,7 +52,14 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   if (DEBUG) {
     const log = { ...h };
     if (log.Authorization) log.Authorization = "(set)";
-    console.log("[iamApi] headers:", log, "method:", method, "url:", urlForCors);
+    console.log(
+      "[iamApi] headers:",
+      log,
+      "method:",
+      method,
+      "url:",
+      urlForCors
+    );
   }
   return h;
 }
@@ -63,19 +73,30 @@ async function toJson(resp) {
 }
 
 /** fetch con errores enriquecidos: err.status y err.payload */
-async function rawFetch(url, { method = "GET", body, token, formData = false } = {}) {
-  const isFD = formData || (typeof FormData !== "undefined" && body instanceof FormData);
+async function rawFetch(
+  url,
+  { method = "GET", body, token, formData = false } = {}
+) {
+  const isFD =
+    formData || (typeof FormData !== "undefined" && body instanceof FormData);
   try {
     const r = await fetch(url, {
       method,
       credentials: "include",
-      headers: buildHeaders({ token, isFormData: isFD, method, urlForCors: url }),
+      headers: buildHeaders({
+        token,
+        isFormData: isFD,
+        method,
+        urlForCors: url,
+      }),
       body: body ? (isFD ? body : JSON.stringify(body)) : undefined,
     });
 
     const contentType = r.headers.get("content-type") || "";
     const parse = async () =>
-      contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => "");
+      contentType.includes("application/json")
+        ? await toJson(r)
+        : await r.text().catch(() => "");
 
     if (!r.ok) {
       const payload = await parse();
@@ -109,28 +130,34 @@ const PATHS = {
   users: {
     list: (q) => `${V1}/users${q ? `?q=${encodeURIComponent(q)}` : ""}`,
     guards: (q, active = true) =>
-      `${V1}/users/guards${q || active ? `?${[
-        q ? `q=${encodeURIComponent(q)}` : "",
-        active ? "active=1" : ""
-      ].filter(Boolean).join("&")}` : ""}`,
+      `${V1}/users/guards${
+        q || active
+          ? `?${[
+              q ? `q=${encodeURIComponent(q)}` : "",
+              active ? "active=1" : "",
+            ]
+              .filter(Boolean)
+              .join("&")}`
+          : ""
+      }`,
     create: () => `${V1}/users`,
     byId: (id) => `${V1}/users/${id}`,
     enable: (id) => `${V1}/users/${id}/enable`,
     disable: (id) => `${V1}/users/${id}/disable`,
-    verify: (id) => `${V1}/users/${id}/verify-email`, // endpoint de verificación
+    verify: (id) => `${V1}/users/${id}/verify-email`,
   },
   roles: {
     list: () => `${V1}/roles`,
     create: () => `${V1}/roles`,
     byId: (id) => `${V1}/roles/${id}`,
-    permissions: (id) => `${V1}/roles/${id}/permissions`, // GET/PUT permisos del rol (keys)
+    permissions: (id) => `${V1}/roles/${id}/permissions`,
   },
   perms: {
     list: () => `${V1}/permissions`,
     create: () => `${V1}/permissions`,
     byId: (id) => `${V1}/permissions/${id}`,
-    // Helper de listado anotado por rol (usa ?role=)
-    listByRole: (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
+    listByRole: (roleId) =>
+      `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
   auth: {
     me: () => `${V1}/me`,
@@ -217,14 +244,23 @@ function fromFormData(fd) {
 
 /* ---------- API ---------- */
 export const iamApi = {
-  // Identidad
   async me(token) {
-    const headers = buildHeaders({ token, isFormData: false, method: "GET", urlForCors: PATHS.auth.me() });
+    const headers = buildHeaders({
+      token,
+      isFormData: false,
+      method: "GET",
+      urlForCors: PATHS.auth.me(),
+    });
     try {
-      const r = await fetch(PATHS.auth.me(), { headers, credentials: "include" });
+      const r = await fetch(PATHS.auth.me(), {
+        headers,
+        credentials: "include",
+      });
       if (r.ok) return toJson(r);
       const payload = await toJson(r);
-      const e = new Error(payload?.message || `${r.status} ${r.statusText}`);
+      const e = new Error(
+        payload?.message || `${r.status} ${r.statusText}`
+      );
       e.status = r.status;
       e.payload = payload;
       throw e;
@@ -234,7 +270,6 @@ export const iamApi = {
     }
   },
 
-  // Login local (opcional)
   async loginLocal({ email, password }) {
     const body = {
       email: String(email || "").trim().toLowerCase(),
@@ -243,29 +278,46 @@ export const iamApi = {
     return rawFetch(PATHS.auth.login(), { method: "POST", body });
   },
 
-  // -------- Roles
   listRoles: (t) => rawFetch(PATHS.roles.list(), { token: t }),
-  createRole: (p, t) => rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
-  updateRole: (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
-  deleteRole: (id, t) => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
+  createRole: (p, t) =>
+    rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
+  updateRole: (id, p, t) =>
+    rawFetch(PATHS.roles.byId(id), {
+      method: "PATCH",
+      body: p,
+      token: t,
+    }),
+  deleteRole: (id, t) =>
+    rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
-  // Permisos de un rol (por KEYS)
-  getRolePerms: (id, t) => rawFetch(PATHS.roles.permissions(id), { token: t }), // -> { permissionKeys: string[] }
+  getRolePerms: (id, t) =>
+    rawFetch(PATHS.roles.permissions(id), { token: t }),
   setRolePerms: (id, keys, t) =>
-    rawFetch(PATHS.roles.permissions(id), { method: "PUT", body: { permissionKeys: keys }, token: t }),
+    rawFetch(PATHS.roles.permissions(id), {
+      method: "PUT",
+      body: { permissionKeys: keys },
+      token: t,
+    }),
 
-  // -------- Permisos
   listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
-  listPermsForRole: (roleId, t) => rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
-  createPerm: (p, t) => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
-  updatePerm: (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
-  deletePerm: (id, t) => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
+  listPermsForRole: (roleId, t) =>
+    rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
+  createPerm: (p, t) =>
+    rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
+  updatePerm: (id, p, t) =>
+    rawFetch(PATHS.perms.byId(id), {
+      method: "PATCH",
+      body: p,
+      token: t,
+    }),
+  deletePerm: (id, t) =>
+    rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
-  // -------- Usuarios
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
   // NUEVO: lista de guardias (para el select)
-  listGuards: (q = "", active = true, t) => rawFetch(PATHS.users.guards(q, active), { token: t }),
+  listGuards: (q = "", active = true, t) =>
+    rawFetch(PATHS.users.guards(q, active), { token: t }),
 
   createUser: (payload, t) => {
     let email = "",
@@ -287,7 +339,10 @@ export const iamApi = {
               .map((s) => s.trim())
               .filter(Boolean)
         : [];
-      active = obj.active !== undefined ? obj.active === true || obj.active === "true" : true;
+      active =
+        obj.active !== undefined
+          ? obj.active === true || obj.active === "true"
+          : true;
       if (obj.perms)
         perms = Array.isArray(obj.perms)
           ? obj.perms
@@ -295,7 +350,12 @@ export const iamApi = {
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
-      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
+      password =
+        obj.password ??
+        obj.clave ??
+        obj.contrasena ??
+        obj.contraseña ??
+        "";
     } else {
       const obj = payload || {};
       email =
@@ -314,7 +374,10 @@ export const iamApi = {
       roles = Array.isArray(obj.roles)
         ? obj.roles
         : typeof obj.roles === "string"
-        ? obj.roles.split(",").map((s) => s.trim()).filter(Boolean)
+        ? obj.roles
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
         : [];
       active = obj.active === undefined ? true : !!obj.active;
       if (obj.perms)
@@ -324,17 +387,24 @@ export const iamApi = {
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
-      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
+      password =
+        obj.password ??
+        obj.clave ??
+        obj.contrasena ??
+        obj.contraseña ??
+        "";
     }
 
     email = String(email || "").trim().toLowerCase();
-    name = (String(name || "").trim()) || nameFromEmail(email);
+    name = String(name || "").trim() || nameFromEmail(email);
 
     if (!email) {
       if (DEBUG) {
         console.warn(
           "[iamApi.createUser] payload sin email. Keys:",
-          payload instanceof FormData ? Array.from(payload.keys()) : Object.keys(payload || {})
+          payload instanceof FormData
+            ? Array.from(payload.keys())
+            : Object.keys(payload || {})
         );
       }
       return Promise.reject(new Error("email requerido"));
@@ -346,38 +416,58 @@ export const iamApi = {
       roles,
       active,
       ...(perms ? { perms } : {}),
-      ...(password ? { password: String(password) } : {}), // opcional
+      ...(password ? { password: String(password) } : {}),
     };
 
-    return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
+    return rawFetch(PATHS.users.create(), {
+      method: "POST",
+      body,
+      token: t,
+    });
   },
 
-  updateUser: (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
-  enableUser: (id, t) => rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
-  disableUser: (id, t) => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+  updateUser: (id, p, t) =>
+    rawFetch(PATHS.users.byId(id), {
+      method: "PATCH",
+      body: p,
+      token: t,
+    }),
+  enableUser: (id, t) =>
+    rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
+  disableUser: (id, t) =>
+    rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
-  // “Eliminar” usando desactivar (soft delete)
-  deleteUser: (id, t) => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+  deleteUser: (id, t) =>
+    rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
-  // Auditoría (tolerante a 404)
   async listAudit(limit = 100, token) {
     try {
-      return await rawFetch(`${V1}/audit?limit=${encodeURIComponent(limit)}`, { token });
+      return await rawFetch(`${V1}/audit?limit=${encodeURIComponent(limit)}`, {
+        token,
+      });
     } catch (e) {
       const msg = (e.message || "").toLowerCase();
-      if (e?.status === 404 || msg.includes("not found") || msg.includes("404")) return { ok: false, items: [] };
+      if (
+        e?.status === 404 ||
+        msg.includes("not found") ||
+        msg.includes("404")
+      )
+        return { ok: false, items: [] };
       throw e;
     }
   },
 
-  // Import Excel (FormData)
   importExcel(file, token) {
     const fd = new FormData();
     fd.append("file", file);
-    return rawFetch(`${V1}/import/excel`, { method: "POST", body: fd, token, formData: true });
+    return rawFetch(`${V1}/import/excel`, {
+      method: "POST",
+      body: fd,
+      token,
+      formData: true,
+    });
   },
 
-  /** Enviar verificación con fallback si backend no está implementado */
   async sendVerificationEmail(userId, email, token) {
     if (!userId || !email) throw new Error("Faltan datos para verificación");
     try {
@@ -389,12 +479,23 @@ export const iamApi = {
     } catch (e) {
       const msg = (e?.message || "").toLowerCase();
       const notImpl =
-        e?.status === 404 || e?.status === 501 || msg.includes("not implemented") || msg.includes("no implementado");
+        e?.status === 404 ||
+        e?.status === 501 ||
+        msg.includes("not implemented") ||
+        msg.includes("no implementado");
 
       if (notImpl) {
-        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando envío…", { userId, email });
+        if (DEBUG)
+          console.warn(
+            "[iamApi] /verify-email no implementado; simulando envío…",
+            { userId, email }
+          );
         await new Promise((r) => setTimeout(r, 700));
-        return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
+        return {
+          ok: true,
+          simulated: true,
+          message: "Simulación de verificación enviada",
+        };
       }
       throw e;
     }

@@ -187,7 +187,10 @@ try {
     console.warn("[iamusers] index username_1 (unique) eliminado");
   }
 } catch (e) {
-  console.warn("[iamusers] no se pudo revisar/eliminar username_1:", e.message);
+  console.warn(
+    "[iamusers] no se pudo revisar/eliminar username_1:",
+    e.message
+  );
 }
 
 /* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
@@ -222,7 +225,11 @@ function iamDevMerge(req, _res, next) {
   }
 
   // Aplicar super admin si el correo está en ROOT_ADMINS
-  const applied = applyRootAdmin(devEmail, p[IAM_NS] || p.roles || [], p.permissions || []);
+  const applied = applyRootAdmin(
+    devEmail,
+    p[IAM_NS] || p.roles || [],
+    p.permissions || []
+  );
   p[IAM_NS] = applied.roles;
   p.roles = applied.roles;
   p.permissions = applied.permissions;
@@ -279,7 +286,10 @@ function authBridgeToReqUser(req, _res, next) {
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  if (req.headers.authorization && String(process.env.DISABLE_AUTH || "0") !== "1") {
+  if (
+    req.headers.authorization &&
+    String(process.env.DISABLE_AUTH || "0") !== "1"
+  ) {
     return requireAuth(req, res, next);
   }
   return next();
@@ -350,6 +360,48 @@ app.get("/api/iam/v1/audit", (_req, res) =>
   res.json({ ok: true, items: [], limit: 100 })
 );
 
+// 🔹 NUEVO: endpoint para lista de guardias usado por iamApi.listGuards
+app.get("/api/iam/v1/users/guards", async (req, res) => {
+  try {
+    const { q, active } = req.query;
+    const col = mongoose.connection.collection("iamusers");
+
+    const filter = {};
+
+    // filtrar por rol tipo guard
+    filter.roles = { $in: ["guard", "guardia", "rondasqr.guard"] };
+
+    if (typeof active !== "undefined") {
+      const isActive = active === "1" || active === "true";
+      filter.active = isActive;
+    }
+
+    if (q && String(q).trim()) {
+      const rx = new RegExp(String(q).trim(), "i");
+      filter.$or = [{ name: rx }, { email: rx }];
+    }
+
+    const docs = await col
+      .find(filter, {
+        projection: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          active: 1,
+          roles: 1,
+        },
+      })
+      .toArray();
+
+    res.json({ ok: true, items: docs });
+  } catch (e) {
+    console.error("[GET /api/iam/v1/users/guards] error:", e);
+    res
+      .status(500)
+      .json({ ok: false, error: "Error al listar guardias" });
+  }
+});
+
 /* ─────────── Email verify (opcional) ─────────── */
 app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
   try {
@@ -376,10 +428,8 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
           port: 465,
           secure: true,
           auth: {
-            user:
-              process.env.GMAIL_USER || process.env.MAIL_USER,
-            pass:
-              process.env.GMAIL_PASS || process.env.MAIL_PASS,
+            user: process.env.GMAIL_USER || process.env.MAIL_USER,
+            pass: process.env.GMAIL_PASS || process.env.MAIL_PASS,
           },
         });
 
@@ -402,9 +452,7 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
           id
         )}`
-      : `http://localhost:5173/verify?user=${encodeURIComponent(
-          id
-        )}`;
+      : `http://localhost:5173/verify?user=${encodeURIComponent(id)}`;
 
     const mailOptions = {
       from: fromAddress,
@@ -468,13 +516,11 @@ app.get("/api/_debug/ping-assign", (req, res) => {
     body,
     meta: { debug: true, ts: Date.now() },
   });
-  io
-    .to(`guard-${userId}`)
-    .emit("rondasqr:nueva-asignacion", {
-      title,
-      body,
-      meta: { debug: true, ts: Date.now() },
-    });
+  io.to(`guard-${userId}`).emit("rondasqr:nueva-asignacion", {
+    title,
+    body,
+    meta: { debug: true, ts: Date.now() },
+  });
   res.json({
     ok: true,
     sentTo: [`user-${userId}`, `guard-${userId}`],
@@ -503,7 +549,7 @@ app.use("/rondasqr/v1", rondasOfflineRoutes);
 
 /* ✅ Módulo de INCIDENTES */
 app.use("/api/incidentes", incidentesRoutes); // compatibilidad
-app.use("/incidentes", incidentesRoutes);     // sin /api
+app.use("/incidentes", incidentesRoutes); // sin /api
 
 /* ✅ Evaluaciones */
 
