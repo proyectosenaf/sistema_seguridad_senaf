@@ -44,7 +44,12 @@ const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPa
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 
 // Varios correos separados por coma: VITE_ROOT_ADMINS=correo1@x.com,correo2@y.com
-const ROOT_ADMINS = (import.meta.env.VITE_ROOT_ADMINS || "")
+// Además, incluye VITE_SUPERADMIN_EMAIL para que coincida con el backend.
+const ROOT_ADMINS = (
+  (import.meta.env.VITE_ROOT_ADMINS ||
+    import.meta.env.VITE_SUPERADMIN_EMAIL ||
+    "")
+)
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
@@ -92,20 +97,26 @@ function pickHome({ roles = [], perms = [] }) {
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
-  const { user } = useAuth0();
+  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
     let alive = true;
+
     const ROOT   = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
     const V1     = `${ROOT}/api/iam/v1`;
     const LEGACY = `${ROOT}/api/iam`;
     const DEV    = import.meta.env.DEV;
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+
     const candidates = [`${V1}/me`, `${V1}/auth/me`, `${LEGACY}/me`, `${LEGACY}/auth/me`];
 
     async function tryFetch(headers = {}) {
       for (const url of candidates) {
         try {
-          const res = await fetch(url, { credentials: "include", headers });
+          const res = await fetch(url, {
+            credentials: "include",
+            headers,
+          });
           if (!res.ok) continue;
           const data  = (await res.json().catch(() => ({}))) || {};
           const roles = data?.roles || data?.user?.roles || [];
@@ -117,21 +128,45 @@ function RoleRedirectInline() {
     }
 
     (async () => {
-      let me = await tryFetch();
+      // 1️⃣ En producción (o si hay sesión Auth0), intentamos con token Bearer
+      let headers = {};
+      if (isAuthenticated && audience) {
+        try {
+          const token = await getAccessTokenSilently({
+            authorizationParams: { audience },
+          });
+          if (token) {
+            headers.Authorization = `Bearer ${token}`;
+          }
+        } catch (err) {
+          const msg = (err && (err.error || err.message)) || String(err);
+          console.debug("[RoleRedirectInline] getAccessTokenSilently:", msg);
+        }
+      }
+
+      // 2️⃣ Intento normal (token si existe, si no cookies)
+      let me = await tryFetch(headers);
+
+      // 3️⃣ En DEV/local con IAM dev: usar x-user-email como antes
       if (!me && DEV) {
         const devEmail =
           user?.email ||
-          localStorage.getItem("iamDevEmail") ||
+          (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
           import.meta.env.VITE_DEV_IAM_EMAIL ||
           "admin@local";
-        me = await tryFetch({ "x-user-email": devEmail });
+
+        me = await tryFetch({
+          ...headers,
+          "x-user-email": devEmail,
+        });
       }
+
       const dest = me ? pickHome(me) : "/";
       if (alive) navigate(dest, { replace: true });
     })();
 
     return () => { alive = false; };
-  }, [navigate, user]);
+  }, [navigate, user, isAuthenticated, getAccessTokenSilently]);
 
   return <div className="p-6">Redirigiendo…</div>;
 }
