@@ -3,6 +3,13 @@ import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
+import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
+
+// helper para mostrar bonito el nombre del guardia
+function guardLabel(g) {
+  const name = g.name || "(Sin nombre)";
+  return g.email ? `${name} — ${g.email}` : name;
+}
 
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
@@ -33,6 +40,9 @@ export default function IncidentesList() {
   // Le quitamos el /api del final para servir /uploads correctamente
   const API_HOST = (API || "").replace(/\/api$/, "");
 
+  // 👇 NUEVO: catálogo de guardias (IAM)
+  const [guards, setGuards] = useState([]);
+
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
     const enProceso = list.filter((i) => i.status === "en_proceso").length;
@@ -61,6 +71,50 @@ export default function IncidentesList() {
         console.error("Error cargando incidentes", err);
       }
     })();
+  }, []);
+
+  // ───────── NUEVO: cargar guardias desde IAM ─────────
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        let items = [];
+        if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true);
+          items = r.items || [];
+        } else if (typeof iamApi.listUsers === "function") {
+          const r = await iamApi.listUsers("");
+          const NS = "https://senaf.local/roles";
+          items = (r.items || []).filter((u) => {
+            const roles = [
+              ...(Array.isArray(u.roles) ? u.roles : []),
+              ...(Array.isArray(u[NS]) ? u[NS] : []),
+            ].map((x) => String(x).toLowerCase());
+            return (
+              roles.includes("guardia") ||
+              roles.includes("guard") ||
+              roles.includes("rondasqr.guard")
+            );
+          });
+        }
+
+        const normalized = (items || []).map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          opId: u.opId || u.sub || u.legacyId || String(u._id),
+          active: u.active !== false,
+        }));
+
+        if (mounted) setGuards(normalized);
+      } catch (e) {
+        console.error("[IncidentesList] listGuards error:", e);
+        if (mounted) setGuards([]);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const actualizarEstado = async (id, nuevoEstado) => {
@@ -202,6 +256,11 @@ export default function IncidentesList() {
     }
   };
 
+  // para que en edición no se pierda el valor si no coincide con la lista de guardias
+  const hasReportedOption =
+    form.reportedBy &&
+    guards.some((g) => guardLabel(g) === form.reportedBy);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
       {/* header */}
@@ -233,7 +292,7 @@ export default function IncidentesList() {
 
       {/* FORM inline */}
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
+        <div className="rounded-xl p-6 md:p-8 bg.white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
@@ -273,18 +332,30 @@ export default function IncidentesList() {
 
             {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 👇 AHORA ES SELECT DE GUARDIAS */}
               <div>
                 <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
                 </label>
-                <input
+                <select
                   name="reportedBy"
                   value={form.reportedBy}
                   onChange={handleFormChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-                  placeholder="Nombre del guardia o responsable"
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                   required
-                />
+                >
+                  <option value="">Seleccione un guardia…</option>
+                  {form.reportedBy && !hasReportedOption && (
+                    <option value={form.reportedBy}>
+                      {form.reportedBy} (actual)
+                    </option>
+                  )}
+                  {guards.map((g) => (
+                    <option key={g._id} value={guardLabel(g)}>
+                      {guardLabel(g)}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -387,7 +458,7 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text.white transition-all"
               >
                 Cancelar
               </button>
@@ -629,7 +700,7 @@ export default function IncidentesList() {
           </table>
         </div>
 
-        <div className="flex justify-end p-4 border-t border-cyan-400/10">
+        <div className="flex.justify-end p-4 border-t border-cyan-400/10">
           <button
             onClick={startCreate}
             className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transición-all duración-300"
