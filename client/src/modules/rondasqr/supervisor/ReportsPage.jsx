@@ -27,6 +27,14 @@ function readVar(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 }
+
+/* fecha/hora segura para evitar "Invalid Date" en exportaciones */
+function formatDateTime(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
 /* =========================================================== */
 
 export default function ReportsPage() {
@@ -202,7 +210,268 @@ export default function ReportsPage() {
     });
   }
 
-  /* ---------- Exportar ---------- */
+  /* ---------- Exportar helper: encabezados y dataset de omisiones ---------- */
+
+  // Nombre legible de sitio/ronda para encabezados
+  const siteLabel =
+    f.siteId && sites.length
+      ? sites.find((s) => String(s._id) === String(f.siteId))?.name || "Sitio seleccionado"
+      : "Todos";
+
+  const roundLabel =
+    f.roundId && rounds.length
+      ? rounds.find((r) => String(r._id) === String(f.roundId))?.name || "Ronda seleccionada"
+      : "Todas";
+
+  // dataset de omisiones a exportar (ya viene filtrado por backend según f)
+  const omissionsToExport = data.omissions || [];
+
+  function exportOmissionsPdf() {
+    const rows = omissionsToExport;
+    const win = window.open("", "_blank");
+    const fechaHora = new Date();
+
+    const style = `
+      <style>
+        @page { margin: 16mm; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        body{
+          font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          margin:0; color:#0f172a;
+        }
+        header{
+          padding:4px 0 12px 0;
+          margin-bottom:8px;
+          border-bottom:2px solid #e2e8f0;
+        }
+        .brand{
+          font-weight:900;
+          font-size:26px;
+          margin:0 0 2px 0;
+          letter-spacing:.12em;
+          text-transform:uppercase;
+        }
+        .title{
+          font-size:20px;
+          font-weight:800;
+          margin:4px 0 2px 0;
+        }
+        .subtitle{
+          font-size:13px;
+          margin:0;
+          color:#475569;
+        }
+        .meta{
+          font-size:11px;
+          margin-top:6px;
+          color:#64748b;
+        }
+        h2.section{
+          font-size:17px;
+          font-weight:800;
+          margin:16px 0 8px;
+        }
+        table{
+          width:100%;
+          border-collapse:separate;
+          border-spacing:0;
+          font-size:11px;
+        }
+        thead th{
+          background:#0f172a;
+          color:#f9fafb;
+          font-weight:700;
+          text-align:left;
+          padding:6px 8px;
+          border-right:1px solid #111827;
+        }
+        thead th:first-child{border-top-left-radius:10px;}
+        thead th:last-child{border-top-right-radius:10px;border-right:none;}
+        tbody td{
+          padding:6px 8px;
+          border-bottom:1px solid #e2e8f0;
+          border-right:1px solid #e2e8f0;
+        }
+        tbody td:last-child{border-right:none;}
+        tbody tr:nth-child(even) td{background:#f9fafb;}
+        .chip{
+          display:inline-block;
+          padding:2px 8px;
+          border-radius:999px;
+          background:#fbbf24;
+          color:#1f2937;
+          font-size:10px;
+          font-weight:600;
+        }
+        footer{
+          position:fixed;
+          bottom:12mm;
+          left:0; right:0;
+          text-align:center;
+          color:#94a3b8;
+          font-size:11px;
+        }
+        table, tr, td, th { page-break-inside: avoid; }
+      </style>
+    `;
+
+    const headerHtml = `
+      <header>
+        <div class="brand">Seguridad SENAF</div>
+        <div class="title">Informe de Omisiones de Rondas</div>
+        <p class="subtitle">Rondas omitidas dentro del rango seleccionado</p>
+        <div class="meta">
+          <div><b>Rango:</b> ${f.from || "—"} — ${f.to || "—"}</div>
+          <div><b>Sitio:</b> ${siteLabel} · <b>Ronda:</b> ${roundLabel}</div>
+          <div><b>Oficial:</b> ${f.officer || "Todos"}</div>
+          <div><b>Generado:</b> ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}</div>
+          <div><b>Total omisiones:</b> ${rows.length}</div>
+        </div>
+      </header>
+    `;
+
+    const headerRow = `
+      <tr>
+        <th>#</th>
+        <th>Ronda</th>
+        <th>Fecha/Hora esperada</th>
+        <th>Punto</th>
+        <th>Oficial</th>
+        <th>Estado</th>
+      </tr>
+    `;
+
+    const bodyRows = rows
+      .map((o, i) => {
+        const fecha = formatDateTime(
+          o.expectedAt || o.expectedTime || o.date || o.ts
+        );
+        const ronda = o.roundName || o.roundId || "—";
+        const punto = o.pointName || o.point || o.pointId || "—";
+        const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+
+        return `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${ronda}</td>
+            <td>${fecha}</td>
+            <td>${punto}</td>
+            <td>${oficial}</td>
+            <td><span class="chip">Omitido</span></td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head><meta charset="utf-8" />${style}</head>
+        <body>
+          ${headerHtml}
+
+          <h2 class="section">Detalle de omisiones</h2>
+
+          <table>
+            <thead>${headerRow}</thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+
+          <footer>Generado por el módulo de Rondas QR — Seguridad SENAF</footer>
+        </body>
+      </html>
+    `;
+
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.onload = () => {
+      win.focus();
+      win.print();
+    };
+  }
+
+  function exportOmissionsExcel() {
+    const rows = omissionsToExport;
+    const fechaHora = new Date();
+
+    const style = `
+      <style>
+        body { font-family: Calibri, "Segoe UI", Arial, sans-serif; }
+        .brand { font-size:20px; font-weight:800; margin:4px 0 2px 0; text-transform:uppercase; letter-spacing:.12em; }
+        .subtitle { font-size:14px; font-weight:700; margin:0 0 6px 0; }
+        .meta { margin:4px 0 8px 0; font-size:11px; }
+        table { width:100%; border-collapse:collapse; font-size:11px; }
+        thead th{
+          background:#0f172a; color:#fff; text-align:left; padding:6px;
+          border:1px solid #0f172a; font-weight:700;
+        }
+        tbody td{ padding:5px; border:1px solid #e5e7eb; }
+        tbody tr:nth-child(even){ background:#f9fafb; }
+      </style>
+    `;
+
+    const resumenHtml = `
+      <div class="meta">
+        <div><b>Rango:</b> ${f.from || "—"} — ${f.to || "—"}</div>
+        <div><b>Sitio:</b> ${siteLabel} · <b>Ronda:</b> ${roundLabel}</div>
+        <div><b>Oficial:</b> ${f.officer || "Todos"}</div>
+        <div><b>Generado:</b> ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}</div>
+        <div><b>Total omisiones:</b> ${rows.length}</div>
+      </div>
+    `;
+
+    const header = ["#", "Ronda", "Fecha/Hora esperada", "Punto", "Oficial", "Estado"];
+
+    const body = rows
+      .map((o, i) => {
+        const fecha = formatDateTime(
+          o.expectedAt || o.expectedTime || o.date || o.ts
+        );
+        const ronda = o.roundName || o.roundId || "—";
+        const punto = o.pointName || o.point || o.pointId || "—";
+        const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+        return `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${ronda}</td>
+            <td>${fecha}</td>
+            <td>${punto}</td>
+            <td>${oficial}</td>
+            <td>Omitido</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const table = `
+      <table>
+        <thead><tr>${header.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+
+    const html = `
+      <!DOCTYPE html>
+      <html><head><meta charset="utf-8"/>${style}</head>
+      <body>
+        <div class="brand">Seguridad SENAF</div>
+        <div class="subtitle">Informe de Omisiones de Rondas</div>
+        ${resumenHtml}
+        ${table}
+      </body></html>
+    `;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `omisiones-${f.from || "desde"}_${f.to || "hasta"}.xls`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* ---------- Exportar (backend + overrides para omisiones) ---------- */
   async function openFirstOk(urls) {
     for (const url of urls) {
       try {
@@ -219,6 +488,12 @@ export default function ReportsPage() {
   }
 
   async function doExcel() {
+    // Si el usuario está en modo "Omisiones", exportamos el dataset filtrado
+    if (f.reportType === "omissions") {
+      exportOmissionsExcel();
+      return;
+    }
+
     try {
       setDownloading(true);
       const qs = new URLSearchParams(f).toString();
@@ -236,6 +511,12 @@ export default function ReportsPage() {
   }
 
   async function doPdf() {
+    // Si el usuario está en modo "Omisiones", generamos el PDF en el front
+    if (f.reportType === "omissions") {
+      exportOmissionsPdf();
+      return;
+    }
+
     try {
       setDownloading(true);
       const qs = new URLSearchParams(f).toString();
@@ -252,7 +533,7 @@ export default function ReportsPage() {
   }
 
   function doPrint() {
-    // Imprime la vista actual; puedes cambiar a una ruta /print si luego haces una vista especial
+    // Imprime la vista actual (el encabezado "Seguridad SENAF" ya se muestra arriba)
     window.print();
   }
   /* ----------------------------------- */
@@ -262,15 +543,25 @@ export default function ReportsPage() {
   const toVar = readVar("--accent-to", "#22d3ee");
   const alphaVar = parseFloat(readVar("--accent-alpha", "0.16")) || 0.16;
   const bannerStyle = {
-    background: `linear-gradient(90deg, ${hexToRgba(fromVar, alphaVar)} 0%, ${hexToRgba(toVar, alphaVar)} 100%)`,
+    background: `linear-gradient(90deg, ${hexToRgba(fromVar, alphaVar)} 0%, ${hexToRgba(
+      toVar,
+      alphaVar
+    )} 100%)`,
   };
 
   return (
     <div className="px-4 py-5 space-y-5">
       {/* Encabezado */}
       <div className="rounded-xl px-4 py-3 md:px-5 md:py-4" style={bannerStyle}>
-        <h1 className="text-2xl md:text-3xl font-bold leading-tight tracking-tight">Informes</h1>
-        <p className="opacity-90 text-sm md:text-base">Resumen de rondas, omisiones e incidentes</p>
+        <p className="text-[11px] md:text-xs font-semibold tracking-[0.18em] uppercase text-white/70">
+          Seguridad SENAF
+        </p>
+        <h1 className="text-2xl md:text-3xl font-bold leading-tight tracking-tight">
+          Informes
+        </h1>
+        <p className="opacity-90 text-sm md:text-base">
+          Resumen de rondas, omisiones e incidentes
+        </p>
       </div>
 
       {/* Filtros */}
@@ -278,7 +569,9 @@ export default function ReportsPage() {
         {/* Fila 1: Tipo de reporte + acciones */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-white/70 uppercase tracking-wide">Tipo de reporte</span>
+            <span className="text-[11px] text-white/70 uppercase tracking-wide">
+              Tipo de reporte
+            </span>
             <div className="flex flex-wrap gap-1.5">
               {[
                 { id: "all", label: "Todos" },
@@ -421,7 +714,9 @@ export default function ReportsPage() {
 
         {/* Fila 3: qué secciones incluir */}
         <div className="flex flex-wrap gap-3 pt-2 border-t border-white/10">
-          <span className="text-[11px] text-white/60 uppercase tracking-wide pt-1">Incluir en el reporte:</span>
+          <span className="text-[11px] text-white/60 uppercase tracking-wide pt-1">
+            Incluir en el reporte:
+          </span>
 
           <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
             <input

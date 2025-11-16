@@ -530,7 +530,6 @@ function NuevaEvaluacionModal({
   const setRange = (k) => (v) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  // 🔴 CAMBIO AQUÍ: solo agregamos al historial si el POST se guarda bien
   const handleSubmit = async (close) => {
     if (!form.empleado || !form.periodo) return;
 
@@ -579,8 +578,8 @@ function NuevaEvaluacionModal({
           </div>
 
           <div className="p-3 grid gap-3 text-[0.9rem]">
-            <div className="grid grid-cols-3 gap-2 max-[840px]:grid-cols-1">
-              <div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
                   Empleado *
                 </label>
@@ -597,7 +596,7 @@ function NuevaEvaluacionModal({
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
                   Período *
                 </label>
@@ -614,7 +613,7 @@ function NuevaEvaluacionModal({
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
                   Tipo de Evaluación
                 </label>
@@ -631,7 +630,7 @@ function NuevaEvaluacionModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 max-[840px]:grid-cols-1">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               <div className="space-y-3">
                 <h3 className="font-semibold text-xs">
                   Criterios de Evaluación
@@ -681,8 +680,8 @@ function NuevaEvaluacionModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5 max-[840px]:grid-cols-1">
-              <div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+              <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
                   Observaciones
                 </label>
@@ -693,7 +692,7 @@ function NuevaEvaluacionModal({
                   onChange={setField("observaciones")}
                 />
               </div>
-              <div>
+              <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
                   Recomendaciones
                 </label>
@@ -707,18 +706,17 @@ function NuevaEvaluacionModal({
             </div>
           </div>
 
-          {/* Cambiado a AZUL */}
-          <div className="px-3 py-2.5 border-t border-neutral-200 dark:border-neutral-800 flex items-center justify-end gap-2">
+          <div className="px-3 py-2.5 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs"
+              className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs w-full sm:w-auto"
             >
               Cancelar
             </button>
             <button
               onClick={() => handleSubmit(onClose)}
               disabled={!form.empleado || !form.periodo}
-              className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+              className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs disabled:opacity-60 disabled:cursor-not-allowed w-full sm:w-auto"
             >
               {submitLabel}
             </button>
@@ -1033,14 +1031,14 @@ function ReportesPanel({
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
         <h3 className="font-semibold text-lg">🧾 Reportes</h3>
         <div className="text-xs opacity-70">
           Exporta a Excel o PDF (con marca SENAF)
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2 max-[640px]:grid-cols-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div>
           <label className="block text-xs opacity-70 mb-1">Período</label>
           <select
@@ -1073,7 +1071,7 @@ function ReportesPanel({
 
         <div className="flex items-end gap-2">
           <button
-            className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+            className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
             onClick={generar}
           >
             Generar vista previa
@@ -1082,14 +1080,14 @@ function ReportesPanel({
 
         <div className="flex items-end gap-2 justify-end">
           <button
-            className="px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 text-xs"
+            className="w-full sm:w-auto px-3 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 text-xs"
             onClick={exportarExcel}
           >
             Exportar a Excel
           </button>
 
           <button
-            className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs"
+            className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs"
             onClick={exportarPDF}
           >
             Exportar a PDF
@@ -1098,7 +1096,7 @@ function ReportesPanel({
       </div>
 
       <div className="mt-3 overflow-x-auto">
-        <table className="tbl w-full">
+        <table className="tbl w-full min-w-[640px]">
           <thead>
             <tr>
               <th>Empleado</th>
@@ -1109,9 +1107,6 @@ function ReportesPanel({
               <th>Tareas</th>
               <th>Estado</th>
               <th>Fecha</th>
-              <th style={{ width: 80 }} className="text-right pr-3">
-                Acciones
-              </th>
             </tr>
           </thead>
           <tbody>
@@ -1394,8 +1389,8 @@ export default function Evaluacion() {
   return (
     <section className="space-y-5" data-fx="neon">
       {/* Encabezado */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
+      <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+        <div className="flex-1 min-w-[220px]">
           <h1 className="text-2xl font-extrabold">
             Evaluación de Personal
           </h1>
@@ -1404,14 +1399,14 @@ export default function Evaluacion() {
           </p>
         </div>
 
-        <div className="ml-auto flex items-end gap-3">
-          <div className="min-w-[220px]">
+        <div className="w-full lg:w-auto lg:ml-auto flex flex-col sm:flex-row gap-3">
+          <div className="flex-1 min-w-[180px]">
             <label className="block text-sm opacity-70 mb-1">
               Periodo
             </label>
             <input
               type="month"
-              className="input-fx date-input"
+              className="input-fx date-input w-full"
               value={filters.periodo}
               onChange={(e) =>
                 setFilters((f) => ({ ...f, periodo: e.target.value }))
@@ -1419,12 +1414,12 @@ export default function Evaluacion() {
             />
           </div>
 
-          <div className="min-w-[280px]">
+          <div className="flex-1 min-w-[200px]">
             <label className="block text-sm opacity-70 mb-1">
               Buscar
             </label>
             <input
-              className="input-fx search-input"
+              className="input-fx search-input w-full"
               placeholder="Buscar por empleado…"
               value={filters.q}
               onChange={(e) =>
@@ -1433,13 +1428,13 @@ export default function Evaluacion() {
             />
           </div>
 
-          <div>
+          <div className="w-full sm:w-auto">
             <label className="block text-sm opacity-0 mb-1">
               .
             </label>
             <button
               type="button"
-              className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
               onClick={() => {
                 setEditInitial(null);
                 setEditIndex(null);
@@ -1453,7 +1448,7 @@ export default function Evaluacion() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-4 gap-4 max-[1024px]:grid-cols-2">
+      <div className="grid grid-cols-4 gap-4 max-[1024px]:grid-cols-2 max-[640px]:grid-cols-1">
         <Stat
           icon="📈"
           label="Rendimiento Promedio"
@@ -1543,13 +1538,13 @@ export default function Evaluacion() {
       {/* Historial */}
       <div className="eval-history">
         <div className="px-4 pt-4">
-          <h3 className="font-extrabold text-xl mb-2">
+          <h3 className="text-lg sm:text-xl font-extrabold mb-2">
             Historial de Evaluaciones
           </h3>
         </div>
 
-        <div className="history-toolbar">
-          <div className="search">
+        <div className="history-toolbar flex flex-wrap gap-2 px-4 pb-2">
+          <div className="search flex-1 min-w-[180px]">
             <input
               className="input-fx w-full"
               placeholder="Buscar por empleado..."
@@ -1561,10 +1556,10 @@ export default function Evaluacion() {
             <span className="icon">🔎</span>
           </div>
 
-          <div className="select-wrap">
+          <div className="select-wrap min-w-[160px]">
             <span className="ctrl-icon">🧑‍💼</span>
             <select
-              className="input-fx pill-select"
+              className="input-fx pill-select w-full"
               value={histFilters.empleado}
               onChange={(e) =>
                 setHistFilters((f) => ({
@@ -1585,10 +1580,10 @@ export default function Evaluacion() {
             </select>
           </div>
 
-          <div className="select-wrap">
+          <div className="select-wrap min-w-[160px]">
             <span className="ctrl-icon">📅</span>
             <select
-              className="input-fx pill-select"
+              className="input-fx pill-select w-full"
               value={histFilters.periodo}
               onChange={(e) =>
                 setHistFilters((f) => ({
@@ -1609,7 +1604,7 @@ export default function Evaluacion() {
         </div>
 
         <div className="overflow-x-auto px-2 pb-2">
-          <table className="tbl w-full">
+          <table className="tbl w-full min-w-[720px] text-sm">
             <thead>
               <tr>
                 <th>Empleado</th>

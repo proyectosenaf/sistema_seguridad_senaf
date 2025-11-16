@@ -1094,3 +1094,48 @@ input.input-fx, select.input-fx{ height:44px; border-radius:12px; }
 .eval-history.eval-ultra .tbl .mini-bar + span{ min-width:30px; font-size:.74rem; }
 .eval-history.eval-ultra .chip{ padding:.14rem .42rem; font-size:.70rem; border-radius:999px; }
 .eval-history.eval-ultra::before{ opacity:.35; } 
+
+/* ===== VISTA DE IMPRESIÓN PARA REPORTES DE RONDAS ===== */
+@media print {
+  /* fondo blanco y texto oscuro */
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Ocultar barras de navegación generales */
+  header,
+  nav,
+  footer,
+  .app-header,
+  .app-topbar,
+  .app-sidebar,
+  .app-footer {
+    display: none !important;
+  }
+
+  /* Contenedor principal del app */
+  #root {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Zona de contenido de ReportsPage */
+  .print-content {
+    margin: 0 !important;
+    padding: 24px 32px !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .print-content .card,
+  .print-content .tbl,
+  .print-content .rounded-2xl {
+    background: #ffffff !important;
+    border-color: #e5e7eb !important;
+    box-shadow: none !important;
+  }
+}
