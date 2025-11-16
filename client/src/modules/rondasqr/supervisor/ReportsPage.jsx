@@ -1,15 +1,20 @@
-// src/modules/rondasqr/supervisor/ReportsPage.jsx
+// client/src/modules/rondasqr/supervisor/ReportsPage.jsx
 import React, { useEffect, useState } from "react";
 import { rondasqrApi } from "../api/rondasqrApi";
 import ReportSummary from "./ReportSummary";
 import OmissionsTable from "./OmissionsTable";
 import MessagesTable from "./MessagesTable";
+import DetailedMarks from "./DetailedMarks";
 import MapView from "./MapView";
 
+import iamApi from "../../../iam/api/iamApi.js";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(
+  /\/$/,
+  ""
+);
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -46,7 +51,7 @@ export default function ReportsPage() {
     to: today(),
     siteId: "",
     roundId: "",
-    officer: "",
+    officer: "", // aquí guardamos el opId del guardia
     // tipo de reporte
     reportType: "all", // all | rounds | omissions | messages | detail | map
     // qué secciones incluir
@@ -71,9 +76,8 @@ export default function ReportsPage() {
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
 
-  // NUEVO: catálogo de oficiales (guardias) y texto en el input buscable
-  const [officers, setOfficers] = useState([]);
-  const [officerQuery, setOfficerQuery] = useState("");
+  // Guardias (igual que en AssignmentsPage)
+  const [guards, setGuards] = useState([]); // [{_id, name, email, opId, active}]
 
   // Cargar sitios al montar
   useEffect(() => {
@@ -104,48 +108,117 @@ export default function ReportsPage() {
     })();
   }, [f.siteId]);
 
-  // NUEVO: cargar guardias (rol Guardia)
+  /* ─────────────── Cargar guardias (IAM) ─────────────── */
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
-        // Ajusta esta llamada al endpoint real que tengas para listar guardias
-        const resp = await rondasqrApi.listOfficers();
-        const items = resp?.items || resp || [];
-
-        const normalized = items.map((u) => {
-          const name =
-            u.name ||
-            `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
-            u.fullName ||
-            u.email ||
-            u.username ||
-            "Sin nombre";
-
-          return {
-            id: u._id || u.id || u.guardId || u.userId,
-            name,
-            email: u.email || u.username || "",
-            guardId: u.guardId || u.employeeId || u._id || u.id,
-          };
-        });
-
-        setOfficers(normalized);
+        let items = [];
+        if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true);
+          items = r.items || [];
+        } else {
+          // fallback si no hay listGuards()
+          const r = await iamApi.listUsers("");
+          const NS = "https://senaf.local/roles";
+          items = (r.items || [])
+            .filter((u) => {
+              const roles = [
+                ...(Array.isArray(u.roles) ? u.roles : []),
+                ...(Array.isArray(u[NS]) ? u[NS] : []),
+              ].map((x) => String(x).toLowerCase());
+              return (
+                roles.includes("guardia") ||
+                roles.includes("guard") ||
+                roles.includes("rondasqr.guard")
+              );
+            })
+            .map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+              opId: u.opId || u.sub || u.legacyId || String(u._id),
+              active: u.active !== false,
+            }));
+        }
+        const normalized = (items || []).map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          opId: u.opId || u.sub || u.legacyId || String(u._id),
+          active: u.active !== false,
+        }));
+        if (mounted) setGuards(normalized);
       } catch (e) {
-        console.warn("[ReportsPage] listOfficers error:", e);
+        console.error("[ReportsPage] listGuards error:", e);
+        if (mounted) setGuards([]);
       }
     })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  function getOfficerLabel(o) {
-    if (!o) return "";
-    if (o.email) return `${o.name} (${o.email})`;
-    return o.name;
+  /* ───────── helpers de guardias ───────── */
+
+  function getGuardLabel(g) {
+    if (!g) return "";
+    return g.email
+      ? `${g.name || "(Sin nombre)"} — ${g.email}`
+      : g.name || "(Sin nombre)";
   }
 
+  function findGuardForRecord(rec) {
+    if (!rec) return null;
+
+    const possibleIds = [
+      rec.guardId,
+      rec.officerId,
+      rec.officer,
+      rec.userId,
+      rec.opId,
+    ]
+      .filter(Boolean)
+      .map((x) => String(x).toLowerCase());
+
+    const possibleEmails = [rec.officerEmail, rec.email]
+      .filter(Boolean)
+      .map((x) => String(x).toLowerCase());
+
+    return (
+      guards.find((g) => {
+        const opId = String(g.opId || "").toLowerCase();
+        const id = String(g._id || "").toLowerCase();
+        const email = String(g.email || "").toLowerCase();
+        return (
+          possibleIds.includes(opId) ||
+          possibleIds.includes(id) ||
+          possibleEmails.includes(email)
+        );
+      }) || null
+    );
+  }
+
+  function resolveOfficerLabel(rec) {
+    const g = findGuardForRecord(rec);
+    if (g) return getGuardLabel(g);
+
+    // fallback a lo que venga en el registro
+    return (
+      rec.officerName ||
+      rec.officerEmail ||
+      rec.guardId ||
+      rec.officerId ||
+      rec.officer ||
+      rec.userId ||
+      "—"
+    );
+  }
+
+  /* ─────────────── Cargar datos de reporte ─────────────── */
   async function load() {
     setLoading(true);
     try {
-      // Se envían todos los filtros; el backend puede ignorar los nuevos si no los soporta
       const s = await rondasqrApi.getSummary(f);
       const d = await rondasqrApi.getDetailed(f);
       setData({
@@ -161,7 +234,6 @@ export default function ReportsPage() {
     }
   }
 
-  // carga inicial
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,7 +249,6 @@ export default function ReportsPage() {
       officer: "",
     }));
     setRounds([]);
-    setOfficerQuery("");
   }
 
   function handleToggleInclude(key) {
@@ -255,23 +326,28 @@ export default function ReportsPage() {
     });
   }
 
-  /* ---------- Exportar helper: encabezados y dataset ---------- */
+  /* ---------- Encabezados comunes ---------- */
 
-  // Nombre legible de sitio/ronda para encabezados
   const siteLabel =
     f.siteId && sites.length
-      ? sites.find((s) => String(s._id) === String(f.siteId))?.name || "Sitio seleccionado"
+      ? sites.find((s) => String(s._id) === String(f.siteId))?.name ||
+        "Sitio seleccionado"
       : "Todos";
 
   const roundLabel =
     f.roundId && rounds.length
-      ? rounds.find((r) => String(r._id) === String(f.roundId))?.name || "Ronda seleccionada"
+      ? rounds.find((r) => String(r._id) === String(f.roundId))?.name ||
+        "Ronda seleccionada"
       : "Todas";
 
-  // dataset de omisiones a exportar (ya viene filtrado por backend según f)
+  const selectedGuard = guards.find((g) => g.opId === f.officer);
+  const officerFilterLabel = selectedGuard
+    ? getGuardLabel(selectedGuard)
+    : f.officer || "Todos";
+
   const omissionsToExport = data.omissions || [];
 
-  /* ===================== PDF helpers (descargar / imprimir) ===================== */
+  /* ===================== PDF helpers ===================== */
   function finalizePdf(doc, filename, mode) {
     if (mode === "print") {
       doc.autoPrint();
@@ -298,7 +374,6 @@ export default function ReportsPage() {
 
     const fechaHora = new Date();
 
-    // Encabezado
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.text("SEGURIDAD SENAF", 14, 14);
@@ -310,11 +385,10 @@ export default function ReportsPage() {
     doc.setFontSize(10);
     doc.text("Rondas omitidas dentro del rango seleccionado", 14, 28);
 
-    // Meta
     const metaLines = [
       `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
       `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${f.officer || "Todos"}`,
+      `Oficial: ${officerFilterLabel}`,
       `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
       `Total omisiones: ${rows.length}`,
     ];
@@ -330,7 +404,7 @@ export default function ReportsPage() {
       const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
       const ronda = o.roundName || o.roundId || "—";
       const punto = o.pointName || o.point || o.pointId || "—";
-      const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+      const oficial = resolveOfficerLabel(o);
 
       return [i + 1, ronda, fecha, punto, oficial, "Omitido"];
     });
@@ -402,7 +476,7 @@ export default function ReportsPage() {
     const metaLines = [
       `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
       `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${f.officer || "Todos"}`,
+      `Oficial: ${officerFilterLabel}`,
       `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
       `Total filas: ${rows.length}`,
     ];
@@ -415,8 +489,7 @@ export default function ReportsPage() {
     });
 
     const tableBody = rows.map((r, i) => {
-      const guard =
-        r.guardName || r.officerName || r.officerEmail || r.guardId || "—";
+      const guardLabel = resolveOfficerLabel(r);
       const site = r.siteName || r.site || "—";
       const round = r.roundName || r.round || r.roundId || "—";
 
@@ -436,7 +509,7 @@ export default function ReportsPage() {
 
       return [
         i + 1,
-        guard,
+        guardLabel,
         site,
         round,
         programadas,
@@ -494,7 +567,7 @@ export default function ReportsPage() {
     finalizePdf(doc, filename, mode);
   }
 
-  /* ==================== PDF: ALERTAS DE PÁNICO (antes Mensajes / Incidentes) ==================== */
+  /* ==================== PDF: ALERTAS DE PÁNICO (messages) ==================== */
   function exportMessagesPdf(mode = "download") {
     const rows = data.messages || [];
     if (!rows.length) {
@@ -520,7 +593,7 @@ export default function ReportsPage() {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text(
-      "Alertas de pánico generadas dentro del rango seleccionado",
+      "Eventos de botón de pánico generados dentro del rango seleccionado",
       14,
       28
     );
@@ -528,9 +601,9 @@ export default function ReportsPage() {
     const metaLines = [
       `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
       `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${f.officer || "Todos"}`,
+      `Oficial: ${officerFilterLabel}`,
       `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
-      `Total alertas de pánico: ${rows.length}`,
+      `Total alertas: ${rows.length}`,
     ];
 
     let y = 34;
@@ -545,7 +618,7 @@ export default function ReportsPage() {
       const fecha = formatDateTime(m.ts || m.date || m.createdAt);
       const sitio = m.siteName || m.site || "—";
       const ronda = m.roundName || m.round || "—";
-      const oficial = m.officerName || m.officerEmail || m.guardId || "—";
+      const oficial = resolveOfficerLabel(m);
       const detalle = m.message || m.description || m.detail || "—";
       const gps = m.gps || m.coordinates || m.location || "—";
 
@@ -584,8 +657,8 @@ export default function ReportsPage() {
         2: { cellWidth: 28 },
         3: { cellWidth: 22 },
         4: { cellWidth: 22 },
-        5: { cellWidth: 26 },
-        6: { cellWidth: 45 },
+        5: { cellWidth: 30 },
+        6: { cellWidth: 40 },
         7: { cellWidth: 25 },
       },
       didDrawPage: (data) => {
@@ -619,7 +692,7 @@ export default function ReportsPage() {
     }
 
     const doc = new jsPDF({
-      orientation: "landscape", // más ancho → más columnas cómodas
+      orientation: "landscape",
       unit: "mm",
       format: "a4",
     });
@@ -644,7 +717,7 @@ export default function ReportsPage() {
     const metaLines = [
       `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
       `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${f.officer || "Todos"}`,
+      `Oficial: ${officerFilterLabel}`,
       `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
       `Total registros: ${rows.length}`,
     ];
@@ -661,7 +734,7 @@ export default function ReportsPage() {
       const sitio = r.siteName || r.site || "—";
       const ronda = r.roundName || r.round || "—";
       const punto = r.pointName || r.point || r.pointId || "—";
-      const oficial = r.officerName || r.officerEmail || r.guardId || "—";
+      const oficial = resolveOfficerLabel(r);
       const enVentana =
         typeof r.inWindow === "boolean" ? (r.inWindow ? "Sí" : "No") : "—";
       const estado = r.status || r.state || r.result || "—";
@@ -758,7 +831,6 @@ export default function ReportsPage() {
       </style>
     `;
 
-    // Zoom 120% para que no se vea "mini" en Excel
     const excelXml = `
       <!--[if gte mso 9]><xml>
       <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">
@@ -781,7 +853,7 @@ export default function ReportsPage() {
       <div class="meta">
         <div><b>Rango:</b> ${f.from || "—"} — ${f.to || "—"}</div>
         <div><b>Sitio:</b> ${siteLabel} · <b>Ronda:</b> ${roundLabel}</div>
-        <div><b>Oficial:</b> ${f.officer || "Todos"}</div>
+        <div><b>Oficial:</b> ${officerFilterLabel}</div>
         <div><b>Generado:</b> ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}</div>
         <div><b>Total omisiones:</b> ${rows.length}</div>
       </div>
@@ -794,7 +866,7 @@ export default function ReportsPage() {
         const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
         const ronda = o.roundName || o.roundId || "—";
         const punto = o.pointName || o.point || o.pointId || "—";
-        const oficial = o.officerName || o.officerEmail || o.guardId || "—";
+        const oficial = resolveOfficerLabel(o);
         return `
           <tr>
             <td>${i + 1}</td>
@@ -858,7 +930,6 @@ export default function ReportsPage() {
   }
 
   async function doExcel() {
-    // Si el usuario está en modo "Omisiones", exportamos el dataset filtrado
     if (f.reportType === "omissions") {
       exportOmissionsExcel();
       return;
@@ -868,11 +939,11 @@ export default function ReportsPage() {
       setDownloading(true);
       const qs = new URLSearchParams(f).toString();
       const candidates = [
-        rondasqrApi.xlsxUrl(f),
+        rondasqrApi.xlsxUrl?.(f),
         `${ROOT}/api/rondasqr/v1/reports/export/xlsx?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/xlsx?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/excel?${qs}`,
-      ];
+      ].filter(Boolean);
       const ok = await openFirstOk(candidates);
       if (!ok)
         alert("HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor.");
@@ -882,7 +953,6 @@ export default function ReportsPage() {
   }
 
   async function doPdf() {
-    // Para tipos específicos generamos el PDF en el front (descargable)
     try {
       setDownloading(true);
 
@@ -903,13 +973,12 @@ export default function ReportsPage() {
         return;
       }
 
-      // Para "all" o "map" seguimos intentando el endpoint del backend
       const qs = new URLSearchParams(f).toString();
       const candidates = [
-        rondasqrApi.pdfUrl(f),
+        rondasqrApi.pdfUrl?.(f),
         `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/export/report.pdf?${qs}`,
-      ];
+      ].filter(Boolean);
       const ok = await openFirstOk(candidates);
       if (!ok)
         alert("HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor.");
@@ -919,7 +988,6 @@ export default function ReportsPage() {
   }
 
   function doPrint() {
-    // Imprimir usando el MISMO formato del PDF (abre el PDF en modo impresión)
     if (f.reportType === "omissions") {
       exportOmissionsPdf("print");
       return;
@@ -937,16 +1005,12 @@ export default function ReportsPage() {
       return;
     }
 
-    // Para "all" o "map" intentamos el backend (PDF ya maquetado del servidor)
     const qs = new URLSearchParams(f).toString();
-    const url =
-      rondasqrApi.pdfUrl?.(f) ||
-      `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`;
+    const url = rondasqrApi.pdfUrl?.(f) || `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`;
     window.open(url, "_blank");
   }
-  /* ----------------------------------- */
 
-  // Banner suave: toma variables del tema
+  // Banner suave
   const fromVar = readVar("--accent-from", "#38bdf8");
   const toVar = readVar("--accent-to", "#22d3ee");
   const alphaVar = parseFloat(readVar("--accent-alpha", "0.16")) || 0.16;
@@ -957,28 +1021,15 @@ export default function ReportsPage() {
     )} 100%)`,
   };
 
-  // ====== lógica para combo buscable de oficiales ======
-  const filteredOfficers =
-    officerQuery.trim().length === 0
-      ? officers
-      : officers.filter((o) =>
-          getOfficerLabel(o).toLowerCase().includes(officerQuery.toLowerCase())
-        );
-
-  function handleOfficerInputChange(e) {
-    const value = e.target.value;
-    setOfficerQuery(value);
-    setF((prev) => ({ ...prev, officer: value }));
-  }
-
-  function handleOfficerSelect(officer) {
-    const label = getOfficerLabel(officer);
-    setOfficerQuery(label);
-    setF((prev) => ({
-      ...prev,
-      officer: officer.guardId || officer.email || officer.id || label,
-    }));
-  }
+  // Omisiones con nombre de oficial ya resuelto
+  const decoratedOmissions = (data.omissions || []).map((o) => {
+    const label = resolveOfficerLabel(o);
+    return {
+      ...o,
+      officerName: label,
+      officerLabel: label,
+    };
+  });
 
   return (
     <div className="px-4 py-5 space-y-5">
@@ -1132,37 +1183,21 @@ export default function ReportsPage() {
             </select>
           </div>
 
-          {/* Oficial buscable */}
-          <div className="flex flex-col relative">
+          {/* Oficial: SELECT de guardias, como en AssignmentsPage */}
+          <div className="flex flex-col">
             <label className="text-[11px] text-white/70 mb-1">Oficial (opcional)</label>
-            <input
-              placeholder="correo / nombre / guardId"
-              value={officerQuery}
-              onChange={handleOfficerInputChange}
+            <select
+              value={f.officer}
+              onChange={setField("officer")}
               className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
-            />
-            {filteredOfficers.length > 0 && officerQuery !== "" && (
-              <div className="absolute z-20 top-full mt-1 left-0 right-0 max-h-56 overflow-y-auto rounded-lg border border-white/15 bg-slate-900/95 backdrop-blur shadow-lg">
-                {filteredOfficers.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      handleOfficerSelect(o);
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-700/80"
-                  >
-                    <div className="font-medium">{o.name}</div>
-                    {(o.email || o.guardId) && (
-                      <div className="text-[10px] text-slate-300">
-                        {o.email} {o.guardId && `· ${o.guardId}`}
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
+            >
+              <option value="">Todos</option>
+              {guards.map((g) => (
+                <option key={g._id} value={g.opId}>
+                  {getGuardLabel(g)}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -1226,9 +1261,17 @@ export default function ReportsPage() {
 
       {/* Secciones de reporte (controladas por flags) */}
       {f.includeSummary && <ReportSummary stats={data.stats} />}
-      {f.includeOmissions && <OmissionsTable items={data.omissions} />}
-      {f.includeMessages && <MessagesTable items={data.messages} />}
-      {f.includeDetail && <MapView items={data.detailed} /> && <></>}
+
+      {f.includeOmissions && <OmissionsTable items={decoratedOmissions} />}
+
+      {f.includeMessages && (
+        <MessagesTable
+          items={data.messages}
+          title="Alertas de pánico"
+        />
+      )}
+
+      {f.includeDetail && <DetailedMarks items={data.detailed} />}
 
       {f.includeMap && (
         <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
