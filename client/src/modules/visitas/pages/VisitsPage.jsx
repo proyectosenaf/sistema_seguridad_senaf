@@ -1,4 +1,3 @@
-// src/modules/visitas/VisitsPage.jsx
 import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
@@ -9,8 +8,7 @@ import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:4000";
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:4000";
 
 async function readJsonSafe(res) {
   const raw = await res.text();
@@ -75,6 +73,30 @@ export default function VisitsPage() {
                   })}`
                 : "-";
 
+            // Leer info de vehículo si existe en la respuesta
+            const vehicleBrand =
+              v.vehiculo?.marca ||
+              v.vehicle?.brand ||
+              v.marcaVehiculo ||
+              "";
+            const vehicleModel =
+              v.vehiculo?.modelo ||
+              v.vehicle?.model ||
+              v.modeloVehiculo ||
+              "";
+            const vehiclePlate =
+              v.vehiculo?.placa ||
+              v.vehicle?.plate ||
+              v.placaVehiculo ||
+              "";
+
+            const vehicleSummary =
+              vehicleBrand || vehicleModel || vehiclePlate
+                ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
+                    vehiclePlate ? ` (${vehiclePlate})` : ""
+                  }`
+                : "—";
+
             return {
               id: v._id,
               name: v.nombre,
@@ -86,6 +108,10 @@ export default function VisitsPage() {
               status: v.estado,
               entryAt: entryDate,
               exitAt: exitDate,
+              vehicleBrand,
+              vehicleModel,
+              vehiclePlate,
+              vehicleSummary,
             };
           });
           setVisitors(mapped);
@@ -127,7 +153,7 @@ export default function VisitsPage() {
 
   const filteredVisitors = useMemo(() => {
     return visitors.filter((v) => {
-      const full = `${v.name} ${v.document} ${v.company}`.toLowerCase();
+      const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
       const matchesSearch = full.includes(search.toLowerCase().trim());
       const matchesStatus =
         statusFilter === "todos"
@@ -147,6 +173,20 @@ export default function VisitsPage() {
       telefono: formData.phone?.trim() || undefined,
       correo: formData.email?.trim() || undefined,
     };
+
+    // Adjuntar info de vehículo solo si vino del modal
+    if (
+      formData.vehicle &&
+      formData.vehicle.brand &&
+      formData.vehicle.model &&
+      formData.vehicle.plate
+    ) {
+      payload.vehiculo = {
+        marca: formData.vehicle.brand,
+        modelo: formData.vehicle.model,
+        placa: formData.vehicle.plate,
+      };
+    }
 
     try {
       const res = await fetch(`${API_BASE}/api/visitas`, {
@@ -174,6 +214,29 @@ export default function VisitsPage() {
         minute: "2-digit",
       })}`;
 
+      const vehicleBrand =
+        v.vehiculo?.marca ||
+        v.vehicle?.brand ||
+        payload.vehiculo?.marca ||
+        "";
+      const vehicleModel =
+        v.vehiculo?.modelo ||
+        v.vehicle?.model ||
+        payload.vehiculo?.modelo ||
+        "";
+      const vehiclePlate =
+        v.vehiculo?.placa ||
+        v.vehicle?.plate ||
+        payload.vehiculo?.placa ||
+        "";
+
+      const vehicleSummary =
+        vehicleBrand || vehicleModel || vehiclePlate
+          ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
+              vehiclePlate ? ` (${vehiclePlate})` : ""
+            }`
+          : "—";
+
       const newRow = {
         id: v._id,
         name: v.nombre,
@@ -185,6 +248,10 @@ export default function VisitsPage() {
         status: v.estado || "Dentro",
         entryAt: entryDate,
         exitAt: null,
+        vehicleBrand,
+        vehicleModel,
+        vehiclePlate,
+        vehicleSummary,
       };
 
       setVisitors((prev) => [newRow, ...prev]);
@@ -246,6 +313,9 @@ export default function VisitsPage() {
       Documento: v.document || "",
       Empresa: v.company || "",
       Empleado: v.employee || "",
+      VehiculoMarca: v.vehicleBrand || "",
+      VehiculoModelo: v.vehicleModel || "",
+      VehiculoPlaca: v.vehiclePlate || "",
       Entrada: v.entry || "",
       Salida: v.exit || "",
       Estado: v.status || "",
@@ -340,8 +410,6 @@ export default function VisitsPage() {
       const headers = Object.keys(rows[0]);
       const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
 
-      // jspdf-autotable usage
-      // autoTable was added to jsPDF prototype by importing "jspdf-autotable"
       doc.autoTable({
         startY: 60,
         head: [headers],
@@ -356,7 +424,9 @@ export default function VisitsPage() {
       doc.save(`visitas-${ts}.pdf`);
     } catch (err) {
       console.error("Error generando PDF con jsPDF:", err);
-      alert("No se pudo generar PDF automáticamente. Revisa las dependencias (jspdf, jspdf-autotable).");
+      alert(
+        "No se pudo generar PDF automáticamente. Revisa las dependencias (jspdf, jspdf-autotable)."
+      );
     }
   }
 
@@ -438,7 +508,7 @@ export default function VisitsPage() {
             <div className="flex-1 md:flex-none">
               <input
                 className="input-fx w-full md:w-[300px]"
-                placeholder="Buscar por nombre, documento o empresa…"
+                placeholder="Buscar por nombre, documento, empresa o placa…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -458,13 +528,14 @@ export default function VisitsPage() {
           </div>
         </div>
 
-        <table className="w-full text-left border-collapse min-w-[900px]">
+        <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
             <tr className="[&>th]:py-2 [&>th]:pr-4">
               <th>Visitante</th>
               <th>Documento</th>
               <th>Empresa</th>
               <th>Empleado</th>
+              <th>Vehículo</th>
               <th>Entrada</th>
               <th>Salida</th>
               <th>Estado</th>
@@ -474,30 +545,40 @@ export default function VisitsPage() {
           <tbody className="text-neutral-200">
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">
+                <td colSpan={9} className="py-6 text-center text-neutral-500 text-sm">
                   Cargando…
                 </td>
               </tr>
             ) : filteredVisitors.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">
+                <td colSpan={9} className="py-6 text-center text-neutral-500 text-sm">
                   Sin resultados
                 </td>
               </tr>
             ) : (
               filteredVisitors.map((v) => (
-                <tr key={v.id} className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4">
-                  <td className="font-medium text-neutral-100"><div>{v.name}</div></td>
+                <tr
+                  key={v.id}
+                  className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                >
+                  <td className="font-medium text-neutral-100">
+                    <div>{v.name}</div>
+                  </td>
                   <td className="text-neutral-400">{v.document}</td>
                   <td className="text-neutral-200">{v.company}</td>
                   <td className="text-neutral-200">{v.employee}</td>
+                  <td className="text-neutral-200">{v.vehicleSummary}</td>
                   <td className="text-neutral-200">{v.entry}</td>
                   <td className="text-neutral-400">{v.exit}</td>
                   <td>
                     {v.status === "Dentro" ? (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">Dentro</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
+                        Dentro
+                      </span>
                     ) : (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">Finalizada</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
+                        Finalizada
+                      </span>
                     )}
                   </td>
                   <td className="text-right">
@@ -519,7 +600,7 @@ export default function VisitsPage() {
           </tbody>
         </table>
 
-        {/* FOOTER: Export buttons moved here (debajo de la tabla) */}
+        {/* FOOTER: Export buttons */}
         <div className="mt-4 flex justify-end gap-3">
           <button
             onClick={() => exportExcel(filteredVisitors)}
