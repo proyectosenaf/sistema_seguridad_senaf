@@ -44,11 +44,9 @@ app.set("trust proxy", 1);
 
 /* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
 
-// Namespace IAM para roles
 const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
 // Correos que serán super administradores en TODOS los módulos.
-// Combina ROOT_ADMINS y SUPERADMIN_EMAIL para compatibilidad.
 const ROOT_ADMINS = Array.from(
   new Set(
     [
@@ -134,24 +132,14 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
-/**
- * Unificamos todo en una sola carpeta raíz:
- *   <root>/uploads
- *
- * Desde el frontend las rutas pueden venir como:
- *   /uploads/incidentes/archivo.png
- *   /api/uploads/incidentes/archivo.png
- *
- * Ambas funcionarán porque montamos dos prefijos.
- */
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOADS_ROOT)) {
   fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 }
 
-// Servir archivos sin /api (ej: http://localhost:4000/uploads/...)
+// Sin /api (ej: http://localhost:4000/uploads/...)
 app.use("/uploads", express.static(UPLOADS_ROOT));
-// Servir archivos también con /api (ej: http://localhost:4000/api/uploads/...)
+// Con /api (ej: http://localhost:4000/api/uploads/...)
 app.use("/api/uploads", express.static(UPLOADS_ROOT));
 
 /* ───────────────────────── Health checks ──────────────────────── */
@@ -518,6 +506,17 @@ app.use("/api/incidentes", incidentesRoutes); // compatibilidad
 app.use("/incidentes", incidentesRoutes);     // sin /api
 
 /* ✅ Evaluaciones */
+
+// 🔍 Debug simple SOLO en desarrollo para ver el payload que llega
+if (process.env.NODE_ENV !== "production") {
+  app.use("/api/evaluaciones", (req, _res, next) => {
+    if (req.method === "POST") {
+      console.log("[debug] POST /api/evaluaciones body:", req.body);
+    }
+    next();
+  });
+}
+
 app.use("/evaluaciones", evaluacionesRoutes);
 app.use("/api/evaluaciones", evaluacionesRoutes);
 
