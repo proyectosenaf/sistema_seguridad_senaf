@@ -2,9 +2,13 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
 
+// IMPORTS ESTÁTICOS (asegúrate de tener instaladas las dependencias)
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
+
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:4000";
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:4000";
 
 async function readJsonSafe(res) {
   const raw = await res.text();
@@ -34,8 +38,7 @@ export default function VisitsPage() {
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
 
-  // 🔧 ahora trabajamos con nombre libre del empleado (texto)
-  const sendEmpleadoAsId = false;
+  const sendEmpleadoAsId = false; // (no se modificó)
 
   useEffect(() => {
     let alive = true;
@@ -70,18 +73,45 @@ export default function VisitsPage() {
                   })}`
                 : "-";
 
+            // Leer info de vehículo si existe en la respuesta
+            const vehicleBrand =
+              v.vehiculo?.marca ||
+              v.vehicle?.brand ||
+              v.marcaVehiculo ||
+              "";
+            const vehicleModel =
+              v.vehiculo?.modelo ||
+              v.vehicle?.model ||
+              v.modeloVehiculo ||
+              "";
+            const vehiclePlate =
+              v.vehiculo?.placa ||
+              v.vehicle?.plate ||
+              v.placaVehiculo ||
+              "";
+
+            const vehicleSummary =
+              vehicleBrand || vehicleModel || vehiclePlate
+                ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
+                    vehiclePlate ? ` (${vehiclePlate})` : ""
+                  }`
+                : "—";
+
             return {
               id: v._id,
               name: v.nombre,
               document: v.documento,
               company: v.empresa || "—",
-              employee: v.empleado || "—", // <- texto
+              employee: v.empleado || "—",
               entry: fmt(entryDate),
               exit: fmt(exitDate),
               status: v.estado,
-              // ✅ guardo fechas crudas para cálculos (no visibles)
               entryAt: entryDate,
               exitAt: exitDate,
+              vehicleBrand,
+              vehicleModel,
+              vehiclePlate,
+              vehicleSummary,
             };
           });
           setVisitors(mapped);
@@ -106,7 +136,6 @@ export default function VisitsPage() {
     [visitors]
   );
 
-  // ✅ “Total Hoy” solo cuenta visitas con fechaEntrada dentro del día local de HOY
   const kpiTotalHoy = useMemo(() => {
     const { start, end } = getTodayRange();
     return visitors.filter(
@@ -114,7 +143,6 @@ export default function VisitsPage() {
     ).length;
   }, [visitors]);
 
-  // ✅ “Empresas Visitantes” también por HOY (únicas del día)
   const kpiEmpresas = useMemo(() => {
     const { start, end } = getTodayRange();
     const empresasDeHoy = visitors
@@ -125,7 +153,7 @@ export default function VisitsPage() {
 
   const filteredVisitors = useMemo(() => {
     return visitors.filter((v) => {
-      const full = `${v.name} ${v.document} ${v.company}`.toLowerCase();
+      const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
       const matchesSearch = full.includes(search.toLowerCase().trim());
       const matchesStatus =
         statusFilter === "todos"
@@ -135,17 +163,30 @@ export default function VisitsPage() {
     });
   }, [visitors, search, statusFilter]);
 
-  // ✅ ahora enviamos 'empleado' (texto)
   async function handleAddVisitor(formData) {
     const payload = {
       nombre: formData.name?.trim(),
       documento: formData.document?.trim(),
       empresa: formData.company?.trim() || undefined,
-      empleado: formData.employee?.trim(), // <- texto libre
+      empleado: formData.employee?.trim(),
       motivo: formData.reason?.trim(),
       telefono: formData.phone?.trim() || undefined,
       correo: formData.email?.trim() || undefined,
     };
+
+    // Adjuntar info de vehículo solo si vino del modal
+    if (
+      formData.vehicle &&
+      formData.vehicle.brand &&
+      formData.vehicle.model &&
+      formData.vehicle.plate
+    ) {
+      payload.vehiculo = {
+        marca: formData.vehicle.brand,
+        modelo: formData.vehicle.model,
+        placa: formData.vehicle.plate,
+      };
+    }
 
     try {
       const res = await fetch(`${API_BASE}/api/visitas`, {
@@ -173,6 +214,29 @@ export default function VisitsPage() {
         minute: "2-digit",
       })}`;
 
+      const vehicleBrand =
+        v.vehiculo?.marca ||
+        v.vehicle?.brand ||
+        payload.vehiculo?.marca ||
+        "";
+      const vehicleModel =
+        v.vehiculo?.modelo ||
+        v.vehicle?.model ||
+        payload.vehiculo?.modelo ||
+        "";
+      const vehiclePlate =
+        v.vehiculo?.placa ||
+        v.vehicle?.plate ||
+        payload.vehiculo?.placa ||
+        "";
+
+      const vehicleSummary =
+        vehicleBrand || vehicleModel || vehiclePlate
+          ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
+              vehiclePlate ? ` (${vehiclePlate})` : ""
+            }`
+          : "—";
+
       const newRow = {
         id: v._id,
         name: v.nombre,
@@ -182,9 +246,12 @@ export default function VisitsPage() {
         entry: fmtEntry,
         exit: "-",
         status: v.estado || "Dentro",
-        // ✅ para KPI de hoy
         entryAt: entryDate,
         exitAt: null,
+        vehicleBrand,
+        vehicleModel,
+        vehiclePlate,
+        vehicleSummary,
       };
 
       setVisitors((prev) => [newRow, ...prev]);
@@ -237,12 +304,142 @@ export default function VisitsPage() {
     }
   }
 
+  // ------------------------------
+  // Export helpers
+  // ------------------------------
+  function buildExportRows(list) {
+    return list.map((v) => ({
+      Visitante: v.name || "",
+      Documento: v.document || "",
+      Empresa: v.company || "",
+      Empleado: v.employee || "",
+      VehiculoMarca: v.vehicleBrand || "",
+      VehiculoModelo: v.vehicleModel || "",
+      VehiculoPlaca: v.vehiclePlate || "",
+      Entrada: v.entry || "",
+      Salida: v.exit || "",
+      Estado: v.status || "",
+    }));
+  }
+
+  // CSV export (universal)
+  function exportCSV(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    const headers = Object.keys(rows[0]);
+    const csvLines = [
+      headers.join(","),
+      ...rows.map((r) =>
+        headers
+          .map((h) => {
+            const cell = String(r[h] ?? "");
+            if (cell.includes('"') || cell.includes(",") || cell.includes("\n")) {
+              return `"${cell.replace(/"/g, '""')}"`;
+            }
+            return cell;
+          })
+          .join(",")
+      ),
+    ];
+    const csv = csvLines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.download = `visitas-${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // XLSX export using SheetJS
+  async function exportExcel(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+    try {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Visitas");
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbout], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.download = `visitas-${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn("Error generando XLSX:", err);
+      exportCSV(list);
+    }
+  }
+
+  // PDF export using jsPDF + autotable (descarga directa, sin popups)
+  function exportPDF(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      const title = "Reporte de Visitantes";
+      doc.setFontSize(14);
+      doc.text(title, 40, 40);
+
+      const headers = Object.keys(rows[0]);
+      const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
+
+      doc.autoTable({
+        startY: 60,
+        head: [headers],
+        body,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [30, 30, 30], textColor: 255 },
+        theme: "grid",
+        margin: { left: 20, right: 20 },
+      });
+
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      doc.save(`visitas-${ts}.pdf`);
+    } catch (err) {
+      console.error("Error generando PDF con jsPDF:", err);
+      alert(
+        "No se pudo generar PDF automáticamente. Revisa las dependencias (jspdf, jspdf-autotable)."
+      );
+    }
+  }
+
+  // ------------------------------
+  // Render
+  // ------------------------------
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
+      {/* Header / botones superior (solo Registrar + Agenda) */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div className="flex flex-col">
           <h1 className="text-xl md:text-2xl font-bold text-neutral-100 dark:text-neutral-100">
@@ -253,7 +450,7 @@ export default function VisitsPage() {
           </p>
         </div>
 
-        <div className="flex flex-col items-start md:items-end gap-2">
+        <div className="flex flex-row gap-3 items-center">
           <button
             onClick={() => setShowModal(true)}
             className="btn-neon flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
@@ -263,18 +460,18 @@ export default function VisitsPage() {
 
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="text-xs text-blue-400 hover:underline"
+            className="btn-neon-alt flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
           >
-            Ir a Agenda de Citas →
+            <span className="font-semibold">Agenda de Citas</span> →
           </button>
         </div>
       </div>
 
+      {/* KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="user">👤</span>{" "}
-            Visitantes Activos
+            👤 Visitantes Activos
           </div>
           <div className="text-2xl font-semibold text-green-400">
             {loading ? "…" : kpiActivos}
@@ -283,8 +480,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="clock">⏰</span>{" "}
-            Total Hoy
+            ⏰ Total Hoy
           </div>
           <div className="text-2xl font-semibold text-blue-400">
             {loading ? "…" : kpiTotalHoy}
@@ -293,8 +489,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="building">🏢</span>{" "}
-            Empresas Visitantes
+            🏢 Empresas Visitantes
           </div>
           <div className="text-2xl font-semibold text-purple-400">
             {loading ? "…" : kpiEmpresas}
@@ -302,6 +497,7 @@ export default function VisitsPage() {
         </div>
       </div>
 
+      {/* TABLA */}
       <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
           <div className="font-semibold text-neutral-200 text-base">
@@ -312,7 +508,7 @@ export default function VisitsPage() {
             <div className="flex-1 md:flex-none">
               <input
                 className="input-fx w-full md:w-[300px]"
-                placeholder="Buscar por nombre, documento o empresa…"
+                placeholder="Buscar por nombre, documento, empresa o placa…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -332,13 +528,14 @@ export default function VisitsPage() {
           </div>
         </div>
 
-        <table className="w-full text-left border-collapse min-w-[900px]">
+        <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
             <tr className="[&>th]:py-2 [&>th]:pr-4">
               <th>Visitante</th>
               <th>Documento</th>
               <th>Empresa</th>
               <th>Empleado</th>
+              <th>Vehículo</th>
               <th>Entrada</th>
               <th>Salida</th>
               <th>Estado</th>
@@ -348,26 +545,40 @@ export default function VisitsPage() {
           <tbody className="text-neutral-200">
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Cargando…</td>
+                <td colSpan={9} className="py-6 text-center text-neutral-500 text-sm">
+                  Cargando…
+                </td>
               </tr>
             ) : filteredVisitors.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Sin resultados</td>
+                <td colSpan={9} className="py-6 text-center text-neutral-500 text-sm">
+                  Sin resultados
+                </td>
               </tr>
             ) : (
               filteredVisitors.map((v) => (
-                <tr key={v.id} className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4">
-                  <td className="font-medium text-neutral-100"><div>{v.name}</div></td>
+                <tr
+                  key={v.id}
+                  className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                >
+                  <td className="font-medium text-neutral-100">
+                    <div>{v.name}</div>
+                  </td>
                   <td className="text-neutral-400">{v.document}</td>
                   <td className="text-neutral-200">{v.company}</td>
                   <td className="text-neutral-200">{v.employee}</td>
+                  <td className="text-neutral-200">{v.vehicleSummary}</td>
                   <td className="text-neutral-200">{v.entry}</td>
                   <td className="text-neutral-400">{v.exit}</td>
                   <td>
                     {v.status === "Dentro" ? (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">Dentro</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
+                        Dentro
+                      </span>
                     ) : (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">Finalizada</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
+                        Finalizada
+                      </span>
                     )}
                   </td>
                   <td className="text-right">
@@ -388,6 +599,25 @@ export default function VisitsPage() {
             )}
           </tbody>
         </table>
+
+        {/* FOOTER: Export buttons */}
+        <div className="mt-4 flex justify-end gap-3">
+          <button
+            onClick={() => exportExcel(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar lista (xlsx)"
+          >
+            Exportar Excel
+          </button>
+
+          <button
+            onClick={() => exportPDF(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar PDF"
+          >
+            Exportar PDF
+          </button>
+        </div>
       </section>
 
       {showModal && (

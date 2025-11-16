@@ -67,7 +67,7 @@ export default function AgendaPage() {
           telefono: form.telefono || undefined,
           correo: form.correo || undefined,
           fecha: form.fecha, // YYYY-MM-DD
-          hora: form.hora,   // HH:mm
+          hora: form.hora, // HH:mm
         }),
       });
       const data = await res.json();
@@ -109,19 +109,29 @@ export default function AgendaPage() {
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const thisMonth = useMemo(() => todayISO.slice(0, 7), [todayISO]);
 
-  const [mode, setMode] = useState("day");           // "day" | "month"
-  const [month, setMonth] = useState(thisMonth);     // YYYY-MM (solo para modo mes)
+  const [mode, setMode] = useState("day"); // "day" | "month"
+  const [month, setMonth] = useState(thisMonth); // YYYY-MM (solo para modo mes)
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Nuevos estados añadidos:
+  const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD (filtro por día concreto)
+  const [showMyCitas, setShowMyCitas] = useState(false);
+  const [myDocumento, setMyDocumento] = useState("");
 
   async function fetchCitas() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      // 🔸 En "Por día" NO filtramos: mostramos TODAS las citas agendadas
+      // 🔸 En "Por día" por defecto mostramos TODO, pero si hay dateFilter lo añadimos
       if (mode === "month") params.set("month", month);
+      if (mode === "day" && dateFilter) params.set("date", dateFilter);
+      // Si usuario activó "Mis citas" y puso documento, filtramos por documento
+      if (showMyCitas && myDocumento.trim()) params.set("documento", myDocumento.trim());
 
-      const res = await fetch(`/api/citas?${params.toString()}`);
+      const qs = params.toString();
+      const url = `/api/citas${qs ? `?${qs}` : ""}`;
+      const res = await fetch(url);
       const data = await res.json();
       setItems(res.ok && data?.ok ? data.items : []);
     } catch (e) {
@@ -132,7 +142,7 @@ export default function AgendaPage() {
     }
   }
 
-  // Cambiar a Por día = listar TODO (sin inputs de fecha)
+  // Cambiar a Por día = listar TODO (sin inputs de fecha), pero ahora puede aceptar un dateFilter opcional
   function handleModeDay() {
     setMode("day");
   }
@@ -143,12 +153,14 @@ export default function AgendaPage() {
     const ym = now.toISOString().slice(0, 7);
     setMode("month");
     setMonth(ym);
+    // limpiar filtro de día
+    setDateFilter("");
   }
 
   useEffect(() => {
     if (tab === "citas") fetchCitas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, mode, month]);
+  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
 
   // Agrupar por día para render
   const grouped = useMemo(() => {
@@ -161,9 +173,7 @@ export default function AgendaPage() {
     for (const arr of map.values()) {
       arr.sort((a, b) => new Date(a.citaAt) - new Date(b.citaAt));
     }
-    return Array.from(map.entries()).sort(
-      (a, b) => new Date(a[0]) - new Date(b[0])
-    );
+    return Array.from(map.entries()).sort((a, b) => new Date(a[0]) - new Date(b[0]));
   }, [items]);
 
   return (
@@ -278,8 +288,34 @@ export default function AgendaPage() {
               </button>
             </div>
 
-            {/* En modo día no hay input. En modo mes sí (opcional) */}
+            {/* En modo día mostramos opcionalmente input date; en modo mes el input month */}
             <div className="flex items-center gap-3">
+              {mode === "day" && (
+                <>
+                  <input
+                    type="date"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                    className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                    title="Filtrar por fecha (opcional)"
+                  />
+                  {/* Mis citas control */}
+                  <label className="flex items-center gap-2 text-xs text-neutral-300">
+                    <input type="checkbox" checked={showMyCitas} onChange={(e) => { setShowMyCitas(e.target.checked); if (!e.target.checked) setMyDocumento(""); }} />
+                    Mis citas
+                  </label>
+                  {showMyCitas && (
+                    <input
+                      type="text"
+                      placeholder="Documento (ej: 0801...)"
+                      value={myDocumento}
+                      onChange={(e) => setMyDocumento(e.target.value)}
+                      className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                    />
+                  )}
+                </>
+              )}
+
               {mode === "month" && (
                 <input
                   type="month"
@@ -289,6 +325,7 @@ export default function AgendaPage() {
                   title="Cambiar mes (opcional)"
                 />
               )}
+
               <button
                 onClick={fetchCitas}
                 className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600"
@@ -302,9 +339,7 @@ export default function AgendaPage() {
             <div className="text-neutral-400">Cargando…</div>
           ) : grouped.length === 0 ? (
             <div className="text-neutral-400">
-              {mode === "day"
-                ? "Sin citas agendadas."
-                : "Sin citas en el mes seleccionado."}
+              {mode === "day" ? "Sin citas agendadas." : "Sin citas en el mes seleccionado."}
             </div>
           ) : (
             <div className="flex flex-col gap-6">
@@ -334,8 +369,15 @@ export default function AgendaPage() {
                             <td className="text-neutral-300">{it.motivo}</td>
                             <td>{fmtTime(it.citaAt)}</td>
                             <td>
-                              <span className="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-200 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300">
-                                Programada
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                  (it.estado === "Programada" || !it.estado) ? "bg-yellow-200 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300" :
+                                  it.estado === "Atendida" ? "bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300" :
+                                  it.estado === "Cancelada" ? "bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300" :
+                                  "bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300"
+                                }`}
+                              >
+                                {it.estado || "Programada"}
                               </span>
                             </td>
                           </tr>
