@@ -24,6 +24,8 @@ export function useAssignmentSocket(user, onNotify, onCount) {
       window.__senafSocket = io(base, {
         withCredentials: true,
         transports: ["websocket", "polling"],
+        path: "/socket.io",
+        reconnectionAttempts: 5, // evita reconectar infinito si falla WS en DO
       });
     }
 

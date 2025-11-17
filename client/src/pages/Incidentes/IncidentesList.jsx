@@ -1,9 +1,10 @@
 // client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
+import { useAuth0 } from "@auth0/auth0-react";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
-import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
+import iamApi from "../../iam/api/iamApi.js"; // 👈 para traer guardias
 
 // helper para mostrar bonito el nombre del guardia
 function guardLabel(g) {
@@ -12,6 +13,8 @@ function guardLabel(g) {
 }
 
 export default function IncidentesList() {
+  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
+
   const [incidentes, setIncidentes] = useState([]);
   const [stats, setStats] = useState({
     abiertos: 0,
@@ -40,7 +43,7 @@ export default function IncidentesList() {
   // Le quitamos el /api del final para servir /uploads correctamente
   const API_HOST = (API || "").replace(/\/api$/, "");
 
-  // 👇 NUEVO: catálogo de guardias (IAM)
+  // 👇 catálogo de guardias (IAM)
   const [guards, setGuards] = useState([]);
 
   function recomputeStats(list) {
@@ -55,7 +58,7 @@ export default function IncidentesList() {
   useEffect(() => {
     (async () => {
       try {
-        // 👇 api ya tiene baseURL tipo http://localhost:4000/api
+        // api ya tiene baseURL tipo http://localhost:4000/api
         const res = await api.get("/incidentes", {
           params: { limit: 500 },
         });
@@ -73,16 +76,35 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── NUEVO: cargar guardias desde IAM ─────────
+  // ───────── cargar guardias desde IAM (con token) ─────────
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         let items = [];
+
         if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards("", true);
-          items = r.items || [];
+          let token;
+          try {
+            if (isAuthenticated) {
+              token = await getAccessTokenSilently({
+                authorizationParams: {
+                  audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+                },
+              });
+            }
+          } catch (e) {
+            console.warn(
+              "[IncidentesList] no se pudo obtener access token para IAM:",
+              e?.message || e
+            );
+          }
+
+          const r = await iamApi.listGuards("", true, token);
+          items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
+          // Fallback si no existe listGuards
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || []).filter((u) => {
@@ -112,10 +134,11 @@ export default function IncidentesList() {
         if (mounted) setGuards([]);
       }
     })();
+
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [getAccessTokenSilently, isAuthenticated]);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
@@ -332,7 +355,7 @@ export default function IncidentesList() {
 
             {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 👇 AHORA ES SELECT DE GUARDIAS */}
+              {/* SELECT DE GUARDIAS */}
               <div>
                 <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
@@ -574,7 +597,7 @@ export default function IncidentesList() {
                       key={i._id}
                       className="border-b border-cyan-400/5 hover:bg-[#1b2d44] transition-colors"
                     >
-                      <td className="px-4 py-3 text-white font-medium">
+                      <td className="px-4 py-3 text.white font-medium">
                         {i.type}
                       </td>
                       <td className="px-4 py-3 text-gray-300 max-w-[320px] truncate">
