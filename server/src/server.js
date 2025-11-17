@@ -295,9 +295,30 @@ function optionalAuth(req, res, next) {
   return next();
 }
 
+/**
+ * 🔐 Igual que requireAuth, pero:
+ * - Respeta DISABLE_AUTH=1.
+ * - NO exige auth en /auth/me ni /me (para que sigan siendo opcionales).
+ */
+function requireAuthExceptMe(req, res, next) {
+  const path = req.path || "";
+  if (path === "/auth/me" || path === "/me") {
+    return next();
+  }
+  if (String(process.env.DISABLE_AUTH || "0") === "1") {
+    return next();
+  }
+  return requireAuth(req, res, next);
+}
+
 /* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
 app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
+
+// 🔐 Middleware especial para IAM:
+// primero valida JWT y luego aplica el bridge + ROOT_ADMIN
+app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
+app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
 const chatMessagesHandler = (_req, res) => res.json([]);
