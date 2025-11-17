@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -29,6 +28,12 @@ import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
 
 // ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
+
+
+import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
+import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
+
+import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
 // ✅ Reports de Rondas (el archivo largo que pegaste)
 import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
@@ -546,6 +551,15 @@ app.get("/rondasqr/v1/checkin/ping", pingCheckinHandler);
 app.use("/rondasqr/v1", rondasqr);
 app.use("/rondasqr/v1", rondasReportsRoutes);
 app.use("/rondasqr/v1", rondasOfflineRoutes);
+
+/* ✅ Módulo Control de Acceso */
+app.use("/api/acceso", accesoRoutes);
+app.use("/acceso", accesoRoutes); // compat sin /api
+
+app.use("/api/acceso/uploads", uploadRoutes);
+app.use("/acceso/uploads", uploadRoutes); // compat sin /api
+
+app.use("/api", visitasRoutes);
 
 /* ✅ Módulo de INCIDENTES */
 app.use("/api/incidentes", incidentesRoutes); // compatibilidad

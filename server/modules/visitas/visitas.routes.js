@@ -1,4 +1,4 @@
-// server/modules/visitas/visitas.routes.js
+// server/src/modules/visitas/visitas.routes.js
 import { Router } from "express";
 import {
   getVisitas,
@@ -7,62 +7,73 @@ import {
   createCita,
   listCitas,
   checkinCita,
+  listVehiculosVisitasEnSitio,
 } from "./visitas.controller.js";
 
-// ✅ Middleware para validar horario de atención (8:00–12:00 y 13:00–17:00)
-import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+// Middleware de horario de atención (8:00–12:00 y 13:00–17:00)
+//import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
 
 const router = Router();
 
 /**
- * Wrapper para manejar funciones async sin try/catch redundante.
+ * Wrapper para manejar funciones async sin try/catch en cada handler
  */
-const asyncHandler = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+const asyncHandler =
+  (fn) =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
 
 /**
- * Seguridad / permisos:
- * De momento queda abierto (igual que /api/incidentes).
- * Luego puedes proteger con requireAuth o middleware de roles.
+ * Healthcheck del módulo
  */
-
-// Healthcheck del módulo
 router.get("/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/visitas/ping" })
 );
 
 /* ─────────────── VISITAS (Ingresos reales) ───────────────
    Compatibilidad de montaje:
-   - Si montas en app.use("/api/visitas", router):
-       GET /api/visitas           → usa la ruta "/"
-       GET /api/visitas/visitas   → también responde (por compat)
-   - Si montas en app.use("/api", router):
-       GET /api/visitas           → usa la ruta "/visitas"
+
+   - Si montas en: app.use("/api", router)
+       GET /api/visitas        → ruta "/visitas"
+       POST /api/visitas       → ruta "/visitas"
+       GET /api/               → ruta "/"
+   - Si montas en: app.use("/api/visitas", router)
+       GET /api/visitas        → ruta "/"
+       GET /api/visitas/visitas→ ruta "/visitas"
 */
 
-// Lista de visitantes activos / históricos
-// Ejemplo: GET /api/visitas  o  GET /api/visitas/visitas
+// Lista de visitas (histórico + dentro)
 router.get(["/visitas", "/"], asyncHandler(getVisitas));
 
-// Registrar un nuevo ingreso (visitante real)
+// Crear ingreso directo
 router.post(["/visitas", "/"], asyncHandler(createVisita));
 
-// Cerrar visita (marcar salida)
+// Cerrar visita (marcar salida / finalizada)
+// Compatibilidad con dos paths distintos:
 router.patch(["/visitas/:id/cerrar", "/:id/cerrar"], asyncHandler(closeVisita));
+router.put("/visitas/:id/finalizar", asyncHandler(closeVisita)); // usado por VisitasControlPage.jsx
+
+/* ─────────────── VEHÍCULOS DE VISITANTES EN SITIO ───────────────
+   Para el módulo de Control de Acceso (tabla de visitantes en estacionamiento)
+   - Usar desde el front: GET /api/visitas/vehiculos-en-sitio
+*/
+router.get(
+  ["/visitas/vehiculos-en-sitio", "/vehiculos-en-sitio"],
+  asyncHandler(listVehiculosVisitasEnSitio)
+);
 
 /* ─────────────── CITAS (Agendadas) ───────────────
-   Nota: Estas rutas se esperan en /api/citas (AgendaPage.jsx).
-   → Monta este router en "/api" para que queden como /api/citas.
+   Se esperan como /api/citas desde el frontend de Agenda
 */
 
-// ✅ Crear una cita (programar visita futura) con validación de horario
+// Crear cita con validación de horario
 router.post("/citas", enforceBusinessHours, asyncHandler(createCita));
 
-// Listar citas programadas
-// Ejemplo: GET /api/citas?day=2025-11-01 o ?month=2025-11
+// Listar citas (?day=YYYY-MM-DD o ?month=YYYY-MM)
 router.get("/citas", asyncHandler(listCitas));
 
-// Registrar check-in (convertir cita → ingreso real)
+// Check-in de cita → pasa a "Dentro"
 router.patch("/citas/:id/checkin", asyncHandler(checkinCita));
 
 export default router;
