@@ -1,4 +1,3 @@
-// client/src/iam/api/iamApi.js
 import { API } from "../../lib/api.js";
 
 // Normaliza raíz de API para evitar dobles slashes

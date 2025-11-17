@@ -1,4 +1,3 @@
-// client/src/iam/api/IamGuard.jsx
 import React, { useEffect, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../api/iamApi";
@@ -10,7 +9,9 @@ const IS_LOCALHOST =
     window.location.hostname === "127.0.0.1");
 
 // 📧 Super-admin por correo (configurable por env)
-const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "").toLowerCase();
+const SUPERADMIN_EMAIL = String(
+  import.meta.env.VITE_SUPERADMIN_EMAIL || ""
+).toLowerCase();
 
 // 🔓 Modo “sin restricciones” en localhost SIEMPRE.
 // Además puedes seguir usando las envs si quieres forzar bypass en otros entornos.
@@ -119,7 +120,9 @@ export default function IamGuard({
   if (state.loading) return <div className="p-6">Cargando…</div>;
 
   // Sets normalizados
-  const roleSet = new Set((state.roles || []).map((r) => String(r).toLowerCase()));
+  const roleSet = new Set(
+    (state.roles || []).map((r) => String(r).toLowerCase())
+  );
   const permSet = new Set(state.perms || []);
 
   // Wildcard si trae "*" o si el usuario es admin
@@ -153,5 +156,5 @@ export default function IamGuard({
   if (asArr(allOf).length) ok = ok && hasAll(allOf);
   if (requireRole) ok = ok && hasRole(requireRole);
 
-  return ok ? <>{children}</> : (fallback || <div className="p-6">No autorizado</div>);
+  return ok ? <>{children}</> : fallback || <div className="p-6">No autorizado</div>;
 }

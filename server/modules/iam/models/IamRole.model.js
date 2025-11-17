@@ -1,4 +1,3 @@
-// server/modules/iam/models/IamRole.model.js
 import mongoose from "mongoose";
 
 const schema = new mongoose.Schema(
@@ -6,10 +5,9 @@ const schema = new mongoose.Schema(
     code: {
       type: String,
       required: true,
-      unique: true,
-      index: true,
+      unique: true,           // esto ya crea índice único
       trim: true,
-      lowercase: true,            // siempre en minúsculas
+      lowercase: true,        // siempre en minúsculas
     }, // ej: "admin"
     name: {
       type: String,
@@ -22,12 +20,12 @@ const schema = new mongoose.Schema(
     permissions: {
       type: [String],
       default: [],
-      index: true,
+      // 👇 sin index:true; definimos el índice abajo
     },
   },
   {
     timestamps: true,
-    collection: "iam_roles",   // 👈 aquí también con guion bajo
+    collection: "iam_roles",
   }
 );
 

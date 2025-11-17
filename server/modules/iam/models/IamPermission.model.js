@@ -1,4 +1,3 @@
-// server/modules/iam/models/IamPermission.model.js
 import mongoose from "mongoose";
 
 const schema = new mongoose.Schema(
@@ -10,12 +9,12 @@ const schema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    collection: "iam_permissions", // 👈 MUY IMPORTANTE: con guion bajo
+    collection: "iam_permissions", // 👈 con guion bajo
   }
 );
 
 // índices
 schema.index({ group: 1, order: 1 });
-schema.index({ key: 1 }, { unique: true });
+// ❌ NO definimos index({ key: 1 }) aquí: unique:true ya crea ese índice
 
 export default mongoose.model("IamPermission", schema);

@@ -1,14 +1,15 @@
-// client/src/iam/tools/seedIam.js
 import { permisosKeys, rolesKeys } from "../catalog/perms";
 import { iamApi } from "../api/iamApi";
 
 /**
  * Crea (si faltan) las entradas de /permissions a partir del catálogo local.
  * Luego asegura que los roles existan y tengan asignadas sus permissions.
- * IMPORTANTE: Debes pasarle un access token válido (Auth0).
+ * IMPORTANTE: Debes pasarle un access token válido (Auth0) con AUDIENCE correcto.
  *
  * Ejemplo desde React:
- *   const token = await getAccessTokenSilently({ authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE } });
+ *   const token = await getAccessTokenSilently({
+ *     authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE }
+ *   });
  *   await seedPermissionsAndRoles(token);
  */
 export async function seedPermissionsAndRoles(token) {
@@ -56,7 +57,10 @@ export async function seedPermissionsAndRoles(token) {
     const res = await iamApi.listPerms(token);
     existingPerms = res?.items || res?.permissions || [];
   } catch (e) {
-    console.warn("[seed] no se pudo volver a listar permisos:", e?.message || e);
+    console.warn(
+      "[seed] no se pudo volver a listar permisos:",
+      e?.message || e
+    );
   }
 
   // 2) ROLES
