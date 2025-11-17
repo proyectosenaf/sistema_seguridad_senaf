@@ -8,6 +8,10 @@ import {
   createIncident,
   updateIncident,
 } from "../controllers/incident.controller.js";
+import {
+  requireAuth,
+  requireAdmin,
+} from "../../../src/middleware/auth.js";
 
 const router = express.Router();
 
@@ -30,39 +34,61 @@ const upload = multer({
  * Por eso registramos varias rutas alias que apuntan a los mismos handlers.
  */
 
+// Todas las rutas de este router exigen estar autenticado
+router.use(requireAuth);
+
 /* ===== LISTAR INCIDENTES ===== */
 
 // Versión absoluta (por si el router se monta en "/")
-router.get("/api/rondasqr/v1/incidentes", getAllIncidents);
+router.get("/api/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
 // Versión relativa a "/api"
-router.get("/rondasqr/v1/incidentes", getAllIncidents);
+router.get("/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
 // Versión genérica para el módulo central: "/api/incidentes"
-router.get("/incidentes", getAllIncidents);
+router.get("/incidentes", requireAdmin, getAllIncidents);
 
 /* ===== CREAR INCIDENTE (con fotos) ===== */
 
 // Absoluta
 router.post(
   "/api/rondasqr/v1/incidentes",
+  requireAdmin,
   upload.array("photos", 10),
   createIncident
 );
 // Relativa a "/api"
 router.post(
   "/rondasqr/v1/incidentes",
+  requireAdmin,
   upload.array("photos", 10),
   createIncident
 );
 // Módulo central "/api/incidentes"
-router.post("/incidentes", upload.array("photos", 10), createIncident);
+router.post(
+  "/incidentes",
+  requireAdmin,
+  upload.array("photos", 10),
+  createIncident
+);
 
 /* ===== ACTUALIZAR INCIDENTE ===== */
 
 // Absoluta
-router.put("/api/rondasqr/v1/incidentes/:id", updateIncident);
+router.put(
+  "/api/rondasqr/v1/incidentes/:id",
+  requireAdmin,
+  updateIncident
+);
 // Relativa a "/api"
-router.put("/rondasqr/v1/incidentes/:id", updateIncident);
+router.put(
+  "/rondasqr/v1/incidentes/:id",
+  requireAdmin,
+  updateIncident
+);
 // Módulo central "/api/incidentes/:id"
-router.put("/incidentes/:id", updateIncident);
+router.put(
+  "/incidentes/:id",
+  requireAdmin,
+  updateIncident
+);
 
 export default router;

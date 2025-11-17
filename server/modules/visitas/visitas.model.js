@@ -1,6 +1,16 @@
 // server/src/modules/visitas/visita.model.js
 import mongoose from "mongoose";
 
+/* Subdocumento para el vehículo del visitante */
+const VehiculoVisitanteSchema = new mongoose.Schema(
+  {
+    marca: { type: String, trim: true },
+    modelo: { type: String, trim: true },
+    placa: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
 const VisitaSchema = new mongoose.Schema(
   {
     /* Datos base */
@@ -39,6 +49,10 @@ const VisitaSchema = new mongoose.Schema(
       index: true,
     },
 
+    /* Vehículo del visitante */
+    llegoEnVehiculo: { type: Boolean, default: false },
+    vehiculo: { type: VehiculoVisitanteSchema, default: null },
+
     /* Fechas */
     citaAt:       { type: Date, default: null, index: true },
     fechaEntrada: { type: Date, default: null, index: true },
@@ -54,6 +68,8 @@ const VisitaSchema = new mongoose.Schema(
 VisitaSchema.index({ tipo: 1, estado: 1, citaAt: 1 });
 VisitaSchema.index({ estado: 1, fechaEntrada: -1 });
 VisitaSchema.index({ createdAt: -1 });
+// Opcionalmente puedes ayudar consultas por vehiculo:
+VisitaSchema.index({ estado: 1, llegoEnVehiculo: 1 });
 
 /* Hook: autollenar fechaEntrada solo para ingresos nuevos */
 VisitaSchema.pre("save", function (next) {
@@ -64,5 +80,7 @@ VisitaSchema.pre("save", function (next) {
 });
 
 /* Modelo */
-const Visita = mongoose.models.Visita || mongoose.model("Visita", VisitaSchema);
+const Visita =
+  mongoose.models.Visita || mongoose.model("Visita", VisitaSchema);
+
 export default Visita;

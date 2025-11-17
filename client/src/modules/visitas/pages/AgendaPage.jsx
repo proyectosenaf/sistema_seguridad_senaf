@@ -2,6 +2,100 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+/* ================== Vehículos (mismas listas que en NewVisitorModal) ================== */
+const VEHICLE_BRANDS = [
+  "Toyota",
+  "Honda",
+  "Nissan",
+  "Hyundai",
+  "Kia",
+  "Chevrolet",
+  "Mazda",
+  "Ford",
+  "Mitsubishi",
+  "Suzuki",
+  "Volkswagen",
+  "Mercedes-Benz",
+  "BMW",
+  "Audi",
+  "Renault",
+  "Peugeot",
+  "Fiat",
+  "Jeep",
+  "Subaru",
+  "Isuzu",
+  "JAC",
+  "Great Wall",
+  "Changan",
+  "Chery",
+  "Otra",
+];
+
+const VEHICLE_MODELS_BASE_BY_BRAND = {
+  Toyota: ["Corolla", "Hilux", "RAV4", "Yaris", "Prado"],
+  Honda: ["Civic", "CR-V", "Fit", "HR-V"],
+  Nissan: ["Versa", "Frontier", "Sentra", "Kicks"],
+  Hyundai: ["Elantra", "Tucson", "Santa Fe", "Accent", "Creta"],
+  Kia: ["Rio", "Sportage", "Sorento", "Picanto"],
+  Chevrolet: ["Aveo", "Onix", "Tracker", "Captiva"],
+  Mazda: ["Mazda 2", "Mazda 3", "CX-5", "CX-30"],
+  Ford: ["Ranger", "Explorer", "Escape", "Fiesta"],
+  Mitsubishi: ["L200", "Outlander", "Montero Sport"],
+  Suzuki: ["Swift", "Vitara", "Jimny"],
+  Volkswagen: ["Jetta", "Gol", "Tiguan", "Amarok"],
+  "Mercedes-Benz": ["Clase C", "Clase E", "GLA"],
+  BMW: ["Serie 3", "Serie 5", "X3", "X5"],
+  Audi: ["A3", "A4", "Q3", "Q5"],
+  Renault: ["Duster", "Koleos", "Logan"],
+  Peugeot: ["208", "3008", "2008"],
+  Fiat: ["Uno", "Argo", "Strada"],
+  Jeep: ["Wrangler", "Renegade", "Cherokee"],
+  Subaru: ["Impreza", "Forester", "Outback"],
+  Isuzu: ["D-MAX"],
+  JAC: ["JS2", "JS4", "T8"],
+  "Great Wall": ["Wingle", "Poer"],
+  Changan: ["CS15", "CS35", "CS55"],
+  Chery: ["Tiggo 2", "Tiggo 4", "Tiggo 7"],
+};
+
+const START_YEAR = 2000;
+const CURRENT_YEAR = new Date().getFullYear();
+
+/* ================== Storage local para citas ================== */
+const CITA_STORAGE_KEY = "citas_demo"; // reutiliza la misma clave para no perder lo que ya tenías
+
+function loadStoredCitas() {
+  try {
+    const raw = localStorage.getItem(CITA_STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    // Normalizar por si acaso
+    return arr.map((it) => {
+      // si no tiene id, generamos uno
+      const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
+      let citaAt = it.citaAt;
+      if (!citaAt && it.fecha && it.hora) {
+        citaAt = new Date(`${it.fecha}T${it.hora}:00`).toISOString();
+      }
+      return { ...it, _id, citaAt };
+    });
+  } catch (e) {
+    console.warn("[citas] No se pudo leer de localStorage:", e);
+    return [];
+  }
+}
+
+function saveStoredCitas(list) {
+  try {
+    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn("[citas] No se pudo guardar en localStorage:", e);
+  }
+}
+
+/* ================== Página ================== */
+
 export default function AgendaPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState("agendar"); // "agendar" | "citas"
@@ -21,12 +115,21 @@ export default function AgendaPage() {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [okMsg, setOkMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // Vehículo
+  const [hasVehicle, setHasVehicle] = useState(false);
+  const [vehicleBrand, setVehicleBrand] = useState("");
+  const [vehicleModel, setVehicleModel] = useState("");
+  const [vehicleModelCustom, setVehicleModelCustom] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
 
   function onChange(e) {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
     setErrors((err) => ({ ...err, [name]: "" }));
     setOkMsg("");
+    setErrorMsg("");
   }
 
   function validate() {
@@ -38,12 +141,21 @@ export default function AgendaPage() {
     if (!form.motivo.trim()) e.motivo = "Requerido";
     if (!form.fecha) e.fecha = "Requerido";
     if (!form.hora) e.hora = "Requerido";
+
     if (form.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.correo)) {
       e.correo = "Correo no válido";
     }
     if (form.telefono && !/^[0-9+\-\s()]{7,}$/.test(form.telefono)) {
       e.telefono = "Teléfono no válido";
     }
+
+    if (hasVehicle) {
+      if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
+      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+      if (!finalModel) e.vehicleModel = "Requerido";
+      if (!vehiclePlate.trim()) e.vehiclePlate = "Requerido";
+    }
+
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -54,28 +166,46 @@ export default function AgendaPage() {
 
     setSubmitting(true);
     setOkMsg("");
+    setErrorMsg("");
+
     try {
-      const res = await fetch("/api/citas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre: form.visitante,
-          documento: form.documento,
-          empresa: form.empresa,
-          empleado: form.empleado,
-          motivo: form.motivo,
-          telefono: form.telefono || undefined,
-          correo: form.correo || undefined,
-          fecha: form.fecha, // YYYY-MM-DD
-          hora: form.hora,   // HH:mm
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "No se pudo crear la cita");
-      }
+      // Construir cita local
+      const fecha = form.fecha; // YYYY-MM-DD
+      const hora = form.hora; // HH:mm
+      const citaAt = new Date(`${fecha}T${hora}:00`);
+
+      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+
+      const nuevaCita = {
+        _id: `local-${Date.now()}`,
+        nombre: form.visitante.trim(),
+        documento: form.documento.trim(),
+        empresa: form.empresa.trim(),
+        empleado: form.empleado.trim(),
+        motivo: form.motivo.trim(),
+        telefono: form.telefono.trim() || undefined,
+        correo: form.correo.trim() || undefined,
+        fecha,
+        hora,
+        citaAt: citaAt.toISOString(),
+        estado: "solicitada",
+        vehiculo: hasVehicle
+          ? {
+              marca: vehicleBrand.trim(),
+              modelo: finalModel,
+              placa: vehiclePlate.trim(),
+            }
+          : null,
+      };
+
+      const current = loadStoredCitas();
+      const next = [...current, nuevaCita];
+      saveStoredCitas(next);
 
       setOkMsg("✅ Cita agendada correctamente.");
+      setErrorMsg("");
+
+      // Limpiar formulario
       setForm({
         visitante: "",
         documento: "",
@@ -87,10 +217,19 @@ export default function AgendaPage() {
         telefono: "",
         correo: "",
       });
-      if (tab === "citas") fetchCitas();
+      setHasVehicle(false);
+      setVehicleBrand("");
+      setVehicleModel("");
+      setVehicleModelCustom("");
+      setVehiclePlate("");
+
+      // Si estás en la pestaña de Citas, refrescar la lista
+      if (tab === "citas") {
+        fetchCitas();
+      }
     } catch (err) {
-      console.error(err);
-      setOkMsg("✅ Cita agendada localmente (revisa /api/citas en backend).");
+      console.error("[citas] Error agendando localmente:", err);
+      setErrorMsg("No se pudo agendar la cita (error en el navegador).");
     } finally {
       setSubmitting(false);
     }
@@ -99,72 +238,116 @@ export default function AgendaPage() {
   /* ===================== LISTADO: CITAS ===================== */
   function fmtDate(d) {
     const dt = new Date(d);
-    return dt.toLocaleDateString("es-HN", { year: "numeric", month: "2-digit", day: "2-digit" });
+    return dt.toLocaleDateString("es-HN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
   }
   function fmtTime(d) {
     const dt = new Date(d);
-    return dt.toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" });
+    return dt.toLocaleTimeString("es-HN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayISO = useMemo(
+    () => new Date().toISOString().slice(0, 10),
+    []
+  );
   const thisMonth = useMemo(() => todayISO.slice(0, 7), [todayISO]);
 
-  const [mode, setMode] = useState("day");           // "day" | "month"
-  const [month, setMonth] = useState(thisMonth);     // YYYY-MM (solo para modo mes)
-  const [items, setItems] = useState([]);
+  const [mode, setMode] = useState("day"); // "day" | "month"
+  const [month, setMonth] = useState(thisMonth); // YYYY-MM
+  const [items, setItems] = useState([]); // citas ya filtradas
   const [loading, setLoading] = useState(false);
 
-  async function fetchCitas() {
+  const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD
+  const [showMyCitas, setShowMyCitas] = useState(false);
+  const [myDocumento, setMyDocumento] = useState("");
+
+  function fetchCitas() {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      // 🔸 En "Por día" NO filtramos: mostramos TODAS las citas agendadas
-      if (mode === "month") params.set("month", month);
+      const all = loadStoredCitas();
+      let list = [...all];
 
-      const res = await fetch(`/api/citas?${params.toString()}`);
-      const data = await res.json();
-      setItems(res.ok && data?.ok ? data.items : []);
+      // Filtro por documento ("Mis citas")
+      if (showMyCitas && myDocumento.trim()) {
+        const doc = myDocumento.trim();
+        list = list.filter((it) => (it.documento || "").includes(doc));
+      }
+
+      // Filtro por modo día/mes
+      if (mode === "month") {
+        if (month) {
+          list = list.filter((it) =>
+            (it.citaAt || "").slice(0, 7) === month
+          );
+        }
+      } else {
+        // "Por día" - si dateFilter está vacío mostramos todas
+        if (dateFilter) {
+          list = list.filter((it) =>
+            (it.citaAt || "").slice(0, 10) === dateFilter
+          );
+        }
+      }
+
+      // Ordenar por fecha/hora
+      list.sort(
+        (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
+      );
+
+      setItems(list);
     } catch (e) {
-      console.error(e);
+      console.error("[citas] Error leyendo citas:", e);
       setItems([]);
     } finally {
       setLoading(false);
     }
   }
 
-  // Cambiar a Por día = listar TODO (sin inputs de fecha)
   function handleModeDay() {
     setMode("day");
   }
 
-  // Cambiar a Por mes = mes actual por defecto (con input opcional)
   function handleModeMonth() {
     const now = new Date();
     const ym = now.toISOString().slice(0, 7);
     setMode("month");
     setMonth(ym);
+    setDateFilter("");
   }
 
+  // Cargar citas cuando cambian filtros o pestaña
   useEffect(() => {
-    if (tab === "citas") fetchCitas();
+    if (tab === "citas") {
+      fetchCitas();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, mode, month]);
+  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
 
-  // Agrupar por día para render
+  // Agrupar por día
   const grouped = useMemo(() => {
     const map = new Map();
     for (const it of items) {
-      const k = new Date(it.citaAt).toISOString().slice(0, 10); // YYYY-MM-DD
-      if (!map.has(k)) map.set(k, []);
-      map.get(k).push(it);
+      const key = (it.citaAt || "").slice(0, 10) || todayISO;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(it);
     }
     for (const arr of map.values()) {
-      arr.sort((a, b) => new Date(a.citaAt) - new Date(b.citaAt));
+      arr.sort(
+        (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
+      );
     }
     return Array.from(map.entries()).sort(
       (a, b) => new Date(a[0]) - new Date(b[0])
     );
-  }, [items]);
+  }, [items, todayISO]);
+
+  /* ===================== Render ===================== */
 
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
@@ -176,8 +359,12 @@ export default function AgendaPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-neutral-100">Agenda de Citas</h1>
-          <p className="text-sm text-neutral-400">Agendar y consultar citas programadas</p>
+          <h1 className="text-xl md:text-2xl font-bold text-neutral-100">
+            Agenda de Citas
+          </h1>
+          <p className="text-sm text-neutral-400">
+            Agendar y consultar citas programadas (pre-registro en línea)
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -193,13 +380,21 @@ export default function AgendaPage() {
       <div className="flex items-center gap-2">
         <button
           onClick={() => setTab("agendar")}
-          className={`px-3 py-2 rounded-lg text-sm ${tab === "agendar" ? "bg-blue-600/80 text-white" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"}`}
+          className={`px-3 py-2 rounded-lg text-sm ${
+            tab === "agendar"
+              ? "bg-blue-600/80 text-white"
+              : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+          }`}
         >
           Agendar
         </button>
         <button
           onClick={() => setTab("citas")}
-          className={`px-3 py-2 rounded-lg text-sm ${tab === "citas" ? "bg-blue-600/80 text-white" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"}`}
+          className={`px-3 py-2 rounded-lg text-sm ${
+            tab === "citas"
+              ? "bg-blue-600/80 text-white"
+              : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+          }`}
         >
           Citas
         </button>
@@ -208,31 +403,254 @@ export default function AgendaPage() {
       {/* ===================== Sección: Agendar ===================== */}
       {tab === "agendar" && (
         <section className="card-rich p-4 md:p-6 text-sm">
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+          <form
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6"
+          >
             {/* Columna izquierda */}
             <div className="flex flex-col gap-4">
-              <Field label="Visitante *" name="visitante" value={form.visitante} onChange={onChange} error={errors.visitante} placeholder="Nombre y apellido" />
-              <Field label="Documento *" name="documento" value={form.documento} onChange={onChange} error={errors.documento} placeholder="DNI / Pasaporte" />
-              <Field label="Empresa *" name="empresa" value={form.empresa} onChange={onChange} error={errors.empresa} placeholder="Empresa" />
-              <Field label="Empleado a visitar *" name="empleado" value={form.empleado} onChange={onChange} error={errors.empleado} placeholder="Persona de contacto" />
+              <Field
+                label="Visitante *"
+                name="visitante"
+                value={form.visitante}
+                onChange={onChange}
+                error={errors.visitante}
+                placeholder="Nombre y apellido"
+              />
+              <Field
+                label="Documento *"
+                name="documento"
+                value={form.documento}
+                onChange={onChange}
+                error={errors.documento}
+                placeholder="DNI / Pasaporte"
+              />
+              <Field
+                label="Empresa *"
+                name="empresa"
+                value={form.empresa}
+                onChange={onChange}
+                error={errors.empresa}
+                placeholder="Empresa"
+              />
+              <Field
+                label="Empleado a visitar *"
+                name="empleado"
+                value={form.empleado}
+                onChange={onChange}
+                error={errors.empleado}
+                placeholder="Persona de contacto"
+              />
             </div>
 
             {/* Columna derecha */}
             <div className="flex flex-col gap-4">
-              <Field label="Motivo *" name="motivo" value={form.motivo} onChange={onChange} error={errors.motivo} placeholder="Motivo de la visita" />
+              <Field
+                label="Motivo *"
+                name="motivo"
+                value={form.motivo}
+                onChange={onChange}
+                error={errors.motivo}
+                placeholder="Motivo de la visita"
+              />
               <div className="grid grid-cols-2 gap-4">
-                <Field type="date" label="Fecha *" name="fecha" value={form.fecha} onChange={onChange} error={errors.fecha} />
-                <Field type="time" label="Hora *" name="hora" value={form.hora} onChange={onChange} error={errors.hora} />
+                <Field
+                  type="date"
+                  label="Fecha *"
+                  name="fecha"
+                  value={form.fecha}
+                  onChange={onChange}
+                  error={errors.fecha}
+                />
+                <Field
+                  type="time"
+                  label="Hora *"
+                  name="hora"
+                  value={form.hora}
+                  onChange={onChange}
+                  error={errors.hora}
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Teléfono" name="telefono" value={form.telefono} onChange={onChange} error={errors.telefono} placeholder="+504 ..." />
-                <Field type="email" label="Correo" name="correo" value={form.correo} onChange={onChange} error={errors.correo} placeholder="correo@dominio.com" />
+                <Field
+                  label="Teléfono"
+                  name="telefono"
+                  value={form.telefono}
+                  onChange={onChange}
+                  error={errors.telefono}
+                  placeholder="+504 ..."
+                />
+                <Field
+                  type="email"
+                  label="Correo"
+                  name="correo"
+                  value={form.correo}
+                  onChange={onChange}
+                  error={errors.correo}
+                  placeholder="correo@dominio.com"
+                />
               </div>
+            </div>
+
+            {/* ===== Vehículo, igual que en Registrar Visitante ===== */}
+            <div className="md:col-span-2 border-t border-neutral-800/60 pt-3 mt-1">
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  id="has-vehicle-agenda"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={hasVehicle}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setHasVehicle(checked);
+                    if (!checked) {
+                      setVehicleBrand("");
+                      setVehicleModel("");
+                      setVehicleModelCustom("");
+                      setVehiclePlate("");
+                      setErrors((prev) => ({
+                        ...prev,
+                        vehicleBrand: "",
+                        vehicleModel: "",
+                        vehiclePlate: "",
+                      }));
+                    }
+                  }}
+                />
+                <label
+                  htmlFor="has-vehicle-agenda"
+                  className="text-xs text-neutral-300 cursor-pointer select-none"
+                >
+                  El visitante llegará en vehículo
+                </label>
+              </div>
+
+              {hasVehicle && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Marca */}
+                  <Field
+                    label={
+                      <>
+                        Marca <span className="text-red-400">*</span>
+                      </>
+                    }
+                    name="vehicleBrand"
+                    error={errors.vehicleBrand}
+                  >
+                    <select
+                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      value={vehicleBrand}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setVehicleBrand(val);
+                        setVehicleModel("");
+                        setVehicleModelCustom("");
+                        setErrors((prev) => ({ ...prev, vehicleBrand: "" }));
+                      }}
+                    >
+                      <option value="">Seleccione marca…</option>
+                      {VEHICLE_BRANDS.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  {/* Modelo */}
+                  <Field
+                    label={
+                      <>
+                        Modelo <span className="text-red-400">*</span>
+                      </>
+                    }
+                    name="vehicleModel"
+                    error={errors.vehicleModel}
+                  >
+                    <select
+                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      value={vehicleModel}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setVehicleModel(val);
+                        if (val !== "__customBefore2000") {
+                          setVehicleModelCustom("");
+                        }
+                        setErrors((prev) => ({ ...prev, vehicleModel: "" }));
+                      }}
+                      disabled={!vehicleBrand || vehicleBrand === "Otra"}
+                    >
+                      <option value="">Seleccione modelo (año ≥ 2000)…</option>
+                      {(
+                        vehicleBrand &&
+                        VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
+                          ? VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand].flatMap(
+                              (base) => {
+                                const list = [];
+                                for (
+                                  let y = START_YEAR;
+                                  y <= CURRENT_YEAR;
+                                  y++
+                                ) {
+                                  list.push(`${base} ${y}`);
+                                }
+                                return list;
+                              }
+                            )
+                          : []
+                      ).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value="__customBefore2000">
+                        Otro modelo / año &lt; 2000 (escribir)
+                      </option>
+                    </select>
+
+                    {(vehicleBrand === "Otra" ||
+                      vehicleModel === "__customBefore2000") && (
+                      <input
+                        className="mt-2 w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                        value={vehicleModelCustom}
+                        onChange={(e) => {
+                          setVehicleModelCustom(e.target.value);
+                          setErrors((prev) => ({ ...prev, vehicleModel: "" }));
+                        }}
+                        placeholder="Escriba modelo y año (ej. Corolla 1998)"
+                      />
+                    )}
+                  </Field>
+
+                  {/* Placa */}
+                  <Field
+                    label={
+                      <>
+                        Placa <span className="text-red-400">*</span>
+                      </>
+                    }
+                    name="vehiclePlate"
+                    error={errors.vehiclePlate}
+                  >
+                    <input
+                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      value={vehiclePlate}
+                      onChange={(e) => {
+                        setVehiclePlate(e.target.value);
+                        setErrors((prev) => ({ ...prev, vehiclePlate: "" }));
+                      }}
+                      placeholder="Ej. HAA-1234"
+                    />
+                  </Field>
+                </div>
+              )}
             </div>
 
             {/* Acciones */}
             <div className="md:col-span-2 flex items-center justify-between pt-2">
-              <div className="text-xs text-neutral-400">Los campos con * son obligatorios</div>
+              <div className="text-xs text-neutral-400">
+                Los campos con * son obligatorios
+              </div>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -251,7 +669,17 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            {okMsg && <div className="md:col-span-2 text-green-300 text-sm">{okMsg}</div>}
+            {okMsg && (
+              <div className="md:col-span-2 text-green-300 text-sm">
+                {okMsg}
+              </div>
+            )}
+            {errorMsg && (
+              <div className="md:col-span-2 text-red-400 text-sm flex items-center gap-2">
+                <span>✖</span>
+                <span>{errorMsg}</span>
+              </div>
+            )}
           </form>
         </section>
       )}
@@ -259,36 +687,76 @@ export default function AgendaPage() {
       {/* ===================== Sección: Citas ===================== */}
       {tab === "citas" && (
         <section className="card-rich p-4 md:p-6 text-sm">
-          {/* Toggle modo + selector opcional de MES */}
+          {/* Toggle modo + filtros */}
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <button
                 onClick={handleModeDay}
-                className={`px-3 py-2 rounded-lg text-xs ${mode === "day" ? "bg-neutral-700 text-white" : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"}`}
-                title="Ver todas las citas (todas las fechas)"
+                className={`px-3 py-2 rounded-lg text-xs ${
+                  mode === "day"
+                    ? "bg-neutral-700 text-white"
+                    : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
+                }`}
+                title="Ver citas (todas las fechas o por día específico)"
               >
                 Por día
               </button>
               <button
                 onClick={handleModeMonth}
-                className={`px-3 py-2 rounded-lg text-xs ${mode === "month" ? "bg-neutral-700 text-white" : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"}`}
-                title="Ver todas las citas del mes actual"
+                className={`px-3 py-2 rounded-lg text-xs ${
+                  mode === "month"
+                    ? "bg-neutral-700 text-white"
+                    : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
+                }`}
+                title="Ver todas las citas de un mes"
               >
                 Por mes
               </button>
             </div>
 
-            {/* En modo día no hay input. En modo mes sí (opcional) */}
             <div className="flex items-center gap-3">
+              {mode === "day" && (
+                <>
+                  <input
+                    type="date"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                    className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                    title="Filtrar por fecha (opcional)"
+                  />
+                  <label className="flex items-center gap-2 text-xs text-neutral-300">
+                    <input
+                      type="checkbox"
+                      checked={showMyCitas}
+                      onChange={(e) => {
+                        setShowMyCitas(e.target.checked);
+                        if (!e.target.checked) setMyDocumento("");
+                      }}
+                    />
+                    Mis citas
+                  </label>
+                  {showMyCitas && (
+                    <input
+                      type="text"
+                      placeholder="Documento (ej: 0801...)"
+                      value={myDocumento}
+                      onChange={(e) => setMyDocumento(e.target.value)}
+                      className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                    />
+                  )}
+                </>
+              )}
+
               {mode === "month" && (
                 <input
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
                   className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
-                  title="Cambiar mes (opcional)"
+                  title="Cambiar mes"
                 />
               )}
+
               <button
                 onClick={fetchCitas}
                 className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600"
@@ -309,9 +777,13 @@ export default function AgendaPage() {
           ) : (
             <div className="flex flex-col gap-6">
               {grouped.map(([k, arr]) => (
-                <div key={k} className="rounded-xl border border-neutral-800/60 bg-neutral-900/30">
+                <div
+                  key={k}
+                  className="rounded-xl border border-neutral-800/60 bg-neutral-900/30"
+                >
                   <div className="px-4 py-3 text-neutral-300 text-sm border-b border-neutral-800/60">
-                    <span className="font-semibold">{fmtDate(k)}</span> — {arr.length} cita(s)
+                    <span className="font-semibold">{fmtDate(k)}</span> —{" "}
+                    {arr.length} cita(s)
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[900px]">
@@ -327,15 +799,35 @@ export default function AgendaPage() {
                       </thead>
                       <tbody className="text-neutral-200">
                         {arr.map((it) => (
-                          <tr key={it._id} className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4">
-                            <td className="font-medium text-neutral-100">{it.nombre}</td>
+                          <tr
+                            key={it._id}
+                            className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                          >
+                            <td className="font-medium text-neutral-100">
+                              {it.nombre}
+                            </td>
                             <td>{it.empresa}</td>
                             <td>{it.empleado}</td>
-                            <td className="text-neutral-300">{it.motivo}</td>
+                            <td className="text-neutral-300">
+                              {it.motivo}
+                            </td>
                             <td>{fmtTime(it.citaAt)}</td>
                             <td>
-                              <span className="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-200 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300">
-                                Programada
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                  (it.estado === "Programada" ||
+                                    it.estado === "solicitada" ||
+                                    !it.estado)
+                                    ? "bg-yellow-200 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300"
+                                    : it.estado === "Atendida"
+                                    ? "bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300"
+                                    : it.estado === "Cancelada" ||
+                                      it.estado === "cancelada"
+                                    ? "bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300"
+                                    : "bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300"
+                                }`}
+                              >
+                                {it.estado || "solicitada"}
                               </span>
                             </td>
                           </tr>
@@ -354,18 +846,37 @@ export default function AgendaPage() {
 }
 
 /* ============== Input reutilizable ============== */
-function Field({ label, name, value, onChange, error, placeholder, type = "text" }) {
+function Field({
+  label,
+  name,
+  value,
+  onChange,
+  error,
+  placeholder,
+  type = "text",
+  children,
+}) {
   return (
     <div>
-      <label className="block text-neutral-300 mb-1">{label}</label>
-      <input
-        type={type}
-        name={name}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
-      />
+      {label && (
+        <label className="block text-neutral-300 mb-1 text-xs md:text-sm">
+          {label}
+        </label>
+      )}
+
+      {children ? (
+        children
+      ) : (
+        <input
+          type={type}
+          name={name}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+        />
+      )}
+
       {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
     </div>
   );

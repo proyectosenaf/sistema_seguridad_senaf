@@ -1,8 +1,8 @@
 // src/modules/incidentes/IncidenteForm.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
-import axios from "axios";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import api from "../../lib/api.js";
 
 export default function IncidenteForm({
   stayOnFinish = false,
@@ -38,14 +38,6 @@ export default function IncidenteForm({
   const [sending, setSending] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
-
-  // ========= BASE API (tanto si el .env tiene /api como si no) =========
-  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-  const BASE_CLEAN = RAW.replace(/\/+$/, "");
-  const API_BASE = /\/api$/.test(BASE_CLEAN)
-    ? BASE_CLEAN
-    : `${BASE_CLEAN}/api`;
-  // ahora API_BASE SIEMPRE termina en /api (ej. https://...../api)
 
   // si viene en modo edición, precargar datos
   useEffect(() => {
@@ -106,22 +98,22 @@ export default function IncidenteForm({
         ...extraData,
       };
 
-      const url = editingIncident
-        ? `${API_BASE}/incidentes/${editingIncident._id}`
-        : `${API_BASE}/incidentes`;
-
-      const method = editingIncident ? "put" : "post";
-
-      await axios({
-        method,
-        url,
-        data: payload,
-        withCredentials: true,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-      });
+      // 🔐 Usamos el cliente axios `api` que ya mete Authorization con Auth0
+      if (editingIncident) {
+        await api.put(`/incidentes/${editingIncident._id}`, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        });
+      } else {
+        await api.post("/incidentes", payload, {
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        });
+      }
 
       if (finalStayOnFinish) {
         // usado desde rondas → no navegar
@@ -132,7 +124,11 @@ export default function IncidenteForm({
       }
     } catch (err) {
       console.error(err);
-      alert("Error al guardar el incidente");
+      const msg =
+        err?.response?.data?.message ||
+        err?.message ||
+        "Error al guardar el incidente";
+      alert(msg);
     } finally {
       setSending(false);
     }
@@ -363,5 +359,5 @@ function fileToBase64(file) {
     r.onload = () => resolve(r.result);
     r.onerror = reject;
     r.readAsDataURL(file);
-    });
+  });
 }

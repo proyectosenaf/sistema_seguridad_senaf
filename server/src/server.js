@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -30,6 +29,12 @@ import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
 // ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
 
+
+import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
+import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
+
+import visitasRoutes from "../modules/visitas/visitas.routes.js";
+
 // ✅ Reports de Rondas (el archivo largo que pegaste)
 import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
 
@@ -44,11 +49,9 @@ app.set("trust proxy", 1);
 
 /* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
 
-// Namespace IAM para roles
 const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
 
 // Correos que serán super administradores en TODOS los módulos.
-// Combina ROOT_ADMINS y SUPERADMIN_EMAIL para compatibilidad.
 const ROOT_ADMINS = Array.from(
   new Set(
     [
@@ -134,19 +137,15 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
-// 📁 uploads de incidentes (para las fotos que vienen de /api/incidentes)
-const INCIDENT_UPLOADS_DIR = path.resolve(process.cwd(), "uploads", "incidentes");
-if (!fs.existsSync(INCIDENT_UPLOADS_DIR)) {
-  fs.mkdirSync(INCIDENT_UPLOADS_DIR, { recursive: true });
+const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOADS_ROOT)) {
+  fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 }
-app.use("/uploads/incidentes", express.static(INCIDENT_UPLOADS_DIR));
 
-// 📁 uploads del módulo Rondas QR (los que ya tenías)
-const RONDAS_UPLOADS_DIR = path.resolve(process.cwd(), "modules", "rondasqr", "uploads");
-if (!fs.existsSync(RONDAS_UPLOADS_DIR)) {
-  fs.mkdirSync(RONDAS_UPLOADS_DIR, { recursive: true });
-}
-app.use("/uploads", express.static(RONDAS_UPLOADS_DIR));
+// Sin /api (ej: http://localhost:4000/uploads/...)
+app.use("/uploads", express.static(UPLOADS_ROOT));
+// Con /api (ej: http://localhost:4000/api/uploads/...)
+app.use("/api/uploads", express.static(UPLOADS_ROOT));
 
 /* ───────────────────────── Health checks ──────────────────────── */
 app.get("/api/health", (_req, res) =>
@@ -193,7 +192,10 @@ try {
     console.warn("[iamusers] index username_1 (unique) eliminado");
   }
 } catch (e) {
-  console.warn("[iamusers] no se pudo revisar/eliminar username_1:", e.message);
+  console.warn(
+    "[iamusers] no se pudo revisar/eliminar username_1:",
+    e.message
+  );
 }
 
 /* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
@@ -228,7 +230,11 @@ function iamDevMerge(req, _res, next) {
   }
 
   // Aplicar super admin si el correo está en ROOT_ADMINS
-  const applied = applyRootAdmin(devEmail, p[IAM_NS] || p.roles || [], p.permissions || []);
+  const applied = applyRootAdmin(
+    devEmail,
+    p[IAM_NS] || p.roles || [],
+    p.permissions || []
+  );
   p[IAM_NS] = applied.roles;
   p.roles = applied.roles;
   p.permissions = applied.permissions;
@@ -285,21 +291,51 @@ function authBridgeToReqUser(req, _res, next) {
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
 function optionalAuth(req, res, next) {
-  if (req.headers.authorization && String(process.env.DISABLE_AUTH || "0") !== "1") {
+  if (
+    req.headers.authorization &&
+    String(process.env.DISABLE_AUTH || "0") !== "1"
+  ) {
     return requireAuth(req, res, next);
   }
   return next();
+}
+
+/**
+ * 🔐 Igual que requireAuth, pero:
+ * - Respeta DISABLE_AUTH=1.
+ * - NO exige auth en /auth/me ni /me (para que sigan siendo opcionales).
+ */
+function requireAuthExceptMe(req, res, next) {
+  const path = req.path || "";
+  if (path === "/auth/me" || path === "/me") {
+    return next();
+  }
+  if (String(process.env.DISABLE_AUTH || "0") === "1") {
+    return next();
+  }
+  return requireAuth(req, res, next);
 }
 
 /* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
 app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
+// 🔐 Middleware especial para IAM:
+// primero valida JWT y luego aplica el bridge + ROOT_ADMIN
+app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
+app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
+
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
-app.get("/api/chat/messages", (_req, res) => res.json([]));
+const chatMessagesHandler = (_req, res) => res.json([]);
+app.get("/api/chat/messages", chatMessagesHandler);
+app.get("/chat/messages", chatMessagesHandler); // alias sin /api
 
 /* ───────────── IAM principal + /me ───────────── */
+
+// Registro normal (localhost, etc.)
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
+// 🔁 Alias sin /api para cuando la plataforma recorta el prefijo
+await registerIAMModule({ app, basePath: "/iam/v1" });
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
@@ -342,6 +378,7 @@ function pickMe(req) {
   };
 }
 
+// /me con /api
 app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
@@ -349,13 +386,70 @@ app.get("/api/iam/v1/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
 
-// stub audit rápido
+// 🔁 alias /me sin /api
+app.get("/iam/v1/auth/me", optionalAuth, (req, res) =>
+  res.json(pickMe(req))
+);
+app.get("/iam/v1/me", optionalAuth, (req, res) =>
+  res.json(pickMe(req))
+);
+
+// stub audit rápido (con y sin /api)
 app.get("/api/iam/v1/audit", (_req, res) =>
   res.json({ ok: true, items: [], limit: 100 })
 );
+app.get("/iam/v1/audit", (_req, res) =>
+  res.json({ ok: true, items: [], limit: 100 })
+);
+
+// 🔹 handler reutilizable para lista de guardias
+async function listGuardsHandler(req, res) {
+  try {
+    const { q, active } = req.query;
+    const col = mongoose.connection.collection("iamusers");
+
+    const filter = {};
+
+    // filtrar por rol tipo guard
+    filter.roles = { $in: ["guard", "guardia", "rondasqr.guard"] };
+
+    if (typeof active !== "undefined") {
+      const isActive = active === "1" || active === "true";
+      filter.active = isActive;
+    }
+
+    if (q && String(q).trim()) {
+      const rx = new RegExp(String(q).trim(), "i");
+      filter.$or = [{ name: rx }, { email: rx }];
+    }
+
+    const docs = await col
+      .find(filter, {
+        projection: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          active: 1,
+          roles: 1,
+        },
+      })
+      .toArray();
+
+    res.json({ ok: true, items: docs });
+  } catch (e) {
+    console.error("[GET /iam users/guards] error:", e);
+    res
+      .status(500)
+      .json({ ok: false, error: "Error al listar guardias" });
+  }
+}
+
+// lista de guardias con y sin /api
+app.get("/api/iam/v1/users/guards", listGuardsHandler);
+app.get("/iam/v1/users/guards", listGuardsHandler);
 
 /* ─────────── Email verify (opcional) ─────────── */
-app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
+async function verifyEmailHandler(req, res) {
   try {
     const { id } = req.params;
     const email = String(req.body?.email || "").trim();
@@ -380,10 +474,8 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
           port: 465,
           secure: true,
           auth: {
-            user:
-              process.env.GMAIL_USER || process.env.MAIL_USER,
-            pass:
-              process.env.GMAIL_PASS || process.env.MAIL_PASS,
+            user: process.env.GMAIL_USER || process.env.MAIL_USER,
+            pass: process.env.GMAIL_PASS || process.env.MAIL_PASS,
           },
         });
 
@@ -406,9 +498,7 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       ? `${process.env.VERIFY_BASE_URL}?user=${encodeURIComponent(
           id
         )}`
-      : `http://localhost:5173/verify?user=${encodeURIComponent(
-          id
-        )}`;
+      : `http://localhost:5173/verify?user=${encodeURIComponent(id)}`;
 
     const mailOptions = {
       from: fromAddress,
@@ -446,12 +536,17 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       .status(500)
       .json({ error: e?.message || "Error enviando verificación" });
   }
-});
+}
+
+// verify email con y sin /api
+app.post("/api/iam/v1/users/:id/verify-email", verifyEmailHandler);
+app.post("/iam/v1/users/:id/verify-email", verifyEmailHandler);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/notifications", notificationsRoutes); // alias sin /api
 
 // ⏰ Inicia cron de asignaciones (diario)
 startDailyAssignmentCron(app);
@@ -471,13 +566,11 @@ app.get("/api/_debug/ping-assign", (req, res) => {
     body,
     meta: { debug: true, ts: Date.now() },
   });
-  io
-    .to(`guard-${userId}`)
-    .emit("rondasqr:nueva-asignacion", {
-      title,
-      body,
-      meta: { debug: true, ts: Date.now() },
-    });
+  io.to(`guard-${userId}`).emit("rondasqr:nueva-asignacion", {
+    title,
+    body,
+    meta: { debug: true, ts: Date.now() },
+  });
   res.json({
     ok: true,
     sentTo: [`user-${userId}`, `guard-${userId}`],
@@ -485,24 +578,50 @@ app.get("/api/_debug/ping-assign", (req, res) => {
 });
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
-app.get("/api/rondasqr/v1/ping", (_req, res) =>
-  res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
-);
-app.get("/api/rondasqr/v1/checkin/ping", (_req, res) =>
-  res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
-);
+const pingHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingCheckinHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
+
+// Con /api (compatibilidad)
+app.get("/api/rondasqr/v1/ping", pingHandler);
+app.get("/api/rondasqr/v1/checkin/ping", pingCheckinHandler);
 app.use("/api/rondasqr/v1", rondasqr);
-
-/* ✅ Módulo de REPORTES de Rondas */
 app.use("/api/rondasqr/v1", rondasReportsRoutes);
-
-/* ✅ Módulo OFFLINE de Rondas */
 app.use("/api/rondasqr/v1", rondasOfflineRoutes);
 
-/* ✅ Módulo de INCIDENTES (ahora sí en /api/incidentes) */
-app.use("/api/incidentes", incidentesRoutes);
+// Sin /api (para cuando el cliente no usa /api)
+app.get("/rondasqr/v1/ping", pingHandler);
+app.get("/rondasqr/v1/checkin/ping", pingCheckinHandler);
+app.use("/rondasqr/v1", rondasqr);
+app.use("/rondasqr/v1", rondasReportsRoutes);
+app.use("/rondasqr/v1", rondasOfflineRoutes);
+
+/* ✅ Módulo Control de Acceso */
+app.use("/api/acceso", accesoRoutes);
+app.use("/acceso", accesoRoutes); // compat sin /api
+
+app.use("/api/acceso/uploads", uploadRoutes);
+app.use("/acceso/uploads", uploadRoutes); // compat sin /api
+
+app.use("/api", visitasRoutes);
+
+/* ✅ Módulo de INCIDENTES */
+app.use("/api/incidentes", incidentesRoutes); // compatibilidad
+app.use("/incidentes", incidentesRoutes); // sin /api
 
 /* ✅ Evaluaciones */
+
+// 🔍 Debug simple SOLO en desarrollo para ver el payload que llega
+if (process.env.NODE_ENV !== "production") {
+  app.use("/api/evaluaciones", (req, _res, next) => {
+    if (req.method === "POST") {
+      console.log("[debug] POST /api/evaluaciones body:", req.body);
+    }
+    next();
+  });
+}
+
 app.use("/evaluaciones", evaluacionesRoutes);
 app.use("/api/evaluaciones", evaluacionesRoutes);
 
@@ -532,15 +651,20 @@ server.listen(PORT, "0.0.0.0", () => {
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
   s.emit("hello", { ok: true, ts: Date.now() });
-  s.on("join-room", ({ userId }) => {
-    if (userId) {
-      s.join(`user-${userId}`);
-      s.join(`guard-${userId}`);
-      console.log(
-        `[io] ${s.id} joined rooms user-${userId} & guard-${userId}`
-      );
-    }
-  });
+
+  const joinRooms = (userId) => {
+    if (!userId) return;
+    s.join(`user-${userId}`);
+    s.join(`guard-${userId}`);
+    console.log(
+      `[io] ${s.id} joined rooms user-${userId} & guard-${userId}`
+    );
+  };
+
+  // compatibilidad con cliente viejo y nuevo
+  s.on("join-room", ({ userId }) => joinRooms(userId));
+  s.on("join", ({ userId }) => joinRooms(userId));
+
   s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
 

@@ -19,10 +19,13 @@ function badgeColor(type) {
 // y tu frontend corre en Vite en otro puerto, le pegamos el host
 const API_HOST = "http://localhost:4000";
 
-export default function MessagesTable({ items = [] }) {
+export default function MessagesTable({
+  items = [],
+  title = "Mensajes / Incidentes", // <-- título configurable
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg">
-      <h3 className="font-semibold text-lg mb-2">Mensajes / Incidentes</h3>
+      <h3 className="font-semibold text-lg mb-2">{title}</h3>
       {!items.length ? (
         <div className="text-sm text-white/70">No hay mensajes.</div>
       ) : (
@@ -49,14 +52,18 @@ export default function MessagesTable({ items = [] }) {
                   m.guardName ||
                   m.guardEmail ||
                   "-";
+
                 const gps =
                   typeof m?.gps?.lat === "number" &&
                   typeof m?.gps?.lon === "number"
                     ? `${m.gps.lat.toFixed(6)}, ${m.gps.lon.toFixed(6)}`
                     : "-";
+
                 const extra =
                   m.type === "inactivity"
-                    ? ` (${m.durationMin ?? "?"} min, pasos ${m.stepsAtAlert ?? "-"})`
+                    ? ` (${m.durationMin ?? "?"} min, pasos ${
+                        m.stepsAtAlert ?? "-"
+                      })`
                     : m.type === "fall"
                     ? ` (pasos ${m.stepsAtAlert ?? "-"})`
                     : "";
@@ -69,7 +76,10 @@ export default function MessagesTable({ items = [] }) {
                   : [];
 
                 return (
-                  <tr key={i} className="border-b border-white/10 last:border-0">
+                  <tr
+                    key={i}
+                    className="border-b border-white/10 last:border-0"
+                  >
                     <td className="py-2 pr-4">
                       <span
                         className={`inline-block px-2 py-0.5 rounded border text-xs ${badgeColor(
@@ -87,6 +97,7 @@ export default function MessagesTable({ items = [] }) {
                     <td className="py-2 pr-4">{who}</td>
                     <td className="py-2 pr-4">{(m.text || "") + extra}</td>
                     <td className="py-2 pr-4">{gps}</td>
+
                     {/* 👇 evidencias */}
                     <td className="py-2 pr-4">
                       {photos.length ? (

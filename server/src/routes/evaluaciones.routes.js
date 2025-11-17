@@ -10,16 +10,15 @@ import {
 
 const router = Router();
 
-// Métricas por empleado (paneles)
+// Métricas por empleado (paneles KPI)
 router.get("/", getMetricaPorEmpleado);
 
 // Historial (tabla)
 router.get("/historial", getHistorial);
 
-// CRUD
+// CRUD principal de evaluaciones
 router.post("/", crear);
 router.put("/:id", actualizar);
 router.delete("/:id", eliminar);
 
 export default router;
-

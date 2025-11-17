@@ -1,40 +1,100 @@
 import React, { useEffect, useRef, useState } from "react";
 
+// Lista de marcas
+const VEHICLE_BRANDS = [
+  "Toyota",
+  "Honda",
+  "Nissan",
+  "Hyundai",
+  "Kia",
+  "Chevrolet",
+  "Mazda",
+  "Ford",
+  "Mitsubishi",
+  "Suzuki",
+  "Volkswagen",
+  "Mercedes-Benz",
+  "BMW",
+  "Audi",
+  "Renault",
+  "Peugeot",
+  "Fiat",
+  "Jeep",
+  "Subaru",
+  "Isuzu",
+  "JAC",
+  "Great Wall",
+  "Changan",
+  "Chery",
+  "Otra", // para marcas no listadas
+];
+
+// Modelos base por marca (sin año)
+const VEHICLE_MODELS_BASE_BY_BRAND = {
+  Toyota: ["Corolla", "Hilux", "RAV4", "Yaris", "Prado"],
+  Honda: ["Civic", "CR-V", "Fit", "HR-V"],
+  Nissan: ["Versa", "Frontier", "Sentra", "Kicks"],
+  Hyundai: ["Elantra", "Tucson", "Santa Fe", "Accent", "Creta"],
+  Kia: ["Rio", "Sportage", "Sorento", "Picanto"],
+  Chevrolet: ["Aveo", "Onix", "Tracker", "Captiva"],
+  Mazda: ["Mazda 2", "Mazda 3", "CX-5", "CX-30"],
+  Ford: ["Ranger", "Explorer", "Escape", "Fiesta"],
+  Mitsubishi: ["L200", "Outlander", "Montero Sport"],
+  Suzuki: ["Swift", "Vitara", "Jimny"],
+  Volkswagen: ["Jetta", "Gol", "Tiguan", "Amarok"],
+  "Mercedes-Benz": ["Clase C", "Clase E", "GLA"],
+  BMW: ["Serie 3", "Serie 5", "X3", "X5"],
+  Audi: ["A3", "A4", "Q3", "Q5"],
+  Renault: ["Duster", "Koleos", "Logan"],
+  Peugeot: ["208", "3008", "2008"],
+  Fiat: ["Uno", "Argo", "Strada"],
+  Jeep: ["Wrangler", "Renegade", "Cherokee"],
+  Subaru: ["Impreza", "Forester", "Outback"],
+  Isuzu: ["D-MAX"],
+  JAC: ["JS2", "JS4", "T8"],
+  "Great Wall": ["Wingle", "Poer"],
+  Changan: ["CS15", "CS35", "CS55"],
+  Chery: ["Tiggo 2", "Tiggo 4", "Tiggo 7"],
+};
+
+const START_YEAR = 2000;
+const CURRENT_YEAR = new Date().getFullYear();
+
 export default function NewVisitorModal({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
   const [company, setCompany] = useState("");
-  const [employee, setEmployee] = useState(""); // texto libre
+  const [employee, setEmployee] = useState("");
   const [reason, setReason] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Vehículo
+  const [hasVehicle, setHasVehicle] = useState(false);
+  const [vehicleBrand, setVehicleBrand] = useState("");
+  const [vehicleModel, setVehicleModel] = useState("");
+  const [vehicleModelCustom, setVehicleModelCustom] = useState(""); // para modelos/años < 2000 o especiales
+  const [vehiclePlate, setVehiclePlate] = useState("");
+
   const firstInputRef = useRef(null);
 
-  // ===== Helpers de horario de atención =====
-  // Rangos válidos: [08:00, 12:00) y [13:00, 17:00) (12:00 y 17:00 excluidas)
+  // ===== Helpers de horario de atención (MODO PRUEBAS) =====
   function isWithinBusinessHours(date) {
-    if (!(date instanceof Date) || isNaN(date)) return false;
-    const minutes = date.getHours() * 60 + date.getMinutes();
-    const AM_START = 8 * 60;   // 08:00
-    const AM_END   = 12 * 60;  // 12:00 (excluido)
-    const PM_START = 13 * 60;  // 13:00
-    const PM_END   = 17 * 60;  // 17:00 (excluido)
-    return (minutes >= AM_START && minutes < AM_END) ||
-           (minutes >= PM_START && minutes < PM_END);
+    // Ahora se permite siempre registrar (para que puedas probar a cualquier hora)
+    if (!(date instanceof Date) || isNaN(date.getTime())) return false;
+    return true;
   }
-  function businessHoursMessage() {
-    return "Horario permitido: 8:00–12:00 y 13:00–17:00 (12:00 y 17:00 no permitidas).";
-  }
-  // ==========================================
 
-  // Auto-focus al abrir
+  function businessHoursMessage() {
+    return "Modo pruebas: actualmente se permite registrar visitas en cualquier horario.";
+  }
+  // ============================================================
+
   useEffect(() => {
     firstInputRef.current?.focus();
   }, []);
 
-  // Cerrar con ESC
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key === "Escape") onClose?.();
@@ -49,34 +109,47 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     setSubmitting(true);
 
     try {
-      // Validaciones rápidas en UI
       if (!name.trim() || !document.trim() || !employee.trim() || !reason.trim()) {
         alert("Completa los campos obligatorios.");
         setSubmitting(false);
         return;
       }
 
-      // ✅ Validación de horario con la hora local actual
+      let finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+
+      if (hasVehicle) {
+        if (!vehicleBrand.trim() || !finalModel || !vehiclePlate.trim()) {
+          alert("Completa los datos del vehículo (marca, modelo y placa).");
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const now = new Date();
       if (!isWithinBusinessHours(now)) {
-        alert(`No se puede registrar la visita fuera del horario permitido.\n${businessHoursMessage()}`);
+        alert(
+          `No se puede registrar la visita fuera del horario permitido.\n${businessHoursMessage()}`
+        );
         setSubmitting(false);
         return;
       }
 
-      // Enviamos limpio; el padre ya vuelve a validar/trim
       await onSubmit?.({
         name: name.trim(),
         document: document.trim(),
         company: company.trim(),
-        employee: employee.trim() || undefined, // <- texto libre
+        employee: employee.trim() || undefined,
         reason: reason.trim(),
         phone: phone.trim(),
         email: email.trim(),
-        // Si en el futuro agregas una hora específica, aquí enviarías:
-        // scheduledAt: selectedDateTime.toISOString(),
+        vehicle: hasVehicle
+          ? {
+              brand: vehicleBrand.trim(),
+              model: finalModel, // aquí ya va "Corolla 2005" o lo que elija/escriba
+              plate: vehiclePlate.trim(),
+            }
+          : null,
       });
-      // Importante: no cerramos aquí; el padre lo hace cuando el POST sale bien.
     } catch (err) {
       console.error("[NewVisitorModal] onSubmit error:", err);
       alert("No se pudo registrar. Revisa la conexión e inténtalo de nuevo.");
@@ -85,10 +158,24 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     }
   }
 
-  // Cerrar al hacer click fuera de la tarjeta
   function handleBackdrop(e) {
     if (e.target === e.currentTarget) onClose?.();
   }
+
+  // Modelos (con año 2000–actual) correspondientes a la marca seleccionada
+  const modelsForBrand =
+    vehicleBrand && VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
+      ? VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand].flatMap((base) => {
+          const list = [];
+          for (let y = START_YEAR; y <= CURRENT_YEAR; y++) {
+            list.push(`${base} ${y}`);
+          }
+          return list;
+        })
+      : [];
+
+  const showCustomModelInput =
+    vehicleBrand === "Otra" || vehicleModel === "__customBefore2000";
 
   return (
     <div
@@ -116,7 +203,6 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
           </button>
         </div>
 
-        {/* Aviso de horario en la UI */}
         <div className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
           {businessHoursMessage()}
         </div>
@@ -156,7 +242,6 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             />
           </div>
 
-          {/* Empleado anfitrión: texto libre */}
           <div className="md:col-span-2">
             <label className="text-xs text-neutral-400">Empleado anfitrión</label>
             <input
@@ -187,7 +272,6 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+504 9999-9999"
               type="tel"
-              inputMode="tel"
             />
           </div>
 
@@ -201,6 +285,115 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
               placeholder="correo@empresa.com"
             />
           </div>
+
+          {/* ================== SECCIÓN VEHÍCULO ================== */}
+          <div className="md:col-span-2 mt-1 border-t border-neutral-800/60 pt-3">
+            <div className="flex items-center gap-2">
+              <input
+                id="has-vehicle"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={hasVehicle}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHasVehicle(checked);
+                  if (!checked) {
+                    setVehicleBrand("");
+                    setVehicleModel("");
+                    setVehicleModelCustom("");
+                    setVehiclePlate("");
+                  }
+                }}
+              />
+              <label
+                htmlFor="has-vehicle"
+                className="text-xs text-neutral-300 cursor-pointer select-none"
+              >
+                El visitante llegó en vehículo
+              </label>
+            </div>
+
+            {hasVehicle && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                {/* Marca */}
+                <div>
+                  <label className="text-xs text-neutral-400">
+                    Marca <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    className="input-fx w-full"
+                    value={vehicleBrand}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setVehicleBrand(val);
+                      setVehicleModel("");
+                      setVehicleModelCustom("");
+                    }}
+                  >
+                    <option value="">Seleccione marca…</option>
+                    {VEHICLE_BRANDS.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Modelo (2000–actual o manual para <2000) */}
+                <div>
+                  <label className="text-xs text-neutral-400">
+                    Modelo <span className="text-red-400">*</span>
+                  </label>
+                  <select
+                    className="input-fx w-full"
+                    value={vehicleModel}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setVehicleModel(val);
+                      if (val !== "__customBefore2000") {
+                        setVehicleModelCustom("");
+                      }
+                    }}
+                    disabled={!vehicleBrand || vehicleBrand === "Otra"}
+                  >
+                    <option value="">Seleccione modelo (año ≥ 2000)…</option>
+                    {modelsForBrand.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                    <option value="__customBefore2000">
+                      Otro modelo / año &lt; 2000 (escribir)
+                    </option>
+                  </select>
+
+                  {/* Input manual: marca "Otra" o año < 2000 */}
+                  {showCustomModelInput && (
+                    <input
+                      className="input-fx w-full mt-2"
+                      value={vehicleModelCustom}
+                      onChange={(e) => setVehicleModelCustom(e.target.value)}
+                      placeholder="Escriba modelo y año (ej. Corolla 1998)"
+                    />
+                  )}
+                </div>
+
+                {/* Placa */}
+                <div>
+                  <label className="text-xs text-neutral-400">
+                    Placa <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    className="input-fx w-full"
+                    value={vehiclePlate}
+                    onChange={(e) => setVehiclePlate(e.target.value)}
+                    placeholder="Ej. HAA-1234"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          {/* ====================================================== */}
 
           <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
             <button

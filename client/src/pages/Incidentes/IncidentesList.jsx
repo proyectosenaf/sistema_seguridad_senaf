@@ -1,8 +1,15 @@
-// src/modules/incidentes/IncidentesList.jsx
+// client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef } from "react";
-import axios from "axios";
 import { Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
+import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
+
+// helper para mostrar bonito el nombre del guardia
+function guardLabel(g) {
+  const name = g.name || "(Sin nombre)";
+  return g.email ? `${name} — ${g.email}` : name;
+}
 
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
@@ -28,8 +35,13 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-  const API_HOST = API_BASE;
+  // ========= BASE para imágenes (solo host, sin /api) =========
+  // API viene como: http://localhost:4000/api o https://urchin-app.../api
+  // Le quitamos el /api del final para servir /uploads correctamente
+  const API_HOST = (API || "").replace(/\/api$/, "");
+
+  // 👇 NUEVO: catálogo de guardias (IAM)
+  const [guards, setGuards] = useState([]);
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -39,10 +51,15 @@ export default function IncidentesList() {
     setStats({ abiertos, enProceso, resueltos, alta });
   }
 
+  // ───────── cargar incidentes ─────────
   useEffect(() => {
-    axios
-      .get(`${API_BASE}/api/incidentes`, { withCredentials: true })
-      .then((res) => {
+    (async () => {
+      try {
+        // 👇 api ya tiene baseURL tipo http://localhost:4000/api
+        const res = await api.get("/incidentes", {
+          params: { limit: 500 },
+        });
+
         const data = Array.isArray(res.data)
           ? res.data
           : Array.isArray(res.data?.items)
@@ -50,23 +67,61 @@ export default function IncidentesList() {
           : [];
         setIncidentes(data);
         recomputeStats(data);
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error("Error cargando incidentes", err);
-      });
-  }, [API_BASE]);
+      }
+    })();
+  }, []);
+
+  // ───────── NUEVO: cargar guardias desde IAM ─────────
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        let items = [];
+        if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true);
+          items = r.items || [];
+        } else if (typeof iamApi.listUsers === "function") {
+          const r = await iamApi.listUsers("");
+          const NS = "https://senaf.local/roles";
+          items = (r.items || []).filter((u) => {
+            const roles = [
+              ...(Array.isArray(u.roles) ? u.roles : []),
+              ...(Array.isArray(u[NS]) ? u[NS] : []),
+            ].map((x) => String(x).toLowerCase());
+            return (
+              roles.includes("guardia") ||
+              roles.includes("guard") ||
+              roles.includes("rondasqr.guard")
+            );
+          });
+        }
+
+        const normalized = (items || []).map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          opId: u.opId || u.sub || u.legacyId || String(u._id),
+          active: u.active !== false,
+        }));
+
+        if (mounted) setGuards(normalized);
+      } catch (e) {
+        console.error("[IncidentesList] listGuards error:", e);
+        if (mounted) setGuards([]);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
-      const res = await axios.put(
-        `${API_BASE}/api/incidentes/${id}`,
-        { status: nuevoEstado },
-        { withCredentials: true }
-      );
+      const res = await api.put(`/incidentes/${id}`, { status: nuevoEstado });
 
-      // si el backend devuelve { ok, item }, usamos item; si no, el cuerpo completo.
       const serverItem = res.data?.item || res.data || {};
-      // si por alguna razón no viene nada útil, al menos forzamos el status localmente
       const patch =
         serverItem && Object.keys(serverItem).length > 0
           ? serverItem
@@ -135,11 +190,7 @@ export default function IncidentesList() {
 
       if (editingId) {
         // UPDATE
-        const res = await axios.put(
-          `${API_BASE}/api/incidentes/${editingId}`,
-          payload,
-          { withCredentials: true }
-        );
+        const res = await api.put(`/incidentes/${editingId}`, payload);
         const actualizado = res.data?.item || res.data || {};
         setIncidentes((prev) => {
           const next = prev.map((i) =>
@@ -150,9 +201,7 @@ export default function IncidentesList() {
         });
       } else {
         // CREATE
-        const res = await axios.post(`${API_BASE}/api/incidentes`, payload, {
-          withCredentials: true,
-        });
+        const res = await api.post("/incidentes", payload);
         const creado = res.data?.item || res.data;
         setIncidentes((prev) => {
           const next = [creado, ...prev];
@@ -195,9 +244,7 @@ export default function IncidentesList() {
     if (!ok) return;
 
     try {
-      await axios.delete(`${API_BASE}/api/incidentes/${id}`, {
-        withCredentials: true,
-      });
+      await api.delete(`/incidentes/${id}`);
       setIncidentes((prev) => {
         const next = prev.filter((i) => i._id !== id);
         recomputeStats(next);
@@ -208,6 +255,11 @@ export default function IncidentesList() {
       alert("No se pudo eliminar el incidente");
     }
   };
+
+  // para que en edición no se pierda el valor si no coincide con la lista de guardias
+  const hasReportedOption =
+    form.reportedBy &&
+    guards.some((g) => guardLabel(g) === form.reportedBy);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
@@ -238,9 +290,9 @@ export default function IncidentesList() {
         </button>
       </div>
 
-      {/* FORM inline con el MISMO estilo del IncidenteForm */}
+      {/* FORM inline */}
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
+        <div className="rounded-xl p-6 md:p-8 bg.white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
@@ -280,18 +332,30 @@ export default function IncidentesList() {
 
             {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 👇 AHORA ES SELECT DE GUARDIAS */}
               <div>
                 <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
                 </label>
-                <input
+                <select
                   name="reportedBy"
                   value={form.reportedBy}
                   onChange={handleFormChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-                  placeholder="Nombre del guardia o responsable"
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                   required
-                />
+                >
+                  <option value="">Seleccione un guardia…</option>
+                  {form.reportedBy && !hasReportedOption && (
+                    <option value={form.reportedBy}>
+                      {form.reportedBy} (actual)
+                    </option>
+                  )}
+                  {guards.map((g) => (
+                    <option key={g._id} value={guardLabel(g)}>
+                      {guardLabel(g)}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -394,7 +458,7 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text.white transition-all"
               >
                 Cancelar
               </button>
@@ -465,7 +529,7 @@ export default function IncidentesList() {
               className="w-full bg-[#1e2a3f] text-white text-sm rounded-md px-3 py-2 
                          border border-cyan-400/20 placeholder-gray-500 
                          focus:outline-none focus:ring-2 focus:ring-cyan-400/40 
-                         transition-all duration-200"
+                         transition-all duración-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
           </div>
@@ -563,7 +627,8 @@ export default function IncidentesList() {
                             {photos.slice(0, 3).map((p, idx) => {
                               const src =
                                 typeof p === "string" &&
-                                (p.startsWith("http") || p.startsWith("data:"))
+                                (p.startsWith("http") ||
+                                  p.startsWith("data:"))
                                   ? p
                                   : `${API_HOST}${p}`;
                               return (
@@ -593,13 +658,12 @@ export default function IncidentesList() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                        {/* botones de flujo */}
                         {i.status === "abierto" && (
                           <button
                             onClick={() =>
                               actualizarEstado(i._id, "en_proceso")
                             }
-                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duración-300"
                           >
                             Procesar
                           </button>
@@ -609,22 +673,21 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "resuelto")
                             }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transición-all duración-300"
                           >
                             Resolver
                           </button>
                         )}
 
-                        {/* nuevo: editar / eliminar */}
                         <button
                           onClick={() => startEdit(i)}
-                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transición-all duración-300"
                         >
                           Editar
                         </button>
                         <button
                           onClick={() => handleDelete(i._id)}
-                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transición-all duración-300"
                         >
                           Eliminar
                         </button>
@@ -637,10 +700,10 @@ export default function IncidentesList() {
           </table>
         </div>
 
-        <div className="flex justify-end p-4 border-t border-cyan-400/10">
+        <div className="flex.justify-end p-4 border-t border-cyan-400/10">
           <button
             onClick={startCreate}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all duration-300"
+            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transición-all duración-300"
           >
             {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
           </button>
@@ -650,7 +713,7 @@ export default function IncidentesList() {
       <div className="text-xs text-gray-500">
         <Link
           to="/"
-          className="hover:text-white hover:underline underline-offset-4 transition-colors"
+          className="hover:text-white hover:underline underline-offset-4 transición-colors"
         >
           ← Volver al panel principal
         </Link>

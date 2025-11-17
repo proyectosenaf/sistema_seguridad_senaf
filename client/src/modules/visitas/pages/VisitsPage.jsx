@@ -2,26 +2,108 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://localhost:4000";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { QRCodeSVG } from "qrcode.react"; // QR dinámico
 
-async function readJsonSafe(res) {
-  const raw = await res.text();
-  try {
-    return { data: JSON.parse(raw), raw };
-  } catch {
-    return { data: null, raw };
-  }
-}
-
-// ⏰ helpers de rango del día local
+// Rango del día actual
 function getTodayRange() {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return { start, end };
+}
+
+const STORAGE_KEY = "visitas_demo";
+const CITA_STORAGE_KEY = "citas_demo";
+
+// Helper para mostrar el texto del estado de la cita
+function prettyCitaEstado(value) {
+  if (!value) return "solicitada";
+  if (value === "en_revision") return "en revisión";
+  return value;
+}
+
+// Helper para la pastilla de estado de cita
+function CitaEstadoPill({ estado }) {
+  const val = prettyCitaEstado(estado);
+  let cls =
+    "px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center";
+
+  switch (estado) {
+    case "autorizada":
+      cls += " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
+      break;
+    case "denegada":
+      cls += " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
+      break;
+    case "cancelada":
+      cls += " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
+      break;
+    case "en_revision":
+      cls += " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
+      break;
+    default: // solicitada
+      cls += " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
+      break;
+  }
+
+  return <span className={cls}>{val}</span>;
+}
+
+// 🔹 Helper para quitar tildes del texto (para que el lector de QR no las dañe)
+function stripDiacritics(str) {
+  if (!str) return str;
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// Contenido del QR (texto tipo ficha) a partir de la cita
+function buildQrValueForCita(cita) {
+  if (!cita) return "";
+
+  const nombre = cita.nombre || cita.visitante || "Visitante";
+  const documento = cita.documento || "No especificado";
+  const empresa = cita.empresa || "—";
+  const empleado = cita.empleado || "—";
+  const motivo = cita.motivo || "—";
+
+  let fecha = "—";
+  let hora = "—";
+
+  if (cita.citaAt instanceof Date && !isNaN(cita.citaAt.getTime())) {
+    fecha = cita.citaAt.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+    hora = cita.citaAt.toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } else {
+    if (cita.fecha) fecha = cita.fecha;
+    if (cita.hora) hora = cita.hora;
+  }
+
+  const estadoLegible = prettyCitaEstado(cita.estado);
+
+  const text = [
+    "INVITACION DE VISITA",
+    "------------------------",
+    `Visitante: ${nombre}`,
+    `Documento: ${documento}`,
+    `Empresa: ${empresa}`,
+    `Visita a: ${empleado}`,
+    `Motivo: ${motivo}`,
+    `Fecha: ${fecha}`,
+    `Hora: ${hora}`,
+    `Estado: ${estadoLegible}`,
+  ].join("\n");
+
+  // 🔹 Devolvemos el texto SIN tildes para evitar caracteres raros al escanear
+  return stripDiacritics(text);
 }
 
 export default function VisitsPage() {
@@ -34,79 +116,99 @@ export default function VisitsPage() {
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
 
-  // 🔧 ahora trabajamos con nombre libre del empleado (texto)
-  const sendEmpleadoAsId = false;
+  // citas de pre-registro
+  const [onlineCitas, setOnlineCitas] = useState([]);
 
+  // cita seleccionada para mostrar QR
+  const [qrCita, setQrCita] = useState(null);
+
+  const sendEmpleadoAsId = false; // queda por si lo usas después
+
+  // ------- Helpers de storage (visitas) -------
+  function saveToStorage(next) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      console.log("[visitas] guardado en localStorage:", next);
+    } catch (e) {
+      console.warn("[visitas] no se pudo guardar en localStorage:", e);
+    }
+  }
+
+  function loadFromStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      const restored = arr.map((v) => ({
+        ...v,
+        entryAt: v.entryAt ? new Date(v.entryAt) : null,
+        exitAt: v.exitAt ? new Date(v.exitAt) : null,
+        // Si no trae tipo (visitas viejas), asumimos PRESENCIAL
+        kind: v.kind || "Presencial",
+      }));
+      console.log("[visitas] cargado desde localStorage:", restored);
+      return restored;
+    } catch (e) {
+      console.warn("[visitas] no se pudo leer de localStorage:", e);
+      return [];
+    }
+  }
+
+  // ------- Helpers de storage (citas) -------
+  function loadCitasFromStorage() {
+    try {
+      const raw = localStorage.getItem(CITA_STORAGE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      const restored = arr.map((c, idx) => {
+        const baseId = c._id || c.id || `local-cita-${idx}`;
+        let citaAt = null;
+        if (c.citaAt) {
+          citaAt = new Date(c.citaAt);
+        } else if (c.fecha && c.hora) {
+          // fecha YYYY-MM-DD, hora HH:mm
+          citaAt = new Date(`${c.fecha}T${c.hora}:00`);
+        }
+        return {
+          ...c,
+          _id: baseId,
+          id: baseId,
+          citaAt,
+        };
+      });
+      console.log("[citas] cargadas desde localStorage:", restored);
+      return restored;
+    } catch (e) {
+      console.warn("[citas] no se pudo leer de localStorage:", e);
+      return [];
+    }
+  }
+
+  function saveCitasToStorage(next) {
+    try {
+      localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(next));
+      console.log("[citas] guardadas en localStorage:", next);
+    } catch (e) {
+      console.warn("[citas] no se pudieron guardar en localStorage:", e);
+    }
+  }
+
+  // Al montar el módulo, cargar desde localStorage
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/visitas`, {
-          credentials: "include",
-        });
-        const { data, raw } = await readJsonSafe(res);
-        if (!alive) return;
-
-        if (!res.ok) {
-          console.error("[visitas] GET /api/visitas fallo:", res.status, raw);
-          setVisitors([]);
-          return;
-        }
-
-        if (data?.ok && Array.isArray(data.items)) {
-          const mapped = data.items.map((v) => {
-            const entryDate = v.fechaEntrada ? new Date(v.fechaEntrada) : null;
-            const exitDate = v.fechaSalida ? new Date(v.fechaSalida) : null;
-
-            const fmt = (d) =>
-              d
-                ? `${d.toLocaleDateString("es-ES", {
-                    day: "2-digit",
-                    month: "2-digit",
-                  })}, ${d.toLocaleTimeString("es-ES", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}`
-                : "-";
-
-            return {
-              id: v._id,
-              name: v.nombre,
-              document: v.documento,
-              company: v.empresa || "—",
-              employee: v.empleado || "—", // <- texto
-              entry: fmt(entryDate),
-              exit: fmt(exitDate),
-              status: v.estado,
-              // ✅ guardo fechas crudas para cálculos (no visibles)
-              entryAt: entryDate,
-              exitAt: exitDate,
-            };
-          });
-          setVisitors(mapped);
-        } else {
-          console.warn("[visitas] respuesta inesperada:", data ?? raw);
-          setVisitors([]);
-        }
-      } catch (err) {
-        console.error("[visitas] error cargando visitas:", err);
-        setVisitors([]);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+    const restored = loadFromStorage();
+    setVisitors(restored);
+    setOnlineCitas(loadCitasFromStorage());
+    setLoading(false);
   }, []);
 
+  // KPI
   const kpiActivos = useMemo(
     () => visitors.filter((v) => v.status === "Dentro").length,
     [visitors]
   );
 
-  // ✅ “Total Hoy” solo cuenta visitas con fechaEntrada dentro del día local de HOY
   const kpiTotalHoy = useMemo(() => {
     const { start, end } = getTodayRange();
     return visitors.filter(
@@ -114,7 +216,6 @@ export default function VisitsPage() {
     ).length;
   }, [visitors]);
 
-  // ✅ “Empresas Visitantes” también por HOY (únicas del día)
   const kpiEmpresas = useMemo(() => {
     const { start, end } = getTodayRange();
     const empresasDeHoy = visitors
@@ -125,7 +226,7 @@ export default function VisitsPage() {
 
   const filteredVisitors = useMemo(() => {
     return visitors.filter((v) => {
-      const full = `${v.name} ${v.document} ${v.company}`.toLowerCase();
+      const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
       const matchesSearch = full.includes(search.toLowerCase().trim());
       const matchesStatus =
         statusFilter === "todos"
@@ -135,85 +236,73 @@ export default function VisitsPage() {
     });
   }, [visitors, search, statusFilter]);
 
-  // ✅ ahora enviamos 'empleado' (texto)
+  // Citas ordenadas por fecha/hora (se usan solo para mostrar)
+  const sortedCitas = useMemo(() => {
+    const list = [...onlineCitas];
+    list.sort((a, b) => {
+      const da = a.citaAt instanceof Date ? a.citaAt.getTime() : 0;
+      const db = b.citaAt instanceof Date ? b.citaAt.getTime() : 0;
+      return da - db;
+    });
+    return list;
+  }, [onlineCitas]);
+
+  // ------- Registrar visitante (solo front) -------
   async function handleAddVisitor(formData) {
-    const payload = {
-      nombre: formData.name?.trim(),
-      documento: formData.document?.trim(),
-      empresa: formData.company?.trim() || undefined,
-      empleado: formData.employee?.trim(), // <- texto libre
-      motivo: formData.reason?.trim(),
-      telefono: formData.phone?.trim() || undefined,
-      correo: formData.email?.trim() || undefined,
+    const entryDate = new Date();
+
+    const fmtEntry = `${entryDate.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+    })}, ${entryDate.toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+
+    const vehicleBrand = formData.vehicle?.brand || "";
+    const vehicleModel = formData.vehicle?.model || "";
+    const vehiclePlate = formData.vehicle?.plate || "";
+
+    const vehicleSummary =
+      vehicleBrand || vehicleModel || vehiclePlate
+        ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
+            vehiclePlate ? ` (${vehiclePlate})` : ""
+          }`
+        : "—";
+
+    const newRow = {
+      id: `local-${Date.now()}`,
+      // Tipo de visita: todas las de este módulo son PRESENCIALES
+      kind: "Presencial",
+      name: formData.name?.trim(),
+      document: formData.document?.trim(),
+      company: formData.company?.trim() || "—",
+      employee: formData.employee?.trim() || "—",
+      entry: fmtEntry,
+      exit: "-",
+      status: "Dentro",
+      entryAt: entryDate,
+      exitAt: null,
+      vehicleBrand,
+      vehicleModel,
+      vehiclePlate,
+      vehicleSummary,
     };
 
-    try {
-      const res = await fetch(`${API_BASE}/api/visitas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
-      });
-
-      const { data, raw } = await readJsonSafe(res);
-
-      if (!res.ok || !data?.ok) {
-        console.error("[visitas] POST /api/visitas fallo:", res.status, data?.error || raw);
-        alert(data?.error || `No se pudo registrar (HTTP ${res.status}).`);
-        return;
-      }
-
-      const v = data.item;
-      const entryDate = v?.fechaEntrada ? new Date(v.fechaEntrada) : new Date();
-      const fmtEntry = `${entryDate.toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-      })}, ${entryDate.toLocaleTimeString("es-ES", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`;
-
-      const newRow = {
-        id: v._id,
-        name: v.nombre,
-        document: v.documento,
-        company: v.empresa || "—",
-        employee: v.empleado || "—",
-        entry: fmtEntry,
-        exit: "-",
-        status: v.estado || "Dentro",
-        // ✅ para KPI de hoy
-        entryAt: entryDate,
-        exitAt: null,
-      };
-
-      setVisitors((prev) => [newRow, ...prev]);
-      setShowModal(false);
-    } catch (err) {
-      console.error("[visitas] error creando visita:", err);
-      alert("Error de red creando visita");
-    }
+    setVisitors((prev) => {
+      const next = [newRow, ...prev];
+      saveToStorage(next); // guardar inmediatamente
+      return next;
+    });
+    setShowModal(false);
   }
 
+  // ------- Marcar salida (solo front) -------
   async function handleExit(id) {
     if (!id) return;
     setSavingExit(id);
     try {
-      const res = await fetch(`${API_BASE}/api/visitas/${id}/cerrar`, {
-        method: "PATCH",
-        credentials: "include",
-      });
-      const { data, raw } = await readJsonSafe(res);
-
-      if (!res.ok || !data?.ok) {
-        console.error("[visitas] PATCH cerrar fallo:", res.status, data?.error || raw);
-        alert(data?.error || "No se pudo cerrar la visita.");
-        setSavingExit(null);
-        return;
-      }
-
-      const v = data.item;
-      const exitDate = v?.fechaSalida ? new Date(v.fechaSalida) : new Date();
+      const exitDate = new Date();
       const fmtExit = `${exitDate.toLocaleDateString("es-ES", {
         day: "2-digit",
         month: "2-digit",
@@ -222,27 +311,162 @@ export default function VisitsPage() {
         minute: "2-digit",
       })}`;
 
-      setVisitors((prev) =>
-        prev.map((row) =>
+      setVisitors((prev) => {
+        const next = prev.map((row) =>
           row.id === id
             ? { ...row, status: "Finalizada", exit: fmtExit, exitAt: exitDate }
             : row
-        )
-      );
-    } catch (err) {
-      console.error("[visitas] error cerrando visita:", err);
-      alert("No se pudo marcar salida.");
+        );
+        saveToStorage(next); // guardar cambio de estado
+        return next;
+      });
     } finally {
       setSavingExit(null);
     }
   }
 
+  // ------- Cambiar estado de una cita (pre-registro) -------
+  function updateCitaStatus(citaId, nuevoEstado) {
+    setOnlineCitas((prev) => {
+      const next = prev.map((c) =>
+        c._id === citaId ? { ...c, estado: nuevoEstado } : c
+      );
+      saveCitasToStorage(next);
+      return next;
+    });
+  }
+
+  // ------- Export helpers -------
+  function buildExportRows(list) {
+    return list.map((v) => ({
+      Visitante: v.name || "",
+      Documento: v.document || "",
+      Empresa: v.company || "",
+      Empleado: v.employee || "",
+      // Tipo en exportes
+      Tipo: v.kind || "",
+      VehiculoMarca: v.vehicleBrand || "",
+      VehiculoModelo: v.vehicleModel || "",
+      VehiculoPlaca: v.vehiclePlate || "",
+      Entrada: v.entry || "",
+      Salida: v.exit || "",
+      Estado: v.status || "",
+    }));
+  }
+
+  function exportCSV(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    const headers = Object.keys(rows[0]);
+    const csvLines = [
+      headers.join(","),
+      ...rows.map((r) =>
+        headers
+          .map((h) => {
+            const cell = String(r[h] ?? "");
+            if (cell.includes('"') || cell.includes(",") || cell.includes("\n")) {
+              return `"${cell.replace(/"/g, '""')}"`;
+            }
+            return cell;
+          })
+          .join(",")
+      ),
+    ];
+    const csv = csvLines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.download = `visitas-${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportExcel(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+    try {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Visitas");
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbout], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.download = `visitas-${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn("Error generando XLSX:", err);
+      exportCSV(list);
+    }
+  }
+
+  function exportPDF(list) {
+    const rows = buildExportRows(list);
+    if (rows.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      const title = "Reporte de Visitantes";
+      doc.setFontSize(14);
+      doc.text(title, 40, 40);
+
+      const headers = Object.keys(rows[0]);
+      const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
+
+      autoTable(doc, {
+        startY: 60,
+        head: [headers],
+        body,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [30, 30, 30], textColor: 255 },
+        theme: "grid",
+        margin: { left: 20, right: 20 },
+      });
+
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      doc.save(`visitas-${ts}.pdf`);
+    } catch (err) {
+      console.error("Error generando PDF con jsPDF:", err);
+      alert(
+        "No se pudo generar PDF automáticamente. Revisa las dependencias (jspdf, jspdf-autotable)."
+      );
+    }
+  }
+
+  // ------- Render -------
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div className="flex flex-col">
           <h1 className="text-xl md:text-2xl font-bold text-neutral-100 dark:text-neutral-100">
@@ -253,7 +477,7 @@ export default function VisitsPage() {
           </p>
         </div>
 
-        <div className="flex flex-col items-start md:items-end gap-2">
+        <div className="flex flex-row gap-3 items-center">
           <button
             onClick={() => setShowModal(true)}
             className="btn-neon flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
@@ -263,18 +487,18 @@ export default function VisitsPage() {
 
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="text-xs text-blue-400 hover:underline"
+            className="btn-neon-alt flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
           >
-            Ir a Agenda de Citas →
+            <span className="font-semibold">Agenda de Citas</span> →
           </button>
         </div>
       </div>
 
+      {/* KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="user">👤</span>{" "}
-            Visitantes Activos
+            👤 Visitantes Activos
           </div>
           <div className="text-2xl font-semibold text-green-400">
             {loading ? "…" : kpiActivos}
@@ -283,8 +507,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="clock">⏰</span>{" "}
-            Total Hoy
+            ⏰ Total Hoy
           </div>
           <div className="text-2xl font-semibold text-blue-400">
             {loading ? "…" : kpiTotalHoy}
@@ -293,8 +516,7 @@ export default function VisitsPage() {
 
         <div className="fx-card p-4 flex flex-col gap-1">
           <div className="text-sm text-neutral-400 flex items-center gap-2">
-            <span role="img" aria-label="building">🏢</span>{" "}
-            Empresas Visitantes
+            🏢 Empresas Visitantes
           </div>
           <div className="text-2xl font-semibold text-purple-400">
             {loading ? "…" : kpiEmpresas}
@@ -302,6 +524,142 @@ export default function VisitsPage() {
         </div>
       </div>
 
+      {/* BLOQUE: Solicitudes en línea (pre-registro) */}
+      {sortedCitas.length > 0 && (
+        <section className="card-rich p-4 md:p-5 text-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <div className="font-semibold text-neutral-200 text-base">
+                Solicitudes en línea (pre-registro)
+              </div>
+              <p className="text-xs text-neutral-400">
+                Citas agendadas por los visitantes para revisión del guardia
+              </p>
+            </div>
+            <button
+              onClick={() => navigate("/visitas/agenda")}
+              className="text-xs text-blue-400 hover:underline"
+            >
+              Ver agenda completa →
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
+              <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
+                <tr className="[&>th]:py-2 [&>th]:pr-4">
+                  <th>Visitante</th>
+                  <th>Documento</th>
+                  <th>Empresa</th>
+                  <th>Empleado</th>
+                  <th>Motivo</th>
+                  <th>Fecha</th>
+                  <th>Hora</th>
+                  <th>Estado</th>
+                  <th className="text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="text-neutral-200">
+                {sortedCitas.map((cita) => (
+                  <tr
+                    key={cita._id}
+                    className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                  >
+                    <td className="font-medium text-neutral-100">
+                      {cita.nombre || cita.visitante}
+                    </td>
+                    <td className="text-neutral-300">
+                      {cita.documento || "-"}
+                    </td>
+                    <td className="text-neutral-200">
+                      {cita.empresa || "—"}
+                    </td>
+                    <td className="text-neutral-200">
+                      {cita.empleado || "—"}
+                    </td>
+                    <td className="text-neutral-300">
+                      {cita.motivo || "—"}
+                    </td>
+                    <td className="text-neutral-300">
+                      {cita.citaAt
+                        ? cita.citaAt.toLocaleDateString("es-ES", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                          })
+                        : cita.fecha || "—"}
+                    </td>
+                    <td className="text-neutral-300">
+                      {cita.citaAt
+                        ? cita.citaAt.toLocaleTimeString("es-ES", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : cita.hora || "—"}
+                    </td>
+                    <td>
+                      <CitaEstadoPill estado={cita.estado} />
+                    </td>
+                    <td className="text-right">
+                      <div className="flex flex-wrap gap-2 justify-end">
+                        {/* Ver QR SOLO si está autorizada */}
+                        {cita.estado === "autorizada" && (
+                          <button
+                            type="button"
+                            onClick={() => setQrCita(cita)}
+                            className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+                          >
+                            Ver QR
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCitaStatus(cita._id, "en_revision")
+                          }
+                          className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-700/60 hover:bg-neutral-600"
+                        >
+                          En revisión
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCitaStatus(cita._id, "autorizada")
+                          }
+                          className="px-2 py-1 rounded-md text-xs font-semibold bg-green-200 text-green-800 hover:bg-green-300 dark:bg-green-600/20 dark:text-green-300 dark:hover:bg-green-600/30"
+                        >
+                          Autorizar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCitaStatus(cita._id, "denegada")
+                          }
+                          className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-800 hover:bg-red-300 dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
+                        >
+                          Denegar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCitaStatus(cita._id, "cancelada")
+                          }
+                          className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-500/40 text-neutral-50 hover:bg-neutral-500/60"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* TABLA VISITANTES */}
       <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
           <div className="font-semibold text-neutral-200 text-base">
@@ -312,7 +670,7 @@ export default function VisitsPage() {
             <div className="flex-1 md:flex-none">
               <input
                 className="input-fx w-full md:w-[300px]"
-                placeholder="Buscar por nombre, documento o empresa…"
+                placeholder="Buscar por nombre, documento, empresa o placa…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -332,13 +690,15 @@ export default function VisitsPage() {
           </div>
         </div>
 
-        <table className="w-full text-left border-collapse min-w-[900px]">
+        <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
             <tr className="[&>th]:py-2 [&>th]:pr-4">
               <th>Visitante</th>
               <th>Documento</th>
               <th>Empresa</th>
               <th>Empleado</th>
+              <th>Tipo</th>
+              <th>Vehículo</th>
               <th>Entrada</th>
               <th>Salida</th>
               <th>Estado</th>
@@ -348,26 +708,41 @@ export default function VisitsPage() {
           <tbody className="text-neutral-200">
             {loading ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Cargando…</td>
+                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
+                  Cargando…
+                </td>
               </tr>
             ) : filteredVisitors.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-6 text-center text-neutral-500 text-sm">Sin resultados</td>
+                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
+                  Sin resultados
+                </td>
               </tr>
             ) : (
               filteredVisitors.map((v) => (
-                <tr key={v.id} className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4">
-                  <td className="font-medium text-neutral-100"><div>{v.name}</div></td>
+                <tr
+                  key={v.id}
+                  className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                >
+                  <td className="font-medium text-neutral-100">
+                    <div>{v.name}</div>
+                  </td>
                   <td className="text-neutral-400">{v.document}</td>
                   <td className="text-neutral-200">{v.company}</td>
                   <td className="text-neutral-200">{v.employee}</td>
+                  <td className="text-neutral-200">{v.kind || "Presencial"}</td>
+                  <td className="text-neutral-200">{v.vehicleSummary}</td>
                   <td className="text-neutral-200">{v.entry}</td>
                   <td className="text-neutral-400">{v.exit}</td>
                   <td>
                     {v.status === "Dentro" ? (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">Dentro</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
+                        Dentro
+                      </span>
                     ) : (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">Finalizada</span>
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
+                        Finalizada
+                      </span>
                     )}
                   </td>
                   <td className="text-right">
@@ -388,6 +763,25 @@ export default function VisitsPage() {
             )}
           </tbody>
         </table>
+
+        {/* FOOTER: Export buttons */}
+        <div className="mt-4 flex justify-end gap-3">
+          <button
+            onClick={() => exportExcel(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar lista (xlsx)"
+          >
+            Exportar Excel
+          </button>
+
+          <button
+            onClick={() => exportPDF(filteredVisitors)}
+            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+            title="Exportar PDF"
+          >
+            Exportar PDF
+          </button>
+        </div>
       </section>
 
       {showModal && (
@@ -395,6 +789,71 @@ export default function VisitsPage() {
           onClose={() => setShowModal(false)}
           onSubmit={handleAddVisitor}
         />
+      )}
+
+      {/* Modal para mostrar el QR de una cita */}
+      {qrCita && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setQrCita(null);
+          }}
+        >
+          <div
+            className="card-rich p-4 md:p-6 w-[95%] max-w-[420px]"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-neutral-100">
+                  Invitación / QR de cita
+                </h3>
+                <p className="text-xs text-neutral-400">
+                  Muestre este código en la entrada para su validación.
+                </p>
+              </div>
+              <button
+                onClick={() => setQrCita(null)}
+                className="text-neutral-400 hover:text-neutral-200"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center gap-3">
+              <QRCodeSVG
+                value={buildQrValueForCita(qrCita)}
+                size={200}
+                includeMargin
+              />
+              <div className="text-xs text-neutral-300 text-center">
+                <div className="font-semibold">
+                  {qrCita.nombre || qrCita.visitante}
+                </div>
+                <div>{qrCita.documento || "Documento no especificado"}</div>
+                <div>
+                  {qrCita.citaAt
+                    ? qrCita.citaAt.toLocaleDateString("es-ES", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })
+                    : qrCita.fecha}{" "}
+                  {" · "}
+                  {qrCita.citaAt
+                    ? qrCita.citaAt.toLocaleTimeString("es-ES", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : qrCita.hora}
+                </div>
+                <div className="mt-1">
+                  Estado: <CitaEstadoPill estado={qrCita.estado} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

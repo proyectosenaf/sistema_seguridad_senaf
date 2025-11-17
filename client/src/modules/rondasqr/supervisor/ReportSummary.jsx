@@ -8,7 +8,7 @@ export default function ReportSummary({ stats = [] }) {
       <h3 className="font-semibold text-lg">Resumen de Vista Rápida</h3>
 
       {!stats.length ? (
-        <div className="text-sm text-white/70">Sin datos de resumen.</div>
+        <div className="text-sm text-white/70">Sin datos de resumen para los filtros seleccionados.</div>
       ) : (
         <>
           {/* Banda amarilla tipo lámina */}

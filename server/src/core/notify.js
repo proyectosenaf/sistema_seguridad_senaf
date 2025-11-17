@@ -13,12 +13,28 @@ export function makeNotifier({ io, mailer } = {}) {
     return [`user-${userId}`, `guard-${userId}`];
   }
 
-  async function _persistAndEmit({ userId, type, title, body = "", meta = {}, email }) {
+  async function _persistAndEmit({
+    userId,
+    type,
+    title,
+    body = "",
+    meta = {},
+    email,
+  }) {
     // 1) Persistencia
-    const doc = await Notification.create({ userId, type, title, body, meta });
+    const doc = await Notification.create({
+      userId,
+      type,
+      title,
+      body,
+      meta,
+    });
 
     // 2) Contador no leído
-    const unread = await Notification.countDocuments({ userId, readAt: null });
+    const unread = await Notification.countDocuments({
+      userId,
+      readAt: null,
+    });
 
     // 3) Tiempo real (contador)
     if (io && userId) {
@@ -47,19 +63,39 @@ export function makeNotifier({ io, mailer } = {}) {
   /* ─────────── API de alto nivel (para otros módulos) ─────────── */
 
   // Nueva asignación (Rondas)
-  async function assignment({ userId, email, siteName, roundName, startTime, endTime, assignmentId }) {
+  async function assignment({
+    userId,
+    email,
+    siteName,
+    roundName,
+    startTime,
+    endTime,
+    assignmentId,
+  }) {
     const title = "Nueva ronda asignada";
-    const body  = `${roundName || ""} — ${siteName || ""} (${startTime || "--:--"} a ${endTime || "--:--"})`;
-    const meta  = { assignmentId, siteName, roundName, startTime, endTime };
+    const body = `${roundName || ""} — ${siteName || ""} (${
+      startTime || "--:--"
+    } a ${endTime || "--:--"})`;
+    const meta = { assignmentId, siteName, roundName, startTime, endTime };
 
     const { doc, unread } = await _persistAndEmit({
-      userId, type: "assignment", title, body, meta, email,
+      userId,
+      type: "assignment",
+      title,
+      body,
+      meta,
+      email,
     });
 
     // Fanout específico del módulo (si tienes una UI escuchando esto)
     if (io && userId) {
       for (const room of roomForUser(userId)) {
-        io.to(room).emit("rondasqr:nueva-asignacion", { title, body, meta, id: doc.id });
+        io.to(room).emit("rondasqr:nueva-asignacion", {
+          title,
+          body,
+          meta,
+          id: doc.id,
+        });
       }
     }
     return { id: doc.id, unread };
@@ -68,16 +104,26 @@ export function makeNotifier({ io, mailer } = {}) {
   // Incidente creado/actualizado
   async function incident({ userId, email, siteName, message, incidentId }) {
     const title = "Nuevo incidente reportado";
-    const body  = `${siteName || ""}: ${message?.slice(0, 140) || ""}`;
-    const meta  = { incidentId, siteName };
+    const body = `${siteName || ""}: ${message?.slice(0, 140) || ""}`;
+    const meta = { incidentId, siteName };
 
     const { doc } = await _persistAndEmit({
-      userId, type: "incident", title, body, meta, email,
+      userId,
+      type: "incident",
+      title,
+      body,
+      meta,
+      email,
     });
 
     if (io && userId) {
       for (const room of roomForUser(userId)) {
-        io.to(room).emit("incidents:new", { title, body, meta, id: doc.id });
+        io.to(room).emit("incidents:new", {
+          title,
+          body,
+          meta,
+          id: doc.id,
+        });
       }
     }
     return { id: doc.id };
@@ -86,15 +132,22 @@ export function makeNotifier({ io, mailer } = {}) {
   // Botón de pánico
   async function panic({ userId, email, siteName, gps }) {
     const title = "🚨 Alerta de pánico";
-    const body  = siteName ? `Sitio: ${siteName}` : "Se activó el botón de pánico";
-    const meta  = { gps, siteName };
+    const body = siteName
+      ? `Sitio: ${siteName}`
+      : "Se activó el botón de pánico";
+    const meta = { gps, siteName };
 
     const { doc } = await _persistAndEmit({
-      userId, type: "panic", title, body, meta, email,
+      userId,
+      type: "panic",
+      title,
+      body,
+      meta,
+      email,
     });
 
     if (io) {
-      io.emit("panic:new", { title, body, meta, id: doc.id }); // broadcast a sala global si quieres
+      io.emit("panic:new", { title, body, meta, id: doc.id }); // broadcast global si quieres
     }
     return { id: doc.id };
   }
@@ -102,12 +155,22 @@ export function makeNotifier({ io, mailer } = {}) {
   // Notificación genérica
   async function generic({ userId, email, title, body = "", meta = {} }) {
     const { doc } = await _persistAndEmit({
-      userId, type: "generic", title, body, meta, email,
+      userId,
+      type: "generic",
+      title,
+      body,
+      meta,
+      email,
     });
 
     if (io && userId) {
       for (const room of roomForUser(userId)) {
-        io.to(room).emit("notify:generic", { title, body, meta, id: doc.id });
+        io.to(room).emit("notify:generic", {
+          title,
+          body,
+          meta,
+          id: doc.id,
+        });
       }
     }
     return { id: doc.id };
@@ -122,7 +185,10 @@ export function makeNotifier({ io, mailer } = {}) {
 
   async function markAllRead(userId) {
     if (!userId) return { updated: 0 };
-    const r = await Notification.updateMany({ userId, readAt: null }, { $set: { readAt: new Date() } });
+    const r = await Notification.updateMany(
+      { userId, readAt: null },
+      { $set: { readAt: new Date() } }
+    );
     // refresca contador a 0 en tiempo real
     if (io) {
       for (const room of roomForUser(userId)) {

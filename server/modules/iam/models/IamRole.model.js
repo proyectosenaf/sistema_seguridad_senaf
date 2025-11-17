@@ -1,31 +1,33 @@
-// models/IamRole.model.js
 import mongoose from "mongoose";
 
-const schema = new mongoose.Schema({
-  code: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true,
-    trim: true,
-    lowercase: true,            // siempre en minúsculas
-  }, // ej: "admin"
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-  }, // ej: "Administrador"
-  description: { type: String, trim: true },
-  // Guardamos KEYS de permisos (p.ej. "incidentes.read")
-  permissions: {
-    type: [String],
-    default: [],
-    index: true,
+const schema = new mongoose.Schema(
+  {
+    code: {
+      type: String,
+      required: true,
+      unique: true,           // esto ya crea índice único
+      trim: true,
+      lowercase: true,        // siempre en minúsculas
+    }, // ej: "admin"
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    }, // ej: "Administrador"
+    description: { type: String, trim: true },
+
+    // Guardamos KEYS de permisos (p.ej. "incidentes.read")
+    permissions: {
+      type: [String],
+      default: [],
+      // 👇 sin index:true; definimos el índice abajo
+    },
   },
-}, {
-  timestamps: true,
-  collection: "iamroles",
-});
+  {
+    timestamps: true,
+    collection: "iam_roles",
+  }
+);
 
 // Índices útiles
 schema.index({ name: 1 });
@@ -38,6 +40,7 @@ schema.pre("save", function (next) {
   }
   next();
 });
+
 schema.pre("findOneAndUpdate", function (next) {
   const u = this.getUpdate();
   if (u?.code && typeof u.code === "string") {
