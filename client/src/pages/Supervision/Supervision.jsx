@@ -5,8 +5,38 @@ import { rondasqrApi } from "../../modules/rondasqr/api/rondasqrApi";
 import { iamApi } from "../../iam/api/iamApi.js";
 
 /* =======================
-   DATOS MOCK (solo para panel de rondas / alertas)
+   DATOS MOCK (otras secciones)
    ======================= */
+
+const asistenciaMock = [
+  {
+    id: 1,
+    guardia: "Juan Pérez",
+    fecha: "2025-11-15",
+    horaEntrada: "05:50",
+    horaSalida: "",
+    metodo: "QR",
+    estado: "A tiempo",
+  },
+  {
+    id: 2,
+    guardia: "María López",
+    fecha: "2025-11-15",
+    horaEntrada: "14:10",
+    horaSalida: "",
+    metodo: "NFC",
+    estado: "Retardo",
+  },
+  {
+    id: 3,
+    guardia: "Carlos Sánchez",
+    fecha: "2025-11-14",
+    horaEntrada: "",
+    horaSalida: "",
+    metodo: "Geo-checkin",
+    estado: "Ausencia",
+  },
+];
 
 const alertasMock = [
   {
@@ -94,24 +124,18 @@ const rondasMock = [
 export default function Supervision() {
   const [vista, setVista] = useState("turnos"); // turnos | asistencia | alertas | rondas | lugar
 
-  // --- Turnos (asignaciones de rondas) ---
+  // Turnos (asignaciones de rondas)
   const [turnosRaw, setTurnosRaw] = useState([]);
   const [cargandoTurnos, setCargandoTurnos] = useState(false);
   const [errorTurnos, setErrorTurnos] = useState(null);
 
-  // --- Asistencia (check-ins) ---
-  const [asistenciaRaw, setAsistenciaRaw] = useState([]);
-  const [cargandoAsistencia, setCargandoAsistencia] = useState(false);
-  const [errorAsistencia, setErrorAsistencia] = useState(null);
-
-  // --- Catálogo de usuarios (IAM) ---
+  // Catálogo de usuarios (IAM)
   const [usuariosMap, setUsuariosMap] = useState({});
   const [usuariosCargados, setUsuariosCargados] = useState(false);
 
   const [filtroGuardia, setFiltroGuardia] = useState("");
   const [filtroEstadoRonda, setFiltroEstadoRonda] = useState("Todos");
 
-  // Lugar de trabajo / checklist
   const [checkLimpieza, setCheckLimpieza] = useState(false);
   const [checkHerramientas, setCheckHerramientas] = useState(false);
   const [checkVestimenta, setCheckVestimenta] = useState(false);
@@ -130,16 +154,8 @@ export default function Supervision() {
         const map = {};
 
         for (const u of items) {
-          const id =
-            u._id ||
-            u.id ||
-            u.userId ||
-            u.personaId ||
-            u.id_persona ||
-            null;
-          if (!id) continue;
-
           const persona = u.persona || {};
+
           const nombre =
             u.nombreCompleto ||
             u.name ||
@@ -155,13 +171,36 @@ export default function Supervision() {
             persona.email ||
             "";
 
-          map[id] = { nombre, email };
+          // 👇 AQUÍ EL CAMBIO IMPORTANTE:
+          // Registramos al usuario bajo TODOS los IDs posibles,
+          // incluyendo persona._id, persona.id_persona, etc.
+          const posiblesIds = [
+            u._id,
+            u.id,
+            u.userId,
+            u.usuarioId,
+            u.personaId,
+            u.id_persona,
+            persona._id,
+            persona.id,
+            persona.id_persona,
+          ]
+            .filter(Boolean)
+            .map(String);
+
+          if (posiblesIds.length === 0) continue;
+
+          for (const pid of posiblesIds) {
+            if (!map[pid]) {
+              map[pid] = { nombre, email };
+            }
+          }
         }
 
         if (!cancel) {
           setUsuariosMap(map);
           setUsuariosCargados(true);
-          console.log("[Supervision] Usuarios IAM cargados:", map);
+          console.log("[Supervision] Usuarios IAM cargados (map):", map);
         }
       } catch (e) {
         console.error("[Supervision] Error cargando usuarios IAM:", e);
@@ -180,6 +219,7 @@ export default function Supervision() {
      ======================= */
   useEffect(() => {
     if (!usuariosCargados) return;
+
     let cancel = false;
 
     const cargarTurnosDesdeAsignaciones = async () => {
@@ -198,15 +238,13 @@ export default function Supervision() {
 
         if (!cancel) {
           setTurnosRaw(assignments);
-          if (assignments[0]) {
-            console.log(
-              "[Supervision] Ejemplo de assignment:",
-              assignments[0]
-            );
-          }
+          console.log(
+            "[Supervision] Asignaciones crudas:",
+            assignments.slice(0, 5)
+          );
         }
       } catch (err) {
-        console.error(err);
+        console.error("[Supervision] Error cargando asignaciones:", err);
         if (!cancel) {
           setErrorTurnos(
             "No se pudieron cargar las asignaciones de rondas."
@@ -224,77 +262,7 @@ export default function Supervision() {
   }, [usuariosCargados]);
 
   /* =======================
-     3) Cargar asistencia desde RondasQR (reportes)
-     ======================= */
-  useEffect(() => {
-    if (!usuariosCargados) return;
-    let cancel = false;
-
-    const cargarAsistencia = async () => {
-      try {
-        setCargandoAsistencia(true);
-        setErrorAsistencia(null);
-
-        let data;
-
-        // 1) Intentar traer TODO sin filtros (solo para probar)
-        try {
-          data = await rondasqrApi.getDetailed({});
-        } catch (e1) {
-          console.warn(
-            "[Supervision] getDetailed sin filtros falló, probando getSummary:",
-            e1
-          );
-          try {
-            data = await rondasqrApi.getSummary({});
-          } catch (e2) {
-            console.warn(
-              "[Supervision] getSummary sin filtros también falló:",
-              e2
-            );
-            throw e2;
-          }
-        }
-
-        const items = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.items)
-          ? data.items
-          : Array.isArray(data?.rows)
-          ? data.rows
-          : [];
-
-        if (!cancel) {
-          setAsistenciaRaw(items);
-          console.log(
-            "[Supervision] Registros de asistencia recibidos:",
-            items.length
-          );
-          if (items[0]) {
-            console.log(
-              "[Supervision] Ejemplo de registro de asistencia:",
-              items[0]
-            );
-          }
-        }
-      } catch (err) {
-        console.error("[Supervision] Error cargando asistencia:", err);
-        if (!cancel) {
-          setErrorAsistencia("No se pudo cargar el control de asistencia.");
-        }
-      } finally {
-        if (!cancel) setCargandoAsistencia(false);
-      }
-    };
-
-    cargarAsistencia();
-    return () => {
-      cancel = true;
-    };
-  }, [usuariosCargados]);
-
-  /* =======================
-     4) Mapear assignments + usuarios (turnos)
+     3) Mapear assignments + usuarios
      ======================= */
   const turnos = useMemo(() => {
     return (turnosRaw || []).map((a) => {
@@ -308,7 +276,7 @@ export default function Supervision() {
         a.ownerId ||
         null;
 
-      const usuario = userId ? usuariosMap[userId] : null;
+      const usuario = userId ? usuariosMap[String(userId)] : null;
 
       let guardDisplay = "Sin datos";
       if (usuario) {
@@ -324,7 +292,7 @@ export default function Supervision() {
           a.userName ||
           a.user?.name ||
           a.user?.nombre ||
-          guardDisplay;
+          (userId ? `ID: ${userId}` : "Sin datos");
       }
 
       const creado =
@@ -363,102 +331,15 @@ export default function Supervision() {
   }, [turnosRaw, usuariosMap]);
 
   /* =======================
-     5) Mapear asistencia + usuarios
-     ======================= */
-  const asistencia = useMemo(() => {
-    return (asistenciaRaw || []).map((r, idx) => {
-      const userId =
-        r.userId ||
-        r.guardUserId ||
-        r.guardId ||
-        r.usuarioId ||
-        r.personaId ||
-        r.iamUserId ||
-        r.ownerId ||
-        null;
-
-      const usuario = userId ? usuariosMap[userId] : null;
-
-      let guardDisplay = "Sin datos";
-      if (usuario) {
-        guardDisplay = usuario.email
-          ? `${usuario.nombre} — ${usuario.email}`
-          : usuario.nombre;
-      } else {
-        guardDisplay =
-          r.guardName ||
-          r.guard ||
-          r.userName ||
-          r.usuario ||
-          guardDisplay;
-      }
-
-      const fecha =
-        r.date ||
-        r.fecha ||
-        r.dia ||
-        (r.timestamp
-          ? new Date(r.timestamp).toISOString().slice(0, 10)
-          : "");
-
-      const entrada =
-        r.checkInTime ||
-        r.horaEntrada ||
-        r.entrada ||
-        r.firstCheck ||
-        r.first_scan_time;
-
-      const salida =
-        r.checkOutTime ||
-        r.horaSalida ||
-        r.salida ||
-        r.lastCheck ||
-        r.last_scan_time;
-
-      const metodo =
-        r.method ||
-        r.metodo ||
-        r.channel ||
-        r.checkinMethod ||
-        r.source ||
-        "—";
-
-      const estado =
-        r.status ||
-        r.estado ||
-        (salida ? "Completado" : entrada ? "En turno" : "Sin registro");
-
-      return {
-        id: r._id || r.id || idx,
-        guardia: guardDisplay,
-        fecha: fecha || "—",
-        horaEntrada: entrada || "",
-        horaSalida: salida || "",
-        metodo,
-        estado,
-      };
-    });
-  }, [asistenciaRaw, usuariosMap]);
-
-  /* =======================
-     6) Derivados / filtros
+     Derivados / filtros
      ======================= */
 
   const guardiasUnicos = Array.from(
-    new Set(
-      [
-        ...turnos.map((t) => t.guardia),
-        ...asistencia.map((a) => a.guardia),
-      ].filter(Boolean)
-    )
+    new Set(turnos.map((t) => t.guardia).filter(Boolean))
   );
 
   const turnosFiltrados = turnos.filter((t) =>
     filtroGuardia ? t.guardia === filtroGuardia : true
-  );
-
-  const asistenciaFiltrada = asistencia.filter((a) =>
-    filtroGuardia ? a.guardia === filtroGuardia : true
   );
 
   const rondasFiltradas = rondasMock.filter((r) =>
@@ -466,7 +347,7 @@ export default function Supervision() {
   );
 
   /* =======================
-     7) Handlers auxiliares
+     Handlers auxiliares
      ======================= */
 
   const handleGuardarSupervision = () => {
@@ -513,7 +394,7 @@ export default function Supervision() {
     "sup-nav-btn" + (vista === key ? " sup-active" : "");
 
   /* =======================
-     8) Render
+     Render
      ======================= */
 
   return (
@@ -694,7 +575,7 @@ export default function Supervision() {
             </section>
           )}
 
-          {/* ==== CONTROL DE ASISTENCIA ==== */}
+          {/* ==== ASISTENCIA ==== */}
           {vista === "asistencia" && (
             <section className="sup-section">
               <article className="card">
@@ -718,25 +599,11 @@ export default function Supervision() {
                       </tr>
                     </thead>
                     <tbody>
-                      {cargandoAsistencia && (
-                        <tr>
-                          <td colSpan={6} className="texto-vacio">
-                            Cargando registros de asistencia...
-                          </td>
-                        </tr>
-                      )}
-
-                      {!cargandoAsistencia && errorAsistencia && (
-                        <tr>
-                          <td colSpan={6} className="texto-vacio">
-                            {errorAsistencia}
-                          </td>
-                        </tr>
-                      )}
-
-                      {!cargandoAsistencia &&
-                        !errorAsistencia &&
-                        asistenciaFiltrada.map((a) => (
+                      {asistenciaMock
+                        .filter((a) =>
+                          filtroGuardia ? a.guardia === filtroGuardia : true
+                        )
+                        .map((a) => (
                           <tr key={a.id}>
                             <td>{a.guardia}</td>
                             <td>{a.fecha}</td>
@@ -746,17 +613,6 @@ export default function Supervision() {
                             <td>{a.estado}</td>
                           </tr>
                         ))}
-
-                      {!cargandoAsistencia &&
-                        !errorAsistencia &&
-                        asistenciaFiltrada.length === 0 && (
-                          <tr>
-                            <td colSpan={6} className="texto-vacio">
-                              No hay registros de asistencia para el filtro
-                              seleccionado.
-                            </td>
-                          </tr>
-                        )}
                     </tbody>
                   </table>
                 </div>
