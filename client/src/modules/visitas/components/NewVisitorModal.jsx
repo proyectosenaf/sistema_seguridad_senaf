@@ -79,28 +79,15 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
 
   const firstInputRef = useRef(null);
 
-  // ===== Helpers de horario de atención (igual que tenías) =====
+  // ===== Helpers de horario de atención (MODO PRUEBAS) =====
   function isWithinBusinessHours(date) {
+    // Ahora se permite siempre registrar (para que puedas probar a cualquier hora)
     if (!(date instanceof Date) || isNaN(date.getTime())) return false;
-    const h = date.getHours();
-    const m = date.getMinutes();
-    const s = date.getSeconds();
-    const totalSeconds = h * 3600 + m * 60 + s;
-
-    const morningStart = 8 * 3600;
-    const morningEndInclusive = 12 * 3600;
-
-    const afternoonStart = 13 * 3600;
-    const afternoonEndExclusive = 16 * 3600 + 59 * 60;
-
-    if (totalSeconds >= morningStart && totalSeconds <= morningEndInclusive) return true;
-    if (totalSeconds >= afternoonStart && totalSeconds < afternoonEndExclusive) return true;
-
-    return false;
+    return true;
   }
 
   function businessHoursMessage() {
-    return "Horario permitido: 08:00–12:00 (12:00 incluido) y 13:00–16:58. Después de 16:59 no se permiten registros.";
+    return "Modo pruebas: actualmente se permite registrar visitas en cualquier horario.";
   }
   // ============================================================
 
