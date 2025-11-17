@@ -1,9 +1,7 @@
-// modules/iam/routes/permissions.routes.js
 import { Router } from "express";
 import IamPermission from "../models/IamPermission.model.js";
 import IamRole from "../models/IamRole.model.js";
 import { requirePerm, devOr } from "../utils/rbac.util.js";
-// ⬇️ Ajusta la ruta si tu helper vive en otro archivo
 import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
@@ -61,7 +59,10 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const filter = {};
     if (group) filter.group = String(group);
     if (q) {
-      const rx = new RegExp(String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const rx = new RegExp(
+        String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i"
+      );
       filter.$or = [{ key: rx }, { label: rx }, { group: rx }];
     }
 
@@ -72,7 +73,9 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     // Si viene rol, anotar selected comparando por KEY
     let selectedSet = null;
     if (roleId) {
-      const role = await IamRole.findById(roleId).select("permissions").lean();
+      const role = await IamRole.findById(roleId)
+        .select("permissions")
+        .lean();
       if (role?.permissions?.length) selectedSet = new Set(role.permissions);
     }
     const annotated = selectedSet
@@ -85,7 +88,10 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       if (!groupMap.has(d.group)) groupMap.set(d.group, []);
       groupMap.get(d.group).push(d);
     }
-    const groups = [...groupMap.entries()].map(([g, items]) => ({ group: g, items }));
+    const groups = [...groupMap.entries()].map(([g, items]) => ({
+      group: g,
+      items,
+    }));
 
     res.json({
       count: annotated.length,
@@ -94,7 +100,9 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       groups,
     });
   } catch (err) {
-    res.status(500).json({ message: "Error listando permisos", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Error listando permisos", error: err.message });
   }
 });
 
@@ -106,11 +114,17 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
     const input = normalizePerm(req.body || {});
     const errors = validatePerm(input);
-    if (errors.length) return res.status(400).json({ message: "Validación fallida", errors });
+    if (errors.length)
+      return res
+        .status(400)
+        .json({ message: "Validación fallida", errors });
 
     // Evitar duplicado por key
     const exists = await IamPermission.exists({ key: input.key });
-    if (exists) return res.status(409).json({ message: "Ya existe un permiso con esa key" });
+    if (exists)
+      return res
+        .status(409)
+        .json({ message: "Ya existe un permiso con esa key" });
 
     const doc = await IamPermission.create(input);
 
@@ -130,7 +144,9 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     res.status(201).json(doc);
   } catch (err) {
-    res.status(500).json({ message: "Error creando permiso", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Error creando permiso", error: err.message });
   }
 });
 
@@ -145,9 +161,9 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     // Si cambia key, valida formato
     if (update.key && !/^[a-z0-9_.-]+$/i.test(update.key)) {
-      return res
-        .status(400)
-        .json({ message: "key solo puede contener letras, números, . _ -" });
+      return res.status(400).json({
+        message: "key solo puede contener letras, números, . _ -",
+      });
     }
 
     // Obtener doc previo para saber si cambia la key
@@ -190,7 +206,10 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     res.json(doc);
   } catch (err) {
-    res.status(500).json({ message: "Error actualizando permiso", error: err.message });
+    res.status(500).json({
+      message: "Error actualizando permiso",
+      error: err.message,
+    });
   }
 });
 
@@ -207,10 +226,14 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     if (!perm) return res.status(404).json({ message: "No encontrado" });
 
     const del = await IamPermission.deleteOne({ _id: id });
-    if (del.deletedCount === 0) return res.status(404).json({ message: "No encontrado" });
+    if (del.deletedCount === 0)
+      return res.status(404).json({ message: "No encontrado" });
 
     // Remover la key de todos los roles que la tengan
-    await IamRole.updateMany({ permissions: perm.key }, { $pull: { permissions: perm.key } });
+    await IamRole.updateMany(
+      { permissions: perm.key },
+      { $pull: { permissions: perm.key } }
+    );
 
     // 🔎 AUDIT: eliminación de permiso
     await writeAudit(req, {
@@ -228,7 +251,10 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ message: "Error eliminando permiso", error: err.message });
+    res.status(500).json({
+      message: "Error eliminando permiso",
+      error: err.message,
+    });
   }
 });
 
@@ -242,9 +268,9 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const { permissions = [], dryRun = false } = req.body || {};
 
     if (!Array.isArray(permissions) || permissions.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "permissions debe ser un arreglo no vacío" });
+      return res.status(400).json({
+        message: "permissions debe ser un arreglo no vacío",
+      });
     }
 
     // Normaliza, valida y deduplica por key (último gana)
@@ -350,7 +376,10 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       modified,
     });
   } catch (err) {
-    res.status(500).json({ message: "Error sincronizando permisos", error: err.message });
+    res.status(500).json({
+      message: "Error sincronizando permisos",
+      error: err.message,
+    });
   }
 });
 

@@ -12,7 +12,7 @@ import "./styles.css";
 import { attachAuth0 } from "./lib/api.js";
 import { attachRondasAuth } from "./modules/rondasqr/api/rondasqrApi.js";
 
-// 🔗 Puente interno entre Auth0 y tus APIs (sin archivo aparte)
+// 🔗 Puente interno entre Auth0 y tus APIs
 function AuthBridge() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 

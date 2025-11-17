@@ -300,9 +300,30 @@ function optionalAuth(req, res, next) {
   return next();
 }
 
+/**
+ * 🔐 Igual que requireAuth, pero:
+ * - Respeta DISABLE_AUTH=1.
+ * - NO exige auth en /auth/me ni /me (para que sigan siendo opcionales).
+ */
+function requireAuthExceptMe(req, res, next) {
+  const path = req.path || "";
+  if (path === "/auth/me" || path === "/me") {
+    return next();
+  }
+  if (String(process.env.DISABLE_AUTH || "0") === "1") {
+    return next();
+  }
+  return requireAuth(req, res, next);
+}
+
 /* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
 app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
+
+// 🔐 Middleware especial para IAM:
+// primero valida JWT y luego aplica el bridge + ROOT_ADMIN
+app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
+app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
 const chatMessagesHandler = (_req, res) => res.json([]);
@@ -310,7 +331,11 @@ app.get("/api/chat/messages", chatMessagesHandler);
 app.get("/chat/messages", chatMessagesHandler); // alias sin /api
 
 /* ───────────── IAM principal + /me ───────────── */
+
+// Registro normal (localhost, etc.)
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
+// 🔁 Alias sin /api para cuando la plataforma recorta el prefijo
+await registerIAMModule({ app, basePath: "/iam/v1" });
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
@@ -353,6 +378,7 @@ function pickMe(req) {
   };
 }
 
+// /me con /api
 app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
@@ -360,13 +386,24 @@ app.get("/api/iam/v1/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
 
-// stub audit rápido
+// 🔁 alias /me sin /api
+app.get("/iam/v1/auth/me", optionalAuth, (req, res) =>
+  res.json(pickMe(req))
+);
+app.get("/iam/v1/me", optionalAuth, (req, res) =>
+  res.json(pickMe(req))
+);
+
+// stub audit rápido (con y sin /api)
 app.get("/api/iam/v1/audit", (_req, res) =>
   res.json({ ok: true, items: [], limit: 100 })
 );
+app.get("/iam/v1/audit", (_req, res) =>
+  res.json({ ok: true, items: [], limit: 100 })
+);
 
-// 🔹 NUEVO: endpoint para lista de guardias usado por iamApi.listGuards
-app.get("/api/iam/v1/users/guards", async (req, res) => {
+// 🔹 handler reutilizable para lista de guardias
+async function listGuardsHandler(req, res) {
   try {
     const { q, active } = req.query;
     const col = mongoose.connection.collection("iamusers");
@@ -400,15 +437,19 @@ app.get("/api/iam/v1/users/guards", async (req, res) => {
 
     res.json({ ok: true, items: docs });
   } catch (e) {
-    console.error("[GET /api/iam/v1/users/guards] error:", e);
+    console.error("[GET /iam users/guards] error:", e);
     res
       .status(500)
       .json({ ok: false, error: "Error al listar guardias" });
   }
-});
+}
+
+// lista de guardias con y sin /api
+app.get("/api/iam/v1/users/guards", listGuardsHandler);
+app.get("/iam/v1/users/guards", listGuardsHandler);
 
 /* ─────────── Email verify (opcional) ─────────── */
-app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
+async function verifyEmailHandler(req, res) {
   try {
     const { id } = req.params;
     const email = String(req.body?.email || "").trim();
@@ -495,7 +536,11 @@ app.post("/api/iam/v1/users/:id/verify-email", async (req, res) => {
       .status(500)
       .json({ error: e?.message || "Error enviando verificación" });
   }
-});
+}
+
+// verify email con y sin /api
+app.post("/api/iam/v1/users/:id/verify-email", verifyEmailHandler);
+app.post("/iam/v1/users/:id/verify-email", verifyEmailHandler);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
 const notifier = makeNotifier({ io, mailer: null });
