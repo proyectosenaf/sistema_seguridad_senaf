@@ -7,6 +7,14 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { QRCodeSVG } from "qrcode.react"; // QR dinámico
 
+// 🔹 BASE DEL BACKEND (igual que en otros módulos)
+const ROOT = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+).replace(/\/$/, "");
+
+// 🔹 ENDPOINT DEL BACKEND PARA VISITAS (CREATE VISITA)
+const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
+
 // Rango del día actual
 function getTodayRange() {
   const start = new Date();
@@ -247,7 +255,7 @@ export default function VisitsPage() {
     return list;
   }, [onlineCitas]);
 
-  // ------- Registrar visitante (solo front) -------
+  // ------- Registrar visitante (FRONT + BD) -------
   async function handleAddVisitor(formData) {
     const entryDate = new Date();
 
@@ -270,8 +278,59 @@ export default function VisitsPage() {
           }`
         : "—";
 
+    // 🔹 1) Intentar guardar en la BASE DE DATOS
+    let backendId = null;
+    try {
+      const payload = {
+        nombre: formData.name?.trim(),
+        documento: formData.document?.trim(),
+        empresa: formData.company?.trim() || null,
+        empleado: formData.employee?.trim() || null,
+        motivo: formData.reason?.trim() || null, // si en NewVisitorModal envías reason
+        telefono: formData.phone?.trim() || null,
+        correo: formData.email?.trim() || null,
+        kind: "Presencial",
+        estado: "Dentro",
+        entryAt: entryDate.toISOString(),
+        vehicle:
+          vehicleBrand || vehicleModel || vehiclePlate
+            ? {
+                brand: vehicleBrand || undefined,
+                model: vehicleModel || undefined,
+                plate: vehiclePlate || undefined,
+              }
+            : null,
+      };
+
+      const res = await fetch(VISITAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data) {
+        // Intentamos detectar el id según como responda tu API
+        backendId =
+          data._id ||
+          data.id ||
+          data?.item?._id ||
+          data?.item?.id ||
+          data?.visita?._id ||
+          data?.visita?.id ||
+          null;
+        console.log("[visitas] creada en backend:", data);
+      } else {
+        console.warn("[visitas] fallo al crear en backend:", data);
+      }
+    } catch (err) {
+      console.warn("[visitas] error de red al crear en backend:", err);
+    }
+
+    // 🔹 2) Siempre guardar en el estado/localStorage (para que tu módulo siga funcionando igual)
     const newRow = {
-      id: `local-${Date.now()}`,
+      id: backendId || `local-${Date.now()}`, // si hay id de BD lo usamos, si no, local-...
       // Tipo de visita: todas las de este módulo son PRESENCIALES
       kind: "Presencial",
       name: formData.name?.trim(),
@@ -297,7 +356,7 @@ export default function VisitsPage() {
     setShowModal(false);
   }
 
-  // ------- Marcar salida (solo front) -------
+  // ------- Marcar salida (solo front, si quieres luego lo conectamos al backend) -------
   async function handleExit(id) {
     if (!id) return;
     setSavingExit(id);
@@ -320,6 +379,9 @@ export default function VisitsPage() {
         saveToStorage(next); // guardar cambio de estado
         return next;
       });
+
+      // Si MÁS ADELANTE quieres cerrar también en la BD,
+      // aquí podríamos hacer un PATCH/PUT a /api/visitas/:id/salida
     } finally {
       setSavingExit(null);
     }
@@ -478,16 +540,18 @@ export default function VisitsPage() {
         </div>
 
         <div className="flex flex-row gap-3 items-center">
+          {/* Botón principal */}
           <button
             onClick={() => setShowModal(true)}
-            className="btn-neon flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
+            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 text-white font-semibold shadow-lg shadow-sky-900/40 hover:shadow-xl hover:from-sky-400 hover:via-indigo-400 hover:to-fuchsia-400 transition"
           >
             <span className="font-semibold">+ Registrar Visitante</span>
           </button>
 
+          {/* Botón secundario */}
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="btn-neon-alt flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
+            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full border border-sky-400/70 text-sky-100 bg-sky-900/10 hover:bg-sky-700/30 hover:border-sky-300 transition"
           >
             <span className="font-semibold">Agenda de Citas</span> →
           </button>
@@ -708,13 +772,19 @@ export default function VisitsPage() {
           <tbody className="text-neutral-200">
             {loading ? (
               <tr>
-                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
+                <td
+                  colSpan={10}
+                  className="py-6 text-center text-neutral-500 text-sm"
+                >
                   Cargando…
                 </td>
               </tr>
             ) : filteredVisitors.length === 0 ? (
               <tr>
-                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
+                <td
+                  colSpan={10}
+                  className="py-6 text-center text-neutral-500 text-sm"
+                >
                   Sin resultados
                 </td>
               </tr>
@@ -730,7 +800,9 @@ export default function VisitsPage() {
                   <td className="text-neutral-400">{v.document}</td>
                   <td className="text-neutral-200">{v.company}</td>
                   <td className="text-neutral-200">{v.employee}</td>
-                  <td className="text-neutral-200">{v.kind || "Presencial"}</td>
+                  <td className="text-neutral-200">
+                    {v.kind || "Presencial"}
+                  </td>
                   <td className="text-neutral-200">{v.vehicleSummary}</td>
                   <td className="text-neutral-200">{v.entry}</td>
                   <td className="text-neutral-400">{v.exit}</td>
@@ -755,7 +827,9 @@ export default function VisitsPage() {
                         {savingExit === v.id ? "…" : "⏏ Salida"}
                       </button>
                     ) : (
-                      <span className="text-neutral-500 text-xs">(cerrada)</span>
+                      <span className="text-neutral-500 text-xs">
+                        (cerrada)
+                      </span>
                     )}
                   </td>
                 </tr>
