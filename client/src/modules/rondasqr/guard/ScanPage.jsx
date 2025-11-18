@@ -16,10 +16,11 @@ import {
   countOutbox,
 } from "../utils/outbox.js";
 
-/* utils pequeños */
+/* ===== helpers pequeños ===== */
 function toArr(v) {
   return !v ? [] : Array.isArray(v) ? v : [v];
 }
+
 function uniqLower(arr) {
   return Array.from(
     new Set(
@@ -29,6 +30,7 @@ function uniqLower(arr) {
     )
   );
 }
+
 function readJsonLS(key, fallback) {
   try {
     if (typeof localStorage === "undefined") return fallback;
@@ -39,6 +41,18 @@ function readJsonLS(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function buildAssignmentKey(a) {
+  return (
+    a.id ||
+    a._id ||
+    [
+      a.date || a.day || a.assignmentDate || "",
+      a.roundId || a.roundName || "",
+      a.guardId || a.guard?.id || "",
+    ].join("|")
+  );
 }
 
 export default function ScanPage() {
@@ -53,7 +67,9 @@ export default function ScanPage() {
   }, [pathname]);
   useEffect(() => {
     document.body.style.overflow = isNavOpen ? "hidden" : "";
-    return () => (document.body.style.overflow = "");
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [isNavOpen]);
 
   /* ===== notificaciones ===== */
@@ -67,20 +83,6 @@ export default function ScanPage() {
   const alertAudioRef = useRef(null);
   const audioCtxRef = useRef(null);
   const [lastPanic, setLastPanic] = useState(null);
-
-  /* ===== socket: alertas entrantes ===== */
-  useAssignmentSocket(user, (evt) => {
-    const t = evt?.type || evt?.event || evt?.kind;
-    if (t === "panic" || t === "rondasqr:panic") {
-      handleIncomingPanic(evt.payload || {});
-    }
-  });
-
-  /* ===== bus local: alertas desde otra página ===== */
-  useEffect(() => {
-    const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
-    return () => unsub && unsub();
-  }, []);
 
   function playAlarmTone() {
     try {
@@ -127,6 +129,22 @@ export default function ScanPage() {
     playAlarmTone();
   }
 
+  /* ===== socket: alertas entrantes ===== */
+  useAssignmentSocket(user, (evt) => {
+    const t = evt?.type || evt?.event || evt?.kind;
+    if (t === "panic" || t === "rondasqr:panic") {
+      handleIncomingPanic(evt.payload || {});
+    }
+  });
+
+  /* ===== bus local: alertas desde otra pestaña ===== */
+  useEffect(() => {
+    const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
   /* ===== roles/permisos ===== */
   const ROLES_CLAIM = "https://senaf.local/roles";
   const PERMS_CLAIM = "https://senaf.local/permissions";
@@ -162,19 +180,21 @@ export default function ScanPage() {
     return "home";
   }, [pathname]);
 
-  // ✅ CAMBIO 1: cuando la pestaña es "msg", lo mandamos al formulario global en modo rondas
+  // redirección de pestaña msg al módulo global de incidentes
   useEffect(() => {
-    if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
+    if (tab === "msg") {
+      nav("/incidentes/nuevo?from=ronda", { replace: true });
+    }
   }, [tab, nav]);
 
-  /* ===== estados varios ===== */
+  /* ===== estados de formularios ===== */
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
   const [sendingAlert, setSendingAlert] = useState(false);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
-  /* ===== carga de plan/puntos ===== */
+  /* ===== puntos de ronda (para futuro) ===== */
   const [points, setPoints] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -205,6 +225,7 @@ export default function ScanPage() {
     nextPoint: null,
     pct: 0,
   });
+
   function loadLocalProgress() {
     const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
     const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
@@ -214,11 +235,150 @@ export default function ScanPage() {
     );
     setProgress({ lastPoint, nextPoint, pct });
   }
+
   useEffect(() => {
     loadLocalProgress();
   }, []);
 
-  /* ===== alerta rápida por hash ===== */
+  /* ===== RONDAS ASIGNADAS AL GUARDIA ===== */
+  const [myAssignments, setMyAssignments] = useState([]);
+  const [assignmentStates, setAssignmentStates] = useState({});
+  const [currentAssignmentKey, setCurrentAssignmentKey] = useState(null);
+
+  function loadAssignmentStates() {
+    try {
+      const raw = localStorage.getItem("rondasqr:assignmentStates");
+      const keyRaw = localStorage.getItem("rondasqr:currentAssignmentKey");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setAssignmentStates(parsed && typeof parsed === "object" ? parsed : {});
+      } else {
+        setAssignmentStates({});
+      }
+      if (keyRaw) setCurrentAssignmentKey(keyRaw);
+    } catch {
+      setAssignmentStates({});
+      setCurrentAssignmentKey(null);
+    }
+  }
+
+  function saveAssignmentStates(next) {
+    setAssignmentStates(next);
+    try {
+      localStorage.setItem("rondasqr:assignmentStates", JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function setActiveAssignment(a) {
+    const key = buildAssignmentKey(a);
+    if (!key) return;
+    setCurrentAssignmentKey(key);
+    try {
+      localStorage.setItem("rondasqr:currentAssignmentKey", key);
+      localStorage.setItem("rondasqr:currentAssignment", JSON.stringify(a));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function clearActiveAssignment() {
+    setCurrentAssignmentKey(null);
+    try {
+      localStorage.removeItem("rondasqr:currentAssignmentKey");
+      localStorage.removeItem("rondasqr:currentAssignment");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function updateAssignmentStatus(a, status, extra = {}) {
+    const key = buildAssignmentKey(a);
+    if (!key) return;
+    const nowIso = new Date().toISOString();
+    const next = {
+      ...assignmentStates,
+      [key]: {
+        ...(assignmentStates[key] || {}),
+        status,
+        updatedAt: nowIso,
+        ...extra,
+      },
+    };
+    saveAssignmentStates(next);
+  }
+
+  function getAssignmentState(a) {
+    const key = buildAssignmentKey(a);
+    return key ? assignmentStates[key] || {} : {};
+  }
+
+  function handleStartRound(a) {
+    setActiveAssignment(a);
+    updateAssignmentStatus(a, "en_progreso", { startedAt: new Date().toISOString() });
+    nav("/rondasqr/scan/qr");
+  }
+
+  function handleFinishRound(a) {
+    updateAssignmentStatus(a, "terminada", {
+      finishedAt: new Date().toISOString(),
+      progressPct: progress.pct,
+    });
+    clearActiveAssignment();
+  }
+
+  function handleCancelRound(a) {
+    updateAssignmentStatus(a, "cancelada");
+    clearActiveAssignment();
+  }
+
+  function loadAssignmentsForGuard() {
+    const all = readJsonLS("rondasqr:assignments", []);
+    if (!Array.isArray(all)) {
+      setMyAssignments([]);
+      return;
+    }
+
+    const email = (user?.email || "").toLowerCase();
+    const sub = (user?.sub || "").toLowerCase();
+    const name = (user?.name || "").toLowerCase();
+
+    const mine = all.filter((a) => {
+      const gEmail = (a.guardEmail || a.guard?.email || "").toLowerCase();
+      const gId = (a.guardId || a.guard?.id || "").toLowerCase();
+      const gName = (a.guardName || a.guard?.name || "").toLowerCase();
+
+      const guardVals = [gEmail, gId, gName].filter(Boolean);
+      const userVals = [email, sub, name].filter(Boolean);
+
+      if (!guardVals.length || !userVals.length) return false;
+      return guardVals.some((gv) => userVals.includes(gv));
+    });
+
+    setMyAssignments(mine);
+  }
+
+  useEffect(() => {
+    loadAssignmentsForGuard();
+    loadAssignmentStates();
+
+    function handleStorage(e) {
+      if (!e) return;
+      if (e.key === "rondasqr:assignments") loadAssignmentsForGuard();
+      if (
+        e.key === "rondasqr:assignmentStates" ||
+        e.key === "rondasqr:currentAssignmentKey"
+      ) {
+        loadAssignmentStates();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [user]);
+
+  /* ===== alerta rápida por hash #alert ===== */
   useEffect(() => {
     if (hash === "#alert") {
       (async () => {
@@ -228,7 +388,7 @@ export default function ScanPage() {
     }
   }, [hash, nav]);
 
-  /* ===== enviar alerta ===== */
+  /* ===== enviar alerta de pánico ===== */
   async function sendAlert() {
     if (sendingAlert) return false;
     setSendingAlert(true);
@@ -324,7 +484,10 @@ export default function ScanPage() {
   /* ===== mensaje legacy ===== */
   async function sendMessage() {
     if (sendingMsg) return;
-    if (!msg.trim()) return alert("Escribe un mensaje.");
+    if (!msg.trim()) {
+      alert("Escribe un mensaje.");
+      return;
+    }
     setSendingMsg(true);
     try {
       await rondasqrApi.postIncident({ text: msg.trim() });
@@ -342,7 +505,10 @@ export default function ScanPage() {
   async function sendPhotos() {
     if (sendingPhotos) return;
     const base64s = photos.filter(Boolean);
-    if (!base64s.length) return alert("Selecciona al menos una foto.");
+    if (!base64s.length) {
+      alert("Selecciona al menos una foto.");
+      return;
+    }
     setSendingPhotos(true);
     try {
       await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
@@ -404,10 +570,10 @@ export default function ScanPage() {
     if (tab === "outbox") refreshOutbox();
   }, [tab]);
 
-  /* ===== Payload offline ===== */
+  /* ===== payload offline ===== */
   function buildOfflinePayload(authUser) {
     const outboxData = getOutbox();
-    const progress = {
+    const progressData = {
       lastPoint: localStorage.getItem("rondasqr:lastPointName") || null,
       nextPoint: localStorage.getItem("rondasqr:nextPointName") || null,
       pct: Number(localStorage.getItem("rondasqr:progressPct") || 0),
@@ -435,7 +601,7 @@ export default function ScanPage() {
 
     return {
       outbox: outboxData,
-      progress,
+      progress: progressData,
       device,
       user: userInfo,
       assignments: Array.isArray(assignments) ? assignments : [],
@@ -474,6 +640,64 @@ export default function ScanPage() {
     }
   }
 
+  /* ===== AUTO-SYNC: enviar pendientes cuando haya conexión ===== */
+  useEffect(() => {
+    async function autoSync() {
+      try {
+        if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
+        const pendingOutbox = getOutbox();
+        const hasOutbox = Array.isArray(pendingOutbox) && pendingOutbox.length > 0;
+
+        if (hasOutbox) {
+          try {
+            await transmitOutbox(sendCheckinViaApi);
+            refreshOutbox();
+          } catch (e) {
+            console.error("[autoSync] error transmitiendo outbox", e);
+          }
+        }
+
+        const payload = buildOfflinePayload(user);
+        const hasDumpOutbox = Array.isArray(payload.outbox) && payload.outbox.length > 0;
+        const hasAssignments =
+          Array.isArray(payload.assignments) && payload.assignments.length > 0;
+        const hasLogs = Array.isArray(payload.logs) && payload.logs.length > 0;
+
+        if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
+
+        const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+        try {
+          const res = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            throw new Error(txt || `HTTP ${res.status}`);
+          }
+        } catch (e) {
+          console.error("[autoSync] error enviando dump offline", e);
+        }
+      } catch (err) {
+        console.error("[autoSync] error inesperado", err);
+      }
+    }
+
+    autoSync();
+
+    function handleOnline() {
+      autoSync();
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      return () => window.removeEventListener("online", handleOnline);
+    }
+  }, [user]);
+
   /* ===== estilos ===== */
   const pageClass = "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
 
@@ -500,7 +724,7 @@ export default function ScanPage() {
       color:#fff;
       background-image:linear-gradient(90deg,#8b5cf6,#06b6d4);
       box-shadow:0 10px 28px rgba(99,102,241,.18),0 6px 20px rgba(6,182,212,.12);
-      transition:filter .2s ease, transform .2s ease;
+      transition:filter .2s ease, transform .2s.ease;
     }
     .btn-neon:hover { filter:brightness(1.04); transform:translateY(-1px); }
     .btn-neon:active { transform:translateY(0); }
@@ -522,7 +746,7 @@ export default function ScanPage() {
     isAdminLike || isSupervisorLike ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2";
 
   const BEEP_SRC =
-    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
 
   return (
     <div className={pageClass}>
@@ -537,7 +761,7 @@ export default function ScanPage() {
           title={`Alerta recibida ${lastPanic.at}`}
         >
           <span className="text-[10px] leading-none font-bold">ALERTA</span>
-          <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
+          <span className="text-[9px] leading-none.mt-1">¡NUEVA!</span>
         </button>
       )}
 
@@ -579,11 +803,20 @@ export default function ScanPage() {
           </button>
         </div>
 
-        {/* header */}
+        {/* header (más amigable) */}
         <div className={headerClass}>
-          <h2 className="text-xl sm:text-2xl font-bold">Visión General</h2>
-          <div className="text-xs sm:text-sm">
-            Pendientes: <span className="font-semibold">{countOutbox()}</span>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
+              Hola {user?.name || user?.email || "guardia"}, aquí verás tus rondas y alertas
+              de hoy.
+            </p>
+          </div>
+          <div className="text-right text-xs sm:text-sm">
+            <div className="opacity-70">Rondas pendientes por enviar</div>
+            <div className="font-semibold text-lg sm:text-xl">
+              {countOutbox()}
+            </div>
           </div>
         </div>
 
@@ -617,23 +850,16 @@ export default function ScanPage() {
                 <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
                   Registrador Punto Control
                 </button>
-                {/* ✅ CAMBIO 2: aquí ya con el query */}
                 <button
                   onClick={() => nav("/incidentes/nuevo?from=ronda")}
                   className="w-full btn-neon btn-neon-purple"
                 >
                   Mensaje Incidente
                 </button>
-                <button onClick={() => nav("/rondasqr/scan/outbox")} className="w-full btn-neon btn-neon-green">
-                  Transmitir Rondas Pendientes ({countOutbox()})
-                </button>
-                <button onClick={() => nav("/rondasqr/scan/dump")} className="w-full btn-neon">
-                  Base offline
-                </button>
               </div>
             </section>
 
-            {/* progreso */}
+            {/* progreso de ronda */}
             <section className={cardClass}>
               <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
               {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
@@ -685,6 +911,179 @@ export default function ScanPage() {
               )}
             </section>
 
+            {/* rondas asignadas al guardia (más amigable) */}
+            <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="font-semibold text-lg">Rondas asignadas para ti</h3>
+                  <p className="text-xs text-slate-500 dark:text-white/70">
+                    Aquí verás las rondas que tu supervisor te asignó para hoy.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadAssignmentsForGuard}
+                  className="hidden sm:inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold
+                             border border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-700
+                             dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white"
+                >
+                  Actualizar lista
+                </button>
+              </div>
+
+              {myAssignments.length === 0 ? (
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 py-4">
+                  <div className="w-12 h-12 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center text-2xl">
+                    🕒
+                  </div>
+                  <div className="text-sm text-slate-600 dark:text.white/80">
+                    <p className="font-medium mb-1">
+                      No tienes rondas asignadas por el momento.
+                    </p>
+                    <p className="mb-2">
+                      Cuando tu supervisor te asigne rondas, aparecerán aquí con la hora,
+                      el sitio y un botón para <strong>empezar la ronda</strong>.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={loadAssignmentsForGuard}
+                      className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold btn-neon"
+                    >
+                      🔄 Volver a comprobar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-2 sm:mx-0">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-white/60">
+                        <th className="px-2 py-2 sm:px-3 sm:py-2">Ronda</th>
+                        <th className="px-2 py-2 sm:px-3 sm:py-2">Sitio</th>
+                        <th className="px-2 py-2 sm:px-3 sm:py-2">Fecha / Hora</th>
+                        <th className="px-2 py-2.sm:px-3 sm:py-2">Estado</th>
+                        <th className="px-2 py-2 sm:px-3 sm:py-2 text-right">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200/70 dark:divide-white/10">
+                      {myAssignments.map((a, idx) => {
+                        const st = getAssignmentState(a);
+                        const status = st.status || "pendiente";
+                        const key = buildAssignmentKey(a);
+                        const isActive = key && key === currentAssignmentKey;
+
+                        let badgeClass =
+                          "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ";
+                        if (status === "en_progreso") {
+                          badgeClass +=
+                            "bg-amber-500/15 text-amber-500 border border-amber-500/40";
+                        } else if (status === "terminada") {
+                          badgeClass +=
+                            "bg-emerald-500/15 text-emerald-500 border border-emerald-500/40";
+                        } else if (status === "cancelada") {
+                          badgeClass +=
+                            "bg-rose-500/15 text-rose-500 border border-rose-500/40";
+                        } else {
+                          badgeClass +=
+                            "bg-slate-500/10 text-slate-500 border border-slate-500/30";
+                        }
+
+                        let mainBtnLabel = "Empezar ronda";
+                        let mainBtnOnClick = () => handleStartRound(a);
+                        let mainBtnDisabled = false;
+
+                        if (status === "en_progreso") {
+                          mainBtnLabel = isActive ? "Ronda en curso" : "Marcar como terminada";
+                          mainBtnOnClick = () =>
+                            isActive ? nav("/rondasqr/scan/qr") : handleFinishRound(a);
+                        } else if (status === "terminada") {
+                          mainBtnLabel = "Terminada";
+                          mainBtnDisabled = true;
+                        } else if (status === "cancelada") {
+                          mainBtnLabel = "Cancelada";
+                          mainBtnDisabled = true;
+                        }
+
+                        const rondaLabel =
+                          a.roundName || a.roundId || a.ronda || "Ronda sin nombre";
+                        const siteLabel = a.siteName || a.site || a.sitio || "—";
+                        const dateLabel = a.date || a.day || a.assignmentDate || "—";
+                        const timeLabel = a.startTime || a.start || a.inicio || "";
+
+                        return (
+                          <tr key={idx} className="align-middle">
+                            <td className="px-2 py-2 sm:px-3 sm:py-2">
+                              <div className="font-medium text-slate-900 dark:text-white">
+                                {rondaLabel}
+                                {isActive && status === "en_progreso" && (
+                                  <span className="ml-2 text-xs text-emerald-400">
+                                    (ronda activa)
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-white/60">
+                                Guardia:{" "}
+                                {a.guardName ||
+                                  a.guard?.name ||
+                                  a.guardEmail ||
+                                  a.guard?.email ||
+                                  "—"}
+                              </div>
+                            </td>
+                            <td className="px-2 py-2 sm:px-3 sm:py-2">
+                              <div className="text-sm">{siteLabel}</div>
+                            </td>
+                            <td className="px-2 py-2 sm:px-3 sm:py-2">
+                              <div className="text-xs text-slate-500 dark:text-white/70">
+                                {dateLabel}
+                                {timeLabel ? ` • ${timeLabel}` : ""}
+                              </div>
+                            </td>
+                            <td className="px-2 py-2 sm:px-3 sm:py-2">
+                              <span className={badgeClass}>
+                                {status === "en_progreso"
+                                  ? "En progreso"
+                                  : status === "terminada"
+                                  ? "Terminada"
+                                  : status === "cancelada"
+                                  ? "Cancelada"
+                                  : "Pendiente"}
+                              </span>
+                            </td>
+                            <td className="px-2 py-2 sm:px-3 sm:py-2">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={mainBtnOnClick}
+                                  disabled={mainBtnDisabled}
+                                  className={[
+                                    "px-3 py-1 rounded-md text-xs font-semibold btn-neon",
+                                    mainBtnDisabled ? "opacity-60 cursor-not-allowed" : "",
+                                  ].join(" ")}
+                                >
+                                  {mainBtnLabel}
+                                </button>
+                                {status === "en_progreso" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelRound(a)}
+                                    className="px-3 py-1 rounded-md text-xs font-semibold
+                                               bg-rose-600/10 text-rose-400 border border-rose-500/40
+                                               hover:bg-rose-600/20"
+                                  >
+                                    Cancelar
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
             {/* acciones admin/supervisor */}
             {(isAdminLike || isSupervisorLike) && (
               <section className={cardClass}>
@@ -705,21 +1104,7 @@ export default function ScanPage() {
               </section>
             )}
 
-            {/* actividad reciente */}
-            <section className={cardClass}>
-              <h3 className="font-semibold mb-2">Actividad reciente</h3>
-              <p className="text-sm text-slate-600 dark:text-white/70">Sin check-ins recientes.</p>
-            </section>
-
-            <section className={cardClass}>
-              <h3 className="font-semibold mb-2">Consejos rápidos</h3>
-              <ul className="list-disc list-inside text-sm text-slate-600 dark:text-white/70 space-y-1">
-                <li>Antes de salir, verifica conexión o transmite pendientes.</li>
-                <li>Si falla el QR, usa “Transmitir Rondas Pendientes”.</li>
-                <li>La alerta también está en el menú lateral.</li>
-              </ul>
-            </section>
-
+            {/* rendimiento del dispositivo */}
             <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
               <h3 className="font-semibold mb-2">Rendimiento del dispositivo</h3>
               <p className="text-sm text-slate-600 dark:text-white/70 mb-2">
@@ -742,39 +1127,39 @@ export default function ScanPage() {
 
         {/* QR */}
         {tab === "qr" && (
-            <section className={cardClass}>
-              <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-              <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
-                <QrScanner
-                  facingMode="environment"
-                  once={true}
-                  enableTorch
-                  enableFlip
-                  onResult={handleScan}
-                  onError={(e) => console.warn("QR error", e)}
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => {
-                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                    nav("/rondasqr/scan");
-                  }}
-                  className="btn-neon btn-neon-amber"
-                >
-                  Finalizar
-                </button>
-                <button
-                  onClick={() => {
-                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                    nav("/rondasqr/scan/qr");
-                  }}
-                  className="btn-neon btn-neon-green"
-                >
-                  Reintentar
-                </button>
-              </div>
-            </section>
+          <section className={cardClass}>
+            <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
+            <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
+              <QrScanner
+                facingMode="environment"
+                once={true}
+                enableTorch
+                enableFlip
+                onResult={handleScan}
+                onError={(e) => console.warn("QR error", e)}
+              />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                  nav("/rondasqr/scan");
+                }}
+                className="btn-neon btn-neon-amber"
+              >
+                Finalizar
+              </button>
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                  nav("/rondasqr/scan/qr");
+                }}
+                className="btn-neon btn-neon-green"
+              >
+                Reintentar
+              </button>
+            </div>
+          </section>
         )}
 
         {/* OUTBOX */}
@@ -782,7 +1167,7 @@ export default function ScanPage() {
           <section className={cardClass}>
             <div className="flex items-center justify-between gap-4 mb-3">
               <h3 className="font-semibold text-lg">Transmitir Rondas Pendientes</h3>
-              <div className="text-sm opacity-70">Pendientes: {outbox.length}</div>
+              <div className="text-sm.opacity-70">Pendientes: {outbox.length}</div>
             </div>
             {outbox.length === 0 ? (
               <div className="text-slate-600 dark:text-white/80">
@@ -790,7 +1175,7 @@ export default function ScanPage() {
               </div>
             ) : (
               <>
-                <ul className="divide-y divide-slate-200 dark:divide-white/10 mb-4">
+                <ul className="divide-y divide-slate-200 dark:divide-white/10.mb-4">
                   {outbox.map((it) => (
                     <li key={it.id} className="py-2 flex items-center justify-between gap-4">
                       <div className="text-sm">
@@ -901,7 +1286,7 @@ export default function ScanPage() {
                 {readJsonLS("rondasqr:logs", []).length > 0 && (
                   <div className="mb-4">
                     <h4 className="font-medium mb-2">Logs locales</h4>
-                    <pre className="text-xs bg-black/5 dark:bg-white/5 rounded p-2 max-h-40 overflow-auto">
+                    <pre className="text-xs bg-black/5 dark:bg.white/5 rounded p-2 max-h-40 overflow-auto">
                       {JSON.stringify(readJsonLS("rondasqr:logs", []), null, 2)}
                     </pre>
                   </div>
@@ -952,7 +1337,7 @@ export default function ScanPage() {
           </section>
         )}
 
-        {/* MENSAJE legacy (ya redirigimos arriba, pero lo dejamos por si acaso) */}
+        {/* MENSAJE legacy (fallback) */}
         {tab === "msg" && (
           <section className={cardClass}>
             <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
