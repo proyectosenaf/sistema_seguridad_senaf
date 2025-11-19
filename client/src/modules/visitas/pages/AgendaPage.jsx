@@ -2,6 +2,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+/* ========= ROOT API para backend ========= */
+// 👇 Unificamos con el resto de módulos (usa VITE_API_BASE_URL primero)
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:8080/api"
+).replace(/\/$/, "");
+
+// ⬇️ Endpoint del backend para crear / listar CITA (Visitas agendadas)
+const CITAS_API_URL = `${API_BASE}/citas`;
+
 /* ================== Vehículos (mismas listas que en NewVisitorModal) ================== */
 const VEHICLE_BRANDS = [
   "Toyota",
@@ -72,7 +83,6 @@ function loadStoredCitas() {
     if (!Array.isArray(arr)) return [];
     // Normalizar por si acaso
     return arr.map((it) => {
-      // si no tiene id, generamos uno
       const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
       let citaAt = it.citaAt;
       if (!citaAt && it.fecha && it.hora) {
@@ -92,6 +102,45 @@ function saveStoredCitas(list) {
   } catch (e) {
     console.warn("[citas] No se pudo guardar en localStorage:", e);
   }
+}
+
+/* ========= Helpers visuales de estado (mismos colores que VisitsPage) ========= */
+
+function prettyCitaEstado(value) {
+  if (!value) return "solicitada";
+  if (value === "en_revision") return "en revisión";
+  return value;
+}
+
+function CitaEstadoPill({ estado }) {
+  const val = prettyCitaEstado(estado);
+  let cls =
+    "px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center";
+
+  switch (estado) {
+    case "autorizada":
+      cls +=
+        " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
+      break;
+    case "denegada":
+      cls +=
+        " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
+      break;
+    case "cancelada":
+      cls +=
+        " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
+      break;
+    case "en_revision":
+      cls +=
+        " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
+      break;
+    default: // solicitada / Programada / etc.
+      cls +=
+        " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
+      break;
+  }
+
+  return <span className={cls}>{val}</span>;
 }
 
 /* ================== Página ================== */
@@ -169,10 +218,9 @@ export default function AgendaPage() {
     setErrorMsg("");
 
     try {
-      // Construir cita local
       const fecha = form.fecha; // YYYY-MM-DD
       const hora = form.hora; // HH:mm
-      const citaAt = new Date(`${fecha}T${hora}:00`);
+      const citaAtDate = new Date(`${fecha}T${hora}:00`);
 
       const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
 
@@ -187,7 +235,7 @@ export default function AgendaPage() {
         correo: form.correo.trim() || undefined,
         fecha,
         hora,
-        citaAt: citaAt.toISOString(),
+        citaAt: citaAtDate.toISOString(),
         estado: "solicitada",
         vehiculo: hasVehicle
           ? {
@@ -198,14 +246,80 @@ export default function AgendaPage() {
           : null,
       };
 
+      const payload = {
+        nombre: nuevaCita.nombre,
+        documento: nuevaCita.documento,
+        empresa: nuevaCita.empresa,
+        empleado: nuevaCita.empleado,
+        motivo: nuevaCita.motivo,
+        telefono: nuevaCita.telefono || null,
+        correo: nuevaCita.correo || null,
+        citaAt: nuevaCita.citaAt,
+        llegoEnVehiculo: !!nuevaCita.vehiculo,
+        vehiculo: nuevaCita.vehiculo
+          ? {
+              marca: nuevaCita.vehiculo.marca,
+              modelo: nuevaCita.vehiculo.modelo,
+              placa: nuevaCita.vehiculo.placa,
+            }
+          : null,
+      };
+
+      let syncedWithServer = false;
+      let serverError = "";
+
+      try {
+        const params = new URLSearchParams();
+        const url = `${CITAS_API_URL}${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (res.ok && data?.ok && data.item) {
+          syncedWithServer = true;
+          nuevaCita._id = data.item._id || nuevaCita._id;
+          nuevaCita.citaAt = data.item.citaAt || nuevaCita.citaAt;
+          nuevaCita.estado = data.item.estado || nuevaCita.estado;
+        } else {
+          console.warn("[citas] fallo al crear en backend:", data);
+          if (data && typeof data.error === "string") {
+            serverError = data.error; // ej. horario de atención
+          }
+        }
+      } catch (err) {
+        console.warn("[citas] error de red al crear en backend:", err);
+      }
+
+      // ⛔ Si el servidor devolvió error (por ejemplo horario fuera de rango),
+      // mostramos ese mensaje y NO guardamos como respaldo local.
+      if (serverError) {
+        setErrorMsg(serverError);
+        setOkMsg("");
+        return;
+      }
+
+      // 🔁 Respaldo local (o sincronizado) como antes
       const current = loadStoredCitas();
       const next = [...current, nuevaCita];
       saveStoredCitas(next);
 
-      setOkMsg("✅ Cita agendada correctamente.");
-      setErrorMsg("");
+      if (syncedWithServer) {
+        setOkMsg("✅ Cita agendada correctamente.");
+        setErrorMsg("");
+      } else {
+        setOkMsg(
+          "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
+        );
+        setErrorMsg("");
+      }
 
-      // Limpiar formulario
       setForm({
         visitante: "",
         documento: "",
@@ -223,13 +337,12 @@ export default function AgendaPage() {
       setVehicleModelCustom("");
       setVehiclePlate("");
 
-      // Si estás en la pestaña de Citas, refrescar la lista
       if (tab === "citas") {
         fetchCitas();
       }
     } catch (err) {
-      console.error("[citas] Error agendando localmente:", err);
-      setErrorMsg("No se pudo agendar la cita (error en el navegador).");
+      console.error("[citas] Error agendando:", err);
+      setErrorMsg("No se pudo agendar la cita (error inesperado).");
     } finally {
       setSubmitting(false);
     }
@@ -267,11 +380,40 @@ export default function AgendaPage() {
   const [showMyCitas, setShowMyCitas] = useState(false);
   const [myDocumento, setMyDocumento] = useState("");
 
-  function fetchCitas() {
+  async function fetchCitas() {
     setLoading(true);
     try {
-      const all = loadStoredCitas();
-      let list = [...all];
+      // Primero intentamos leer desde el BACKEND
+      const params = new URLSearchParams();
+      if (mode === "month" && month) {
+        params.set("month", month);
+      } else if (mode === "day" && dateFilter) {
+        params.set("day", dateFilter);
+      }
+
+      let url = CITAS_API_URL;
+      const qs = params.toString();
+      if (qs) url += `?${qs}`;
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      let list = Array.isArray(data.items) ? data.items : [];
+
+      // 👇 Mezclar con estados del localStorage (citas_demo)
+      const stored = loadStoredCitas();
+      const storedMap = new Map(
+        stored.map((c) => [c._id || c.id, c])
+      );
+      list = list.map((it) => {
+        const key = it._id || it.id;
+        const local = storedMap.get(key);
+        if (local && local.estado) {
+          return { ...it, estado: local.estado };
+        }
+        return it;
+      });
 
       // Filtro por documento ("Mis citas")
       if (showMyCitas && myDocumento.trim()) {
@@ -279,31 +421,54 @@ export default function AgendaPage() {
         list = list.filter((it) => (it.documento || "").includes(doc));
       }
 
-      // Filtro por modo día/mes
-      if (mode === "month") {
-        if (month) {
-          list = list.filter((it) =>
-            (it.citaAt || "").slice(0, 7) === month
-          );
-        }
-      } else {
-        // "Por día" - si dateFilter está vacío mostramos todas
-        if (dateFilter) {
-          list = list.filter((it) =>
-            (it.citaAt || "").slice(0, 10) === dateFilter
-          );
-        }
+      // Si estamos en modo día y no hay dateFilter, mostramos todas;
+      // si hay dateFilter, filtramos adicionalmente por día exacto.
+      if (mode === "day" && dateFilter) {
+        list = list.filter(
+          (it) => (it.citaAt || "").slice(0, 10) === dateFilter
+        );
       }
 
-      // Ordenar por fecha/hora
       list.sort(
         (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
       );
 
       setItems(list);
     } catch (e) {
-      console.error("[citas] Error leyendo citas:", e);
-      setItems([]);
+      console.error("[citas] Error leyendo desde backend, usando local:", e);
+
+      // 🔁 Fallback: lo mismo que hacías antes con localStorage
+      try {
+        const all = loadStoredCitas();
+        let list = [...all];
+
+        if (showMyCitas && myDocumento.trim()) {
+          const doc = myDocumento.trim();
+          list = list.filter((it) => (it.documento || "").includes(doc));
+        }
+
+        if (mode === "month") {
+          if (month) {
+            list = list.filter(
+              (it) => (it.citaAt || "").slice(0, 7) === month
+            );
+          }
+        } else {
+          if (dateFilter) {
+            list = list.filter(
+              (it) => (it.citaAt || "").slice(0, 10) === dateFilter
+            );
+          }
+        }
+
+        list.sort(
+          (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
+        );
+        setItems(list);
+      } catch (e2) {
+        console.error("[citas] Error leyendo citas local:", e2);
+        setItems([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -580,7 +745,9 @@ export default function AgendaPage() {
                       }}
                       disabled={!vehicleBrand || vehicleBrand === "Otra"}
                     >
-                      <option value="">Seleccione modelo (año ≥ 2000)…</option>
+                      <option value="">
+                        Seleccione modelo (año ≥ 2000)…
+                      </option>
                       {(
                         vehicleBrand &&
                         VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
@@ -615,7 +782,10 @@ export default function AgendaPage() {
                         value={vehicleModelCustom}
                         onChange={(e) => {
                           setVehicleModelCustom(e.target.value);
-                          setErrors((prev) => ({ ...prev, vehicleModel: "" }));
+                          setErrors((prev) => ({
+                            ...prev,
+                            vehicleModel: "",
+                          }));
                         }}
                         placeholder="Escriba modelo y año (ej. Corolla 1998)"
                       />
@@ -813,22 +983,8 @@ export default function AgendaPage() {
                             </td>
                             <td>{fmtTime(it.citaAt)}</td>
                             <td>
-                              <span
-                                className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                                  (it.estado === "Programada" ||
-                                    it.estado === "solicitada" ||
-                                    !it.estado)
-                                    ? "bg-yellow-200 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-300"
-                                    : it.estado === "Atendida"
-                                    ? "bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300"
-                                    : it.estado === "Cancelada" ||
-                                      it.estado === "cancelada"
-                                    ? "bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300"
-                                    : "bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300"
-                                }`}
-                              >
-                                {it.estado || "solicitada"}
-                              </span>
+                              {/* Usa los mismos colores/estados que la pantalla principal */}
+                              <CitaEstadoPill estado={it.estado} />
                             </td>
                           </tr>
                         ))}

@@ -14,13 +14,13 @@ const VehiculoVisitanteSchema = new mongoose.Schema(
 const VisitaSchema = new mongoose.Schema(
   {
     /* Datos base */
-    nombre:    { type: String, required: true, trim: true },
+    nombre: { type: String, required: true, trim: true },
     documento: { type: String, required: true, trim: true },
-    empresa:   { type: String, default: null, trim: true },
-    empleado:  { type: String, default: null, trim: true },
-    motivo:    { type: String, required: true, trim: true },
+    empresa: { type: String, default: null, trim: true },
+    empleado: { type: String, default: null, trim: true },
+    motivo: { type: String, required: true, trim: true },
 
-    telefono:  { type: String, default: null, trim: true },
+    telefono: { type: String, default: null, trim: true },
     correo: {
       type: String,
       default: null,
@@ -40,9 +40,19 @@ const VisitaSchema = new mongoose.Schema(
       index: true,
     },
 
+    // 🔹 Aquí SOLO amplié la lista de estados permitidos
+    // para poder usar en_revision / autorizada / denegada
     estado: {
       type: String,
-      enum: ["Programada", "Dentro", "Finalizada", "Cancelada"],
+      enum: [
+        "Programada",
+        "Dentro",
+        "Finalizada",
+        "Cancelada",
+        "en_revision",
+        "autorizada",
+        "denegada",
+      ],
       default: function () {
         return this.tipo === "Agendada" ? "Programada" : "Dentro";
       },
@@ -54,9 +64,9 @@ const VisitaSchema = new mongoose.Schema(
     vehiculo: { type: VehiculoVisitanteSchema, default: null },
 
     /* Fechas */
-    citaAt:       { type: Date, default: null, index: true },
+    citaAt: { type: Date, default: null, index: true },
     fechaEntrada: { type: Date, default: null, index: true },
-    fechaSalida:  { type: Date, default: null },
+    fechaSalida: { type: Date, default: null },
   },
   {
     timestamps: true,
