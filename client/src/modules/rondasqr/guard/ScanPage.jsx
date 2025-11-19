@@ -707,7 +707,7 @@ export default function ScanPage() {
     "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
 
   const cardClass =
-    "rounded-2xl p-4 sm:p-6 " +
+    "rounded-2xl p-4.sm:p-6 " +
     "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
     "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
 
@@ -724,7 +724,7 @@ export default function ScanPage() {
       color:#fff;
       background-image:linear-gradient(90deg,#8b5cf6,#06b6d4);
       box-shadow:0 10px 28px rgba(99,102,241,.18),0 6px 20px rgba(6,182,212,.12);
-      transition:filter .2s ease, transform .2s.ease;
+      transition:filter .2s ease, transform .2s ease;
     }
     .btn-neon:hover { filter:brightness(1.04); transform:translateY(-1px); }
     .btn-neon:active { transform:translateY(0); }
@@ -743,7 +743,7 @@ export default function ScanPage() {
   `;
 
   const homeCols =
-    isAdminLike || isSupervisorLike ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2";
+    isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
 
   const BEEP_SRC =
     "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
@@ -761,7 +761,7 @@ export default function ScanPage() {
           title={`Alerta recibida ${lastPanic.at}`}
         >
           <span className="text-[10px] leading-none font-bold">ALERTA</span>
-          <span className="text-[9px] leading-none.mt-1">¡NUEVA!</span>
+          <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
         </button>
       )}
 
@@ -791,11 +791,11 @@ export default function ScanPage() {
       )}
 
       <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 relative gap-4">
-        {/* hamburguesa */}
+        {/* hamburguesa SOLO móvil */}
         <div className="md:hidden mb-1">
           <button
             onClick={() => setIsNavOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-2
+            className="inline-flex.items-center gap-2 rounded-lg px-3 py-2
                        border border-slate-300 bg-slate-50 text-slate-800
                        dark:border-white/15 dark:bg-white/10 dark:text-white"
           >
@@ -891,7 +891,10 @@ export default function ScanPage() {
                     <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
                       Continuar ronda
                     </button>
-                    <button onClick={() => nav("/rondasqr/scan")} className="btn-neon btn-neon-amber">
+                    <button
+                      onClick={() => nav("/rondasqr/scan")}
+                      className="btn-neon btn-neon-amber"
+                    >
                       Finalizar
                     </button>
                   </div>
@@ -911,7 +914,30 @@ export default function ScanPage() {
               )}
             </section>
 
-            {/* rondas asignadas al guardia (más amigable) */}
+            {/* acciones admin/supervisor */}
+            {(isAdminLike || isSupervisorLike) && (
+              <section className={cardClass}>
+                <h3 className="font-semibold text-lg mb-3">Acciones</h3>
+                <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
+                  Acciones avanzadas disponibles para supervisores o administradores.
+                </p>
+                <div className="grid gap-3 max-w-sm">
+                  <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
+                    📊 Abrir informes
+                  </button>
+                  {isAdminLike && (
+                    <button
+                      onClick={() => nav("/rondasqr/admin")}
+                      className="btn-neon btn-neon-purple"
+                    >
+                      ⚙️ Administración de rondas
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* rondas asignadas al guardia */}
             <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div>
@@ -936,7 +962,7 @@ export default function ScanPage() {
                   <div className="w-12 h-12 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center text-2xl">
                     🕒
                   </div>
-                  <div className="text-sm text-slate-600 dark:text.white/80">
+                  <div className="text-sm text-slate-600 dark:text-white/80">
                     <p className="font-medium mb-1">
                       No tienes rondas asignadas por el momento.
                     </p>
@@ -961,7 +987,7 @@ export default function ScanPage() {
                         <th className="px-2 py-2 sm:px-3 sm:py-2">Ronda</th>
                         <th className="px-2 py-2 sm:px-3 sm:py-2">Sitio</th>
                         <th className="px-2 py-2 sm:px-3 sm:py-2">Fecha / Hora</th>
-                        <th className="px-2 py-2.sm:px-3 sm:py-2">Estado</th>
+                        <th className="px-2 py-2 sm:px-3 sm:py-2">Estado</th>
                         <th className="px-2 py-2 sm:px-3 sm:py-2 text-right">Acción</th>
                       </tr>
                     </thead>
@@ -1084,26 +1110,6 @@ export default function ScanPage() {
               )}
             </section>
 
-            {/* acciones admin/supervisor */}
-            {(isAdminLike || isSupervisorLike) && (
-              <section className={cardClass}>
-                <h3 className="font-semibold text-lg mb-3">Acciones</h3>
-                <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
-                  Acciones avanzadas disponibles para supervisores o administradores.
-                </p>
-                <div className="grid gap-3 max-w-sm">
-                  <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
-                    📊 Abrir informes
-                  </button>
-                  {isAdminLike && (
-                    <button onClick={() => nav("/rondasqr/admin")} className="btn-neon btn-neon-purple">
-                      ⚙️ Administración de rondas
-                    </button>
-                  )}
-                </div>
-              </section>
-            )}
-
             {/* rendimiento del dispositivo */}
             <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
               <h3 className="font-semibold mb-2">Rendimiento del dispositivo</h3>
@@ -1167,7 +1173,7 @@ export default function ScanPage() {
           <section className={cardClass}>
             <div className="flex items-center justify-between gap-4 mb-3">
               <h3 className="font-semibold text-lg">Transmitir Rondas Pendientes</h3>
-              <div className="text-sm.opacity-70">Pendientes: {outbox.length}</div>
+              <div className="text-sm opacity-70">Pendientes: {outbox.length}</div>
             </div>
             {outbox.length === 0 ? (
               <div className="text-slate-600 dark:text-white/80">
@@ -1175,7 +1181,7 @@ export default function ScanPage() {
               </div>
             ) : (
               <>
-                <ul className="divide-y divide-slate-200 dark:divide-white/10.mb-4">
+                <ul className="divide-y divide-slate-200 dark:divide-white/10 mb-4">
                   {outbox.map((it) => (
                     <li key={it.id} className="py-2 flex items-center justify-between gap-4">
                       <div className="text-sm">
@@ -1275,8 +1281,8 @@ export default function ScanPage() {
                     <ul className="text-sm list-disc list-inside space-y-1">
                       {readJsonLS("rondasqr:assignments", []).map((a, idx) => (
                         <li key={idx}>
-                          {a.roundName || a.roundId || "Ronda"} — guardia: {a.guardId || "?"} —
-                          fecha: {a.date || "?"}
+                          {a.roundName || a.roundId || "Ronda"} — guardia: {a.guardId || "?"} — fecha:{" "}
+                          {a.date || "?"}
                         </li>
                       ))}
                     </ul>
@@ -1286,7 +1292,7 @@ export default function ScanPage() {
                 {readJsonLS("rondasqr:logs", []).length > 0 && (
                   <div className="mb-4">
                     <h4 className="font-medium mb-2">Logs locales</h4>
-                    <pre className="text-xs bg-black/5 dark:bg.white/5 rounded p-2 max-h-40 overflow-auto">
+                    <pre className="text-xs bg-black/5 dark:bg-white/5 rounded p-2 max-h-40 overflow-auto">
                       {JSON.stringify(readJsonLS("rondasqr:logs", []), null, 2)}
                     </pre>
                   </div>
@@ -1412,7 +1418,9 @@ function PhotoPicker({ photos, setPhotos }) {
               Seleccionar
             </label>
             <button
-              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
+              onClick={() =>
+                setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))
+              }
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
             >
               Eliminar
