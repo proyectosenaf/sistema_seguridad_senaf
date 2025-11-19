@@ -29,6 +29,7 @@ export default function IncidentesList() {
     type: "Acceso no autorizado",
     description: "",
     reportedBy: "",
+    reportedByGuardId: "", // 👈 ID del guardia seleccionado
     zone: "",
     priority: "alta",
     status: "abierto",
@@ -174,6 +175,17 @@ export default function IncidentesList() {
   const handleFormChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
+  // cambio específico del select de guardia
+  const handleReporterChange = (e) => {
+    const opId = e.target.value;
+    const g = guards.find((x) => String(x.opId) === String(opId));
+    setForm((prev) => ({
+      ...prev,
+      reportedByGuardId: opId,
+      reportedBy: g ? guardLabel(g) : "",
+    }));
+  };
+
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -195,6 +207,7 @@ export default function IncidentesList() {
       type: "Acceso no autorizado",
       description: "",
       reportedBy: "",
+      reportedByGuardId: "",
       zone: "",
       priority: "alta",
       status: "abierto",
@@ -205,9 +218,33 @@ export default function IncidentesList() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!form.description.trim()) {
+      alert("Describa el incidente.");
+      return;
+    }
+    if (!form.reportedByGuardId) {
+      alert("Seleccione el guardia que reporta el incidente.");
+      return;
+    }
+
     try {
+      // resolvemos guardia para mandar datos ricos al backend
+      const guard = guards.find(
+        (g) => String(g.opId) === String(form.reportedByGuardId)
+      );
+      const label = guard ? guardLabel(guard) : form.reportedBy;
+
       const payload = {
-        ...form,
+        type: form.type,
+        description: form.description,
+        zone: form.zone,
+        priority: form.priority,
+        status: form.status,
+        reportedBy: label,                         // texto visible
+        guardId: form.reportedByGuardId || undefined, // ID para enlazar con IAM
+        guardName: guard?.name || undefined,
+        guardEmail: guard?.email || undefined,
         photosBase64: photos,
       };
 
@@ -249,10 +286,28 @@ export default function IncidentesList() {
   const startEdit = (incidente) => {
     setShowForm(true);
     setEditingId(incidente._id);
+
+    // intentamos recuperar guardId si ya viene desde backend
+    let guardId =
+      incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
+    let reportedByLabel = incidente.reportedBy || "";
+
+    // si no viene guardId pero sí label, intentamos machear con el catálogo
+    if (!guardId && incidente.reportedBy && guards.length) {
+      const match = guards.find(
+        (g) => guardLabel(g) === incidente.reportedBy
+      );
+      if (match) {
+        guardId = match.opId;
+        reportedByLabel = guardLabel(match);
+      }
+    }
+
     setForm({
       type: incidente.type || "Acceso no autorizado",
       description: incidente.description || "",
-      reportedBy: incidente.reportedBy || "",
+      reportedBy: reportedByLabel,
+      reportedByGuardId: guardId,
       zone: incidente.zone || "",
       priority: incidente.priority || "alta",
       status: incidente.status || "abierto",
@@ -279,17 +334,12 @@ export default function IncidentesList() {
     }
   };
 
-  // para que en edición no se pierda el valor si no coincide con la lista de guardias
-  const hasReportedOption =
-    form.reportedBy &&
-    guards.some((g) => guardLabel(g) === form.reportedBy);
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
       {/* header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white">
+          <h1 className="text-2xl font-semibold text.white">
             Gestión de Incidentes
           </h1>
           <p className="text-sm text-gray-400">
@@ -315,7 +365,7 @@ export default function IncidentesList() {
 
       {/* FORM inline */}
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg.white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
+        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
@@ -361,20 +411,15 @@ export default function IncidentesList() {
                   Reportado por
                 </label>
                 <select
-                  name="reportedBy"
-                  value={form.reportedBy}
-                  onChange={handleFormChange}
+                  name="reportedByGuardId"
+                  value={form.reportedByGuardId}
+                  onChange={handleReporterChange}
                   className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                   required
                 >
                   <option value="">Seleccione un guardia…</option>
-                  {form.reportedBy && !hasReportedOption && (
-                    <option value={form.reportedBy}>
-                      {form.reportedBy} (actual)
-                    </option>
-                  )}
                   {guards.map((g) => (
-                    <option key={g._id} value={guardLabel(g)}>
+                    <option key={g._id || g.opId} value={g.opId}>
                       {guardLabel(g)}
                     </option>
                   ))}
@@ -481,7 +526,7 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text.white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
                 Cancelar
               </button>
@@ -517,7 +562,7 @@ export default function IncidentesList() {
           </div>
         </div>
         <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
-          <div className="text-xs uppercase text-green-300 font-medium flex items-center gap-2">
+          <div className="text-xs uppercase text-green-300 font-medium flex.items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500" />
             Resueltos
           </div>
@@ -552,7 +597,7 @@ export default function IncidentesList() {
               className="w-full bg-[#1e2a3f] text-white text-sm rounded-md px-3 py-2 
                          border border-cyan-400/20 placeholder-gray-500 
                          focus:outline-none focus:ring-2 focus:ring-cyan-400/40 
-                         transition-all duración-200"
+                         transition-all duration-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
           </div>
@@ -686,7 +731,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "en_proceso")
                             }
-                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duración-300"
+                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
                           >
                             Procesar
                           </button>
@@ -696,7 +741,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "resuelto")
                             }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transición-all duración-300"
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
                           >
                             Resolver
                           </button>
@@ -704,13 +749,13 @@ export default function IncidentesList() {
 
                         <button
                           onClick={() => startEdit(i)}
-                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transición-all duración-300"
+                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
                           Editar
                         </button>
                         <button
                           onClick={() => handleDelete(i._id)}
-                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transición-all duración-300"
+                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
                           Eliminar
                         </button>
@@ -723,10 +768,10 @@ export default function IncidentesList() {
           </table>
         </div>
 
-        <div className="flex.justify-end p-4 border-t border-cyan-400/10">
+        <div className="flex justify-end p-4 border-t border-cyan-400/10">
           <button
             onClick={startCreate}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transición-all duración-300"
+            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all duration-300"
           >
             {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
           </button>
@@ -736,7 +781,7 @@ export default function IncidentesList() {
       <div className="text-xs text-gray-500">
         <Link
           to="/"
-          className="hover:text-white hover:underline underline-offset-4 transición-colors"
+          className="hover:text-white hover:underline underline-offset-4 transition-colors"
         >
           ← Volver al panel principal
         </Link>
