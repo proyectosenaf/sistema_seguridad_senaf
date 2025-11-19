@@ -7,8 +7,8 @@ function slugify(s) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "") // quita acentos
-    .replace(/[^a-z0-9]+/g, "-")     // no alfanum → guion
-    .replace(/(^-|-$)/g, "");        // bordes
+    .replace(/[^a-z0-9]+/g, "-") // no alfanum → guion
+    .replace(/(^-|-$)/g, ""); // bordes
 }
 
 const RqRoundSchema = new mongoose.Schema(
@@ -30,7 +30,7 @@ const RqRoundSchema = new mongoose.Schema(
     code: {
       type: String,
       trim: true,
-      lowercase: true, // fuerza minúsculas para la unicidad
+      lowercase: true,
       // Ojo: la unicidad real se define por índice compuesto (ver abajo)
     },
 

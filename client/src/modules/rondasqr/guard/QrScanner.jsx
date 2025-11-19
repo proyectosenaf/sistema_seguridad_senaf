@@ -133,7 +133,9 @@ export default function QrScanner({
           audio: false,
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia(streamConstraints);
+        const stream = await navigator.mediaDevices.getUserMedia(
+          streamConstraints
+        );
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
@@ -182,7 +184,19 @@ export default function QrScanner({
         }
       }
     },
-    [applyTorch, beep, constraints, deviceId, facingMode, onError, onResult, once, refreshDevices, stopReader, torchOn]
+    [
+      applyTorch,
+      beep,
+      constraints,
+      deviceId,
+      facingMode,
+      onError,
+      onResult,
+      once,
+      refreshDevices,
+      stopReader,
+      torchOn,
+    ]
   );
 
   // 🧩 Escucha global de parada ("qrscanner:stop")
