@@ -6,8 +6,6 @@ import {
   AlertTriangle,
   QrCode,
   MessageSquare,
-  Send,
-  Database,
   Settings,
   LogOut,
   FileBarChart,
@@ -38,11 +36,10 @@ export default function SidebarGuard({
     { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin" },
   ];
 
+  // solo dejamos alerta y mensaje incidente en el mini-menú
   const actionItems = [
     { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
     { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
-    { key: "tx", label: "Transmitir Rondas Pendientes", icon: Send },
-    { key: "dumpdb", label: "Enviar base de datos", icon: Database },
   ];
 
   async function handleAction(key) {

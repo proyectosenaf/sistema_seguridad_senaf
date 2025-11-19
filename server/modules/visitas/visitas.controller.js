@@ -187,8 +187,22 @@ export async function listCitas(req, res) {
 
     if (day) {
       const d = new Date(day);
-      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
-      const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0);
+      const start = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        0,
+        0,
+        0
+      );
+      const end = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() + 1,
+        0,
+        0,
+        0
+      );
       match.citaAt = { $gte: start, $lt: end };
     } else if (month) {
       // month = "YYYY-MM"
@@ -235,6 +249,41 @@ export async function checkinCita(req, res) {
   } catch (err) {
     console.error("[visitas] checkinCita", err);
     res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * 🔹 NUEVO
+ * PATCH /api/citas/:id/estado
+ * Actualiza el estado de la cita (en_revision, autorizada, denegada, cancelada, etc.)
+ * para que se refleje también en la Agenda de Citas.
+ */
+export async function updateCitaEstado(req, res) {
+  try {
+    const { id } = req.params;
+    const { estado } = req.body || {};
+
+    if (!estado) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Debe indicar un estado" });
+    }
+
+    const visita = await Visita.findById(id);
+    if (!visita) {
+      return res
+        .status(404)
+        .json({ ok: false, error: "Cita/visita no encontrada" });
+    }
+
+    // Solo cambiamos el estado; la validación de enum la hace mongoose
+    visita.estado = estado;
+    await visita.save();
+
+    return res.json({ ok: true, item: visita });
+  } catch (err) {
+    console.error("[visitas] updateCitaEstado", err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
@@ -291,7 +340,8 @@ export async function listVehiculosVisitasEnSitio(req, res) {
     console.error("[visitas] listVehiculosVisitasEnSitio", err);
     res.status(500).json({
       ok: false,
-      error: err.message || "Error al obtener vehículos de visitas en sitio",
+      error:
+        err.message || "Error al obtener vehículos de visitas en sitio",
     });
   }
 }

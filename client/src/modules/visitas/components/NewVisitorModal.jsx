@@ -81,7 +81,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
 
   // ===== Helpers de horario de atención (MODO PRUEBAS) =====
   function isWithinBusinessHours(date) {
-    // Ahora se permite siempre registrar (para que puedas probar a cualquier hora)
+    // En modo pruebas: se permite registrar siempre que la fecha sea válida
     if (!(date instanceof Date) || isNaN(date.getTime())) return false;
     return true;
   }
@@ -145,7 +145,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         vehicle: hasVehicle
           ? {
               brand: vehicleBrand.trim(),
-              model: finalModel, // aquí ya va "Corolla 2005" o lo que elija/escriba
+              model: finalModel, // ej. "Corolla 2005" o lo que escriba
               plate: vehiclePlate.trim(),
             }
           : null,
@@ -190,7 +190,10 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between mb-4">
-          <h3 id="new-visitor-title" className="text-lg font-semibold text-neutral-100">
+          <h3
+            id="new-visitor-title"
+            className="text-lg font-semibold text-neutral-100"
+          >
             Registrar Visitante
           </h3>
           <button
@@ -207,7 +210,10 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
           {businessHoursMessage()}
         </div>
 
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <form
+          onSubmit={handleSubmit}
+          className="grid grid-cols-1 md:grid-cols-2 gap-3"
+        >
           <div className="md:col-span-2">
             <label className="text-xs text-neutral-400">Nombre completo</label>
             <input

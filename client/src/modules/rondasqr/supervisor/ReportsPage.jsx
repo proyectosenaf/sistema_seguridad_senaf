@@ -239,7 +239,8 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const setField = (k) => (e) => setF((prev) => ({ ...prev, [k]: e.target.value }));
+  const setField = (k) => (e) =>
+    setF((prev) => ({ ...prev, [k]: e.target.value }));
 
   function resetOptionalFilters() {
     setF((prev) => ({
@@ -401,7 +402,9 @@ export default function ReportsPage() {
     });
 
     const tableBody = rows.map((o, i) => {
-      const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
+      const fecha = formatDateTime(
+        o.expectedAt || o.expectedTime || o.date || o.ts
+      );
       const ronda = o.roundName || o.roundId || "—";
       const punto = o.pointName || o.point || o.pointId || "—";
       const oficial = resolveOfficerLabel(o);
@@ -471,7 +474,11 @@ export default function ReportsPage() {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text("Resumen de rondas ejecutadas dentro del rango seleccionado", 14, 28);
+    doc.text(
+      "Resumen de rondas ejecutadas dentro del rango seleccionado",
+      14,
+      28
+    );
 
     const metaLines = [
       `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
@@ -488,34 +495,27 @@ export default function ReportsPage() {
       y += 4;
     });
 
+    // Usar campos reales del backend: siteName, roundName, puntosRegistrados, pasos, primeraMarca, ultimaMarca, duracionText
     const tableBody = rows.map((r, i) => {
       const guardLabel = resolveOfficerLabel(r);
       const site = r.siteName || r.site || "—";
       const round = r.roundName || r.round || r.roundId || "—";
-
-      const programadas = r.totalRounds ?? r.programadas ?? r.total ?? 0;
-      const realizadas = r.completed ?? r.realizadas ?? r.done ?? 0;
-      const omitidas = r.missed ?? r.omitidas ?? r.omissions ?? 0;
-
-      const cumplimientoRaw =
-        r.compliancePct ??
-        r.compliance ??
-        r.pct ??
-        (programadas ? Math.round((realizadas / programadas) * 100) : 0);
-
-      const cumplimiento = Number.isFinite(cumplimientoRaw)
-        ? `${Math.round(cumplimientoRaw)}%`
-        : "—";
+      const puntos = r.puntosRegistrados ?? r.totalRounds ?? r.total ?? 0;
+      const pasos = r.pasos ?? 0;
+      const primera = formatDateTime(r.primeraMarca || r.firstAt);
+      const ultima = formatDateTime(r.ultimaMarca || r.lastAt);
+      const duracion = r.duracionText || r.duration || "—";
 
       return [
         i + 1,
         guardLabel,
         site,
         round,
-        programadas,
-        realizadas,
-        omitidas,
-        cumplimiento,
+        puntos,
+        pasos,
+        primera,
+        ultima,
+        duracion,
       ];
     });
 
@@ -527,10 +527,11 @@ export default function ReportsPage() {
           "Oficial",
           "Sitio",
           "Ronda",
-          "Programadas",
-          "Realizadas",
-          "Omitidas",
-          "Cumplimiento",
+          "Puntos",
+          "Pasos",
+          "Primera marca",
+          "Última marca",
+          "Duración",
         ],
       ],
       body: tableBody,
@@ -615,12 +616,37 @@ export default function ReportsPage() {
 
     const tableBody = rows.map((m, i) => {
       const tipo = m.type || m.kind || m.level || "—";
-      const fecha = formatDateTime(m.ts || m.date || m.createdAt);
+      const fecha = formatDateTime(m.at || m.ts || m.date || m.createdAt);
       const sitio = m.siteName || m.site || "—";
       const ronda = m.roundName || m.round || "—";
       const oficial = resolveOfficerLabel(m);
-      const detalle = m.message || m.description || m.detail || "—";
-      const gps = m.gps || m.coordinates || m.location || "—";
+
+      const baseText = m.text || m.message || m.description || m.detail || "—";
+      const extras = [];
+      if (typeof m.durationMin === "number") {
+        extras.push(`Inactividad: ${m.durationMin} min`);
+      }
+      if (typeof m.stepsAtAlert === "number") {
+        extras.push(`Pasos: ${m.stepsAtAlert}`);
+      }
+      if (m.fallDetected) {
+        extras.push("Caída detectada");
+      }
+      const detalle =
+        extras.length > 0 ? `${baseText} (${extras.join(" · ")})` : baseText;
+
+      let gps = "—";
+      if (
+        m.gps &&
+        typeof m.gps.lat === "number" &&
+        typeof m.gps.lon === "number"
+      ) {
+        gps = `${m.gps.lat}, ${m.gps.lon}`;
+      } else if (m.coordinates) {
+        gps = String(m.coordinates);
+      } else if (m.location) {
+        gps = String(m.location);
+      }
 
       return [i + 1, tipo, fecha, sitio, ronda, oficial, detalle, gps];
     });
@@ -730,16 +756,20 @@ export default function ReportsPage() {
     });
 
     const tableBody = rows.map((r, i) => {
-      const fecha = formatDateTime(r.ts || r.date || r.createdAt);
+      const fecha = formatDateTime(r.at || r.ts || r.date || r.createdAt);
       const sitio = r.siteName || r.site || "—";
       const ronda = r.roundName || r.round || "—";
       const punto = r.pointName || r.point || r.pointId || "—";
       const oficial = resolveOfficerLabel(r);
       const enVentana =
-        typeof r.inWindow === "boolean" ? (r.inWindow ? "Sí" : "No") : "—";
-      const estado = r.status || r.state || r.result || "—";
+        typeof r.onWindow === "boolean"
+          ? r.onWindow
+            ? "Sí"
+            : "No"
+          : "—";
+      const mensaje = r.message || "—";
 
-      return [i + 1, fecha, sitio, ronda, punto, oficial, enVentana, estado];
+      return [i + 1, fecha, sitio, ronda, punto, oficial, enVentana, mensaje];
     });
 
     autoTable(doc, {
@@ -753,7 +783,7 @@ export default function ReportsPage() {
           "Punto",
           "Oficial",
           "En ventana",
-          "Estado",
+          "Mensaje",
         ],
       ],
       body: tableBody,
@@ -863,7 +893,9 @@ export default function ReportsPage() {
 
     const body = rows
       .map((o, i) => {
-        const fecha = formatDateTime(o.expectedAt || o.expectedTime || o.date || o.ts);
+        const fecha = formatDateTime(
+          o.expectedAt || o.expectedTime || o.date || o.ts
+        );
         const ronda = o.roundName || o.roundId || "—";
         const punto = o.pointName || o.point || o.pointId || "—";
         const oficial = resolveOfficerLabel(o);
@@ -940,13 +972,18 @@ export default function ReportsPage() {
       const qs = new URLSearchParams(f).toString();
       const candidates = [
         rondasqrApi.xlsxUrl?.(f),
+        // 👇 ruta real del backend
+        `${ROOT}/api/rondasqr/v1/reports/export/excel?${qs}`,
+        // rutas alternativas por compatibilidad
+        `${ROOT}/api/rondasqr/v1/reports/excel?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/export/xlsx?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/xlsx?${qs}`,
-        `${ROOT}/api/rondasqr/v1/reports/excel?${qs}`,
       ].filter(Boolean);
       const ok = await openFirstOk(candidates);
       if (!ok)
-        alert("HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor.");
+        alert(
+          "HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor."
+        );
     } finally {
       setDownloading(false);
     }
@@ -976,12 +1013,17 @@ export default function ReportsPage() {
       const qs = new URLSearchParams(f).toString();
       const candidates = [
         rondasqrApi.pdfUrl?.(f),
+        // 👇 ruta real del backend
+        `${ROOT}/api/rondasqr/v1/reports/export/pdf?${qs}`,
+        // rutas alternativas por compatibilidad
         `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`,
         `${ROOT}/api/rondasqr/v1/reports/export/report.pdf?${qs}`,
       ].filter(Boolean);
       const ok = await openFirstOk(candidates);
       if (!ok)
-        alert("HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor.");
+        alert(
+          "HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor."
+        );
     } finally {
       setDownloading(false);
     }
@@ -1006,7 +1048,9 @@ export default function ReportsPage() {
     }
 
     const qs = new URLSearchParams(f).toString();
-    const url = rondasqrApi.pdfUrl?.(f) || `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`;
+    const url =
+      rondasqrApi.pdfUrl?.(f) ||
+      `${ROOT}/api/rondasqr/v1/reports/export/pdf?${qs}`;
     window.open(url, "_blank");
   }
 
@@ -1015,10 +1059,10 @@ export default function ReportsPage() {
   const toVar = readVar("--accent-to", "#22d3ee");
   const alphaVar = parseFloat(readVar("--accent-alpha", "0.16")) || 0.16;
   const bannerStyle = {
-    background: `linear-gradient(90deg, ${hexToRgba(fromVar, alphaVar)} 0%, ${hexToRgba(
-      toVar,
+    background: `linear-gradient(90deg, ${hexToRgba(
+      fromVar,
       alphaVar
-    )} 100%)`,
+    )} 0%, ${hexToRgba(toVar, alphaVar)} 100%)`,
   };
 
   // Omisiones con nombre de oficial ya resuelto
@@ -1151,7 +1195,9 @@ export default function ReportsPage() {
           </div>
 
           <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">Sitio (opcional)</label>
+            <label className="text-[11px] text-white/70 mb-1">
+              Sitio (opcional)
+            </label>
             <select
               value={f.siteId}
               onChange={setField("siteId")}
@@ -1167,7 +1213,9 @@ export default function ReportsPage() {
           </div>
 
           <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">Ronda (opcional)</label>
+            <label className="text-[11px] text-white/70 mb-1">
+              Ronda (opcional)
+            </label>
             <select
               value={f.roundId}
               onChange={setField("roundId")}
@@ -1185,7 +1233,9 @@ export default function ReportsPage() {
 
           {/* Oficial: SELECT de guardias, como en AssignmentsPage */}
           <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">Oficial (opcional)</label>
+            <label className="text-[11px] text-white/70 mb-1">
+              Oficial (opcional)
+            </label>
             <select
               value={f.officer}
               onChange={setField("officer")}
@@ -1262,13 +1312,12 @@ export default function ReportsPage() {
       {/* Secciones de reporte (controladas por flags) */}
       {f.includeSummary && <ReportSummary stats={data.stats} />}
 
-      {f.includeOmissions && <OmissionsTable items={decoratedOmissions} />}
+      {f.includeOmissions && (
+        <OmissionsTable items={decoratedOmissions} />
+      )}
 
       {f.includeMessages && (
-        <MessagesTable
-          items={data.messages}
-          title="Alertas de pánico"
-        />
+        <MessagesTable items={data.messages} title="Alertas de pánico" />
       )}
 
       {f.includeDetail && <DetailedMarks items={data.detailed} />}

@@ -1,6 +1,8 @@
 // server/modules/rondasqr/routes/rondasqr.admin.routes.js
 import express from "express";
 import mongoose from "mongoose";
+import QRCode from "qrcode";
+import PDFDocument from "pdfkit";
 
 import RqSite from "../models/RqSite.model.js";
 import RqRound from "../models/RqRound.model.js";
@@ -87,7 +89,9 @@ router.post("/sites", async (req, res, next) => {
     res.status(201).json({ item });
   } catch (e) {
     if (e?.name === "ValidationError") {
-      return res.status(400).json({ error: "validacion", details: e.errors || {} });
+      return res
+        .status(400)
+        .json({ error: "validacion", details: e.errors || {} });
     }
     if (e?.code === 11000) {
       const field = Object.keys(e.keyValue || {})[0] || "campo";
@@ -334,7 +338,8 @@ router.post("/points", async (req, res, next) => {
     const sid = toId(siteId);
     const rid = toId(roundId);
     if (!sid) return res.status(400).json({ error: "siteId requerido/valido" });
-    if (!rid) return res.status(400).json({ error: "roundId requerido/valido" });
+    if (!rid)
+      return res.status(400).json({ error: "roundId requerido/valido" });
     if (!norm(name)) return res.status(400).json({ error: "name requerido" });
 
     const payload = {
@@ -342,7 +347,10 @@ router.post("/points", async (req, res, next) => {
       roundId: rid,
       name: norm(name),
       qr: norm(qr) || undefined,
-      order: Number.isFinite(Number(order)) ? Number(order) : 0,
+      // si no viene order, dejamos que el modelo lo calcule
+      ...(order != null && Number.isFinite(Number(order))
+        ? { order: Number(order) }
+        : {}),
       active: typeof active === "boolean" ? active : true,
     };
 
@@ -381,7 +389,9 @@ router.put("/points/:id", async (req, res, next) => {
     }
     if (name != null) $set.name = norm(name);
     if (qr != null) $set.qr = norm(qr) || null;
-    if (order != null) $set.order = Number.isFinite(Number(order)) ? Number(order) : 0;
+    if (order != null && Number.isFinite(Number(order))) {
+      $set.order = Number(order);
+    }
 
     if (gps !== undefined) {
       const lat = Number(gps?.lat);
@@ -447,6 +457,179 @@ router.delete("/points/:id", async (req, res, next) => {
     const del = await RqPoint.findByIdAndDelete(id).lean();
     if (!del) return res.status(404).json({ error: "no encontrado" });
     res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* =================================================================
+   QR EXTRA: PNG / PDF / ROTACIÓN / REPOSITORIO
+================================================================= */
+
+// PNG del QR de un punto
+router.get("/points/:id/qr.png", async (req, res, next) => {
+  try {
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+
+    const point = await RqPoint.findById(id).lean();
+    if (!point) return res.status(404).json({ error: "punto no encontrado" });
+
+    const text = String(point.qr || "");
+    if (!text) {
+      return res.status(400).json({ error: "el punto no tiene QR asignado" });
+    }
+
+    const buffer = await QRCode.toBuffer(text, {
+      type: "png",
+      margin: 2,
+      scale: 8,
+    });
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="rq-point-${point._id}.png"`
+    );
+    res.send(buffer);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// PDF con el QR del punto (para imprimir)
+router.get("/points/:id/qr.pdf", async (req, res, next) => {
+  try {
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+
+    const point = await RqPoint.findById(id)
+      .populate("siteId", "name code")
+      .populate("roundId", "name code")
+      .lean();
+    if (!point) return res.status(404).json({ error: "punto no encontrado" });
+
+    const text = String(point.qr || "");
+    if (!text) {
+      return res.status(400).json({ error: "el punto no tiene QR asignado" });
+    }
+
+    const pngBuffer = await QRCode.toBuffer(text, {
+      type: "png",
+      margin: 1,
+      scale: 8,
+    });
+
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="rq-point-${point._id}.pdf"`
+    );
+    doc.pipe(res);
+
+    doc.fontSize(20).text("Código QR – Ronda de Vigilancia", { align: "center" });
+    doc.moveDown();
+    doc
+      .fontSize(14)
+      .text(`Sitio: ${point.siteId?.name || ""}`, { align: "center" });
+    doc
+      .fontSize(14)
+      .text(`Ronda: ${point.roundId?.name || ""}`, { align: "center" });
+    doc
+      .fontSize(14)
+      .text(`Punto: ${point.name || ""}`, { align: "center" });
+    doc.moveDown(2);
+
+    const imgSize = 250;
+    const x = (doc.page.width - imgSize) / 2;
+    const y = doc.y;
+    doc.image(pngBuffer, x, y, { width: imgSize, height: imgSize });
+
+    doc.moveDown(6);
+    doc
+      .fontSize(12)
+      .text(`Código: ${text}`, { align: "center" })
+      .moveDown();
+
+    doc
+      .fontSize(10)
+      .fillColor("gray")
+      .text("Escanear con la app de RondasQR para registrar el punto.", {
+        align: "center",
+      });
+
+    doc.end();
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Rotar QR de un punto (nuevo código)
+router.post("/points/:id/rotate-qr", async (req, res, next) => {
+  try {
+    const id = toId(req.params.id);
+    if (!id) return res.status(400).json({ error: "id inválido" });
+
+    // usamos el helper estático del modelo
+    const result = await RqPoint.rotateQr(id);
+    // devolvemos el punto actualizado (sin qrSecret)
+    res.json({
+      item: {
+        ...result.point.toJSON(),
+      },
+      oldQr: result.oldQr,
+    });
+  } catch (e) {
+    // si el static lanzó un error 404, respetarlo
+    if (e.status) {
+      return res.status(e.status).json({ error: e.message });
+    }
+    next(e);
+  }
+});
+
+// Repositorio de QRs por sitio/ronda
+router.get("/qr-repo", async (req, res, next) => {
+  try {
+    const { siteId, roundId } = req.query;
+    const filter = {};
+    if (siteId) {
+      const sid = toId(siteId);
+      if (!sid) return res.status(400).json({ error: "siteId inválido" });
+      filter.siteId = sid;
+    }
+    if (roundId) {
+      const rid = toId(roundId);
+      if (!rid) return res.status(400).json({ error: "roundId inválido" });
+      filter.roundId = rid;
+    }
+
+    const raw = await RqPoint.find(filter)
+      .populate("siteId", "name code")
+      .populate("roundId", "name code")
+      .sort({ siteId: 1, roundId: 1, order: 1 })
+      .lean();
+
+    const items = raw.map((p) => ({
+      id: p._id,
+      name: p.name,
+      order: p.order,
+      qr: p.qr,
+      qrNo: p.qrNo,
+      code: p.code,
+      active: p.active,
+      siteId: p.siteId?._id || p.siteId,
+      siteName: p.siteId?.name,
+      siteCode: p.siteId?.code,
+      roundId: p.roundId?._id || p.roundId,
+      roundName: p.roundId?.name,
+      roundCode: p.roundId?.code,
+      updatedAt: p.updatedAt,
+      createdAt: p.createdAt,
+    }));
+
+    res.json({ items });
   } catch (e) {
     next(e);
   }
@@ -544,7 +727,8 @@ router.put("/plans/:id", async (req, res, next) => {
     const id = toId(req.params.id);
     if (!id) return res.status(400).json({ error: "id inválido" });
 
-    const { siteId, roundId, shift, pointIds, windows, active } = req.body || {};
+    const { siteId, roundId, shift, pointIds, windows, active } =
+      req.body || {};
     const $set = {};
     if (siteId != null) {
       const sid = toId(siteId);
@@ -557,7 +741,8 @@ router.put("/plans/:id", async (req, res, next) => {
       $set.roundId = rid;
     }
     if (shift !== undefined) $set.shift = normShift(shift) || undefined;
-    if (Array.isArray(pointIds)) $set.pointIds = pointIds.map(toId).filter(Boolean);
+    if (Array.isArray(pointIds))
+      $set.pointIds = pointIds.map(toId).filter(Boolean);
     if (Array.isArray(windows)) {
       $set.windows = windows.map((w) => ({
         label: norm(w?.label) || undefined,

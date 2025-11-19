@@ -7,6 +7,16 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { QRCodeSVG } from "qrcode.react"; // QR dinámico
 
+// 🔹 BASE DEL BACKEND (igual que en otros módulos)
+const ROOT = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+).replace(/\/$/, "");
+
+// 🔹 ENDPOINT DEL BACKEND PARA VISITAS (CREATE VISITA)
+const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
+// 🔹 ENDPOINT PARA CITAS (para actualizar estado desde la vista principal)
+const CITAS_API_URL = `${ROOT}/citas`;
+
 // Rango del día actual
 function getTodayRange() {
   const start = new Date();
@@ -124,6 +134,9 @@ export default function VisitsPage() {
 
   const sendEmpleadoAsId = false; // queda por si lo usas después
 
+  // vista actual: "citas" o "visitas"
+  const [viewMode, setViewMode] = useState("citas");
+
   // ------- Helpers de storage (visitas) -------
   function saveToStorage(next) {
     try {
@@ -224,17 +237,27 @@ export default function VisitsPage() {
     return new Set(empresasDeHoy).size;
   }, [visitors]);
 
+  // 🔍 normalizamos texto de búsqueda UNA sola vez
+  const normalizedSearch = search.toLowerCase().trim();
+  const hasSearch = normalizedSearch.length > 0;
+  const hasMinSearch = normalizedSearch.length >= 2;
+
   const filteredVisitors = useMemo(() => {
     return visitors.filter((v) => {
       const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
-      const matchesSearch = full.includes(search.toLowerCase().trim());
+
+      // Si no hay búsqueda o hay menos de 2 caracteres, no filtramos por texto
+      const matchesSearch =
+        !hasSearch || !hasMinSearch ? true : full.includes(normalizedSearch);
+
       const matchesStatus =
         statusFilter === "todos"
           ? true
           : v.status.toLowerCase() === statusFilter.toLowerCase();
+
       return matchesSearch && matchesStatus;
     });
-  }, [visitors, search, statusFilter]);
+  }, [visitors, normalizedSearch, hasSearch, hasMinSearch, statusFilter]);
 
   // Citas ordenadas por fecha/hora (se usan solo para mostrar)
   const sortedCitas = useMemo(() => {
@@ -247,7 +270,23 @@ export default function VisitsPage() {
     return list;
   }, [onlineCitas]);
 
-  // ------- Registrar visitante (solo front) -------
+  // 🔍 Citas filtradas por el mismo buscador (nombre / documento / empresa / empleado / motivo)
+  const filteredCitas = useMemo(() => {
+    return sortedCitas.filter((c) => {
+      const full = `${c.nombre || c.visitante || ""} ${
+        c.documento || ""
+      } ${c.empresa || ""} ${c.empleado || ""} ${c.motivo || ""}`
+        .toString()
+        .toLowerCase();
+
+      const matchesSearch =
+        !hasSearch || !hasMinSearch ? true : full.includes(normalizedSearch);
+
+      return matchesSearch;
+    });
+  }, [sortedCitas, normalizedSearch, hasSearch, hasMinSearch]);
+
+  // ------- Registrar visitante (FRONT + BD) -------
   async function handleAddVisitor(formData) {
     const entryDate = new Date();
 
@@ -270,8 +309,59 @@ export default function VisitsPage() {
           }`
         : "—";
 
+    // 🔹 1) Intentar guardar en la BASE DE DATOS
+    let backendId = null;
+    try {
+      const payload = {
+        nombre: formData.name?.trim(),
+        documento: formData.document?.trim(),
+        empresa: formData.company?.trim() || null,
+        empleado: formData.employee?.trim() || null,
+        motivo: formData.reason?.trim() || null, // si en NewVisitorModal envías reason
+        telefono: formData.phone?.trim() || null,
+        correo: formData.email?.trim() || null,
+        kind: "Presencial",
+        estado: "Dentro",
+        entryAt: entryDate.toISOString(),
+        vehicle:
+          vehicleBrand || vehicleModel || vehiclePlate
+            ? {
+                brand: vehicleBrand || undefined,
+                model: vehicleModel || undefined,
+                plate: vehiclePlate || undefined,
+              }
+            : null,
+      };
+
+      const res = await fetch(VISITAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data) {
+        // Intentamos detectar el id según como responda tu API
+        backendId =
+          data._id ||
+          data.id ||
+          data?.item?._id ||
+          data?.item?.id ||
+          data?.visita?._id ||
+          data?.visita?.id ||
+          null;
+        console.log("[visitas] creada en backend:", data);
+      } else {
+        console.warn("[visitas] fallo al crear en backend:", data);
+      }
+    } catch (err) {
+      console.warn("[visitas] error de red al crear en backend:", err);
+    }
+
+    // 🔹 2) Siempre guardar en el estado/localStorage (para que tu módulo siga funcionando igual)
     const newRow = {
-      id: `local-${Date.now()}`,
+      id: backendId || `local-${Date.now()}`, // si hay id de BD lo usamos, si no, local-...
       // Tipo de visita: todas las de este módulo son PRESENCIALES
       kind: "Presencial",
       name: formData.name?.trim(),
@@ -297,7 +387,7 @@ export default function VisitsPage() {
     setShowModal(false);
   }
 
-  // ------- Marcar salida (solo front) -------
+  // ------- Marcar salida (solo front, si quieres luego lo conectamos al backend) -------
   async function handleExit(id) {
     if (!id) return;
     setSavingExit(id);
@@ -320,13 +410,19 @@ export default function VisitsPage() {
         saveToStorage(next); // guardar cambio de estado
         return next;
       });
+
+      // Si MÁS ADELANTE quieres cerrar también en la BD,
+      // aquí podríamos hacer un PATCH/PUT a /api/visitas/:id/salida
     } finally {
       setSavingExit(null);
     }
   }
 
   // ------- Cambiar estado de una cita (pre-registro) -------
-  function updateCitaStatus(citaId, nuevoEstado) {
+  async function updateCitaStatus(citaId, nuevoEstado) {
+    if (!citaId) return;
+
+    // 1) Actualizar en memoria + localStorage (como ya lo hacías)
     setOnlineCitas((prev) => {
       const next = prev.map((c) =>
         c._id === citaId ? { ...c, estado: nuevoEstado } : c
@@ -334,6 +430,30 @@ export default function VisitsPage() {
       saveCitasToStorage(next);
       return next;
     });
+
+    // 2) Sincronizar con el backend para que AgendaPage lo vea también
+    try {
+      const url = `${CITAS_API_URL}/${encodeURIComponent(citaId)}/estado`;
+
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado: nuevoEstado }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        console.warn(
+          "[citas] fallo al actualizar estado en backend:",
+          res.status,
+          data
+        );
+      } else {
+        console.log("[citas] estado actualizado en backend:", data);
+      }
+    } catch (err) {
+      console.warn("[citas] error de red al actualizar estado:", err);
+    }
   }
 
   // ------- Export helpers -------
@@ -478,16 +598,18 @@ export default function VisitsPage() {
         </div>
 
         <div className="flex flex-row gap-3 items-center">
+          {/* Botón principal */}
           <button
             onClick={() => setShowModal(true)}
-            className="btn-neon flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
+            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 text-white font-semibold shadow-lg shadow-sky-900/40 hover:shadow-xl hover:from-sky-400 hover:via-indigo-400 hover:to-fuchsia-400 transition"
           >
             <span className="font-semibold">+ Registrar Visitante</span>
           </button>
 
+          {/* Botón secundario */}
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="btn-neon-alt flex items-center gap-2 text-sm px-3 py-2 rounded-lg"
+            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full border border-sky-400/70 text-sky-100 bg-sky-900/10 hover:bg-sky-700/30 hover:border-sky-300 transition"
           >
             <span className="font-semibold">Agenda de Citas</span> →
           </button>
@@ -524,8 +646,67 @@ export default function VisitsPage() {
         </div>
       </div>
 
+      {/* CONTROLES DE VISTA + BUSCADOR (compartido para citas y visitas) */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        {/* Tabs Citas / Visitas */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-400">Ver:</span>
+          <div className="inline-flex items-center rounded-full bg-neutral-900/60 p-1 border border-cyan-500/40">
+            <button
+              type="button"
+              onClick={() => setViewMode("citas")}
+              className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
+                viewMode === "citas"
+                  ? "bg-cyan-500 text-neutral-900 shadow"
+                  : "text-neutral-300 hover:text-white"
+              }`}
+            >
+              Citas
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("visitas")}
+              className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
+                viewMode === "visitas"
+                  ? "bg-cyan-500 text-neutral-900 shadow"
+                  : "text-neutral-300 hover:text-white"
+              }`}
+            >
+              Visitas
+            </button>
+          </div>
+        </div>
+
+        {/* Buscador y filtro de estado (el buscador aplica a ambas vistas) */}
+        <div className="flex flex-col-reverse md:flex-row md:items-center gap-3 w-full md:w-auto">
+          <div className="flex-1 md:flex-none">
+            <input
+              className="input-fx w-full md:w-[300px]"
+              placeholder="Buscar por nombre, documento, empresa o placa…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {/* Filtro de estado SOLO afecta a la tabla de visitantes */}
+          {viewMode === "visitas" && (
+            <div>
+              <select
+                className="input-fx w-full md:w-[160px]"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="todos">Todos los Estados</option>
+                <option value="Dentro">Dentro</option>
+                <option value="Finalizada">Finalizada</option>
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* BLOQUE: Solicitudes en línea (pre-registro) */}
-      {sortedCitas.length > 0 && (
+      {viewMode === "citas" && filteredCitas.length > 0 && (
         <section className="card-rich p-4 md:p-5 text-sm">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -560,7 +741,7 @@ export default function VisitsPage() {
                 </tr>
               </thead>
               <tbody className="text-neutral-200">
-                {sortedCitas.map((cita) => (
+                {filteredCitas.map((cita) => (
                   <tr
                     key={cita._id}
                     className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
@@ -653,6 +834,16 @@ export default function VisitsPage() {
                     </td>
                   </tr>
                 ))}
+                {filteredCitas.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      className="py-6 text-center text-neutral-500 text-sm"
+                    >
+                      Sin resultados
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -660,132 +851,122 @@ export default function VisitsPage() {
       )}
 
       {/* TABLA VISITANTES */}
-      <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
-          <div className="font-semibold text-neutral-200 text-base">
-            Lista de Visitantes
-          </div>
-
-          <div className="flex flex-col-reverse md:flex-row md:items-center gap-3 w-full md:w-auto">
-            <div className="flex-1 md:flex-none">
-              <input
-                className="input-fx w-full md:w-[300px]"
-                placeholder="Buscar por nombre, documento, empresa o placa…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <select
-                className="input-fx w-full md:w-[160px]"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="todos">Todos los Estados</option>
-                <option value="Dentro">Dentro</option>
-                <option value="Finalizada">Finalizada</option>
-              </select>
+      {viewMode === "visitas" && (
+        <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+            <div className="font-semibold text-neutral-200 text-base">
+              Lista de Visitantes
             </div>
           </div>
-        </div>
 
-        <table className="w-full text-left border-collapse min-w-[1000px]">
-          <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
-            <tr className="[&>th]:py-2 [&>th]:pr-4">
-              <th>Visitante</th>
-              <th>Documento</th>
-              <th>Empresa</th>
-              <th>Empleado</th>
-              <th>Tipo</th>
-              <th>Vehículo</th>
-              <th>Entrada</th>
-              <th>Salida</th>
-              <th>Estado</th>
-              <th className="text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="text-neutral-200">
-            {loading ? (
-              <tr>
-                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
-                  Cargando…
-                </td>
+          <table className="w-full text-left border-collapse min-w-[1000px]">
+            <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
+              <tr className="[&>th]:py-2 [&>th]:pr-4">
+                <th>Visitante</th>
+                <th>Documento</th>
+                <th>Empresa</th>
+                <th>Empleado</th>
+                <th>Tipo</th>
+                <th>Vehículo</th>
+                <th>Entrada</th>
+                <th>Salida</th>
+                <th>Estado</th>
+                <th className="text-right">Acciones</th>
               </tr>
-            ) : filteredVisitors.length === 0 ? (
-              <tr>
-                <td colSpan={10} className="py-6 text-center text-neutral-500 text-sm">
-                  Sin resultados
-                </td>
-              </tr>
-            ) : (
-              filteredVisitors.map((v) => (
-                <tr
-                  key={v.id}
-                  className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
-                >
-                  <td className="font-medium text-neutral-100">
-                    <div>{v.name}</div>
-                  </td>
-                  <td className="text-neutral-400">{v.document}</td>
-                  <td className="text-neutral-200">{v.company}</td>
-                  <td className="text-neutral-200">{v.employee}</td>
-                  <td className="text-neutral-200">{v.kind || "Presencial"}</td>
-                  <td className="text-neutral-200">{v.vehicleSummary}</td>
-                  <td className="text-neutral-200">{v.entry}</td>
-                  <td className="text-neutral-400">{v.exit}</td>
-                  <td>
-                    {v.status === "Dentro" ? (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
-                        Dentro
-                      </span>
-                    ) : (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
-                        Finalizada
-                      </span>
-                    )}
-                  </td>
-                  <td className="text-right">
-                    {v.status === "Dentro" ? (
-                      <button
-                        disabled={savingExit === v.id}
-                        onClick={() => handleExit(v.id)}
-                        className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-700 hover:bg-red-300 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
-                      >
-                        {savingExit === v.id ? "…" : "⏏ Salida"}
-                      </button>
-                    ) : (
-                      <span className="text-neutral-500 text-xs">(cerrada)</span>
-                    )}
+            </thead>
+            <tbody className="text-neutral-200">
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={10}
+                    className="py-6 text-center text-neutral-500 text-sm"
+                  >
+                    Cargando…
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : filteredVisitors.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={10}
+                    className="py-6 text-center text-neutral-500 text-sm"
+                  >
+                    Sin resultados
+                  </td>
+                </tr>
+              ) : (
+                filteredVisitors.map((v) => (
+                  <tr
+                    key={v.id}
+                    className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                  >
+                    <td className="font-medium text-neutral-100">
+                      <div>{v.name}</div>
+                    </td>
+                    <td className="text-neutral-400">{v.document}</td>
+                    <td className="text-neutral-200">{v.company}</td>
+                    <td className="text-neutral-200">{v.employee}</td>
+                    <td className="text-neutral-200">
+                      {v.kind || "Presencial"}
+                    </td>
+                    <td className="text-neutral-200">{v.vehicleSummary}</td>
+                    <td className="text-neutral-200">{v.entry}</td>
+                    <td className="text-neutral-400">{v.exit}</td>
+                    <td>
+                      {v.status === "Dentro" ? (
+                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
+                          Dentro
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
+                          Finalizada
+                        </span>
+                      )}
+                    </td>
+                    <td className="text-right">
+                      {v.status === "Dentro" ? (
+                        <button
+                          disabled={savingExit === v.id}
+                          onClick={() => handleExit(v.id)}
+                          className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-700 hover:bg-red-300 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
+                        >
+                          {savingExit === v.id ? "…" : "⏏ Salida"}
+                        </button>
+                      ) : (
+                        <span className="text-neutral-500 text-xs">
+                          (cerrada)
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
 
-        {/* FOOTER: Export buttons */}
-        <div className="mt-4 flex justify-end gap-3">
-          <button
-            onClick={() => exportExcel(filteredVisitors)}
-            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
-            title="Exportar lista (xlsx)"
-          >
-            Exportar Excel
-          </button>
+          {/* FOOTER: Export buttons */}
+          <div className="mt-4 flex justify-end gap-3">
+            <button
+              onClick={() => exportExcel(filteredVisitors)}
+              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              title="Exportar lista (xlsx)"
+            >
+              Exportar Excel
+            </button>
 
-          <button
-            onClick={() => exportPDF(filteredVisitors)}
-            className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
-            title="Exportar PDF"
-          >
-            Exportar PDF
-          </button>
-        </div>
-      </section>
+            <button
+              onClick={() => exportPDF(filteredVisitors)}
+              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              title="Exportar PDF"
+            >
+              Exportar PDF
+            </button>
+          </div>
+        </section>
+      )}
 
       {showModal && (
         <NewVisitorModal
+          open={showModal}
           onClose={() => setShowModal(false)}
           onSubmit={handleAddVisitor}
         />

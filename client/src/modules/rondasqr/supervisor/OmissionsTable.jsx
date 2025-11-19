@@ -9,15 +9,19 @@ function formatDateTime(value) {
   return d.toLocaleString();
 }
 
+/**
+ * items: array de omisiones
+ * resolveOfficer?: función opcional (registro) => etiqueta de oficial
+ */
 export default function OmissionsTable({ items = [], resolveOfficer }) {
-  const rows = items || [];
+  const rows = Array.isArray(items) ? items : [];
 
   return (
     <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 backdrop-blur shadow-lg">
       <div className="px-4 py-3 border-b border-white/10">
         <h2 className="text-base font-semibold">Omisiones</h2>
         <p className="text-xs text-white/60">
-          Rondas omitidas según los filtros seleccionados
+          Rondas omitidas según los filtros seleccionados.
         </p>
       </div>
 
@@ -48,10 +52,11 @@ export default function OmissionsTable({ items = [], resolveOfficer }) {
                 const ronda = o.roundName || o.round || o.roundId || "—";
                 const punto = o.pointName || o.point || o.pointId || "—";
 
-                // Si ReportsPage nos manda un resolver, lo usamos
+                // Si ReportsPage nos manda un resolver (resolveOfficerLabel), lo usamos
                 const oficial = resolveOfficer
                   ? resolveOfficer(o)
-                  : o.officerName ||
+                  : o.officerLabel ||
+                    o.officerName ||
                     o.guardName ||
                     o.officerEmail ||
                     o.guardEmail ||
