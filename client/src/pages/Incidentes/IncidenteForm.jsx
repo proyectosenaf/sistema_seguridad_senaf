@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import api from "../../lib/api.js";
+import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
 
 export default function IncidenteForm({
   stayOnFinish = false,
@@ -28,7 +29,8 @@ export default function IncidenteForm({
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
-    reportedBy: "",
+    reportedBy: "",          // nombre / etiqueta que verá el supervisor
+    reportedByGuardId: "",   // 👈 opId/guardId seleccionado en el combo
     zone: "",
     priority: "alta",
     status: "abierto",
@@ -39,18 +41,94 @@ export default function IncidenteForm({
   const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef(null);
 
+  // 🧑‍🏭 Guardias para el select "Reportado por"
+  const [guards, setGuards] = useState([]);
+  const [loadingGuards, setLoadingGuards] = useState(false);
+
+  /* ================== helpers guardias ================== */
+  function getGuardLabel(g) {
+    if (!g) return "";
+    return g.email
+      ? `${g.name || "(Sin nombre)"} — ${g.email}`
+      : g.name || "(Sin nombre)";
+  }
+
+  // carga catálogo de guardias desde IAM
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        setLoadingGuards(true);
+        let items = [];
+        if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true);
+          items = r.items || [];
+        } else {
+          // fallback por si no existe listGuards
+          const r = await iamApi.listUsers("");
+          const NS = "https://senaf.local/roles";
+          items = (r.items || [])
+            .filter((u) => {
+              const roles = [
+                ...(Array.isArray(u.roles) ? u.roles : []),
+                ...(Array.isArray(u[NS]) ? u[NS] : []),
+              ].map((x) => String(x).toLowerCase());
+              return (
+                roles.includes("guardia") ||
+                roles.includes("guard") ||
+                roles.includes("rondasqr.guard")
+              );
+            })
+            .map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+              opId: u.opId || u.sub || u.legacyId || String(u._id),
+              active: u.active !== false,
+            }));
+        }
+
+        const normalized = (items || []).map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          opId: u.opId || u.sub || u.legacyId || String(u._id),
+          active: u.active !== false,
+        }));
+
+        if (mounted) setGuards(normalized);
+      } catch (e) {
+        console.warn("[IncidenteForm] listGuards error:", e);
+        if (mounted) setGuards([]);
+      } finally {
+        if (mounted) setLoadingGuards(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   // si viene en modo edición, precargar datos
   useEffect(() => {
     if (!editingIncident) return;
 
-    setForm({
+    setForm((prev) => ({
+      ...prev,
       type: editingIncident.type || "Acceso no autorizado",
       description: editingIncident.description || "",
       reportedBy: editingIncident.reportedBy || "",
+      // tratamos de recuperar guardId/opId si existiera
+      reportedByGuardId:
+        editingIncident.reportedByGuardId ||
+        editingIncident.guardId ||
+        editingIncident.opId ||
+        "",
       zone: editingIncident.zone || "",
       priority: editingIncident.priority || "alta",
       status: editingIncident.status || "abierto",
-    });
+    }));
 
     if (Array.isArray(editingIncident.photosBase64)) {
       setPhotos(editingIncident.photosBase64);
@@ -61,6 +139,17 @@ export default function IncidenteForm({
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+
+  // cambio específico del select de guardia
+  const handleReporterChange = (e) => {
+    const opId = e.target.value;
+    const g = guards.find((x) => String(x.opId) === String(opId));
+    setForm((prev) => ({
+      ...prev,
+      reportedByGuardId: opId,
+      reportedBy: g ? getGuardLabel(g) : "",
+    }));
+  };
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -80,6 +169,7 @@ export default function IncidenteForm({
       type: "Acceso no autorizado",
       description: "",
       reportedBy: "",
+      reportedByGuardId: "",
       zone: "",
       priority: "alta",
       status: "abierto",
@@ -89,10 +179,31 @@ export default function IncidenteForm({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!form.description.trim()) {
+      alert("Describa el incidente.");
+      return;
+    }
+    if (!form.reportedByGuardId) {
+      alert("Seleccione el guardia que reporta el incidente.");
+      return;
+    }
+
     try {
       setSending(true);
+
+      // resolvemos guardia seleccionado para mandar datos ricos al backend
+      const guard = guards.find(
+        (g) => String(g.opId) === String(form.reportedByGuardId)
+      );
+      const guardLabel = guard ? getGuardLabel(guard) : form.reportedBy;
+
       const payload = {
         ...form,
+        reportedBy: guardLabel,                       // texto visible
+        guardId: form.reportedByGuardId || undefined, // 👈 ID opId/guardId
+        guardName: guard?.name || undefined,
+        guardEmail: guard?.email || undefined,
         photosBase64: photos,
         ...(origin ? { origin } : {}),
         ...extraData,
@@ -215,19 +326,31 @@ export default function IncidenteForm({
 
           {/* Reportado / Zona */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Reportado por: SELECT de guardias */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Reportado por
               </label>
-              <input
-                name="reportedBy"
-                value={form.reportedBy}
-                onChange={handleChange}
-                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-                placeholder="Nombre del guardia o responsable"
+              <select
+                name="reportedByGuardId"
+                value={form.reportedByGuardId}
+                onChange={handleReporterChange}
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                 required
-              />
+              >
+                <option value="">
+                  {loadingGuards
+                    ? "Cargando guardias..."
+                    : "Seleccione el guardia que reporta"}
+                </option>
+                {guards.map((g) => (
+                  <option key={g._id || g.opId} value={g.opId}>
+                    {getGuardLabel(g)}
+                  </option>
+                ))}
+              </select>
             </div>
+
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Zona / Ubicación
