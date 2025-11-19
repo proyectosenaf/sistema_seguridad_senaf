@@ -1,3 +1,5 @@
+import { eliminarEmpleado } from "../controllers/acceso.controller.js";
+
 import { Router } from "express";
 import {
   listarEmpleadosVehiculos,
@@ -22,7 +24,7 @@ router.get("/ping", (_req, res) =>
  * Devuelve empleados con sus vehículos (lo que consume Accesos.jsx)
  */
 router.get("/empleados-vehiculos", listarEmpleadosVehiculos);
-
+router.delete("/empleados/:id", eliminarEmpleado);
 /**
  * (Opcional) GET /api/acceso/empleados
  * Para compatibilidad: usa el mismo listado.

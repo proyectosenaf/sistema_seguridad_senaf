@@ -1,4 +1,5 @@
 // server/src/modules/visitas/visita.model.js
+
 import mongoose from "mongoose";
 
 /* Subdocumento para el vehículo del visitante */

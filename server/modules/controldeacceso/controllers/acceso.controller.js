@@ -219,3 +219,21 @@ export async function listarMovimientos(req, res) {
     res.status(500).json({ ok: false, error: err.message });
   }
 }
+// En server/modules/acceso/controllers/acceso.controller.js
+export async function eliminarEmpleado(req, res) {
+  try {
+    const { id } = req.params;
+    // Buscamos y eliminamos al empleado
+    const emp = await Empleado.findByIdAndDelete(id);
+    if (!emp) {
+      return res.status(404).json({ ok: false, error: "Empleado no encontrado" });
+    }
+    // eliminar también sus vehículos registrados
+    await Vehiculo.deleteMany({ empleado: id });
+
+    res.json({ ok: true, item: emp });
+  } catch (err) {
+    console.error("[acceso] eliminarEmpleado", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+}
