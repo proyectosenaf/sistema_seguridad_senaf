@@ -1,4 +1,4 @@
-// server/src/modules/visitas/visitas.routes.js
+// server/modules/visitas/visitas.routes.js
 import { Router } from "express";
 import {
   getVisitas,
@@ -13,7 +13,7 @@ import {
 } from "./visitas.controller.js";
 
 // Middleware de horario de atención (8:00–12:00 y 13:00–17:00)
-//import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+// import { enforceBusinessHours } from "../../middlewares/businessHours.js";
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
 
 const router = Router();
