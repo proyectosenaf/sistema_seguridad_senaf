@@ -528,7 +528,9 @@ router.get("/points/:id/qr.pdf", async (req, res, next) => {
     );
     doc.pipe(res);
 
-    doc.fontSize(20).text("Código QR – Ronda de Vigilancia", { align: "center" });
+    doc.fontSize(20).text("Código QR – Ronda de Vigilancia", {
+      align: "center",
+    });
     doc.moveDown();
     doc
       .fontSize(14)
@@ -536,9 +538,7 @@ router.get("/points/:id/qr.pdf", async (req, res, next) => {
     doc
       .fontSize(14)
       .text(`Ronda: ${point.roundId?.name || ""}`, { align: "center" });
-    doc
-      .fontSize(14)
-      .text(`Punto: ${point.name || ""}`, { align: "center" });
+    doc.fontSize(14).text(`Punto: ${point.name || ""}`, { align: "center" });
     doc.moveDown(2);
 
     const imgSize = 250;
@@ -547,10 +547,7 @@ router.get("/points/:id/qr.pdf", async (req, res, next) => {
     doc.image(pngBuffer, x, y, { width: imgSize, height: imgSize });
 
     doc.moveDown(6);
-    doc
-      .fontSize(12)
-      .text(`Código: ${text}`, { align: "center" })
-      .moveDown();
+    doc.fontSize(12).text(`Código: ${text}`, { align: "center" }).moveDown();
 
     doc
       .fontSize(10)
@@ -571,17 +568,58 @@ router.post("/points/:id/rotate-qr", async (req, res, next) => {
     const id = toId(req.params.id);
     if (!id) return res.status(400).json({ error: "id inválido" });
 
-    // usamos el helper estático del modelo
-    const result = await RqPoint.rotateQr(id);
-    // devolvemos el punto actualizado (sin qrSecret)
+    // 1) Si el modelo tiene helper estático rotateQr, lo usamos.
+    if (typeof RqPoint.rotateQr === "function") {
+      const r = await RqPoint.rotateQr(id);
+      const pointDoc = r.point || r.item || r;
+      const item =
+        pointDoc && typeof pointDoc.toJSON === "function"
+          ? pointDoc.toJSON()
+          : pointDoc;
+      return res.json({
+        item,
+        oldQr: r.oldQr ?? null,
+      });
+    }
+
+    // 2) Fallback: rotación local aquí en la ruta
+    const point = await RqPoint.findById(id);
+    if (!point) return res.status(404).json({ error: "punto no encontrado" });
+
+    const oldQr = point.qr || null;
+
+    let saved = false;
+    let attempts = 0;
+    let lastError = null;
+
+    while (!saved && attempts < 5) {
+      attempts += 1;
+      const newQr = `RQ-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)
+        .toUpperCase()}`;
+      point.qr = newQr;
+
+      try {
+        await point.save();
+        saved = true;
+      } catch (err) {
+        lastError = err;
+        // choque de índice único (roundId+qr): reintentar
+        if (err.code === 11000) continue;
+        throw err;
+      }
+    }
+
+    if (!saved) {
+      throw lastError || new Error("No se pudo rotar el QR del punto.");
+    }
+
     res.json({
-      item: {
-        ...result.point.toJSON(),
-      },
-      oldQr: result.oldQr,
+      item: point.toJSON(),
+      oldQr,
     });
   } catch (e) {
-    // si el static lanzó un error 404, respetarlo
     if (e.status) {
       return res.status(e.status).json({ error: e.message });
     }
@@ -589,7 +627,7 @@ router.post("/points/:id/rotate-qr", async (req, res, next) => {
   }
 });
 
-// Repositorio de QRs por sitio/ronda
+// Repositorio de QRs por sitio/ronda (JSON)
 router.get("/qr-repo", async (req, res, next) => {
   try {
     const { siteId, roundId } = req.query;
@@ -637,11 +675,6 @@ router.get("/qr-repo", async (req, res, next) => {
 
 /* =================================================================
    PLANS
-   GET    /admin/plans?siteId=&roundId=&shift=
-   POST   /admin/plans               (upsert por siteId+roundId+shift)
-   PUT    /admin/plans/:id
-   DELETE /admin/plans               (por query: siteId+roundId+shift)
-   DELETE /admin/plans/:id           (por id)
 ================================================================= */
 
 // GET: si viene siteId+roundId (y opcional shift) -> { item }, si no -> { items }

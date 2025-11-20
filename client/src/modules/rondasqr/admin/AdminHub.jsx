@@ -242,9 +242,9 @@ function PointsTab() {
   const [siteId, setSiteId] = useState("");
   const [roundId, setRoundId] = useState("");
   const [name, setName] = useState("");
-  const [qr, setQr] = useState("");
   const [order, setOrder] = useState(0);
 
+  // cargar sitios
   useEffect(() => {
     (async () => {
       const res = await api.listSites();
@@ -252,6 +252,7 @@ function PointsTab() {
     })();
   }, []);
 
+  // cargar rondas + puntos cuando cambia sitio/ronda
   useEffect(() => {
     (async () => {
       if (!siteId) {
@@ -269,100 +270,187 @@ function PointsTab() {
     })();
   }, [siteId, roundId]);
 
+  async function reloadPoints() {
+    if (!siteId) return;
+    const p = await api.listPoints({ siteId, roundId: roundId || undefined });
+    setRows(p?.items || []);
+  }
+
   async function add() {
-    if (!siteId || !roundId || !name.trim() || !qr.trim()) return;
+    if (!siteId || !roundId || !name.trim()) return;
     await api.createPoint({
       siteId,
       roundId,
       name,
-      qr,
+      // QR no se envía: lo genera el backend automáticamente
       order: Number(order) || 0,
     });
     setName("");
-    setQr("");
     setOrder(0);
-    const p = await api.listPoints({ siteId, roundId });
-    setRows(p?.items || []);
+    reloadPoints();
   }
+
   async function del(id) {
     await api.deletePoint(id);
-    const p = await api.listPoints({ siteId, roundId });
-    setRows(p?.items || []);
+    reloadPoints();
+  }
+
+  async function rotateQr(id) {
+    if (!window.confirm("¿Rotar el código QR de este punto?")) return;
+    try {
+      if (typeof api.rotatePointQr === "function") {
+        // Ruta específica de rotación si existe en tu API
+        await api.rotatePointQr(id);
+      } else {
+        // Fallback: actualizamos el punto dejando qr indefinido
+        // para que el backend le asigne uno nuevo.
+        await api.updatePoint(id, { qr: undefined });
+      }
+      await reloadPoints();
+    } catch (e) {
+      console.error("Error al rotar QR", e);
+      alert("No se pudo rotar el QR de este punto.");
+    }
+  }
+
+  function openQrRepo() {
+    if (!siteId || !roundId) {
+      alert("Seleccione un sitio y una ronda para ver el repositorio de QRs.");
+      return;
+    }
+    if (typeof api.qrRepoUrl !== "function") {
+      alert(
+        "La función qrRepoUrl aún no está disponible en la API. Hay que implementarla en rondasqrApi."
+      );
+      return;
+    }
+    const url = api.qrRepoUrl({ siteId, roundId });
+    if (!url) return;
+    window.open(url, "_blank", "noopener");
+  }
+
+  function pointQrPngUrl(id) {
+    if (typeof api.pointQrPngUrl === "function") {
+      return api.pointQrPngUrl(id);
+    }
+    return null;
   }
 
   return (
     <Section title="Puntos">
-      <div className="grid gap-3 items-end grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="min-w-0">
-          <select
-            value={siteId}
-            onChange={(e) => setSiteId(e.target.value)}
-            className={selectBase}
-          >
-            <option value="">-- Sitio --</option>
-            {sites.map((s) => (
-              <option key={s._id} value={s._id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+      {/* Filtros + formulario + botón repositorio */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="grid gap-3 items-end grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 flex-1">
+          <div className="min-w-0">
+            <select
+              value={siteId}
+              onChange={(e) => setSiteId(e.target.value)}
+              className={selectBase}
+            >
+              <option value="">-- Sitio --</option>
+              {sites.map((s) => (
+                <option key={s._id} value={s._id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="min-w-0">
+            <select
+              value={roundId}
+              onChange={(e) => setRoundId(e.target.value)}
+              className={selectBase}
+            >
+              <option value="">-- Ronda --</option>
+              {rounds.map((r) => (
+                <option key={r._id} value={r._id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:col-span-2 lg:col-span-1">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nombre punto"
+              className={inputBase}
+            />
+
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={order}
+                onChange={(e) => setOrder(e.target.value)}
+                placeholder="Orden"
+                className={inputBase + " w-28"}
+              />
+              <button onClick={add} className={btn + " shrink-0"}>
+                Agregar
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="min-w-0">
-          <select
-            value={roundId}
-            onChange={(e) => setRoundId(e.target.value)}
-            className={selectBase}
+        {/* Botón repositorio QR */}
+        <div className="flex lg:ml-4">
+          <button
+            onClick={openQrRepo}
+            className={
+              btn +
+              " bg-gradient-to-r from-indigo-500 to-cyan-500 whitespace-nowrap"
+            }
           >
-            <option value="">-- Ronda --</option>
-            {rounds.map((r) => (
-              <option key={r._id} value={r._id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Nombre punto"
-          className={inputBase}
-        />
-        <input
-          value={qr}
-          onChange={(e) => setQr(e.target.value)}
-          placeholder="QR"
-          className={inputBase}
-        />
-
-        <div className="flex gap-2">
-          <input
-            type="number"
-            value={order}
-            onChange={(e) => setOrder(e.target.value)}
-            placeholder="Orden"
-            className={inputBase + " w-28"}
-          />
-          <button onClick={add} className={btn + " shrink-0"}>
-            Agregar
+            Repositorio de códigos QR
           </button>
         </div>
       </div>
 
       <Table cols={["Orden", "Punto", "QR", "Acciones"]}>
-        {rows.map((r) => (
-          <tr key={r._id} className="border-b border-slate-200 dark:border-white/10">
-            <td className="px-3 py-2">{r.order}</td>
-            <td className="px-3 py-2">{r.name}</td>
-            <td className="px-3 py-2">{r.qr}</td>
-            <td className="px-3 py-2">
-              <button onClick={() => del(r._id)} className={btnDanger}>
-                Eliminar
-              </button>
-            </td>
-          </tr>
-        ))}
+        {rows.map((r) => {
+          const qrUrl = pointQrPngUrl(r._id);
+          return (
+            <tr
+              key={r._id}
+              className="border-b border-slate-200 dark:border-white/10"
+            >
+              <td className="px-3 py-2">{r.order}</td>
+              <td className="px-3 py-2">{r.name}</td>
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <code className="text-xs bg-slate-100 dark:bg-white/10 px-2 py-1 rounded">
+                    {r.qr || "—"}
+                  </code>
+                  {qrUrl && r.qr && (
+                    <a
+                      href={qrUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs px-2 py-1 rounded-lg bg-slate-800 text-white hover:bg-slate-700"
+                    >
+                      Etiqueta
+                    </a>
+                  )}
+                </div>
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => rotateQr(r._id)}
+                    className={btnSmall}
+                  >
+                    Rotar QR
+                  </button>
+                  <button onClick={() => del(r._id)} className={btnDanger}>
+                    Eliminar
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
       </Table>
     </Section>
   );
@@ -576,7 +664,10 @@ function PlansTab() {
             <table className="w-full text-sm">
               <tbody>
                 {points.map((p) => (
-                  <tr key={p._id} className="border-b border-slate-200/40 dark:border-white/5">
+                  <tr
+                    key={p._id}
+                    className="border-b border-slate-200/40 dark:border-white/5"
+                  >
                     <td className="px-3 py-2 w-10 text-xs opacity-50">
                       {typeof p.order === "number" ? p.order : "-"}
                     </td>
@@ -608,7 +699,9 @@ function PlansTab() {
         <div className="bg-slate-950/5 dark:bg-white/5 rounded-xl border border-slate-200/50 dark:border-white/10 overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-200/50 dark:border-white/5 flex items-center justify-between">
             <h4 className="font-semibold">Plan actual (orden)</h4>
-            <span className="text-xs opacity-60">{planIds.length} en el orden</span>
+            <span className="text-xs opacity-60">
+              {planIds.length} en el orden
+            </span>
           </div>
           <div className="max-h-[360px] overflow-auto">
             <table className="w-full text-sm">
@@ -616,10 +709,15 @@ function PlansTab() {
                 {planIds.map((id, idx) => {
                   const p = points.find((x) => x._id === id);
                   return (
-                    <tr key={id} className="border-b border-slate-200/40 dark:border-white/5">
-                      <td className="px-3 py-2 w-10 text-xs opacity-50">{idx + 1}</td>
+                    <tr
+                      key={id}
+                      className="border-b border-slate-200/40 dark:border-white/5"
+                    >
+                      <td className="px-3 py-2 w-10 text-xs opacity-50">
+                        {idx + 1}
+                      </td>
                       <td className="px-3 py-2">{p?.name || id}</td>
-                      <td className="px-1 py-2 w-24 text-right space-x-1">
+                      <td className="px-3 py-2 w-24 text-right space-x-1">
                         <button
                           onClick={() => moveUp(idx)}
                           className="inline-flex items-center justify-center w-7 h-7 rounded bg-slate-200/70 dark:bg-white/10"
@@ -649,7 +747,8 @@ function PlansTab() {
                 {!planIds.length && (
                   <tr>
                     <td className="px-3 py-3 text-sm opacity-60" colSpan={4}>
-                      No hay puntos en este plan. Añada desde la columna izquierda.
+                      No hay puntos en este plan. Añada desde la columna
+                      izquierda.
                     </td>
                   </tr>
                 )}
@@ -665,7 +764,8 @@ function PlansTab() {
           Plan guardado: <strong>{savedCount}</strong> puntos.
         </span>
         <span className="text-xs opacity-60">
-          Use “Guardar plan” para aplicar cambios / “Eliminar plan” para dejarlo vacío.
+          Use “Guardar plan” para aplicar cambios / “Eliminar plan” para
+          dejarlo vacío.
         </span>
       </div>
     </Section>
