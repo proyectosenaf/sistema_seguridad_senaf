@@ -60,13 +60,22 @@ const VEHICLE_MODELS_BASE_BY_BRAND = {
 const START_YEAR = 2000;
 const CURRENT_YEAR = new Date().getFullYear();
 
+// Longitudes / límites
+const DNI_DIGITS = 13; // 0801YYYYXXXXX
+const PHONE_MIN_DIGITS = 8;
+const NAME_MAX = 40;
+const COMPANY_MAX = 20;
+const EMP_MAX = 20;
+const REASON_MAX = 20;
+const EMAIL_MAX = 25;
+
 export default function NewVisitorModal({ onClose, onSubmit }) {
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
   const [company, setCompany] = useState("");
   const [employee, setEmployee] = useState("");
   const [reason, setReason] = useState("");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState("+504 ");
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -74,14 +83,16 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
   const [hasVehicle, setHasVehicle] = useState(false);
   const [vehicleBrand, setVehicleBrand] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
-  const [vehicleModelCustom, setVehicleModelCustom] = useState(""); // para modelos/años < 2000 o especiales
+  const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
+
+  // Errores de validación
+  const [errors, setErrors] = useState({});
 
   const firstInputRef = useRef(null);
 
-  // ===== Helpers de horario de atención (MODO PRUEBAS) =====
+  // ===== Horario (modo pruebas) =====
   function isWithinBusinessHours(date) {
-    // En modo pruebas: se permite registrar siempre que la fecha sea válida
     if (!(date instanceof Date) || isNaN(date.getTime())) return false;
     return true;
   }
@@ -89,7 +100,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
   function businessHoursMessage() {
     return "Modo pruebas: actualmente se permite registrar visitas en cualquier horario.";
   }
-  // ============================================================
+  // ==================================
 
   useEffect(() => {
     firstInputRef.current?.focus();
@@ -103,29 +114,240 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  // ---------- Handlers de cambio + limpieza de errores ----------
+
+  const handleNameChange = (e) => {
+    // Solo letras (con tildes) y espacios, máx 40
+    let val = e.target.value
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+      .slice(0, NAME_MAX);
+    setName(val);
+    setErrors((prev) => ({ ...prev, name: undefined }));
+  };
+
+  const handleDocumentChange = (e) => {
+    // Solo dígitos, 13 en total, formateados como 0801-YYYY-XXXXX
+    const digits = e.target.value.replace(/\D/g, "").slice(0, DNI_DIGITS);
+
+    let formatted = digits;
+    if (digits.length > 4 && digits.length <= 8) {
+      formatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    } else if (digits.length > 8) {
+      formatted = `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(
+        8
+      )}`;
+    }
+
+    setDocument(formatted);
+    setErrors((prev) => ({ ...prev, document: undefined }));
+  };
+
+  const handleCompanyChange = (e) => {
+    // Solo letras y espacios, máx 20
+    let val = e.target.value
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+      .slice(0, COMPANY_MAX);
+    setCompany(val);
+    setErrors((prev) => ({ ...prev, company: undefined }));
+  };
+
+  const handleEmployeeChange = (e) => {
+    // Solo letras y espacios, máx 20
+    let val = e.target.value
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+      .slice(0, EMP_MAX);
+    setEmployee(val);
+    setErrors((prev) => ({ ...prev, employee: undefined }));
+  };
+
+  const handleReasonChange = (e) => {
+    // Solo letras y espacios, máx 20
+    let val = e.target.value
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+      .slice(0, REASON_MAX);
+    setReason(val);
+    setErrors((prev) => ({ ...prev, reason: undefined }));
+  };
+
+  const handlePhoneChange = (e) => {
+    // Mantener prefijo +504 y formatear +504 9999-9999
+    let input = e.target.value;
+
+    if (input.startsWith("+504")) {
+      input = input.slice(4).trimStart();
+    }
+
+    const digits = input.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
+
+    let localFormatted = "";
+    if (digits.length <= 4) {
+      localFormatted = digits;
+    } else {
+      localFormatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    }
+
+    const formatted = `+504 ${localFormatted}`;
+    setPhone(formatted);
+    setErrors((prev) => ({ ...prev, phone: undefined }));
+  };
+
+  const handleEmailChange = (e) => {
+    // Alfanumérico + . _ - y @, sin espacios, máx 25
+    let val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
+    setEmail(val);
+    setErrors((prev) => ({ ...prev, email: undefined }));
+  };
+
+  const handleVehicleBrandChange = (e) => {
+    const val = e.target.value;
+    setVehicleBrand(val);
+    setVehicleModel("");
+    setVehicleModelCustom("");
+    setErrors((prev) => ({
+      ...prev,
+      vehicleBrand: undefined,
+      vehicleModel: undefined,
+    }));
+  };
+
+  const handleVehicleModelChange = (e) => {
+    const val = e.target.value;
+    setVehicleModel(val);
+    if (val !== "__customBefore2000") {
+      setVehicleModelCustom("");
+    }
+    setErrors((prev) => ({ ...prev, vehicleModel: undefined }));
+  };
+
+  const handleVehicleModelCustomChange = (e) => {
+    setVehicleModelCustom(e.target.value);
+    setErrors((prev) => ({ ...prev, vehicleModel: undefined }));
+  };
+
+  const handleVehiclePlateChange = (e) => {
+    // Alfanumérico mayúscula y guion, máx 8 (ej. HAA-1234)
+    const val = e.target.value
+      .toUpperCase()
+      .replace(/[^A-Z0-9-]/g, "")
+      .slice(0, 8);
+    setVehiclePlate(val);
+    setErrors((prev) => ({ ...prev, vehiclePlate: undefined }));
+  };
+
+  // ---------- Validación del formulario ----------
+
+  function validateForm() {
+    const newErrors = {};
+
+    // Nombre: obligatorio, máx 40, dos nombres y al menos un apellido
+    const trimmedName = name.trim();
+    const parts = trimmedName.split(/\s+/).filter(Boolean);
+    if (!trimmedName) {
+      newErrors.name = "El nombre es obligatorio.";
+    } else if (trimmedName.length > NAME_MAX) {
+      newErrors.name = `El nombre no debe superar ${NAME_MAX} caracteres.`;
+    } else if (parts.length < 3) {
+      newErrors.name =
+        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+    }
+
+    // DNI: obligatorio y completo (13 dígitos)
+    const dniDigits = document.replace(/\D/g, "");
+    if (!dniDigits) {
+      newErrors.document = "El DNI es obligatorio.";
+    } else if (dniDigits.length !== DNI_DIGITS) {
+      newErrors.document = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
+    }
+
+    // Empresa: opcional, pero si la escribe máx 20
+    if (company.trim() && company.trim().length > COMPANY_MAX) {
+      newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+    }
+
+    // Empleado anfitrión: obligatorio, máx 20
+    const trimmedEmp = employee.trim();
+    if (!trimmedEmp) {
+      newErrors.employee = "El empleado anfitrión es obligatorio.";
+    } else if (trimmedEmp.length > EMP_MAX) {
+      newErrors.employee = `El empleado no debe superar ${EMP_MAX} caracteres.`;
+    }
+
+    // Motivo: obligatorio, máx 20
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      newErrors.reason = "El motivo es obligatorio.";
+    } else if (trimmedReason.length > REASON_MAX) {
+      newErrors.reason = `El motivo no debe superar ${REASON_MAX} caracteres.`;
+    }
+
+    // Teléfono: opcional, pero si se llena debe tener 8 dígitos después de +504
+    const phoneTrimmed = phone.trim();
+    if (phoneTrimmed && phoneTrimmed !== "+504") {
+      const digits = phone.replace(/\D/g, "");
+      const localDigits = digits.replace(/^504/, "");
+      if (localDigits.length < PHONE_MIN_DIGITS) {
+        newErrors.phone =
+          "El teléfono debe tener 8 dígitos después de +504.";
+      }
+    }
+
+    // Correo: opcional, pero si se llena -> máx 25, con @ y termina en .com o .org
+    if (email.trim()) {
+      if (email.length > EMAIL_MAX) {
+        newErrors.email = `El correo no debe superar ${EMAIL_MAX} caracteres.`;
+      } else if (!email.includes("@")) {
+        newErrors.email = "El correo debe incluir el símbolo @.";
+      } else {
+        const emailRegex =
+          /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        if (!emailRegex.test(email.trim())) {
+          newErrors.email =
+            "El correo debe tener un dominio válido y terminar en .com o .org.";
+        }
+      }
+    }
+
+    // Vehículo (si aplica)
+    const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+
+    if (hasVehicle) {
+      if (!vehicleBrand.trim()) {
+        newErrors.vehicleBrand = "La marca es obligatoria.";
+      }
+      if (!finalModel) {
+        newErrors.vehicleModel = "El modelo es obligatorio.";
+      }
+      const plate = vehiclePlate.trim();
+      if (!plate) {
+        newErrors.vehiclePlate = "La placa es obligatoria.";
+      } else {
+        // Placa: 5–8 caracteres, al menos una letra y un número
+        const plateRegex = /^(?=.*[A-Z])(?=.*\d)[A-Z0-9-]{5,8}$/;
+        if (!plateRegex.test(plate)) {
+          newErrors.vehiclePlate =
+            "Placa inválida. Use letras mayúsculas, números y guion (5 a 8 caracteres).";
+        }
+      }
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }
+
+  // ---------- Submit ----------
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (submitting) return;
+
+    if (!validateForm()) return;
+
     setSubmitting(true);
 
     try {
-      if (!name.trim() || !document.trim() || !employee.trim() || !reason.trim()) {
-        alert("Completa los campos obligatorios.");
-        setSubmitting(false);
-        return;
-      }
-
-      let finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
-
-      if (hasVehicle) {
-        if (!vehicleBrand.trim() || !finalModel || !vehiclePlate.trim()) {
-          alert("Completa los datos del vehículo (marca, modelo y placa).");
-          setSubmitting(false);
-          return;
-        }
-      }
-
+      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
       const now = new Date();
+
       if (!isWithinBusinessHours(now)) {
         alert(
           `No se puede registrar la visita fuera del horario permitido.\n${businessHoursMessage()}`
@@ -145,7 +367,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         vehicle: hasVehicle
           ? {
               brand: vehicleBrand.trim(),
-              model: finalModel, // ej. "Corolla 2005" o lo que escriba
+              model: finalModel,
               plate: vehiclePlate.trim(),
             }
           : null,
@@ -162,7 +384,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     if (e.target === e.currentTarget) onClose?.();
   }
 
-  // Modelos (con año 2000–actual) correspondientes a la marca seleccionada
+  // Modelos según marca seleccionada
   const modelsForBrand =
     vehicleBrand && VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
       ? VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand].flatMap((base) => {
@@ -206,9 +428,8 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
           </button>
         </div>
 
-        <div className="mb-3 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
-          {businessHoursMessage()}
-        </div>
+        {/* 🔻 Banner eliminado */}
+        {/* Antes aquí estaba el div con businessHoursMessage() */}
 
         <form
           onSubmit={handleSubmit}
@@ -220,22 +441,28 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
               ref={firstInputRef}
               className="input-fx w-full"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. María López"
+              onChange={handleNameChange}
+              placeholder="Ej. María Fernanda López Pérez"
               required
             />
+            {errors.name && (
+              <p className="text-xs text-red-400 mt-1">{errors.name}</p>
+            )}
           </div>
 
           <div>
-            <label className="text-xs text-neutral-400">Documento</label>
+            <label className="text-xs text-neutral-400">DNI</label>
             <input
               className="input-fx w-full"
               value={document}
-              onChange={(e) => setDocument(e.target.value)}
+              onChange={handleDocumentChange}
               placeholder="0801-YYYY-XXXXX"
               required
               inputMode="numeric"
             />
+            {errors.document && (
+              <p className="text-xs text-red-400 mt-1">{errors.document}</p>
+            )}
           </div>
 
           <div>
@@ -243,20 +470,28 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             <input
               className="input-fx w-full"
               value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder="SENAF / Munily S.A."
+              onChange={handleCompanyChange}
+              placeholder="SENAF / Munily"
             />
+            {errors.company && (
+              <p className="text-xs text-red-400 mt-1">{errors.company}</p>
+            )}
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs text-neutral-400">Empleado anfitrión</label>
+            <label className="text-xs text-neutral-400">
+              Empleado anfitrión
+            </label>
             <input
               className="input-fx w-full"
               value={employee}
-              onChange={(e) => setEmployee(e.target.value)}
+              onChange={handleEmployeeChange}
               placeholder="Nombre de la persona que visita"
               required
             />
+            {errors.employee && (
+              <p className="text-xs text-red-400 mt-1">{errors.employee}</p>
+            )}
           </div>
 
           <div className="md:col-span-2">
@@ -264,10 +499,13 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             <input
               className="input-fx w-full"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={handleReasonChange}
               placeholder="Reunión / Entrega / Mantenimiento…"
               required
             />
+            {errors.reason && (
+              <p className="text-xs text-red-400 mt-1">{errors.reason}</p>
+            )}
           </div>
 
           <div>
@@ -275,10 +513,14 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             <input
               className="input-fx w-full"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={handlePhoneChange}
               placeholder="+504 9999-9999"
               type="tel"
+              inputMode="tel"
             />
+            {errors.phone && (
+              <p className="text-xs text-red-400 mt-1">{errors.phone}</p>
+            )}
           </div>
 
           <div>
@@ -287,9 +529,12 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
               type="email"
               className="input-fx w-full"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={handleEmailChange}
               placeholder="correo@empresa.com"
             />
+            {errors.email && (
+              <p className="text-xs text-red-400 mt-1">{errors.email}</p>
+            )}
           </div>
 
           {/* ================== SECCIÓN VEHÍCULO ================== */}
@@ -308,6 +553,12 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                     setVehicleModel("");
                     setVehicleModelCustom("");
                     setVehiclePlate("");
+                    setErrors((prev) => ({
+                      ...prev,
+                      vehicleBrand: undefined,
+                      vehicleModel: undefined,
+                      vehiclePlate: undefined,
+                    }));
                   }
                 }}
               />
@@ -329,12 +580,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                   <select
                     className="input-fx w-full"
                     value={vehicleBrand}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setVehicleBrand(val);
-                      setVehicleModel("");
-                      setVehicleModelCustom("");
-                    }}
+                    onChange={handleVehicleBrandChange}
                   >
                     <option value="">Seleccione marca…</option>
                     {VEHICLE_BRANDS.map((b) => (
@@ -343,9 +589,14 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                       </option>
                     ))}
                   </select>
+                  {errors.vehicleBrand && (
+                    <p className="text-xs text-red-400 mt-1">
+                      {errors.vehicleBrand}
+                    </p>
+                  )}
                 </div>
 
-                {/* Modelo (2000–actual o manual para <2000) */}
+                {/* Modelo */}
                 <div>
                   <label className="text-xs text-neutral-400">
                     Modelo <span className="text-red-400">*</span>
@@ -353,13 +604,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                   <select
                     className="input-fx w-full"
                     value={vehicleModel}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setVehicleModel(val);
-                      if (val !== "__customBefore2000") {
-                        setVehicleModelCustom("");
-                      }
-                    }}
+                    onChange={handleVehicleModelChange}
                     disabled={!vehicleBrand || vehicleBrand === "Otra"}
                   >
                     <option value="">Seleccione modelo (año ≥ 2000)…</option>
@@ -373,14 +618,18 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                     </option>
                   </select>
 
-                  {/* Input manual: marca "Otra" o año < 2000 */}
                   {showCustomModelInput && (
                     <input
                       className="input-fx w-full mt-2"
                       value={vehicleModelCustom}
-                      onChange={(e) => setVehicleModelCustom(e.target.value)}
+                      onChange={handleVehicleModelCustomChange}
                       placeholder="Escriba modelo y año (ej. Corolla 1998)"
                     />
+                  )}
+                  {errors.vehicleModel && (
+                    <p className="text-xs text-red-400 mt-1">
+                      {errors.vehicleModel}
+                    </p>
                   )}
                 </div>
 
@@ -392,9 +641,14 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
                   <input
                     className="input-fx w-full"
                     value={vehiclePlate}
-                    onChange={(e) => setVehiclePlate(e.target.value)}
+                    onChange={handleVehiclePlateChange}
                     placeholder="Ej. HAA-1234"
                   />
+                  {errors.vehiclePlate && (
+                    <p className="text-xs text-red-400 mt-1">
+                      {errors.vehiclePlate}
+                    </p>
+                  )}
                 </div>
               </div>
             )}

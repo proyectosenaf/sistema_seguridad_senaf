@@ -44,7 +44,8 @@ function CitaEstadoPill({ estado }) {
 
   switch (estado) {
     case "autorizada":
-      cls += " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
+      cls +=
+        " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
       break;
     case "denegada":
       cls += " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
@@ -53,10 +54,12 @@ function CitaEstadoPill({ estado }) {
       cls += " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
       break;
     case "en_revision":
-      cls += " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
+      cls +=
+        " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
       break;
     default: // solicitada
-      cls += " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
+      cls +=
+        " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
       break;
   }
 
@@ -384,7 +387,7 @@ export default function VisitsPage() {
       saveToStorage(next); // guardar inmediatamente
       return next;
     });
-    setShowModal(false);
+      setShowModal(false);
   }
 
   // ------- Marcar salida (solo front, si quieres luego lo conectamos al backend) -------
@@ -601,7 +604,7 @@ export default function VisitsPage() {
           {/* Botón principal */}
           <button
             onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 text-white font-semibold shadow-lg shadow-sky-900/40 hover:shadow-xl hover:from-sky-400 hover:via-indigo-400 hover:to-fuchsia-400 transition"
+            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full bg-cyan-500 text-neutral-900 font-semibold shadow hover:bg-cyan-400 transition"
           >
             <span className="font-semibold">+ Registrar Visitante</span>
           </button>

@@ -72,6 +72,15 @@ const VEHICLE_MODELS_BASE_BY_BRAND = {
 const START_YEAR = 2000;
 const CURRENT_YEAR = new Date().getFullYear();
 
+/* ====== Límites y reglas de validación (mismas que NewVisitorModal) ====== */
+const DNI_DIGITS = 13; // 0801YYYYXXXXX
+const PHONE_MIN_DIGITS = 8;
+const NAME_MAX = 40;
+const COMPANY_MAX = 20;
+const EMP_MAX = 20;
+const REASON_MAX = 20;
+const EMAIL_MAX = 25;
+
 /* ================== Storage local para citas ================== */
 const CITA_STORAGE_KEY = "citas_demo"; // reutiliza la misma clave para no perder lo que ya tenías
 
@@ -158,7 +167,7 @@ export default function AgendaPage() {
     motivo: "",
     fecha: "",
     hora: "",
-    telefono: "",
+    telefono: "+504 ",
     correo: "",
   });
   const [errors, setErrors] = useState({});
@@ -175,7 +184,59 @@ export default function AgendaPage() {
 
   function onChange(e) {
     const { name, value } = e.target;
-    setForm((f) => ({ ...f, [name]: value }));
+    let newValue = value;
+
+    // ====== mismas reglas que en NewVisitorModal ======
+    if (name === "visitante") {
+      // Solo letras (con tildes) y espacios, máx 40
+      newValue = value
+        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+        .slice(0, NAME_MAX);
+    } else if (name === "documento") {
+      // DNI con formato 0801-YYYY-XXXXX (13 dígitos)
+      const digits = value.replace(/\D/g, "").slice(0, DNI_DIGITS);
+      if (digits.length <= 4) {
+        newValue = digits;
+      } else if (digits.length <= 8) {
+        newValue = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+      } else {
+        newValue = `${digits.slice(0, 4)}-${digits.slice(
+          4,
+          8
+        )}-${digits.slice(8)}`;
+      }
+    } else if (name === "empresa") {
+      newValue = value
+        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+        .slice(0, COMPANY_MAX);
+    } else if (name === "empleado") {
+      newValue = value
+        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+        .slice(0, EMP_MAX);
+    } else if (name === "motivo") {
+      newValue = value
+        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+        .slice(0, REASON_MAX);
+    } else if (name === "telefono") {
+      // Mantener prefijo +504 y formatear +504 9999-9999
+      let input = value;
+      if (input.startsWith("+504")) {
+        input = input.slice(4).trimStart();
+      }
+      const digits = input.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
+      let localFormatted = "";
+      if (digits.length <= 4) {
+        localFormatted = digits;
+      } else {
+        localFormatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
+      }
+      newValue = `+504 ${localFormatted}`;
+    } else if (name === "correo") {
+      // Sin espacios, máx 25
+      newValue = value.replace(/\s/g, "").slice(0, EMAIL_MAX);
+    }
+
+    setForm((f) => ({ ...f, [name]: newValue }));
     setErrors((err) => ({ ...err, [name]: "" }));
     setOkMsg("");
     setErrorMsg("");
@@ -183,26 +244,98 @@ export default function AgendaPage() {
 
   function validate() {
     const e = {};
-    if (!form.visitante.trim()) e.visitante = "Requerido";
-    if (!form.documento.trim()) e.documento = "Requerido";
-    if (!form.empresa.trim()) e.empresa = "Requerido";
-    if (!form.empleado.trim()) e.empleado = "Requerido";
-    if (!form.motivo.trim()) e.motivo = "Requerido";
+
+    // Visitante: requerido, máx 40, al menos 3 palabras (2 nombres + 1 apellido)
+    const nombre = form.visitante.trim();
+    const nombreParts = nombre.split(/\s+/).filter(Boolean);
+    if (!nombre) {
+      e.visitante = "El nombre es obligatorio.";
+    } else if (nombre.length > NAME_MAX) {
+      e.visitante = `El nombre no debe superar ${NAME_MAX} caracteres.`;
+    } else if (nombreParts.length < 3) {
+      e.visitante =
+        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+    }
+
+    // Documento: DNI completo (13 dígitos)
+    const dniDigits = form.documento.replace(/\D/g, "");
+    if (!dniDigits) {
+      e.documento = "El DNI es obligatorio.";
+    } else if (dniDigits.length !== DNI_DIGITS) {
+      e.documento = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
+    }
+
+    // Empresa: requerida, solo texto, máx 20
+    const empresa = form.empresa.trim();
+    if (!empresa) {
+      e.empresa = "La empresa es obligatoria.";
+    } else if (empresa.length > COMPANY_MAX) {
+      e.empresa = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+    }
+
+    // Empleado a visitar: requerido, solo texto, máx 20
+    const empleado = form.empleado.trim();
+    if (!empleado) {
+      e.empleado = "El empleado a visitar es obligatorio.";
+    } else if (empleado.length > EMP_MAX) {
+      e.empleado = `El empleado no debe superar ${EMP_MAX} caracteres.`;
+    }
+
+    // Motivo: requerido, solo texto, máx 20
+    const motivo = form.motivo.trim();
+    if (!motivo) {
+      e.motivo = "El motivo es obligatorio.";
+    } else if (motivo.length > REASON_MAX) {
+      e.motivo = `El motivo no debe superar ${REASON_MAX} caracteres.`;
+    }
+
     if (!form.fecha) e.fecha = "Requerido";
     if (!form.hora) e.hora = "Requerido";
 
-    if (form.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.correo)) {
-      e.correo = "Correo no válido";
-    }
-    if (form.telefono && !/^[0-9+\-\s()]{7,}$/.test(form.telefono)) {
-      e.telefono = "Teléfono no válido";
+    // Teléfono: opcional, pero si se escribe debe tener 8 dígitos después de +504
+    const phoneTrimmed = form.telefono.trim();
+    if (phoneTrimmed && phoneTrimmed !== "+504") {
+      const digits = form.telefono.replace(/\D/g, "");
+      const localDigits = digits.replace(/^504/, "");
+      if (localDigits.length < PHONE_MIN_DIGITS) {
+        e.telefono =
+          "El teléfono debe tener 8 dígitos después de +504.";
+      }
     }
 
+    // Correo: opcional, máx 25, debe incluir @ y terminar en .com o .org
+    const correo = form.correo.trim();
+    if (correo) {
+      if (correo.length > EMAIL_MAX) {
+        e.correo = `El correo no debe superar ${EMAIL_MAX} caracteres.`;
+      } else if (!correo.includes("@")) {
+        e.correo = "El correo debe incluir el símbolo @.";
+      } else {
+        const emailRegex = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        if (!emailRegex.test(correo)) {
+          e.correo =
+            "El correo debe tener un dominio válido y terminar en .com o .org.";
+        }
+      }
+    }
+
+    // Vehículo (si aplica)
     if (hasVehicle) {
       if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
       const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
       if (!finalModel) e.vehicleModel = "Requerido";
-      if (!vehiclePlate.trim()) e.vehiclePlate = "Requerido";
+
+      const plate = vehiclePlate.trim();
+      if (!plate) {
+        e.vehiclePlate = "Requerido";
+      } else {
+        // Placa: 5–8 caracteres, mayúsculas, al menos una letra y un número
+        const plateRegex = /^(?=.*[A-Z])(?=.*\d)[A-Z0-9-]{5,8}$/;
+        if (!plateRegex.test(plate)) {
+          e.vehiclePlate =
+            "Placa inválida. Use letras mayúsculas, números y guion (5 a 8 caracteres).";
+        }
+      }
     }
 
     setErrors(e);
@@ -328,7 +461,7 @@ export default function AgendaPage() {
         motivo: "",
         fecha: "",
         hora: "",
-        telefono: "",
+        telefono: "+504 ",
         correo: "",
       });
       setHasVehicle(false);
@@ -373,12 +506,16 @@ export default function AgendaPage() {
 
   const [mode, setMode] = useState("day"); // "day" | "month"
   const [month, setMonth] = useState(thisMonth); // YYYY-MM
-  const [items, setItems] = useState([]); // citas ya filtradas
+  const [items, setItems] = useState([]); // citas ya filtradas base
   const [loading, setLoading] = useState(false);
 
   const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD
   const [showMyCitas, setShowMyCitas] = useState(false);
   const [myDocumento, setMyDocumento] = useState("");
+
+  // 🔎 Filtros locales para la vista de citas
+  const [citasSearch, setCitasSearch] = useState("");
+  const [citasEstado, setCitasEstado] = useState("todos"); // solicitada, en_revision, autorizada, denegada, cancelada
 
   async function fetchCitas() {
     setLoading(true);
@@ -494,10 +631,34 @@ export default function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
 
-  // Agrupar por día
+  // 🔎 Aplicar búsqueda (nombre/DNI) + filtro de estado sobre items
+  const filteredItems = useMemo(() => {
+    const search = citasSearch.trim().toLowerCase();
+    const hasSearch = search.length > 0;
+
+    return items.filter((it) => {
+      let ok = true;
+
+      if (hasSearch) {
+        const full = `${it.nombre || ""} ${it.documento || ""}`
+          .toString()
+          .toLowerCase();
+        ok = full.includes(search);
+      }
+
+      if (ok && citasEstado !== "todos") {
+        const estadoBase = it.estado || "solicitada";
+        ok = estadoBase === citasEstado;
+      }
+
+      return ok;
+    });
+  }, [items, citasSearch, citasEstado]);
+
+  // Agrupar por día (usando la lista filtrada)
   const grouped = useMemo(() => {
     const map = new Map();
-    for (const it of items) {
+    for (const it of filteredItems) {
       const key = (it.citaAt || "").slice(0, 10) || todayISO;
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(it);
@@ -510,7 +671,7 @@ export default function AgendaPage() {
     return Array.from(map.entries()).sort(
       (a, b) => new Date(a[0]) - new Date(b[0])
     );
-  }, [items, todayISO]);
+  }, [filteredItems, todayISO]);
 
   /* ===================== Render ===================== */
 
@@ -643,7 +804,7 @@ export default function AgendaPage() {
                   value={form.telefono}
                   onChange={onChange}
                   error={errors.telefono}
-                  placeholder="+504 ..."
+                  placeholder="+504 9999-9999"
                 />
                 <Field
                   type="email"
@@ -806,7 +967,11 @@ export default function AgendaPage() {
                       className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
                       value={vehiclePlate}
                       onChange={(e) => {
-                        setVehiclePlate(e.target.value);
+                        const val = e.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9-]/g, "")
+                          .slice(0, 8);
+                        setVehiclePlate(val);
                         setErrors((prev) => ({ ...prev, vehiclePlate: "" }));
                       }}
                       placeholder="Ej. HAA-1234"
@@ -884,14 +1049,14 @@ export default function AgendaPage() {
               </button>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               {mode === "day" && (
                 <>
                   <input
                     type="date"
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
-                    className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                    className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
                     title="Filtrar por fecha (opcional)"
                   />
                   <label className="flex items-center gap-2 text-xs text-neutral-300">
@@ -911,7 +1076,7 @@ export default function AgendaPage() {
                       placeholder="Documento (ej: 0801...)"
                       value={myDocumento}
                       onChange={(e) => setMyDocumento(e.target.value)}
-                      className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                      className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
                     />
                   )}
                 </>
@@ -922,10 +1087,34 @@ export default function AgendaPage() {
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
-                  className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100"
+                  className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
                   title="Cambiar mes"
                 />
               )}
+
+              {/* 🔎 Buscador de citas (nombre / DNI) */}
+              <input
+                type="text"
+                placeholder="Buscar por nombre o DNI…"
+                value={citasSearch}
+                onChange={(e) => setCitasSearch(e.target.value)}
+                className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm min-w-[180px]"
+              />
+
+              {/* 🎛️ Filtro por estado */}
+              <select
+                value={citasEstado}
+                onChange={(e) => setCitasEstado(e.target.value)}
+                className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
+                title="Filtrar por estado"
+              >
+                <option value="todos">Todos los estados</option>
+                <option value="solicitada">Solicitada</option>
+                <option value="en_revision">En revisión</option>
+                <option value="autorizada">Autorizada</option>
+                <option value="denegada">Denegada</option>
+                <option value="cancelada">Cancelada</option>
+              </select>
 
               <button
                 onClick={fetchCitas}
