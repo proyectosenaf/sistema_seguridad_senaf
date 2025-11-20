@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:8080/api"
-).replace(/\/$/, "");
+import { API as API_BASE } from "../../lib/api.js";
 
 // Normaliza empleados + vehículos desde la API
 function normalizeItems(employeesRaw) {

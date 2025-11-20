@@ -12,13 +12,13 @@ const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
 let API_ROOT = RAW.replace(/\/$/, "");
 
 // 👉 Para Socket.IO necesitamos SOLO el host, SIN /api
-//    - Si API_ROOT termina en "/api" → SOCKET_BASE sin "api"
-//    - Si API_ROOT ya es sólo el host → SOCKET_BASE = API_ROOT
-let SOCKET_BASE = API_ROOT.replace(/\/api\/?$/, "");
+//    - Si API_ROOT termina en "/api" → SOCKET_HOST sin "api"
+//    - Si API_ROOT ya es sólo el host → SOCKET_HOST = API_ROOT
+let SOCKET_HOST = API_ROOT.replace(/\/api\/?$/, "");
 
 // Por si alguien pone accidentalmente "/api/" con más cosas
-if (SOCKET_BASE === API_ROOT && API_ROOT.endsWith("/api")) {
-  SOCKET_BASE = API_ROOT.slice(0, -4);
+if (SOCKET_HOST === API_ROOT && API_ROOT.endsWith("/api")) {
+  SOCKET_HOST = API_ROOT.slice(0, -4);
 }
 
 // 👉 Este es el endpoint base de la API, tipo:
@@ -29,7 +29,9 @@ export const API = API_ROOT;
 // 👉 Para Socket.IO:
 //    http://localhost:4000
 //    https://urchin-app-fuirh.ondigitalocean.app
-export const SOCKET_BASE_URL = SOCKET_BASE;
+// Exportamos con los dos nombres para compatibilidad
+export const SOCKET_BASE = SOCKET_HOST;      // 👈 el que usa tu hook
+export const SOCKET_BASE_URL = SOCKET_HOST;  // 👈 por si algún código viejo lo usa
 
 // Flags de modo dev / auth
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
@@ -101,7 +103,12 @@ api.interceptors.request.use(
     if (token) {
       // Modo normal: JWT real
       config.headers.Authorization = `Bearer ${token}`;
-    } else if (DISABLE_AUTH || FORCE_DEV_API || window.location.hostname === "localhost") {
+    } else if (
+      DISABLE_AUTH ||
+      FORCE_DEV_API ||
+      (typeof window !== "undefined" &&
+        window.location.hostname === "localhost")
+    ) {
       // Modo DEV local: usamos x-user-headers,
       // que el server fusiona con iamDevMerge
       const { email, roles, perms } = getDevIdentity();
