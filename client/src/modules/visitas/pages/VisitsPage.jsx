@@ -48,10 +48,12 @@ function CitaEstadoPill({ estado }) {
         " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
       break;
     case "denegada":
-      cls += " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
+      cls +=
+        " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
       break;
     case "cancelada":
-      cls += " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
+      cls +=
+        " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
       break;
     case "en_revision":
       cls +=
@@ -307,9 +309,9 @@ export default function VisitsPage() {
 
     const vehicleSummary =
       vehicleBrand || vehicleModel || vehiclePlate
-        ? `${vehicleBrand || "N/D"}${vehicleModel ? " " + vehicleModel : ""}${
-            vehiclePlate ? ` (${vehiclePlate})` : ""
-          }`
+        ? `${vehicleBrand || "N/D"}${
+            vehicleModel ? " " + vehicleModel : ""
+          }${vehiclePlate ? ` (${vehiclePlate})` : ""}`
         : "—";
 
     // 🔹 1) Intentar guardar en la BASE DE DATOS
@@ -387,7 +389,7 @@ export default function VisitsPage() {
       saveToStorage(next); // guardar inmediatamente
       return next;
     });
-      setShowModal(false);
+    setShowModal(false);
   }
 
   // ------- Marcar salida (solo front, si quieres luego lo conectamos al backend) -------
@@ -463,7 +465,7 @@ export default function VisitsPage() {
   function buildExportRows(list) {
     return list.map((v) => ({
       Visitante: v.name || "",
-      Documento: v.document || "",
+      DNI: v.document || "",
       Empresa: v.company || "",
       Empleado: v.employee || "",
       // Tipo en exportes
@@ -491,7 +493,11 @@ export default function VisitsPage() {
         headers
           .map((h) => {
             const cell = String(r[h] ?? "");
-            if (cell.includes('"') || cell.includes(",") || cell.includes("\n")) {
+            if (
+              cell.includes('"') ||
+              cell.includes(",") ||
+              cell.includes("\n")
+            ) {
               return `"${cell.replace(/"/g, '""')}"`;
             }
             return cell;
@@ -600,11 +606,12 @@ export default function VisitsPage() {
           </p>
         </div>
 
-        <div className="flex flex-row gap-3 items-center">
-          {/* Botón principal */}
+        {/* 🔹 Botones responsivos (columna en móvil, fila en desktop) */}
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full md:w-auto">
+          {/* Botón principal: estilo similar a los tabs de Ver Citas/Visitas */}
           <button
             onClick={() => setShowModal(true)}
-            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full bg-cyan-500 text-neutral-900 font-semibold shadow hover:bg-cyan-400 transition"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full bg-neutral-900/60 border border-cyan-500/60 text-cyan-100 hover:bg-cyan-500 hover:text-neutral-900 transition"
           >
             <span className="font-semibold">+ Registrar Visitante</span>
           </button>
@@ -612,7 +619,7 @@ export default function VisitsPage() {
           {/* Botón secundario */}
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-full border border-sky-400/70 text-sky-100 bg-sky-900/10 hover:bg-sky-700/30 hover:border-sky-300 transition"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full border border-sky-400/70 text-sky-100 bg-sky-900/10 hover:bg-sky-700/30 hover:border-sky-300 transition"
           >
             <span className="font-semibold">Agenda de Citas</span> →
           </button>
@@ -685,7 +692,7 @@ export default function VisitsPage() {
           <div className="flex-1 md:flex-none">
             <input
               className="input-fx w-full md:w-[300px]"
-              placeholder="Buscar por nombre, documento, empresa o placa…"
+              placeholder="Buscar por nombre, DNI, empresa o placa…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -711,7 +718,7 @@ export default function VisitsPage() {
       {/* BLOQUE: Solicitudes en línea (pre-registro) */}
       {viewMode === "citas" && filteredCitas.length > 0 && (
         <section className="card-rich p-4 md:p-5 text-sm">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
               <div className="font-semibold text-neutral-200 text-base">
                 Solicitudes en línea (pre-registro)
@@ -722,7 +729,7 @@ export default function VisitsPage() {
             </div>
             <button
               onClick={() => navigate("/visitas/agenda")}
-              className="text-xs text-blue-400 hover:underline"
+              className="text-xs text-blue-400 hover:underline self-start md:self-auto"
             >
               Ver agenda completa →
             </button>
@@ -733,7 +740,7 @@ export default function VisitsPage() {
               <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
                 <tr className="[&>th]:py-2 [&>th]:pr-4">
                   <th>Visitante</th>
-                  <th>Documento</th>
+                  <th>DNI</th>
                   <th>Empresa</th>
                   <th>Empleado</th>
                   <th>Motivo</th>
@@ -856,7 +863,7 @@ export default function VisitsPage() {
       {/* TABLA VISITANTES */}
       {viewMode === "visitas" && (
         <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div className="font-semibold text-neutral-200 text-base">
               Lista de Visitantes
             </div>
@@ -866,7 +873,7 @@ export default function VisitsPage() {
             <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
               <tr className="[&>th]:py-2 [&>th]:pr-4">
                 <th>Visitante</th>
-                <th>Documento</th>
+                <th>DNI</th>
                 <th>Empresa</th>
                 <th>Empleado</th>
                 <th>Tipo</th>
@@ -947,7 +954,7 @@ export default function VisitsPage() {
           </table>
 
           {/* FOOTER: Export buttons */}
-          <div className="mt-4 flex justify-end gap-3">
+          <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
             <button
               onClick={() => exportExcel(filteredVisitors)}
               className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"

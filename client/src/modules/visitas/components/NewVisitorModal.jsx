@@ -405,7 +405,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
       onMouseDown={handleBackdrop}
     >
       <div
-        className="w-[95%] max-w-[560px] card-rich p-4 md:p-5"
+        className="w-full max-w-[560px] mx-2 card-rich p-4 md:p-5 max-h-[90vh] overflow-y-auto"
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-visitor-title"
@@ -428,9 +428,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
           </button>
         </div>
 
-        {/* 🔻 Banner eliminado */}
-        {/* Antes aquí estaba el div con businessHoursMessage() */}
-
+        {/* Formulario */}
         <form
           onSubmit={handleSubmit}
           className="grid grid-cols-1 md:grid-cols-2 gap-3"

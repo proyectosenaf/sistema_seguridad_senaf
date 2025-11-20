@@ -676,7 +676,7 @@ export default function AgendaPage() {
   /* ===================== Render ===================== */
 
   return (
-    <div className="layer-content relative z-[1] flex flex-col gap-6">
+    <div className="layer-content relative z-[1] flex flex-col gap-6 pb-10">
       {/* FX */}
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
@@ -982,7 +982,7 @@ export default function AgendaPage() {
             </div>
 
             {/* Acciones */}
-            <div className="md:col-span-2 flex items-center justify-between pt-2">
+            <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div className="text-xs text-neutral-400">
                 Los campos con * son obligatorios
               </div>
