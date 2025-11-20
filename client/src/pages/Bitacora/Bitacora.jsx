@@ -1,5 +1,6 @@
 // src/pages/bitacora/Bitacora.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { rondasqrApi } from "../../modules/rondasqr/api/rondasqrApi.js";
 
 const COMPANY = "SENAF";
 
@@ -217,7 +218,9 @@ async function fetchAccesoAsBitacoraRows() {
         turno: turnoEmp,
         tipo: "Acceso",
         modulo: "Control de Acceso",
-        descripcion: `Registro de empleado ${nombreCompleto || "sin nombre"} (ID: ${
+        descripcion: `Registro de empleado ${
+          nombreCompleto || "sin nombre"
+        } (ID: ${
           id_persona || "N/D"
         }) en el módulo de Control de Acceso. Departamento: ${
           departamento || "N/D"
@@ -275,6 +278,157 @@ async function fetchAccesoAsBitacoraRows() {
     return rowsAcceso;
   } catch (err) {
     console.warn("[bitacora] No se pudieron leer datos de Control de Acceso:", err);
+    return [];
+  }
+}
+
+/* ========= NUEVO: Recopilar datos del módulo de RONDAS (ingreso de datos) ========= */
+/**
+ * Toma los datos de reportes de Rondas QR:
+ * - Marcas detalladas (check-ins)
+ * - Mensajes / alertas (panic, fall, inactivity, etc.)
+ * y los convierte a filas de bitácora.
+ */
+async function fetchRondasAsBitacoraRows() {
+  try {
+    if (!rondasqrApi) return [];
+
+    const hoy = new Date();
+    const hace7 = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000); // últimos 7 días
+    const filtro = {
+      from: hace7.toISOString().slice(0, 10),
+      to: hoy.toISOString().slice(0, 10),
+      siteId: "",
+      roundId: "",
+      officer: "",
+    };
+
+    let summary = null;
+    let detailed = null;
+
+    if (typeof rondasqrApi.getSummary === "function") {
+      summary = await rondasqrApi.getSummary(filtro).catch(() => null);
+    }
+    if (typeof rondasqrApi.getDetailed === "function") {
+      detailed = await rondasqrApi.getDetailed(filtro).catch(() => null);
+    }
+
+    const mensajes = Array.isArray(summary?.messages) ? summary.messages : [];
+    const marcas = Array.isArray(detailed?.items) ? detailed.items : [];
+
+    const rows = [];
+
+    // 🔹 Marcas (check-ins de rondas)
+    for (const m of marcas) {
+      const fecha = m.at || m.ts || m.date || m.createdAt || new Date().toISOString();
+      const fechaDate = new Date(fecha);
+      const turno = turnoFromDate(fechaDate);
+
+      const site = m.site || m.siteName || "Sitio sin nombre";
+      const ronda = m.round || m.roundName || "Ronda sin nombre";
+      const punto = m.point || m.pointName || "Punto sin nombre";
+      const qr = m.qr || m.hardwareId || "";
+      const pasos = typeof m.steps === "number" ? m.steps : null;
+      const msg = m.message || m.text || "";
+
+      const descripcionPartes = [
+        `Marcación de ronda en "${site}" / "${ronda}"`,
+        `Punto: ${punto}`,
+      ];
+      if (qr) descripcionPartes.push(`QR: ${qr}`);
+      if (msg) descripcionPartes.push(`Mensaje: ${msg}`);
+      if (pasos != null) descripcionPartes.push(`Pasos: ${pasos}`);
+
+      const descripcion = descripcionPartes.join(" · ");
+
+      rows.push({
+        id:
+          m._id ||
+          `ronda-mark-${fechaDate.getTime()}-${Math.random()
+            .toString(36)
+            .slice(2)}`,
+        fecha,
+        agente: m.officer || m.officerName || "Guardia",
+        turno,
+        tipo: "Ronda",
+        modulo: "Rondas de Vigilancia",
+        descripcion,
+        prioridad: "Baja",
+        estado: m.status || m.state || "Registrado",
+        nombre: m.officer || m.officerName || "",
+        empresa: "Interno",
+      });
+    }
+
+    // 🔹 Mensajes / Alertas (panic, fall, inactivity, noncompliance, incident, custom)
+    for (const a of mensajes) {
+      const fecha = a.at || a.ts || a.date || a.createdAt || new Date().toISOString();
+      const fechaDate = new Date(fecha);
+      const turno = turnoFromDate(fechaDate);
+
+      const tipoAlerta = (a.type || a.kind || "incident").toLowerCase();
+      let prioridad = "Media";
+      if (tipoAlerta === "panic") prioridad = "Alta";
+      if (tipoAlerta === "fall" || tipoAlerta === "inactivity") prioridad = "Media";
+
+      const site = a.siteName || a.site || "Sitio sin nombre";
+      const ronda = a.roundName || a.round || "";
+      const quien =
+        a.officerName ||
+        a.officerEmail ||
+        a.guardName ||
+        a.guardEmail ||
+        "Guardia";
+
+      const texto = a.text || a.message || a.description || a.detail || "";
+      const gps =
+        a.gps && typeof a.gps.lat === "number" && typeof a.gps.lon === "number"
+          ? `GPS: ${a.gps.lat.toFixed(6)}, ${a.gps.lon.toFixed(6)}`
+          : "";
+
+      const extraInactividad =
+        typeof a.durationMin === "number"
+          ? `Inactividad: ${a.durationMin} min`
+          : "";
+      const extraPasos =
+        typeof a.stepsAtAlert === "number"
+          ? `Pasos al momento: ${a.stepsAtAlert}`
+          : "";
+
+      const partes = [
+        `Alerta de tipo "${tipoAlerta.toUpperCase()}" en "${site}"`,
+      ];
+      if (ronda) partes.push(`Ronda: ${ronda}`);
+      partes.push(`Oficial: ${quien}`);
+      if (texto) partes.push(`Detalle: ${texto}`);
+      if (gps) partes.push(gps);
+      if (extraInactividad) partes.push(extraInactividad);
+      if (extraPasos) partes.push(extraPasos);
+
+      const descripcion = partes.join(" · ");
+
+      rows.push({
+        id:
+          a._id ||
+          `ronda-alert-${fechaDate.getTime()}-${Math.random()
+            .toString(36)
+            .slice(2)}`,
+        fecha,
+        agente: quien,
+        turno,
+        tipo: "Incidente",
+        modulo: "Rondas de Vigilancia",
+        descripcion,
+        prioridad,
+        estado: a.status || a.state || "Abierto",
+        nombre: quien,
+        empresa: site,
+      });
+    }
+
+    return rows;
+  } catch (err) {
+    console.warn("[bitacora] No se pudieron leer datos de Rondas QR:", err);
     return [];
   }
 }
@@ -528,7 +682,7 @@ export default function Bitacora() {
   const [tmpTipo, setTmpTipo] = useState("Todos");
   const [tmpModulo, setTmpModulo] = useState("Todos");
 
-  // 🔄 Cargar registros desde el backend + VISITAS PRESENCIALES + CITAS EN LÍNEA + CONTROL DE ACCESO
+  // 🔄 Cargar registros desde el backend + VISITAS PRESENCIALES + CITAS EN LÍNEA + CONTROL DE ACCESO + RONDAS
   useEffect(() => {
     let isMounted = true;
 
@@ -562,10 +716,13 @@ export default function Bitacora() {
         // 🔹 Recopilar registros de Control de Acceso (empleados y vehículos)
         const accesoRows = await fetchAccesoAsBitacoraRows().catch(() => []);
 
+        // 🔹 Recopilar registros desde Rondas QR (marcas + alertas)
+        const rondasRows = await fetchRondasAsBitacoraRows().catch(() => []);
+
         if (!isMounted) return;
 
         const base = mapped.length ? mapped : [];
-        setRows(base.concat(extraVisitas, accesoRows));
+        setRows(base.concat(extraVisitas, accesoRows, rondasRows));
         setLoadError("");
       } catch (err) {
         console.error("[bitacora] error cargando eventos:", err);
@@ -579,7 +736,10 @@ export default function Bitacora() {
         // También intentamos anexar datos de Control de Acceso
         const accesoRows = await fetchAccesoAsBitacoraRows().catch(() => []);
 
-        setRows(extraVisitas.concat(accesoRows));
+        // Y datos de Rondas QR
+        const rondasRows = await fetchRondasAsBitacoraRows().catch(() => []);
+
+        setRows(extraVisitas.concat(accesoRows, rondasRows));
         setLoadError(
           "No se pudo cargar la bitácora en tiempo real. Se muestran datos de ejemplo."
         );
@@ -653,19 +813,21 @@ export default function Bitacora() {
     });
   }, [rows, fDesde, fHasta, fAgente, fTurno, fTipo, fModulo]);
 
-  // KPIs
-  const visitas = rows.filter((r) => r.tipo === "Visita");
+  // KPIs basados en los registros filtrados
+  const visitas = filtered.filter((r) => r.tipo === "Visita");
   const visitasActivas = visitas.filter((v) => /activo/i.test(v.estado)).length;
-  const incidentes = rows.filter((r) => r.tipo === "Incidente");
+  const incidentes = filtered.filter((r) => r.tipo === "Incidente");
   const incidentesPend = incidentes.filter((v) =>
     /abierto|proceso/i.test(v.estado)
   ).length;
-  const rondas = rows.filter((r) => r.tipo === "Ronda");
+
+  // 🔁 Contador de rondas: cuenta registros de tipo "Ronda" o del módulo "Rondas de Vigilancia"
+  const rondas = filtered.filter(
+    (r) => r.tipo === "Ronda" || r.modulo === "Rondas de Vigilancia"
+  );
   const rondasHechas = rondas.length;
-  const hoy = new Date().toISOString().slice(0, 10);
-  const accesosHoy = rows.filter(
-    (r) => r.tipo === "Acceso" && String(r.fecha).slice(0, 10) === hoy
-  ).length;
+
+  const accesosTotal = filtered.filter((r) => r.tipo === "Acceso").length;
   const incRecientes = [...incidentes]
     .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
     .slice(0, 3);
@@ -730,14 +892,14 @@ export default function Bitacora() {
           const raw = window.localStorage.getItem(VISITAS_STORAGE_KEY);
           if (raw) {
             const arr = JSON.parse(raw) || [];
-            const filtered = arr.filter((v) => {
+            const filteredLocal = arr.filter((v) => {
               const baseId = v.id ? String(v.id) : "";
               const altId = v.entryAt ? String(v.entryAt) : "";
               return baseId !== suffix && altId !== suffix;
             });
             window.localStorage.setItem(
               VISITAS_STORAGE_KEY,
-              JSON.stringify(filtered)
+              JSON.stringify(filteredLocal)
             );
           }
         } else if (idStr.startsWith("cita-")) {
@@ -745,13 +907,13 @@ export default function Bitacora() {
           const raw = window.localStorage.getItem(CITAS_STORAGE_KEY);
           if (raw) {
             const arr = JSON.parse(raw) || [];
-            const filtered = arr.filter((c, idx) => {
+            const filteredLocal = arr.filter((c, idx) => {
               const baseId = c._id || c.id || idx;
               return String(baseId) !== suffix;
             });
             window.localStorage.setItem(
               CITAS_STORAGE_KEY,
-              JSON.stringify(filtered)
+              JSON.stringify(filteredLocal)
             );
           }
         }
@@ -795,9 +957,10 @@ export default function Bitacora() {
           Cargando registros de bitácora…
         </p>
       )}
-      {loadError && !loading && (
+      {/* Mensaje de error oculto: se deja la lógica pero no se renderiza */}
+      {/* {loadError && !loading && (
         <p className="text-xs mb-2 text-amber-500">{loadError}</p>
-      )}
+      )} */}
 
       {/* Tabs (solo Bitácora y Análisis y Métricas) */}
       <div className="grid grid-cols-2 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden mb-4">
@@ -810,7 +973,7 @@ export default function Bitacora() {
             onClick={() => setTab(t.id)}
             className={`py-2 text-sm font-medium ${
               tab === t.id
-                ? "bg-black/5 dark:bg-white/10"
+                ? "bg-black/5 dark:bg:white/10"
                 : "bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
             }`}
           >
@@ -846,11 +1009,11 @@ export default function Bitacora() {
 
             <div className="fx-card fx-kpi">
               <div className="flex items-center justify-between">
-                <h4 className="font-semibold">Accesos Hoy</h4>
+                <h4 className="font-semibold">Total Accesos</h4>
                 <span>🛂</span>
               </div>
-              <div className="text-3xl font-bold mt-1">{accesosHoy}</div>
-              <div className="text-sm opacity-75">entradas registradas</div>
+              <div className="text-3xl font-bold mt-1">{accesosTotal}</div>
+              <div className="text-sm opacity-75">registros de acceso</div>
             </div>
           </section>
 
@@ -884,7 +1047,13 @@ export default function Bitacora() {
                 <input
                   className="input-fx"
                   value={tmpAgente}
-                  onChange={(e) => setTmpAgente(e.target.value)}
+                  onChange={(e) => {
+                    const soloLetras = e.target.value.replace(
+                      /[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g,
+                      ""
+                    );
+                    setTmpAgente(soloLetras);
+                  }}
                   placeholder="Buscar agente…"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") applyFilters();
@@ -924,7 +1093,11 @@ export default function Bitacora() {
                 <select
                   className="input-fx"
                   value={tmpModulo}
-                  onChange={(e) => setTmpModulo(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTmpModulo(value); // estado del control
+                    setFModulo(value); // 🔁 aplica filtro inmediatamente
+                  }}
                 >
                   {["Todos", ...MODULES].map((m) => (
                     <option key={m} value={m}>
@@ -938,7 +1111,7 @@ export default function Bitacora() {
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <button
                 onClick={applyFilters}
-                className="px-3 py-2 rounded-xl bg-black text-white dark:bg:white dark:text-black"
+                className="rounded-xl px-3 py-2 border border-neutral-300 dark:border-neutral-700 bg-black/5 dark:bg:white/5 hover:bg-black/10 dark:hover:bg-white/10"
               >
                 Buscar
               </button>
@@ -956,7 +1129,7 @@ export default function Bitacora() {
               </button>
               <button
                 onClick={exportFilteredPDF}
-                className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg:white/5"
+                className="px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/5"
               >
                 Descargar PDF
               </button>
@@ -1212,13 +1385,6 @@ export default function Bitacora() {
                 </span>
                 <h3 className="font-semibold">Confirmar eliminación</h3>
               </div>
-              <button
-                onClick={() => setConfirmRow(null)}
-                className="rounded-lg px-2 py-1 hover:bg-white/10"
-                aria-label="Cerrar"
-              >
-                ✕
-              </button>
             </div>
             <div className="p-5 space-y-2">
               <p className="leading-relaxed">
