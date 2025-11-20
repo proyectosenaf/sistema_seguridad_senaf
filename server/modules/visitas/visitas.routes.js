@@ -1,4 +1,4 @@
-// server/modules/visitas/visitas.routes.js
+
 import { Router } from "express";
 import {
   getVisitas,
@@ -8,12 +8,10 @@ import {
   listCitas,
   checkinCita,
   listVehiculosVisitasEnSitio,
-  // 🔹 Nuevo controlador para actualizar estado de cita
   updateCitaEstado,
 } from "./visitas.controller.js";
 
-// Middleware de horario de atención (8:00–12:00 y 13:00–17:00)
-// import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+// Si tienes un middleware para validar horario, mantenlo importado
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
 
 const router = Router();
@@ -89,7 +87,7 @@ router.get("/citas", asyncHandler(listCitas));
 // Check-in de cita → visitante llegó
 router.patch("/citas/:id/checkin", asyncHandler(checkinCita));
 
-// 🔹 NUEVO: actualizar estado de la cita (usado por VisitsPage)
+// Actualizar estado de la cita (usado por VisitsPage)
 router.patch("/citas/:id/estado", asyncHandler(updateCitaEstado));
 
 export default router;

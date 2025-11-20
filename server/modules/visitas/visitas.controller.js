@@ -40,14 +40,12 @@ export async function createVisita(req, res) {
       citaAt,
     } = req.body;
 
-    // 👇 Detectamos si realmente viene info de vehículo
+    // Detectamos si realmente viene info de vehículo
     const hasVehiculo =
       vehiculo &&
-      (
-        (vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
+      ((vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
         (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
-        (vehiculo.modelo && String(vehiculo.modelo).trim() !== "")
-      );
+        (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
 
     const visita = new Visita({
       nombre,
@@ -58,8 +56,8 @@ export async function createVisita(req, res) {
       telefono: telefono || null,
       correo: correo || null,
       tipo: tipo || "Ingreso",
-      // 🟢 Si el frontend manda llegoEnVehiculo lo respetamos,
-      //    si no lo manda pero hay vehículo → true
+      // Si el frontend manda llegoEnVehiculo lo respetamos,
+      // si no lo manda pero hay vehículo → true
       llegoEnVehiculo:
         typeof llegoEnVehiculo !== "undefined"
           ? !!llegoEnVehiculo
@@ -127,18 +125,16 @@ export async function createCita(req, res) {
       motivo,
       telefono,
       correo,
-      citaAt,        // fecha/hora de la cita
+      citaAt, // fecha/hora de la cita
       llegoEnVehiculo,
       vehiculo,
     } = req.body;
 
     const hasVehiculo =
       vehiculo &&
-      (
-        (vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
+      ((vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
         (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
-        (vehiculo.modelo && String(vehiculo.modelo).trim() !== "")
-      );
+        (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
 
     const visita = new Visita({
       nombre,
@@ -253,7 +249,6 @@ export async function checkinCita(req, res) {
 }
 
 /**
- * 🔹 NUEVO
  * PATCH /api/citas/:id/estado
  * Actualiza el estado de la cita (en_revision, autorizada, denegada, cancelada, etc.)
  * para que se refleje también en la Agenda de Citas.
@@ -289,59 +284,83 @@ export async function updateCitaEstado(req, res) {
 
 /**
  * GET /api/visitas/vehiculos-en-sitio
- * Vehículos de VISITANTES actualmente dentro de la empresa.
- * Usado por el módulo de Control de Acceso (Accesos.jsx).
+ * Vehículos de VISITANTES actualmente dentro de la empresa, incluyendo
+ * tanto visitas reales (estado "Dentro") como citas programadas (tipo "Agendada")
+ * que tengan vehículo. Esto permite al módulo de Control de Acceso
+ * mostrar en una sola tabla los vehículos de visitantes en el estacionamiento.
  */
 export async function listVehiculosVisitasEnSitio(req, res) {
   try {
-    const visitas = await Visita.find({
+    // Visitas que ya están dentro de la empresa
+    const visitasDentro = await Visita.find({
       estado: "Dentro",
-      llegoEnVehiculo: true, // 👈 requisito que quieres mantener
+      llegoEnVehiculo: true,
       $or: [
-        // Esquema nuevo: objeto vehiculo con placa
         { "vehiculo.placa": { $exists: true, $ne: "" } },
-        // Esquema viejo: campo placa suelto
         { placa: { $exists: true, $ne: "" } },
       ],
     })
       .sort({ fechaEntrada: -1, createdAt: -1 })
       .lean();
 
-    const items = visitas.map((v) => {
-      const veh = v.vehiculo;
+    // Citas agendadas con vehículo que aún no se han cerrado
+    const citasConVehiculo = await Visita.find({
+      tipo: "Agendada",
+      // estados que indican que la cita aún está activa/programada
+      estado: { $in: ["Programada", "En revisión", "Autorizada"] },
+      llegoEnVehiculo: true,
+      $or: [
+        { "vehiculo.placa": { $exists: true, $ne: "" } },
+        { placa: { $exists: true, $ne: "" } },
+      ],
+    })
+      .sort({ citaAt: 1, createdAt: -1 })
+      .lean();
 
-      const marca =
-        typeof veh === "string"
-          ? veh
-          : veh?.marca || "";
-
-      const modelo =
-        typeof veh === "string"
-          ? ""
-          : veh?.modelo || "";
-
-      const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
-
-      return {
-        id: v._id.toString(),
-        visitante: v.nombre,
-        documento: v.documento,
-        empresa: v.empresa,
-        empleadoAnfitrion: v.empleado,
-        vehiculoMarca: marca,
-        vehiculoModelo: modelo,
-        placa,
-        horaEntrada: v.fechaEntrada,
-      };
-    });
+    // Transformamos ambas listas al mismo formato esperado por el frontend
+    const items = [
+      ...visitasDentro.map((v) => {
+        const veh = v.vehiculo;
+        const marca = typeof veh === "string" ? veh : veh?.marca || "";
+        const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
+        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+        return {
+          id: v._id.toString(),
+          visitante: v.nombre,
+          documento: v.documento,
+          empresa: v.empresa,
+          empleadoAnfitrion: v.empleado,
+          vehiculoMarca: marca,
+          vehiculoModelo: modelo,
+          placa,
+          horaEntrada: v.fechaEntrada,
+        };
+      }),
+      ...citasConVehiculo.map((v) => {
+        const veh = v.vehiculo;
+        const marca = typeof veh === "string" ? veh : veh?.marca || "";
+        const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
+        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+        return {
+          id: v._id.toString(),
+          visitante: v.nombre,
+          documento: v.documento,
+          empresa: v.empresa,
+          empleadoAnfitrion: v.empleado,
+          vehiculoMarca: marca,
+          vehiculoModelo: modelo,
+          placa,
+          horaEntrada: v.citaAt,
+        };
+      }),
+    ];
 
     res.json({ ok: true, items });
   } catch (err) {
     console.error("[visitas] listVehiculosVisitasEnSitio", err);
     res.status(500).json({
       ok: false,
-      error:
-        err.message || "Error al obtener vehículos de visitas en sitio",
+      error: err.message || "Error al obtener vehículos de visitas en sitio",
     });
   }
 }
@@ -353,5 +372,6 @@ export default {
   createCita,
   listCitas,
   checkinCita,
+  updateCitaEstado,
   listVehiculosVisitasEnSitio,
 };
