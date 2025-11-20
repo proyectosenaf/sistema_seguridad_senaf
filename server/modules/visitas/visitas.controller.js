@@ -1,5 +1,6 @@
 // server/src/modules/visitas/visitas.controller.js
 
+
 import Visita from "./visitas.model.js";
 
 /**
@@ -39,6 +40,15 @@ export async function createVisita(req, res) {
       citaAt,
     } = req.body;
 
+    // 👇 Detectamos si realmente viene info de vehículo
+    const hasVehiculo =
+      vehiculo &&
+      (
+        (vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
+        (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
+        (vehiculo.modelo && String(vehiculo.modelo).trim() !== "")
+      );
+
     const visita = new Visita({
       nombre,
       documento,
@@ -48,17 +58,19 @@ export async function createVisita(req, res) {
       telefono: telefono || null,
       correo: correo || null,
       tipo: tipo || "Ingreso",
-      // Si viene tipo "Agendada", el default de estado en el modelo la pone "Programada"
-      // Si viene "Ingreso", el default la deja "Dentro"
-      llegoEnVehiculo: !!llegoEnVehiculo,
-      vehiculo:
-        llegoEnVehiculo && vehiculo
-          ? {
-              marca: vehiculo.marca || "",
-              modelo: vehiculo.modelo || "",
-              placa: (vehiculo.placa || "").toUpperCase(),
-            }
-          : null,
+      // 🟢 Si el frontend manda llegoEnVehiculo lo respetamos,
+      //    si no lo manda pero hay vehículo → true
+      llegoEnVehiculo:
+        typeof llegoEnVehiculo !== "undefined"
+          ? !!llegoEnVehiculo
+          : !!hasVehiculo,
+      vehiculo: hasVehiculo
+        ? {
+            marca: vehiculo.marca || "",
+            modelo: vehiculo.modelo || "",
+            placa: (vehiculo.placa || "").toUpperCase(),
+          }
+        : null,
       citaAt: citaAt || null,
       // fechaEntrada: el pre("save") del modelo la llena si tipo = "Ingreso"
     });
@@ -115,10 +127,18 @@ export async function createCita(req, res) {
       motivo,
       telefono,
       correo,
-      citaAt, // fecha/hora de la cita
+      citaAt,        // fecha/hora de la cita
       llegoEnVehiculo,
       vehiculo,
     } = req.body;
+
+    const hasVehiculo =
+      vehiculo &&
+      (
+        (vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
+        (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
+        (vehiculo.modelo && String(vehiculo.modelo).trim() !== "")
+      );
 
     const visita = new Visita({
       nombre,
@@ -131,15 +151,17 @@ export async function createCita(req, res) {
       tipo: "Agendada",
       // el default de estado en el modelo: "Programada"
       citaAt: citaAt ? new Date(citaAt) : null,
-      llegoEnVehiculo: !!llegoEnVehiculo,
-      vehiculo:
-        llegoEnVehiculo && vehiculo
-          ? {
-              marca: vehiculo.marca || "",
-              modelo: vehiculo.modelo || "",
-              placa: (vehiculo.placa || "").toUpperCase(),
-            }
-          : null,
+      llegoEnVehiculo:
+        typeof llegoEnVehiculo !== "undefined"
+          ? !!llegoEnVehiculo
+          : !!hasVehiculo,
+      vehiculo: hasVehiculo
+        ? {
+            marca: vehiculo.marca || "",
+            modelo: vehiculo.modelo || "",
+            placa: (vehiculo.placa || "").toUpperCase(),
+          }
+        : null,
     });
 
     await visita.save();
@@ -165,8 +187,22 @@ export async function listCitas(req, res) {
 
     if (day) {
       const d = new Date(day);
-      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
-      const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0);
+      const start = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        0,
+        0,
+        0
+      );
+      const end = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() + 1,
+        0,
+        0,
+        0
+      );
       match.citaAt = { $gte: start, $lt: end };
     } else if (month) {
       // month = "YYYY-MM"
@@ -217,6 +253,41 @@ export async function checkinCita(req, res) {
 }
 
 /**
+ * 🔹 NUEVO
+ * PATCH /api/citas/:id/estado
+ * Actualiza el estado de la cita (en_revision, autorizada, denegada, cancelada, etc.)
+ * para que se refleje también en la Agenda de Citas.
+ */
+export async function updateCitaEstado(req, res) {
+  try {
+    const { id } = req.params;
+    const { estado } = req.body || {};
+
+    if (!estado) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Debe indicar un estado" });
+    }
+
+    const visita = await Visita.findById(id);
+    if (!visita) {
+      return res
+        .status(404)
+        .json({ ok: false, error: "Cita/visita no encontrada" });
+    }
+
+    // Solo cambiamos el estado; la validación de enum la hace mongoose
+    visita.estado = estado;
+    await visita.save();
+
+    return res.json({ ok: true, item: visita });
+  } catch (err) {
+    console.error("[visitas] updateCitaEstado", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
  * GET /api/visitas/vehiculos-en-sitio
  * Vehículos de VISITANTES actualmente dentro de la empresa.
  * Usado por el módulo de Control de Acceso (Accesos.jsx).
@@ -225,30 +296,62 @@ export async function listVehiculosVisitasEnSitio(req, res) {
   try {
     const visitas = await Visita.find({
       estado: "Dentro",
-      llegoEnVehiculo: true,
-      "vehiculo.placa": { $exists: true, $ne: "" },
+      llegoEnVehiculo: true, // 👈 requisito que quieres mantener
+      $or: [
+        // Esquema nuevo: objeto vehiculo con placa
+        { "vehiculo.placa": { $exists: true, $ne: "" } },
+        // Esquema viejo: campo placa suelto
+        { placa: { $exists: true, $ne: "" } },
+      ],
     })
-      .sort({ fechaEntrada: -1 })
+      .sort({ fechaEntrada: -1, createdAt: -1 })
       .lean();
 
-    const items = visitas.map((v) => ({
-      id: v._id.toString(),
-      visitante: v.nombre,
-      documento: v.documento,
-      empresa: v.empresa,
-      empleadoAnfitrion: v.empleado,
-      vehiculoMarca: v.vehiculo?.marca || "",
-      vehiculoModelo: v.vehiculo?.modelo || "",
-      placa: v.vehiculo?.placa || "",
-      horaEntrada: v.fechaEntrada,
-    }));
+    const items = visitas.map((v) => {
+      const veh = v.vehiculo;
+
+      const marca =
+        typeof veh === "string"
+          ? veh
+          : veh?.marca || "";
+
+      const modelo =
+        typeof veh === "string"
+          ? ""
+          : veh?.modelo || "";
+
+      const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+
+      return {
+        id: v._id.toString(),
+        visitante: v.nombre,
+        documento: v.documento,
+        empresa: v.empresa,
+        empleadoAnfitrion: v.empleado,
+        vehiculoMarca: marca,
+        vehiculoModelo: modelo,
+        placa,
+        horaEntrada: v.fechaEntrada,
+      };
+    });
 
     res.json({ ok: true, items });
   } catch (err) {
     console.error("[visitas] listVehiculosVisitasEnSitio", err);
     res.status(500).json({
       ok: false,
-      error: err.message || "Error al obtener vehículos de visitas en sitio",
+      error:
+        err.message || "Error al obtener vehículos de visitas en sitio",
     });
   }
 }
+
+export default {
+  getVisitas,
+  createVisita,
+  closeVisita,
+  createCita,
+  listCitas,
+  checkinCita,
+  listVehiculosVisitasEnSitio,
+};

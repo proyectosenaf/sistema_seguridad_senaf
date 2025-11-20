@@ -29,10 +29,10 @@ import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
 // ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
 
-
 import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 
+// ⬅️ AQUÍ: usamos la ruta que sí existe en tu proyecto
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
 // ✅ Reports de Rondas (el archivo largo que pegaste)

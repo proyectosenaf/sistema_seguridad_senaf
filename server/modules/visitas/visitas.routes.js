@@ -1,4 +1,4 @@
-// server/src/modules/visitas/visitas.routes.js
+// server/modules/visitas/visitas.routes.js
 import { Router } from "express";
 import {
   getVisitas,
@@ -8,10 +8,12 @@ import {
   listCitas,
   checkinCita,
   listVehiculosVisitasEnSitio,
+  // 🔹 Nuevo controlador para actualizar estado de cita
+  updateCitaEstado,
 } from "./visitas.controller.js";
 
 // Middleware de horario de atención (8:00–12:00 y 13:00–17:00)
-//import { enforceBusinessHours } from "../../middlewares/businessHours.js";
+// import { enforceBusinessHours } from "../../middlewares/businessHours.js";
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
 
 const router = Router();
@@ -35,45 +37,59 @@ router.get("/ping", (_req, res) =>
    Compatibilidad de montaje:
 
    - Si montas en: app.use("/api", router)
-       GET /api/visitas        → ruta "/visitas"
-       POST /api/visitas       → ruta "/visitas"
-       GET /api/               → ruta "/"
+       GET /api/visitas              → ruta "/visitas"
+       POST /api/visitas             → ruta "/visitas"
+       GET /api/                     → ruta "/"
    - Si montas en: app.use("/api/visitas", router)
-       GET /api/visitas        → ruta "/"
-       GET /api/visitas/visitas→ ruta "/visitas"
+       GET /api/visitas              → ruta "/"
+       GET /api/visitas/visitas      → ruta "/visitas"
+
+   - EXTRA compatibilidad:
+       GET /api/visitas/v1/visitas
+       POST /api/visitas/v1/visitas
 */
 
-// Lista de visitas (histórico + dentro)
-router.get(["/visitas", "/"], asyncHandler(getVisitas));
+router.get(
+  ["/visitas/v1/visitas", "/visitas", "/"],
+  asyncHandler(getVisitas)
+);
 
 // Crear ingreso directo
-router.post(["/visitas", "/"], asyncHandler(createVisita));
+router.post(
+  ["/visitas/v1/visitas", "/visitas", "/"],
+  asyncHandler(createVisita)
+);
 
 // Cerrar visita (marcar salida / finalizada)
-// Compatibilidad con dos paths distintos:
-router.patch(["/visitas/:id/cerrar", "/:id/cerrar"], asyncHandler(closeVisita));
+router.patch(
+  ["/visitas/:id/cerrar", "/:id/cerrar"],
+  asyncHandler(closeVisita)
+);
+
 router.put("/visitas/:id/finalizar", asyncHandler(closeVisita)); // usado por VisitasControlPage.jsx
 
-/* ─────────────── VEHÍCULOS DE VISITANTES EN SITIO ───────────────
-   Para el módulo de Control de Acceso (tabla de visitantes en estacionamiento)
-   - Usar desde el front: GET /api/visitas/vehiculos-en-sitio
-*/
+/* ─────────────── VEHÍCULOS DE VISITANTES EN SITIO ─────────────── */
 router.get(
   ["/visitas/vehiculos-en-sitio", "/vehiculos-en-sitio"],
   asyncHandler(listVehiculosVisitasEnSitio)
 );
 
 /* ─────────────── CITAS (Agendadas) ───────────────
-   Se esperan como /api/citas desde el frontend de Agenda
+   Endpoints esperados por frontend:
+   → POST /api/citas
+   → GET /api/citas
 */
 
 // Crear cita con validación de horario
 router.post("/citas", enforceBusinessHours, asyncHandler(createCita));
 
-// Listar citas (?day=YYYY-MM-DD o ?month=YYYY-MM)
+// Listar citas por día o mes
 router.get("/citas", asyncHandler(listCitas));
 
-// Check-in de cita → pasa a "Dentro"
+// Check-in de cita → visitante llegó
 router.patch("/citas/:id/checkin", asyncHandler(checkinCita));
+
+// 🔹 NUEVO: actualizar estado de la cita (usado por VisitsPage)
+router.patch("/citas/:id/estado", asyncHandler(updateCitaEstado));
 
 export default router;
