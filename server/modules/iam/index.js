@@ -1,4 +1,4 @@
-// server/modules/iam/index.js (o similar)
+// server/modules/iam/index.js
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -60,7 +60,10 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
       if (!req.files || !req.files.file) {
         return res
           .status(400)
-          .json({ ok: false, message: "Sube un archivo Excel en el campo 'file'." });
+          .json({
+            ok: false,
+            message: "Sube un archivo Excel en el campo 'file'.",
+          });
       }
 
       const up = req.files.file;
@@ -86,8 +89,10 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   );
 
   // -------- Registro del router en la app --------
-  app.use(basePath, router);      // v1 oficial: /api/iam/v1/...
-  app.use("/api/iam", router);    // alias legacy: /api/iam/...
+  // v1 oficial: /api/iam/v1/...
+  app.use(basePath, router);
+  // Alias legacy: /api/iam/...
+  app.use("/api/iam", router);
 
   // Manejo de errores SÓLO para este módulo (no tumbar el proceso)
   const errorMw = (err, _req, res, _next) => {
