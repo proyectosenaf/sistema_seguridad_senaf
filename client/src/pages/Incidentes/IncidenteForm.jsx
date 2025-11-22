@@ -29,8 +29,8 @@ export default function IncidenteForm({
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
-    reportedBy: "",          // nombre / etiqueta que verá el supervisor
-    reportedByGuardId: "",   // 👈 opId/guardId seleccionado en el combo
+    reportedBy: "", // nombre / etiqueta que verá el supervisor
+    reportedByGuardId: "", // 👈 opId/guardId seleccionado en el combo
     zone: "",
     priority: "alta",
     status: "abierto",
@@ -200,7 +200,7 @@ export default function IncidenteForm({
 
       const payload = {
         ...form,
-        reportedBy: guardLabel,                       // texto visible
+        reportedBy: guardLabel, // texto visible
         guardId: form.reportedByGuardId || undefined, // 👈 ID opId/guardId
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,

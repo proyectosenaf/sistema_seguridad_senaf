@@ -6,6 +6,11 @@ import CameraCapture from "../../components/CameraCapture.jsx";
 import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
 import iamApi from "../../iam/api/iamApi.js"; // 👈 para traer guardias
 
+// 👉 librerías para exportar
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
+
 // helper para mostrar bonito el nombre del guardia
 function guardLabel(g) {
   const name = g.name || "(Sin nombre)";
@@ -241,7 +246,7 @@ export default function IncidentesList() {
         zone: form.zone,
         priority: form.priority,
         status: form.status,
-        reportedBy: label,                         // texto visible
+        reportedBy: label, // texto visible
         guardId: form.reportedByGuardId || undefined, // ID para enlazar con IAM
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
@@ -334,12 +339,102 @@ export default function IncidentesList() {
     }
   };
 
+  // ───────── EXPORTAR PDF ─────────
+  const handleExportPDF = () => {
+    if (!incidentes.length) {
+      alert("No hay incidentes para exportar.");
+      return;
+    }
+
+    const doc = new jsPDF("l", "pt", "a4"); // horizontal para más columnas
+
+    const columns = [
+      "#",
+      "Tipo",
+      "Descripción",
+      "Reportado por",
+      "Zona",
+      "Fecha",
+      "Prioridad",
+      "Estado",
+    ];
+
+    const rows = incidentes.map((i, idx) => {
+      const fecha =
+        i.date || i.createdAt
+          ? new Date(i.date || i.createdAt).toLocaleString()
+          : "";
+      let estadoLegible = "Abierto";
+      if (i.status === "en_proceso") estadoLegible = "En proceso";
+      else if (i.status === "resuelto") estadoLegible = "Resuelto";
+
+      return [
+        idx + 1,
+        i.type || "",
+        i.description || "",
+        i.reportedBy || "",
+        i.zone || "",
+        fecha,
+        i.priority || "",
+        estadoLegible,
+      ];
+    });
+
+    doc.setFontSize(14);
+    doc.text("Reporte de Incidentes", 40, 30);
+
+    doc.autoTable({
+      head: [columns],
+      body: rows,
+      startY: 50,
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [15, 27, 45] },
+    });
+
+    doc.save("incidentes.pdf");
+  };
+
+  // ───────── EXPORTAR EXCEL ─────────
+  const handleExportExcel = () => {
+    if (!incidentes.length) {
+      alert("No hay incidentes para exportar.");
+      return;
+    }
+
+    const data = incidentes.map((i, idx) => {
+      const fecha =
+        i.date || i.createdAt
+          ? new Date(i.date || i.createdAt).toLocaleString()
+          : "";
+      let estadoLegible = "Abierto";
+      if (i.status === "en_proceso") estadoLegible = "En proceso";
+      else if (i.status === "resuelto") estadoLegible = "Resuelto";
+
+      return {
+        "#": idx + 1,
+        Tipo: i.type || "",
+        Descripción: i.description || "",
+        "Reportado por": i.reportedBy || "",
+        Zona: i.zone || "",
+        Fecha: fecha,
+        Prioridad: i.priority || "",
+        Estado: estadoLegible,
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Incidentes");
+
+    XLSX.writeFile(wb, "incidentes.xlsx");
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
       {/* header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text.white">
+          <h1 className="text-2xl font-semibold text-white">
             Gestión de Incidentes
           </h1>
           <p className="text-sm text-gray-400">
@@ -475,7 +570,7 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowCamera(true)}
-                  className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className="bg-gradient.to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
                   📷 Tomar foto
                 </button>
@@ -532,7 +627,7 @@ export default function IncidentesList() {
               </button>
               <button
                 type="submit"
-                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
+                className="text-sm bg-gradient.to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
               >
                 {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>
@@ -562,7 +657,7 @@ export default function IncidentesList() {
           </div>
         </div>
         <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
-          <div className="text-xs uppercase text-green-300 font-medium flex.items-center gap-2">
+          <div className="text-xs uppercase text-green-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500" />
             Resueltos
           </div>
@@ -582,30 +677,47 @@ export default function IncidentesList() {
       </div>
 
       {/* LISTA */}
-      <div className="bg-[#0f1b2d] border border-cyan-400/20 rounded-lg shadow-[0_0_30px_rgba(0,255,255,0.08)] overflow-hidden">
-        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-cyan-400/10 gap-3">
+      <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
+        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
           <div>
             <h2 className="font-semibold text-lg text-white">
               Lista de Incidentes
             </h2>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-300">
               Historial de reportes registrados en el sistema
             </p>
           </div>
-          <div className="w-full md:w-1/3">
+          <div className="w-full md:w-1/3 flex flex-col gap-2">
             <input
-              className="w-full bg-[#1e2a3f] text-white text-sm rounded-md px-3 py-2 
-                         border border-cyan-400/20 placeholder-gray-500 
-                         focus:outline-none focus:ring-2 focus:ring-cyan-400/40 
+              className="w-full bg-black/30 text-white text-sm rounded-md px-3 py-2 
+                         border border-purple-400/40 placeholder-gray-500 
+                         focus:outline-none focus:ring-2 focus:ring-purple-400/60 
                          transition-all duration-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
+            {/* BOTONES EXPORTAR */}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={handleExportPDF}
+                className="text-xs bg-indigo-600/90 hover:bg-indigo-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+              >
+                Exportar PDF
+              </button>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+              >
+                Exportar Excel
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-gray-200">
-            <thead className="bg-[#1e2a3f] text-gray-400 uppercase text-xs border-b border-cyan-400/10">
+            <thead className="bg-white/5 text-gray-300 uppercase text-xs border-b border-white/10">
               <tr>
                 <th className="px-4 py-3 font-medium">TIPO</th>
                 <th className="px-4 py-3 font-medium">DESCRIPCIÓN</th>
@@ -623,7 +735,7 @@ export default function IncidentesList() {
                 <tr>
                   <td
                     colSpan={9}
-                    className="text-center text-gray-500 py-10 text-sm"
+                    className="text-center text-gray-400 py-10 text-sm"
                   >
                     No hay incidentes registrados.
                   </td>
@@ -640,19 +752,19 @@ export default function IncidentesList() {
                   return (
                     <tr
                       key={i._id}
-                      className="border-b border-cyan-400/5 hover:bg-[#1b2d44] transition-colors"
+                      className="border-b border-white/5 hover:bg-white/5 transition-colors"
                     >
-                      <td className="px-4 py-3 text.white font-medium">
+                      <td className="px-4 py-3 text-white font-medium">
                         {i.type}
                       </td>
-                      <td className="px-4 py-3 text-gray-300 max-w-[320px] truncate">
+                      <td className="px-4 py-3 text-gray-200 max-w-[320px] truncate">
                         {i.description}
                       </td>
                       <td className="px-4 py-3 text-gray-200">
                         {i.reportedBy}
                       </td>
                       <td className="px-4 py-3 text-gray-200">{i.zone}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-xs">
+                      <td className="px-4 py-3 whitespace-nowrap text-gray-300 text-xs">
                         {i.date || i.createdAt
                           ? new Date(i.date || i.createdAt).toLocaleString()
                           : "—"}
@@ -662,10 +774,10 @@ export default function IncidentesList() {
                           className={
                             "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
                             (i.priority === "alta"
-                              ? "bg-red-600/20 text-red-400 border border-red-500/40"
+                              ? "bg-red-600/25 text-red-300 border border-red-400/60"
                               : i.priority === "media"
-                              ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/40"
-                              : "bg-green-600/20 text-green-400 border border-green-500/40")
+                              ? "bg-yellow-400/20 text-yellow-200 border border-yellow-300/60"
+                              : "bg-green-600/20 text-green-300 border border-green-400/60")
                           }
                         >
                           {i.priority}
@@ -676,10 +788,10 @@ export default function IncidentesList() {
                           className={
                             "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
                             (i.status === "resuelto"
-                              ? "bg-green-600/20 text-green-400 border border-green-500/40"
+                              ? "bg-green-600/20 text-green-300 border border-green-400/60"
                               : i.status === "en_proceso"
-                              ? "bg-blue-600/20 text-blue-400 border border-blue-500/40"
-                              : "bg-red-600/20 text-red-400 border border-red-500/40")
+                              ? "bg-blue-600/20 text-blue-300 border border-blue-400/60"
+                              : "bg-red-600/20 text-red-300 border border-red-400/60")
                           }
                         >
                           {i.status === "en_proceso"
@@ -705,7 +817,7 @@ export default function IncidentesList() {
                                   href={src}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="block w-12 h-12 rounded overflow-hidden border border-cyan-400/20 bg-black/30"
+                                  className="block w-12 h-12 rounded overflow-hidden border border-purple-400/40 bg-black/40"
                                 >
                                   <img
                                     src={src}
@@ -716,7 +828,7 @@ export default function IncidentesList() {
                               );
                             })}
                             {photos.length > 3 && (
-                              <span className="text-xs text-gray-400">
+                              <span className="text-xs text-gray-300">
                                 +{photos.length - 3}
                               </span>
                             )}
@@ -766,15 +878,6 @@ export default function IncidentesList() {
               )}
             </tbody>
           </table>
-        </div>
-
-        <div className="flex justify-end p-4 border-t border-cyan-400/10">
-          <button
-            onClick={startCreate}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transition-all duration-300"
-          >
-            {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
-          </button>
         </div>
       </div>
 

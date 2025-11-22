@@ -1,13 +1,12 @@
 // client/src/modules/rondasqr/hooks/useAssignmentSocket.js
 import { useEffect } from "react";
-<<<<<<< HEAD
+
 import { io } from "socket.io-client";
 
 import { SOCKET_BASE } from "../../../lib/api";
 
-=======
 import { socket } from "../../../lib/socket.js";
->>>>>>> 79ce776941e1dabe4f29507803aaa6b17a86c16e
+
 
 /**
  * Hook de socket para rondas:
