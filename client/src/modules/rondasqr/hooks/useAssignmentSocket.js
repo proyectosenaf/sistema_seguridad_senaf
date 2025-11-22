@@ -1,9 +1,13 @@
 // client/src/modules/rondasqr/hooks/useAssignmentSocket.js
 import { useEffect } from "react";
 
+
 import { io } from "socket.io-client";
 
 import { SOCKET_BASE } from "../../../lib/api";
+
+import { socket } from "../../../lib/socket.js";
+
 
 import { socket } from "../../../lib/socket.js";
 
