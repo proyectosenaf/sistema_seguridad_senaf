@@ -13,7 +13,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 // IAM (usuarios/roles/permisos)
-import { registerIAMModule } from "../modules/iam/index.js";
+// import { registerIAMModule } from "../modules/iam/index.js"; // ⛔ desactivado
 // Auth opcional (valida JWT sólo si hay Authorization)
 import { requireAuth } from "./middleware/auth.js";
 
@@ -351,7 +351,7 @@ app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
 // 🔐 Middleware especial para IAM:
-// primero valida JWT y luego aplica el bridge + ROOT_ADMIN
+// primero valida JWT (si aplica) y luego aplica el bridge + ROOT_ADMIN
 app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 
@@ -363,10 +363,99 @@ app.get("/chat/messages", chatMessagesHandler); // alias sin /api
 
 /* ───────────── IAM principal + /me ───────────── */
 
-// Registro normal (localhost, etc.)
-await registerIAMModule({ app, basePath: "/api/iam/v1" });
-// Alias sin /api para cuando la plataforma recorta el prefijo
-await registerIAMModule({ app, basePath: "/iam/v1" });
+// ⛔ Desactivado: módulo IAM interno que estaba respondiendo 401
+// await registerIAMModule({ app, basePath: "/api/iam/v1" });
+// await registerIAMModule({ app, basePath: "/iam/v1" });
+
+/* ✅ IAM SIMPLE hecho a mano (evita 401 del módulo interno) */
+
+const iamUsersCol = mongoose.connection.collection("iamusers");
+const iamRolesCol = mongoose.connection.collection("iamroles");
+const iamPermsCol = mongoose.connection.collection("iamperms");
+
+function okList(items) {
+  return { ok: true, items };
+}
+
+// Lista de usuarios IAM
+app.get("/api/iam/v1/users", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const filter = {};
+    if (q) {
+      const rx = new RegExp(q, "i");
+      filter.$or = [{ name: rx }, { email: rx }, { dni: rx }];
+    }
+    const docs = await iamUsersCol
+      .find(filter, {
+        projection: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          roles: 1,
+          active: 1,
+          dni: 1,
+          id_persona: 1,
+        },
+      })
+      .toArray();
+
+    res.json(okList(docs));
+  } catch (e) {
+    console.error("[IAM simple] list users error:", e);
+    res.status(500).json({ ok: false, error: "Error al listar usuarios" });
+  }
+});
+
+// Lista de roles IAM
+app.get("/api/iam/v1/roles", async (_req, res) => {
+  try {
+    const docs = await iamRolesCol
+      .find(
+        {},
+        {
+          projection: {
+            _id: 1,
+            key: 1,
+            name: 1,
+            description: 1,
+            module: 1,
+          },
+        }
+      )
+      .toArray();
+
+    res.json(okList(docs));
+  } catch (e) {
+    console.error("[IAM simple] list roles error:", e);
+    res.status(500).json({ ok: false, error: "Error al listar roles" });
+  }
+});
+
+// Lista de permisos IAM
+app.get("/api/iam/v1/permissions", async (_req, res) => {
+  try {
+    const docs = await iamPermsCol
+      .find(
+        {},
+        {
+          projection: {
+            _id: 1,
+            key: 1,
+            name: 1,
+            description: 1,
+            module: 1,
+          },
+        }
+      )
+      .toArray();
+
+    res.json(okList(docs));
+  } catch (e) {
+    console.error("[IAM simple] list perms error:", e);
+    res.status(500).json({ ok: false, error: "Error al listar permisos" });
+  }
+});
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
