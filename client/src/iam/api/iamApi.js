@@ -66,26 +66,22 @@ async function toJson(resp) {
 }
 
 /** fetch con errores enriquecidos: err.status y err.payload */
-async function rawFetch(url, opts = {}) {
-  let {
-    method = "GET",
-    body,
-    token: tokenArg,
-    formData = false,
-  } = opts;
-
+async function rawFetch(
+  url,
+  { method = "GET", body, token, formData = false } = {}
+) {
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
-  // 🔹 NUEVO: si no nos pasaron token, intentamos usar el provider global de AuthBridge
-  let token = tokenArg;
-  if (!token && typeof window !== "undefined" && window.__iamTokenProvider) {
+  // 🔹 Si no nos pasaron token, intentamos usar el provider global de AuthBridge
+  if (!token && typeof window !== "undefined" && window.__senafAuthTokenProvider) {
     try {
-      token = await window.__iamTokenProvider();
+      const autoToken = await window.__senafAuthTokenProvider();
+      if (autoToken) token = autoToken;
     } catch (err) {
       if (DEBUG) {
         console.warn(
-          "[iamApi] no se pudo obtener token desde window.__iamTokenProvider:",
+          "[iamApi] no se pudo obtener token desde window.__senafAuthTokenProvider:",
           err?.message || err
         );
       }
@@ -258,27 +254,8 @@ function fromFormData(fd) {
 /* ---------- API ---------- */
 export const iamApi = {
   async me(token) {
-    const headers = buildHeaders({
-      token,
-      isFormData: false,
-      method: "GET",
-      urlForCors: PATHS.auth.me(),
-    });
-    try {
-      const r = await fetch(PATHS.auth.me(), {
-        headers,
-        credentials: "include",
-      });
-      if (r.ok) return toJson(r);
-      const payload = await toJson(r);
-      const e = new Error(payload?.message || `${r.status} ${r.statusText}`);
-      e.status = r.status;
-      e.payload = payload;
-      throw e;
-    } catch (e) {
-      if (DEBUG) console.warn("[iamApi.me] fallo:", e?.message || e);
-      throw e;
-    }
+    // usa rawFetch para que también aplique el provider global de token
+    return rawFetch(PATHS.auth.me(), { token });
   },
 
   async loginLocal({ email, password }) {
