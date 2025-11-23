@@ -15,32 +15,52 @@ import IamGuard from "./iam/api/IamGuard.jsx";
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
-const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+const IncidentesList = React.lazy(() =>
+  import("./pages/Incidentes/IncidentesList.jsx")
+);
+const IncidenteForm = React.lazy(() =>
+  import("./pages/Incidentes/IncidenteForm.jsx")
+);
 
 // ✅ Rondas QR
 //   - Panel unificado (scan + widgets)
-const RondasDashboard = React.lazy(
-  () => import("./modules/rondasqr/supervisor/ReportsPage.jsx")
+const RondasDashboard = React.lazy(() =>
+  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
 ); // informes
-const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx")); // panel unificado
+const RondasScan = React.lazy(() =>
+  import("./modules/rondasqr/guard/ScanPage.jsx")
+); // panel unificado
 
 // ✅ Hub de administración (CRUD)
-const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
+const AdminHub = React.lazy(() =>
+  import("./modules/rondasqr/admin/AdminHub.jsx")
+);
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Visitas = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
-const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
+const Supervision = React.lazy(() =>
+  import("./pages/Supervision/Supervision.jsx")
+);
+const Evaluacion = React.lazy(() =>
+  import("./pages/Evaluacion/Evaluacion.jsx")
+);
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
-const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
-const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx")); // 👈 NUEVO
+const LoginRedirect = React.lazy(() =>
+  import("./pages/Auth/LoginRedirect.jsx")
+);
+const AuthCallback = React.lazy(() =>
+  import("./pages/Auth/AuthCallback.jsx")
+); // 👈 NUEVO
 
 /* 👇 NUEVO: páginas del módulo Control de Visitas */
-const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
-const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+const VisitsPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/VisitsPage.jsx")
+);
+const AgendaPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/AgendaPage.jsx")
+);
 /* FIN NUEVO */
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
@@ -94,7 +114,8 @@ function pickHome({ roles = [], perms = [] }) {
   if (R.has("guardia")) return "/rondasqr/scan";
 
   // Admin de rondas → Hub de administración
-  if (P.has("rondasqr.admin") || R.has("rondasqr.admin")) return "/rondasqr/admin";
+  if (P.has("rondasqr.admin") || R.has("rondasqr.admin"))
+    return "/rondasqr/admin";
 
   // Recepción → módulo de accesos
   if (R.has("recepcion")) return "/accesos";
@@ -138,7 +159,8 @@ function RoleRedirectInline() {
           const data = (await res.json().catch(() => ({}))) || {};
           const roles = data?.roles || data?.user?.roles || [];
           const perms = data?.permissions || data?.perms || [];
-          if ((roles?.length || 0) + (perms?.length || 0) > 0) return { roles, perms };
+          if ((roles?.length || 0) + (perms?.length || 0) > 0)
+            return { roles, perms };
         } catch {
           // ignoramos y probamos la siguiente URL
         }
@@ -355,7 +377,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["iam.users.manage", "iam.roles.manage", "*"]}
+                    >
                       <IamAdminPage />
                     </IamGuardSuper>
                   </Layout>
