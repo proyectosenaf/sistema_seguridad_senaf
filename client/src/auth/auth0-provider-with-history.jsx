@@ -3,9 +3,6 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
 
-// 👇 IMPORTA EL BRIDGE
-import AuthBridge from "../components/AuthBridge.jsx";
-
 export default function Auth0ProviderWithHistory({ children }) {
   const navigate = useNavigate();
 
@@ -36,8 +33,6 @@ export default function Auth0ProviderWithHistory({ children }) {
       useRefreshTokens={true}
       cacheLocation="localstorage"
     >
-      {/* 👇 AQUÍ se monta el bridge que conecta Auth0 → Axios / Rondas / IAM */}
-      <AuthBridge />
       {children}
     </Auth0Provider>
   );

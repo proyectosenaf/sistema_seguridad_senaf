@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -273,7 +272,7 @@ function iamDevMerge(req, _res, next) {
 }
 
 /* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
-
+// ⚠️ Esto es SOLO backend y no tiene relación con el componente React <AuthBridge />.
 function authBridgeToReqUser(req, _res, next) {
   if (!req?.auth?.payload) return next();
 

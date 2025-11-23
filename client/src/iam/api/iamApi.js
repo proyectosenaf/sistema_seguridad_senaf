@@ -48,7 +48,9 @@ function getDevIdentity() {
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
-  if (token) h.Authorization = `Bearer token`;
+
+  // 👈 AQUÍ ESTABA EL BUG: ahora sí mandamos el token real
+  if (token) h.Authorization = `Bearer ${token}`;
 
   // Enviar headers DEV si:
   // - Fuerzas modo dev (VITE_FORCE_DEV_IAM=1), o
