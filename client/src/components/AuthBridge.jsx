@@ -1,10 +1,10 @@
+// client/src/components/AuthBridge.jsx
 import { useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 
 // Inyectores de token a tus capas de red
 import { attachAuth0 } from "../lib/api.js";
 import { attachRondasAuth } from "../modules/rondasqr/api/rondasqrApi.js";
-import { attachIamAuth } from "../iam/api/iamApi.js";
 
 /**
  * No renderiza UI: solo registra (o limpia) proveedores de token.
@@ -19,7 +19,11 @@ export default function AuthBridge() {
         // Si el usuario no está autenticado, limpia proveedores
         attachAuth0(null);
         attachRondasAuth(null);
-        attachIamAuth(null);
+
+        // 🔹 Limpia también el provider global de IAM
+        if (typeof window !== "undefined") {
+          window.__iamTokenProvider = null;
+        }
         return;
       }
 
@@ -42,9 +46,14 @@ export default function AuthBridge() {
         }
       };
 
+      // axios y rondas
       attachAuth0(provider);
       attachRondasAuth(provider);
-      attachIamAuth(provider); // 👈 IAM también
+
+      // 🔹 Provider global para iamApi (fetch puro)
+      if (typeof window !== "undefined") {
+        window.__iamTokenProvider = provider;
+      }
     };
 
     wireProviders();

@@ -9,36 +9,6 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
-/* ============================================================
-   👇 NUEVO: provider global de token para IAM (Auth0)
-   ============================================================ */
-let iamTokenProvider = null;
-
-/** Lo llamaremos desde AuthBridge */
-export function attachIamAuth(provider) {
-  iamTokenProvider =
-    typeof provider === "function" ? provider : null;
-}
-
-/** Resuelve el token:
- *  - si se pasó explícito (tokenOverride) usa ese;
- *  - si no, pregunta al provider (Auth0 → getAccessTokenSilently);
- *  - si nada, devuelve null.
- */
-async function resolveToken(tokenOverride) {
-  if (tokenOverride) return tokenOverride;
-  if (!iamTokenProvider) return null;
-  try {
-    const t = await iamTokenProvider();
-    return t || null;
-  } catch (e) {
-    if (DEBUG)
-      console.warn("[iamApi] resolveToken fallo:", e?.message || e);
-    return null;
-  }
-}
-/* ============================================================ */
-
 /** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
@@ -54,6 +24,7 @@ function getDevIdentity() {
   const perms =
     (typeof localStorage !== "undefined" &&
       localStorage.getItem("iamDevPerms")) ||
+    import.meta.env.VITE_DEV_IAM_PERMS ||
     "*";
   return {
     email: email.trim(),
@@ -62,12 +33,7 @@ function getDevIdentity() {
   };
 }
 
-function buildHeaders({
-  token,
-  isFormData,
-  method = "GET",
-  urlForCors,
-} = {}) {
+function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
   if (token) h.Authorization = `Bearer ${token}`;
@@ -86,14 +52,7 @@ function buildHeaders({
   if (DEBUG) {
     const log = { ...h };
     if (log.Authorization) log.Authorization = "(set)";
-    console.log(
-      "[iamApi] headers:",
-      log,
-      "method:",
-      method,
-      "url:",
-      urlForCors
-    );
+    console.log("[iamApi] headers:", log, "method:", method, "url:", urlForCors);
   }
   return h;
 }
@@ -107,23 +66,38 @@ async function toJson(resp) {
 }
 
 /** fetch con errores enriquecidos: err.status y err.payload */
-async function rawFetch(
-  url,
-  { method = "GET", body, token, formData = false } = {}
-) {
-  const isFD =
-    formData ||
-    (typeof FormData !== "undefined" && body instanceof FormData);
+async function rawFetch(url, opts = {}) {
+  let {
+    method = "GET",
+    body,
+    token: tokenArg,
+    formData = false,
+  } = opts;
 
-  // 👇 AQUÍ ya usamos el provider global de token
-  const finalToken = await resolveToken(token);
+  const isFD =
+    formData || (typeof FormData !== "undefined" && body instanceof FormData);
+
+  // 🔹 NUEVO: si no nos pasaron token, intentamos usar el provider global de AuthBridge
+  let token = tokenArg;
+  if (!token && typeof window !== "undefined" && window.__iamTokenProvider) {
+    try {
+      token = await window.__iamTokenProvider();
+    } catch (err) {
+      if (DEBUG) {
+        console.warn(
+          "[iamApi] no se pudo obtener token desde window.__iamTokenProvider:",
+          err?.message || err
+        );
+      }
+    }
+  }
 
   try {
     const r = await fetch(url, {
       method,
       credentials: "include",
       headers: buildHeaders({
-        token: finalToken,
+        token,
         isFormData: isFD,
         method,
         urlForCors: url,
@@ -140,8 +114,7 @@ async function rawFetch(
     if (!r.ok) {
       const payload = await parse();
       const err = new Error(
-        (payload &&
-          (payload.error || payload.detail || payload.message)) ||
+        (payload && (payload.error || payload.detail || payload.message)) ||
           `${r.status} ${r.statusText}`
       );
       err.status = r.status;
@@ -285,10 +258,8 @@ function fromFormData(fd) {
 /* ---------- API ---------- */
 export const iamApi = {
   async me(token) {
-    // usa resolveToken para rellenar si no te pasan token
-    const finalToken = await resolveToken(token);
     const headers = buildHeaders({
-      token: finalToken,
+      token,
       isFormData: false,
       method: "GET",
       urlForCors: PATHS.auth.me(),
@@ -300,9 +271,7 @@ export const iamApi = {
       });
       if (r.ok) return toJson(r);
       const payload = await toJson(r);
-      const e = new Error(
-        payload?.message || `${r.status} ${r.statusText}`
-      );
+      const e = new Error(payload?.message || `${r.status} ${r.statusText}`);
       e.status = r.status;
       e.payload = payload;
       throw e;
@@ -515,8 +484,7 @@ export const iamApi = {
   },
 
   async sendVerificationEmail(userId, email, token) {
-    if (!userId || !email)
-      throw new Error("Faltan datos para verificación");
+    if (!userId || !email) throw new Error("Faltan datos para verificación");
     try {
       return await rawFetch(PATHS.users.verify(userId), {
         method: "POST",
