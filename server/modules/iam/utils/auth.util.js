@@ -1,4 +1,4 @@
-// server/utils/auth.util.js
+// server/utils/auth.util.js (por ejemplo)
 import { auth as requireJwt } from "express-oauth2-jwt-bearer";
 
 /**
