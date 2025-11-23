@@ -69,11 +69,17 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
 export default function Sidebar({ onNavigate }) {
   const { isAuthenticated, logout } = useAuth0();
 
-  // Botón "Salir": cerrar sesión y volver al home
+  // Botón "Salir": cerrar sesión y volver al /login
   const handleLogoutClick = () => {
     onNavigate?.();
     try {
-      logout({ logoutParams: { returnTo: window.location.origin } });
+      const returnTo = `${window.location.origin}/login`;
+      logout({
+        logoutParams: {
+          returnTo,
+          federated: true, // opcional, lo dejamos igual que en el topbar
+        },
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("Error al cerrar sesión:", err);

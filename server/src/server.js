@@ -1,3 +1,4 @@
+// server/src/server.js (o el archivo principal que pegaste)
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -26,16 +27,16 @@ import rondasqr from "../modules/rondasqr/index.js";
 // ✅ Evaluaciones (rutas)
 import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
 
-// ✅ Incidentes (AHORA el del módulo *incidentes*, no el de rondas)
+// ✅ Incidentes (módulo dedicado)
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
 
 import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 
-// ⬅️ AQUÍ: usamos la ruta que sí existe en tu proyecto
+// Control de visitas
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
-// ✅ Reports de Rondas (el archivo largo que pegaste)
+// ✅ Reports de Rondas
 import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
 
 // ✅ NUEVO: rutas offline de rondasqr (para /offline/dump)
@@ -77,6 +78,7 @@ function applyRootAdmin(email, rolesArr = [], permsArr = []) {
   if (emailNorm && ROOT_ADMINS.includes(emailNorm)) {
     roles.add("admin");
     perms.add("*");
+
     // permisos clave que ya usas en el frontend
     perms.add("iam.users.manage");
     perms.add("iam.roles.manage");
@@ -96,6 +98,7 @@ function applyRootAdmin(email, rolesArr = [], permsArr = []) {
 }
 
 /* ───────────────────────────── CORS ───────────────────────────── */
+
 function parseOrigins(str) {
   if (!str) return null;
   return String(str)
@@ -103,6 +106,7 @@ function parseOrigins(str) {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
 const devDefaults = ["http://localhost:5173", "http://localhost:3000"];
 const origins =
   parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN) ||
@@ -116,15 +120,18 @@ app.use(
 );
 
 /* ─────────────────────── Helmet / Seguridad ───────────────────── */
+
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
   })
 );
+
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 app.use(compression());
 
 /* ─────────────────────── Parsers de body ──────────────────────── */
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -137,6 +144,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
+
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOADS_ROOT)) {
   fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
@@ -148,12 +156,14 @@ app.use("/uploads", express.static(UPLOADS_ROOT));
 app.use("/api/uploads", express.static(UPLOADS_ROOT));
 
 /* ───────────────────────── Health checks ──────────────────────── */
+
 app.get("/api/health", (_req, res) =>
   res.json({ ok: true, service: "senaf-api", ts: Date.now() })
 );
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
+
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
@@ -162,6 +172,7 @@ const io = new SocketIOServer(server, {
     credentials: true,
   },
 });
+
 app.set("io", io);
 // compat: algunos módulos esperan req.io
 app.use((req, _res, next) => {
@@ -170,17 +181,20 @@ app.use((req, _res, next) => {
 });
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
+
 const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!mongoUri) {
   console.error("[db] FALTA MONGODB_URI o MONGO_URI");
   process.exit(1);
 }
+
 await mongoose
   .connect(mongoUri, { autoIndex: true })
   .catch((e) => {
     console.error("[db] Error conectando a MongoDB:", e?.message || e);
     process.exit(1);
   });
+
 console.log("[db] MongoDB conectado");
 
 // Fix índice conflictivo en iamusers: username_1 unique con valores null
@@ -199,6 +213,7 @@ try {
 }
 
 /* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
+
 function iamDevMerge(req, _res, next) {
   const allow = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
   if (!allow) return next();
@@ -252,6 +267,7 @@ function iamDevMerge(req, _res, next) {
 }
 
 /* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
+
 function authBridgeToReqUser(req, _res, next) {
   if (!req?.auth?.payload) return next();
 
@@ -290,6 +306,7 @@ function authBridgeToReqUser(req, _res, next) {
 }
 
 /* ────────── Auth opcional: sólo valida si viene Authorization ────────── */
+
 function optionalAuth(req, res, next) {
   if (
     req.headers.authorization &&
@@ -317,6 +334,7 @@ function requireAuthExceptMe(req, res, next) {
 }
 
 /* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
+
 app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
@@ -326,6 +344,7 @@ app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
 
 /* ───────────────────── Stubs simples (UI) ─────────────────────── */
+
 const chatMessagesHandler = (_req, res) => res.json([]);
 app.get("/api/chat/messages", chatMessagesHandler);
 app.get("/chat/messages", chatMessagesHandler); // alias sin /api
@@ -334,7 +353,7 @@ app.get("/chat/messages", chatMessagesHandler); // alias sin /api
 
 // Registro normal (localhost, etc.)
 await registerIAMModule({ app, basePath: "/api/iam/v1" });
-// 🔁 Alias sin /api para cuando la plataforma recorta el prefijo
+// Alias sin /api para cuando la plataforma recorta el prefijo
 await registerIAMModule({ app, basePath: "/iam/v1" });
 
 function pickMe(req) {
@@ -386,7 +405,7 @@ app.get("/api/iam/v1/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
 
-// 🔁 alias /me sin /api
+// Alias /me sin /api
 app.get("/iam/v1/auth/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
@@ -409,8 +428,6 @@ async function listGuardsHandler(req, res) {
     const col = mongoose.connection.collection("iamusers");
 
     const filter = {};
-
-    // filtrar por rol tipo guard
     filter.roles = { $in: ["guard", "guardia", "rondasqr.guard"] };
 
     if (typeof active !== "undefined") {
@@ -449,6 +466,7 @@ app.get("/api/iam/v1/users/guards", listGuardsHandler);
 app.get("/iam/v1/users/guards", listGuardsHandler);
 
 /* ─────────── Email verify (opcional) ─────────── */
+
 async function verifyEmailHandler(req, res) {
   try {
     const { id } = req.params;
@@ -543,6 +561,7 @@ app.post("/api/iam/v1/users/:id/verify-email", verifyEmailHandler);
 app.post("/iam/v1/users/:id/verify-email", verifyEmailHandler);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
+
 const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
 app.use("/api/notifications", notificationsRoutes);
@@ -552,6 +571,7 @@ app.use("/notifications", notificationsRoutes); // alias sin /api
 startDailyAssignmentCron(app);
 
 /* ──────────────── DEBUG: trigger de asignación por URL ─────────────── */
+
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(
@@ -578,6 +598,7 @@ app.get("/api/_debug/ping-assign", (req, res) => {
 });
 
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
+
 const pingHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
@@ -598,21 +619,25 @@ app.use("/rondasqr/v1", rondasReportsRoutes);
 app.use("/rondasqr/v1", rondasOfflineRoutes);
 
 /* ✅ Módulo Control de Acceso */
+
 app.use("/api/acceso", accesoRoutes);
 app.use("/acceso", accesoRoutes); // compat sin /api
 
 app.use("/api/acceso/uploads", uploadRoutes);
 app.use("/acceso/uploads", uploadRoutes); // compat sin /api
 
+/* ✅ Módulo de VISITAS */
+
 app.use("/api", visitasRoutes);
 
 /* ✅ Módulo de INCIDENTES */
-app.use("/api/incidentes", incidentesRoutes); // compatibilidad
+
+app.use("/api/incidentes", incidentesRoutes);
 app.use("/incidentes", incidentesRoutes); // sin /api
 
 /* ✅ Evaluaciones */
 
-// 🔍 Debug simple SOLO en desarrollo para ver el payload que llega
+// Debug simple SOLO en desarrollo para ver el payload que llega
 if (process.env.NODE_ENV !== "production") {
   app.use("/api/evaluaciones", (req, _res, next) => {
     if (req.method === "POST") {
@@ -626,6 +651,7 @@ app.use("/evaluaciones", evaluacionesRoutes);
 app.use("/api/evaluaciones", evaluacionesRoutes);
 
 /* ────────────────────── Error handler (500) ───────────────────── */
+
 app.use((err, _req, res, _next) => {
   console.error("[api] error:", err?.stack || err?.message || err);
   res
@@ -634,11 +660,13 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ─────────────────────────── 404 final ────────────────────────── */
+
 app.use((_req, res) =>
   res.status(404).json({ ok: false, error: "Not implemented" })
 );
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
+
 const PORT = Number(process.env.PORT || 8080);
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[api] http://localhost:${PORT}`);
@@ -648,6 +676,7 @@ server.listen(PORT, "0.0.0.0", () => {
 });
 
 /* ───────────────────────── Socket.IO ──────────────────────────── */
+
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
   s.emit("hello", { ok: true, ts: Date.now() });
@@ -669,6 +698,7 @@ io.on("connection", (s) => {
 });
 
 /* ────────────────────────── Shutdown ──────────────────────────── */
+
 function shutdown(sig) {
   console.log(`[api] ${sig} recibido. Cerrando...`);
   server.close(() => {
@@ -678,6 +708,7 @@ function shutdown(sig) {
     });
   });
 }
+
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (err) =>

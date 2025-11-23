@@ -51,14 +51,7 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   if (DEBUG) {
     const log = { ...h };
     if (log.Authorization) log.Authorization = "(set)";
-    console.log(
-      "[iamApi] headers:",
-      log,
-      "method:",
-      method,
-      "url:",
-      urlForCors
-    );
+    console.log("[iamApi] headers:", log, "method:", method, "url:", urlForCors);
   }
   return h;
 }
@@ -78,6 +71,7 @@ async function rawFetch(
 ) {
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
+
   try {
     const r = await fetch(url, {
       method,
@@ -257,9 +251,7 @@ export const iamApi = {
       });
       if (r.ok) return toJson(r);
       const payload = await toJson(r);
-      const e = new Error(
-        payload?.message || `${r.status} ${r.statusText}`
-      );
+      const e = new Error(payload?.message || `${r.status} ${r.statusText}`);
       e.status = r.status;
       e.payload = payload;
       throw e;
@@ -277,6 +269,7 @@ export const iamApi = {
     return rawFetch(PATHS.auth.login(), { method: "POST", body });
   },
 
+  /* ---------- ROLES ---------- */
   listRoles: (t) => rawFetch(PATHS.roles.list(), { token: t }),
   createRole: (p, t) =>
     rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
@@ -298,6 +291,7 @@ export const iamApi = {
       token: t,
     }),
 
+  /* ---------- PERMISOS ---------- */
   listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
   listPermsForRole: (roleId, t) =>
     rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
@@ -312,19 +306,20 @@ export const iamApi = {
   deletePerm: (id, t) =>
     rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
+  /* ---------- USUARIOS ---------- */
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
-  // NUEVO: lista de guardias (para el select)
+  // lista de guardias (para selects de otros módulos)
   listGuards: (q = "", active = true, t) =>
     rawFetch(PATHS.users.guards(q, active), { token: t }),
 
   createUser: (payload, t) => {
-    let email = "",
-      name = "",
-      roles = [],
-      active = true,
-      perms,
-      password;
+    let email = "";
+    let name = "";
+    let roles = [];
+    let active = true;
+    let perms;
+    let password;
 
     if (typeof FormData !== "undefined" && payload instanceof FormData) {
       const obj = fromFormData(payload);
@@ -362,7 +357,7 @@ export const iamApi = {
         String(
           obj.email ??
             obj.correo ??
-            obj.correoPersonal ??
+            obj.correoPersona ??
             obj.personalEmail ??
             obj.mail ??
             obj?.persona?.email ??
@@ -436,6 +431,7 @@ export const iamApi = {
   disableUser: (id, t) =>
     rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
+  // "Eliminar" hace soft-delete / desactivar
   deleteUser: (id, t) =>
     rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 

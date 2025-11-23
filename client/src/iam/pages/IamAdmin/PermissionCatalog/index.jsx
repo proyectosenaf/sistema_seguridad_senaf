@@ -1,28 +1,46 @@
-// client/src/iam/pages/IamAdmin/PermissionCatalog/index.jsx
 import React, { useMemo, useRef, useState, useEffect } from "react";
 
 import { usePermissionCatalogData } from "./hooks/usePermissionCatalogData";
 import HeaderRow from "../components/HeaderRow";
 import GroupSection from "../components/GroupSection";
 import Modal from "../components/Modal";
-import { Plus, Eye, Minus, Square } from "lucide-react"; // íconos
+import { Plus, Eye, Minus, Square } from "lucide-react";
 
 export default function PermissionCatalog() {
   const {
-    loading, errorMsg, banner,
-    roles, groups, roleMatrix, origMatrix,
-    query, setQuery, compactView, setCompactView,
-    onToggle, onSaveAll, onCreatePerm, onDeletePerm,
+    loading,
+    errorMsg,
+    banner,
+    roles,
+    groups,
+    roleMatrix,
+    origMatrix,
+    query,
+    setQuery,
+    compactView,
+    setCompactView,
+    onToggle,
+    onSaveAll,
+    onCreatePerm,
+    onDeletePerm,
   } = usePermissionCatalogData();
 
   const scrollRef = useRef(null);
   const [openCreate, setOpenCreate] = useState(false);
-  const [form, setForm] = useState({ key: "", label: "", moduleValue: "bitacora" });
+  const [form, setForm] = useState({
+    key: "",
+    label: "",
+    moduleValue: "bitacora",
+  });
   const [openDelete, setOpenDelete] = useState(null);
 
   // Control de módulos desplegados
-  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(() => new Set());
-  const [expandedGroupsFull, setExpandedGroupsFull] = useState(() => new Set());
+  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(
+    () => new Set()
+  );
+  const [expandedGroupsFull, setExpandedGroupsFull] = useState(
+    () => new Set()
+  );
 
   const toggleGroupCompact = (groupKey) => {
     setExpandedGroupsCompact((prev) => {
@@ -59,46 +77,51 @@ export default function PermissionCatalog() {
       .filter((g) => g.items.length > 0 || compactView);
   }, [groups, query, compactView]);
 
-  // ⬇️ Si estamos en "Mostrar" y aún no hay grupos abiertos, abrir todos por defecto
+  // Si estamos en "Mostrar" y aún no hay grupos abiertos, abrir todos por defecto
   useEffect(() => {
     if (!compactView) {
       const all = new Set(
         filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
       );
-      if (expandedGroupsFull.size === 0 || [...expandedGroupsFull].some(k => !all.has(k))) {
+      if (
+        expandedGroupsFull.size === 0 ||
+        [...expandedGroupsFull].some((k) => !all.has(k))
+      ) {
         setExpandedGroupsFull(all);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compactView, filtered]);
 
-  if (loading) return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
+  if (loading) {
+    return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
+  }
 
   const btnDark =
     "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium " +
-    "bg-neutral-800 text-neutral-200 border border-neutral-700 " +
-    "hover:bg-neutral-700/90 transition";
+    "bg-neutral-900/70 text-neutral-100 border border-white/10 " +
+    "hover:bg-neutral-900/90 transition backdrop-blur-sm";
   const btnPrimary =
     "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold " +
-    "bg-emerald-600 text-white border border-emerald-500 " +
+    "bg-emerald-600 text-white border border-emerald-500/80 " +
     "hover:bg-emerald-500 transition shadow";
 
   return (
     <div className="space-y-4 layer-content">
       {errorMsg && (
-        <div className="rounded-md border border-rose-300 bg-rose-50 text-rose-800 p-3">
+        <div className="rounded-xl border border-rose-400/60 bg-rose-500/10 text-rose-100 px-4 py-3 backdrop-blur-sm">
           {errorMsg}
         </div>
       )}
       {banner && (
         <div
           className={
-            "rounded-md p-3 border " +
+            "rounded-xl px-4 py-3 border backdrop-blur-sm " +
             (banner.type === "ok"
-              ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+              ? "bg-emerald-500/10 text-emerald-100 border-emerald-400/60"
               : banner.type === "warn"
-              ? "bg-blue-50 text-blue-800 border-blue-300"
-              : "bg-rose-50 text-rose-800 border-rose-300")
+              ? "bg-sky-500/10 text-sky-100 border-sky-400/60"
+              : "bg-rose-500/10 text-rose-100 border-rose-400/60")
           }
         >
           {banner.msg}
@@ -115,7 +138,7 @@ export default function PermissionCatalog() {
             className="input-fx"
             aria-label="Buscar permisos"
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
             <button onClick={() => setOpenCreate(true)} className={btnDark}>
               <Plus className="w-4 h-4 opacity-90" />
               <span>Crear permiso</span>
@@ -123,7 +146,6 @@ export default function PermissionCatalog() {
             <button
               onClick={() => {
                 setCompactView(false);
-                // Abrir todos al cambiar a Mostrar
                 const all = new Set(
                   filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
                 );
@@ -134,11 +156,10 @@ export default function PermissionCatalog() {
               <Eye className="w-4 h-4 opacity-90" />
               <span>Mostrar</span>
             </button>
-            {/* ⬇ Ver menos: vuelve al listado compacto con TODO colapsado */}
             <button
               onClick={() => {
                 setCompactView(true);
-                setExpandedGroupsCompact(new Set()); // todos cerrados
+                setExpandedGroupsCompact(new Set());
                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
               }}
               className={btnDark}
@@ -160,18 +181,18 @@ export default function PermissionCatalog() {
           No se encontraron permisos para “{query}”.
         </div>
       ) : compactView ? (
-        /* ===== VISTA COMPACTA (sticky header, todo colapsado por defecto) ===== */
+        /* ===== VISTA COMPACTA ===== */
         <div className="fx-card p-0 overflow-hidden">
           <div className="overflow-auto max-h-[72vh]" ref={scrollRef}>
             <div style={{ minWidth: `${minWidthPx}px` }}>
-              {/* Encabezado general FIJO */}
+              {/* Encabezado FIJO */}
               <div className="sticky top-0 z-20">
-                <div className="bg-neutral-900/80 dark:bg-neutral-900/80 border-b border-neutral-800 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md">
+                <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
                   <HeaderRow roles={roles} gridCols={gridCols} />
                 </div>
               </div>
 
-              <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              <div className="divide-y divide-neutral-200/40 dark:divide-neutral-800/70">
                 {filtered.map((g, idx) => {
                   const groupKey = g.group || `g-${idx}`;
                   const isOpen = expandedGroupsCompact.has(groupKey);
@@ -179,9 +200,9 @@ export default function PermissionCatalog() {
                   return (
                     <div
                       key={`${groupKey}-${idx}`}
-                      className="bg-neutral-100/5 dark:bg-neutral-900/30"
+                      className="bg-neutral-900/20"
                     >
-                      {/* Botón de despliegue: oculta el nombre cuando está abierto */}
+                      {/* Botón de despliegue */}
                       <button
                         type="button"
                         onClick={() => toggleGroupCompact(groupKey)}
@@ -193,7 +214,7 @@ export default function PermissionCatalog() {
                               <span className="font-semibold capitalize text-neutral-100">
                                 {g.group}
                               </span>
-                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
+                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
                                 {g.items.length}
                               </span>
                             </>
@@ -208,7 +229,7 @@ export default function PermissionCatalog() {
                       </button>
 
                       {isOpen && (
-                        <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                        <div className="divide-y divide-neutral-800/70">
                           <GroupSection
                             key={`${g.group}-compact`}
                             group={g}
@@ -235,18 +256,18 @@ export default function PermissionCatalog() {
           </div>
         </div>
       ) : (
-        /* ===== VISTA NORMAL "MOSTRAR" (sticky header) ===== */
+        /* ===== VISTA COMPLETA "MOSTRAR" ===== */
         <div className="fx-card p-0">
           <div ref={scrollRef} className="overflow-auto max-h-[72vh]">
             <div style={{ minWidth: `${minWidthPx}px` }}>
-              {/* Encabezado general FIJO */}
+              {/* Encabezado FIJO */}
               <div className="sticky top-0 z-20">
-                <div className="bg-neutral-900/80 dark:bg-neutral-900/80 border-b border-neutral-800 backdrop-blur supports-[backdrop-filter]:backdrop-blur-md">
+                <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
                   <HeaderRow roles={roles} gridCols={gridCols} />
                 </div>
               </div>
 
-              <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              <div className="divide-y divide-neutral-800/70">
                 {filtered.map((g, idx) => {
                   const groupKey = g.group || `g-${idx}`;
                   const isOpen = expandedGroupsFull.has(groupKey);
@@ -265,7 +286,7 @@ export default function PermissionCatalog() {
                               <span className="font-semibold capitalize text-neutral-100">
                                 {g.group}
                               </span>
-                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/15 text-blue-300">
+                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
                                 {g.items.length}
                               </span>
                             </>
