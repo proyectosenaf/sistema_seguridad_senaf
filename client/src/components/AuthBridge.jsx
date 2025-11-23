@@ -14,25 +14,21 @@ export default function AuthBridge() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
-    let cancelled = false;
-
     const wireProviders = async () => {
       if (!isAuthenticated) {
-        // 🔹 Usuario no autenticado: limpiamos TODO
+        // Si el usuario no está autenticado, limpia proveedores
         attachAuth0(null);
         attachRondasAuth(null);
+
+        // 🔹 IMPORTANTE: también limpiamos el provider de IAM
         if (typeof window !== "undefined") {
-          delete window.__iamTokenProvider;
+          window.__iamTokenProvider = null;
         }
         return;
       }
 
-      // 🔹 Un único provider que usaremos en:
-      // - api.js (axios)
-      // - rondasqrApi
-      // - iamApi (vía window.__iamTokenProvider)
+      // Un único provider para todas tus libs
       const provider = async () => {
-        if (cancelled) return null;
         try {
           const token = await getAccessTokenSilently({
             authorizationParams: {
@@ -50,27 +46,19 @@ export default function AuthBridge() {
         }
       };
 
-      // Conectamos el provider a las diferentes capas
+      // 👉 API general
       attachAuth0(provider);
+
+      // 👉 Módulo de rondas
       attachRondasAuth(provider);
 
-      // 🔹 NUEVO: provider global para iamApi.js
+      // 👉 🔥 NUEVO: IAM (roles / permisos / usuarios)
       if (typeof window !== "undefined") {
         window.__iamTokenProvider = provider;
       }
     };
 
     wireProviders();
-
-    // Cleanup al desmontar / cambiar auth
-    return () => {
-      cancelled = true;
-      attachAuth0(null);
-      attachRondasAuth(null);
-      if (typeof window !== "undefined") {
-        delete window.__iamTokenProvider;
-      }
-    };
   }, [isAuthenticated, getAccessTokenSilently]);
 
   return null;
