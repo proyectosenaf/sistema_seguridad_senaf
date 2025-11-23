@@ -810,14 +810,6 @@ function shutdown(sig) {
   });
 }
 
-app.get("/api/iam/v1/debug-version", (_req, res) => {
-  res.json({
-    ok: true,
-    source: "custom-simple-iam",
-    ts: Date.now(),
-  });
-});
-
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
