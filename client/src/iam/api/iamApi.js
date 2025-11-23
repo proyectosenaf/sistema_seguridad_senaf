@@ -8,6 +8,12 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
+/* 🔐 Provider global de token (lo setea AuthBridge) */
+let IAM_TOKEN_PROVIDER = null;
+export function attachIamAuth(provider) {
+  IAM_TOKEN_PROVIDER = typeof provider === "function" ? provider : null;
+}
+
 /** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
@@ -72,12 +78,27 @@ async function rawFetch(
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
+  // 🔐 Resolver token: primero el explícito, si no, el provider global
+  let resolvedToken = token;
+  if (!resolvedToken && typeof IAM_TOKEN_PROVIDER === "function") {
+    try {
+      resolvedToken = await IAM_TOKEN_PROVIDER();
+    } catch (e) {
+      if (DEBUG) {
+        console.warn(
+          "[iamApi] error obteniendo token del provider:",
+          e?.message || e
+        );
+      }
+    }
+  }
+
   try {
     const r = await fetch(url, {
       method,
       credentials: "include",
       headers: buildHeaders({
-        token,
+        token: resolvedToken,
         isFormData: isFD,
         method,
         urlForCors: url,
@@ -238,8 +259,23 @@ function fromFormData(fd) {
 /* ---------- API ---------- */
 export const iamApi = {
   async me(token) {
+    // Si no recibimos token explícito, intentamos el provider
+    let resolvedToken = token;
+    if (!resolvedToken && typeof IAM_TOKEN_PROVIDER === "function") {
+      try {
+        resolvedToken = await IAM_TOKEN_PROVIDER();
+      } catch (e) {
+        if (DEBUG) {
+          console.warn(
+            "[iamApi.me] error obteniendo token del provider:",
+            e?.message || e
+          );
+        }
+      }
+    }
+
     const headers = buildHeaders({
-      token,
+      token: resolvedToken,
       isFormData: false,
       method: "GET",
       urlForCors: PATHS.auth.me(),
@@ -282,8 +318,7 @@ export const iamApi = {
   deleteRole: (id, t) =>
     rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
-  getRolePerms: (id, t) =>
-    rawFetch(PATHS.roles.permissions(id), { token: t }),
+  getRolePerms: (id, t) => rawFetch(PATHS.roles.permissions(id), { token: t }),
   setRolePerms: (id, keys, t) =>
     rawFetch(PATHS.roles.permissions(id), {
       method: "PUT",
