@@ -2,6 +2,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
+import AuthBridge from "../components/AuthBridge.jsx"; // 👈 IMPORTANTE
 
 export default function Auth0ProviderWithHistory({ children }) {
   const navigate = useNavigate();
@@ -33,6 +34,8 @@ export default function Auth0ProviderWithHistory({ children }) {
       useRefreshTokens={true}
       cacheLocation="localstorage"
     >
+      {/* 👇 Aquí enganchamos los tokens a axios, rondasqr y IAM */}
+      <AuthBridge />
       {children}
     </Auth0Provider>
   );
