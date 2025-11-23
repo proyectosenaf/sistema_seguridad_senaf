@@ -75,32 +75,37 @@ export async function seedPermissionsAndRoles(token) {
 
   const roleIdx = new Map();
   for (const r of existingRoles) {
-    const name = r?.name || r?._id || "";
-    if (!name) continue;
-    roleIdx.set(name, r);
+    const key = r?.key || r?.name || r?._id || "";
+    if (!key) continue;
+    roleIdx.set(key, r);
   }
 
-  for (const [roleName, permList] of Object.entries(rolesKeys)) {
-    const role = roleIdx.get(roleName);
+  for (const [roleKey, permList] of Object.entries(rolesKeys)) {
+    const role = roleIdx.get(roleKey);
     const desired = Array.isArray(permList) ? permList : [];
 
     if (!role) {
       try {
         await iamApi.createRole(
-          { name: roleName, description: "", permissions: desired },
+          {
+            key: roleKey,
+            name: roleKey,
+            description: "",
+            permissions: desired,
+          },
           token
         );
-        console.log("[seed] rol creado:", roleName);
+        console.log("[seed] rol creado:", roleKey);
       } catch (e) {
         console.warn(
           "[seed] no se pudo crear rol",
-          roleName,
+          roleKey,
           e?.message || e
         );
       }
     } else {
-      const current = Array.isArray(role.permissions || role.perms)
-        ? role.permissions || role.perms
+      const current = Array.isArray(role.permissionKeys || role.permissions || role.perms)
+        ? role.permissionKeys || role.permissions || role.perms
         : [];
       const same =
         current.length === desired.length &&
@@ -111,17 +116,18 @@ export async function seedPermissionsAndRoles(token) {
           await iamApi.updateRole(
             role._id || role.id,
             {
-              name: roleName,
+              key: roleKey,
+              name: roleKey,
               description: role.description || "",
               permissions: desired,
             },
             token
           );
-          console.log("[seed] rol actualizado:", roleName);
+          console.log("[seed] rol actualizado:", roleKey);
         } catch (e) {
           console.warn(
             "[seed] no se pudo actualizar rol",
-            roleName,
+            roleKey,
             e?.message || e
           );
         }
