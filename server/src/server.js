@@ -1,4 +1,4 @@
-// server/src/server.js (o el archivo principal que pegaste)
+// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -319,17 +319,29 @@ function optionalAuth(req, res, next) {
 
 /**
  * 🔐 Igual que requireAuth, pero:
+ * - Respeta IAM_DEV_ALLOW_ALL=1 (modo dev IAM total).
  * - Respeta DISABLE_AUTH=1.
  * - NO exige auth en /auth/me ni /me (para que sigan siendo opcionales).
  */
 function requireAuthExceptMe(req, res, next) {
   const path = req.path || "";
+
+  // 👇 Modo DEV IAM: deja pasar TODO sin validar JWT
+  if (String(process.env.IAM_DEV_ALLOW_ALL || "0") === "1") {
+    return next();
+  }
+
+  // /auth/me y /me siguen siendo libres
   if (path === "/auth/me" || path === "/me") {
     return next();
   }
+
+  // Si deshabilitas auth global
   if (String(process.env.DISABLE_AUTH || "0") === "1") {
     return next();
   }
+
+  // En cualquier otro caso, exige JWT real
   return requireAuth(req, res, next);
 }
 
