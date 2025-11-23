@@ -1,4 +1,3 @@
-// client/src/components/AuthBridge.jsx
 import { useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -11,7 +10,7 @@ export default function AuthBridge() {
   useEffect(() => {
     const wireProviders = async () => {
       if (!isAuthenticated) {
-        // limpiar todo si no hay sesión
+        // limpiar providers si no hay sesión
         attachAuth0(null);
         attachRondasAuth(null);
         if (typeof window !== "undefined") {
@@ -20,7 +19,7 @@ export default function AuthBridge() {
         return;
       }
 
-      // único provider de token
+      // único provider para TODAS las libs
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
@@ -39,11 +38,11 @@ export default function AuthBridge() {
         }
       };
 
-      // inyectar en todas tus capas de red
+      // API general
       attachAuth0(provider);
+      // Rondas
       attachRondasAuth(provider);
-
-      // 🔹 clave para IAM: provider global que usa iamApi.js
+      // 🔹 IAM (lo usa iamApi.js -> window.__iamTokenProvider)
       if (typeof window !== "undefined") {
         window.__iamTokenProvider = provider;
       }
@@ -51,7 +50,6 @@ export default function AuthBridge() {
 
     wireProviders();
 
-    // limpieza opcional
     return () => {
       if (typeof window !== "undefined") {
         window.__iamTokenProvider = null;

@@ -1,4 +1,3 @@
-// client/src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -13,7 +12,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
       <Auth0ProviderWithHistory>
-        {/* 👇 puente de tokens */}
+        {/* 👇 Aquí es donde inyectamos el token a TODO */}
         <AuthBridge />
         <App />
       </Auth0ProviderWithHistory>
