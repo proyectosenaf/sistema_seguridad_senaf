@@ -17,17 +17,20 @@ export default function AuthBridge() {
     let cancelled = false;
 
     const wireProviders = async () => {
-      // 🔴 Si NO hay sesión: limpiar todo
       if (!isAuthenticated) {
+        // 🔹 Usuario no autenticado: limpiamos TODO
         attachAuth0(null);
         attachRondasAuth(null);
         if (typeof window !== "undefined") {
-          window.__iamTokenProvider = undefined;
+          delete window.__iamTokenProvider;
         }
         return;
       }
 
-      // ✅ Provider único para TODAS las libs (axios, rondasqrApi, iamApi)
+      // 🔹 Un único provider que usaremos en:
+      // - api.js (axios)
+      // - rondasqrApi
+      // - iamApi (vía window.__iamTokenProvider)
       const provider = async () => {
         if (cancelled) return null;
         try {
@@ -47,11 +50,11 @@ export default function AuthBridge() {
         }
       };
 
-      // 👉 Inyectar en tus capas de red existentes
+      // Conectamos el provider a las diferentes capas
       attachAuth0(provider);
       attachRondasAuth(provider);
 
-      // 👉 NUEVO: exponer provider para iamApi
+      // 🔹 NUEVO: provider global para iamApi.js
       if (typeof window !== "undefined") {
         window.__iamTokenProvider = provider;
       }
@@ -59,13 +62,13 @@ export default function AuthBridge() {
 
     wireProviders();
 
-    // cleanup al desmontar / cambiar sesión
+    // Cleanup al desmontar / cambiar auth
     return () => {
       cancelled = true;
       attachAuth0(null);
       attachRondasAuth(null);
       if (typeof window !== "undefined") {
-        window.__iamTokenProvider = undefined;
+        delete window.__iamTokenProvider;
       }
     };
   }, [isAuthenticated, getAccessTokenSilently]);
