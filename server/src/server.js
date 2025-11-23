@@ -12,9 +12,10 @@ import nodemailer from "nodemailer";
 import path from "node:path";
 import fs from "node:fs";
 
-// IAM (usuarios/roles/permisos)
-// import { registerIAMModule } from "../modules/iam/index.js"; // ⛔ desactivado
-// Auth opcional (valida JWT sólo si hay Authorization)
+// ❌ IMPORT VIEJO ELIMINADO:
+// import { registerIAMModule } from "../modules/iam/index.js";
+
+// Auth opcional (pero ya casi no lo usamos para IAM)
 import { requireAuth } from "./middleware/auth.js";
 
 // Core de notificaciones
@@ -317,149 +318,33 @@ function optionalAuth(req, res, next) {
   return next();
 }
 
-/**
- * 🔐 Igual que requireAuth, pero:
- * - Respeta IAM_DEV_ALLOW_ALL=1 (modo dev IAM total).
- * - Respeta DISABLE_AUTH=1.
- * - NO exige auth en /auth/me ni /me (para que sigan siendo opcionales).
- */
-function requireAuthExceptMe(req, res, next) {
-  const path = req.path || "";
-
-  // 👇 Modo DEV IAM: deja pasar TODO sin validar JWT
-  if (String(process.env.IAM_DEV_ALLOW_ALL || "0") === "1") {
-    return next();
-  }
-
-  // /auth/me y /me siguen siendo libres
-  if (path === "/auth/me" || path === "/me") {
-    return next();
-  }
-
-  // Si deshabilitas auth global
-  if (String(process.env.DISABLE_AUTH || "0") === "1") {
-    return next();
-  }
-
-  // En cualquier otro caso, exige JWT real
-  return requireAuth(req, res, next);
-}
-
-/* ─────────────────── MIDDLEWARES antes del 404 ─────────────────── */
+/* ─────────────────── MIDDLEWARES GLOBALES ─────────────────── */
 
 app.use(iamDevMerge);
 app.use(authBridgeToReqUser);
 
-// 🔐 Middleware especial para IAM:
-// primero valida JWT (si aplica) y luego aplica el bridge + ROOT_ADMIN
-app.use("/api/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
-app.use("/iam/v1", requireAuthExceptMe, authBridgeToReqUser);
+/* ─────────────────── IAM SIMPLE (SIN registerIAMModule) ─────────────────── */
 
-/* ───────────────────── Stubs simples (UI) ─────────────────────── */
+// Colecciones base
+const iamDb = mongoose.connection;
+const UsersCol = iamDb.collection("iamusers");
+const RolesCol = iamDb.collection("iamroles");
+const PermsCol = iamDb.collection("iampermissions");
 
-const chatMessagesHandler = (_req, res) => res.json([]);
-app.get("/api/chat/messages", chatMessagesHandler);
-app.get("/chat/messages", chatMessagesHandler); // alias sin /api
-
-/* ───────────── IAM principal + /me ───────────── */
-
-// ⛔ Desactivado: módulo IAM interno que estaba respondiendo 401
-// await registerIAMModule({ app, basePath: "/api/iam/v1" });
-// await registerIAMModule({ app, basePath: "/iam/v1" });
-
-/* ✅ IAM SIMPLE hecho a mano (evita 401 del módulo interno) */
-
-const iamUsersCol = mongoose.connection.collection("iamusers");
-const iamRolesCol = mongoose.connection.collection("iamroles");
-const iamPermsCol = mongoose.connection.collection("iamperms");
-
-function okList(items) {
-  return { ok: true, items };
+// Helper para ObjectId seguro
+import { Types as MTypes } from "mongoose";
+function toId(id) {
+  try {
+    return new MTypes.ObjectId(String(id));
+  } catch {
+    return null;
+  }
 }
 
-// Lista de usuarios IAM
-app.get("/api/iam/v1/users", async (req, res) => {
-  try {
-    const q = String(req.query.q || "").trim();
-    const filter = {};
-    if (q) {
-      const rx = new RegExp(q, "i");
-      filter.$or = [{ name: rx }, { email: rx }, { dni: rx }];
-    }
-    const docs = await iamUsersCol
-      .find(filter, {
-        projection: {
-          _id: 1,
-          name: 1,
-          email: 1,
-          roles: 1,
-          active: 1,
-          dni: 1,
-          id_persona: 1,
-        },
-      })
-      .toArray();
-
-    res.json(okList(docs));
-  } catch (e) {
-    console.error("[IAM simple] list users error:", e);
-    res.status(500).json({ ok: false, error: "Error al listar usuarios" });
-  }
-});
-
-// Lista de roles IAM
-app.get("/api/iam/v1/roles", async (_req, res) => {
-  try {
-    const docs = await iamRolesCol
-      .find(
-        {},
-        {
-          projection: {
-            _id: 1,
-            key: 1,
-            name: 1,
-            description: 1,
-            module: 1,
-          },
-        }
-      )
-      .toArray();
-
-    res.json(okList(docs));
-  } catch (e) {
-    console.error("[IAM simple] list roles error:", e);
-    res.status(500).json({ ok: false, error: "Error al listar roles" });
-  }
-});
-
-// Lista de permisos IAM
-app.get("/api/iam/v1/permissions", async (_req, res) => {
-  try {
-    const docs = await iamPermsCol
-      .find(
-        {},
-        {
-          projection: {
-            _id: 1,
-            key: 1,
-            name: 1,
-            description: 1,
-            module: 1,
-          },
-        }
-      )
-      .toArray();
-
-    res.json(okList(docs));
-  } catch (e) {
-    console.error("[IAM simple] list perms error:", e);
-    res.status(500).json({ ok: false, error: "Error al listar permisos" });
-  }
-});
+/* ---- /me ---- */
 
 function pickMe(req) {
   const p = req?.auth?.payload || {};
-
   const email =
     p.email ||
     p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] ||
@@ -486,19 +371,9 @@ function pickMe(req) {
     },
     roles,
     permissions,
-    _debug:
-      process.env.NODE_ENV !== "production"
-        ? {
-            NS: IAM_NS,
-            hasAuthHeader: !!req.headers.authorization,
-            fromDevHeaders:
-              String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1",
-          }
-        : undefined,
   };
 }
 
-// /me con /api
 app.get("/api/iam/v1/auth/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
@@ -506,7 +381,7 @@ app.get("/api/iam/v1/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
 
-// Alias /me sin /api
+// Alias sin /api
 app.get("/iam/v1/auth/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
@@ -514,20 +389,247 @@ app.get("/iam/v1/me", optionalAuth, (req, res) =>
   res.json(pickMe(req))
 );
 
-// stub audit rápido (con y sin /api)
-app.get("/api/iam/v1/audit", (_req, res) =>
-  res.json({ ok: true, items: [], limit: 100 })
-);
-app.get("/iam/v1/audit", (_req, res) =>
-  res.json({ ok: true, items: [], limit: 100 })
-);
+/* ---- PERMISOS ---- */
 
-// 🔹 handler reutilizable para lista de guardias
+// GET /permissions
+app.get("/api/iam/v1/permissions", async (_req, res) => {
+  try {
+    const items = await PermsCol.find({}).sort({ module: 1, key: 1 }).toArray();
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[IAM] list permissions error:", e);
+    res.status(500).json({ ok: false, error: "Error listando permisos" });
+  }
+});
+
+// POST /permissions
+app.post("/api/iam/v1/permissions", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    if (!payload.key) {
+      return res.status(400).json({ ok: false, error: "key requerida" });
+    }
+    const now = new Date();
+    const doc = {
+      key: String(payload.key),
+      name: String(payload.name || payload.label || payload.key),
+      module: String(payload.module || payload.modulo || "general"),
+      description: String(payload.description || payload.descripcion || ""),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const r = await PermsCol.insertOne(doc);
+    doc._id = r.insertedId;
+    res.json({ ok: true, item: doc });
+  } catch (e) {
+    console.error("[IAM] create permission error:", e);
+    res.status(500).json({ ok: false, error: "Error creando permiso" });
+  }
+});
+
+// PATCH /permissions/:id
+app.patch("/api/iam/v1/permissions/:id", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+
+    const payload = req.body || {};
+    const $set = {
+      updatedAt: new Date(),
+    };
+    ["key", "name", "module", "description"].forEach((k) => {
+      if (payload[k] !== undefined) $set[k] = payload[k];
+    });
+
+    await PermsCol.updateOne({ _id }, { $set });
+    const item = await PermsCol.findOne({ _id });
+    res.json({ ok: true, item });
+  } catch (e) {
+    console.error("[IAM] update permission error:", e);
+    res.status(500).json({ ok: false, error: "Error actualizando permiso" });
+  }
+});
+
+// DELETE /permissions/:id
+app.delete("/api/iam/v1/permissions/:id", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    await PermsCol.deleteOne({ _id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[IAM] delete permission error:", e);
+    res.status(500).json({ ok: false, error: "Error eliminando permiso" });
+  }
+});
+
+/* ---- ROLES ---- */
+
+// GET /roles
+app.get("/api/iam/v1/roles", async (_req, res) => {
+  try {
+    const items = await RolesCol.find({}).sort({ name: 1 }).toArray();
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[IAM] list roles error:", e);
+    res.status(500).json({ ok: false, error: "Error listando roles" });
+  }
+});
+
+// POST /roles
+app.post("/api/iam/v1/roles", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    if (!payload.key) {
+      return res.status(400).json({ ok: false, error: "key requerida" });
+    }
+    const now = new Date();
+    const doc = {
+      key: String(payload.key),
+      name: String(payload.name || payload.label || payload.key),
+      description: String(payload.description || payload.descripcion || ""),
+      permissionKeys: Array.isArray(payload.permissionKeys)
+        ? payload.permissionKeys
+        : Array.isArray(payload.permissions)
+        ? payload.permissions
+        : [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const r = await RolesCol.insertOne(doc);
+    doc._id = r.insertedId;
+    res.json({ ok: true, item: doc });
+  } catch (e) {
+    console.error("[IAM] create role error:", e);
+    res.status(500).json({ ok: false, error: "Error creando rol" });
+  }
+});
+
+// PATCH /roles/:id
+app.patch("/api/iam/v1/roles/:id", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+
+    const payload = req.body || {};
+    const $set = { updatedAt: new Date() };
+    ["key", "name", "description"].forEach((k) => {
+      if (payload[k] !== undefined) $set[k] = payload[k];
+    });
+    if (payload.permissionKeys) {
+      $set.permissionKeys = payload.permissionKeys;
+    } else if (payload.permissions) {
+      $set.permissionKeys = payload.permissions;
+    }
+
+    await RolesCol.updateOne({ _id }, { $set });
+    const item = await RolesCol.findOne({ _id });
+    res.json({ ok: true, item });
+  } catch (e) {
+    console.error("[IAM] update role error:", e);
+    res.status(500).json({ ok: false, error: "Error actualizando rol" });
+  }
+});
+
+// DELETE /roles/:id
+app.delete("/api/iam/v1/roles/:id", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    await RolesCol.deleteOne({ _id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[IAM] delete role error:", e);
+    res.status(500).json({ ok: false, error: "Error eliminando rol" });
+  }
+});
+
+// GET /roles/:id/permissions
+app.get("/api/iam/v1/roles/:id/permissions", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const role = await RolesCol.findOne({ _id });
+    if (!role)
+      return res.status(404).json({ ok: false, error: "Rol no encontrado" });
+    res.json({
+      ok: true,
+      permissionKeys: role.permissionKeys || [],
+    });
+  } catch (e) {
+    console.error("[IAM] getRolePerms error:", e);
+    res.status(500).json({ ok: false, error: "Error obteniendo permisos" });
+  }
+});
+
+// PUT /roles/:id/permissions
+app.put("/api/iam/v1/roles/:id/permissions", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    const keys = Array.isArray(req.body?.permissionKeys)
+      ? req.body.permissionKeys
+      : [];
+    await RolesCol.updateOne(
+      { _id },
+      {
+        $set: {
+          permissionKeys: keys,
+          updatedAt: new Date(),
+        },
+      }
+    );
+    const role = await RolesCol.findOne({ _id });
+    res.json({ ok: true, item: role });
+  } catch (e) {
+    console.error("[IAM] setRolePerms error:", e);
+    res.status(500).json({ ok: false, error: "Error guardando permisos" });
+  }
+});
+
+/* ---- USUARIOS ---- */
+
+// GET /users
+app.get("/api/iam/v1/users", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const filter = {};
+    if (q) {
+      const rx = new RegExp(q, "i");
+      filter.$or = [{ name: rx }, { email: rx }, { dni: rx }];
+    }
+    const docs = await UsersCol.find(filter)
+      .project({
+        _id: 1,
+        name: 1,
+        email: 1,
+        dni: 1,
+        roles: 1,
+        active: 1,
+        id_persona: 1,
+        correoPersona: 1,
+      })
+      .sort({ name: 1 })
+      .toArray();
+
+    // Adaptar un poco a lo que espera tu UI
+    const items = docs.map((u) => ({
+      ...u,
+      nombreCompleto: u.name,
+      correoPersona: u.email || u.correoPersona,
+    }));
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[IAM] list users error:", e);
+    res.status(500).json({ ok: false, error: "Error listando usuarios" });
+  }
+});
+
+// lista de guardias (para selects de otros módulos)
 async function listGuardsHandler(req, res) {
   try {
     const { q, active } = req.query;
-    const col = mongoose.connection.collection("iamusers");
-
     const filter = {};
     filter.roles = { $in: ["guard", "guardia", "rondasqr.guard"] };
 
@@ -541,17 +643,15 @@ async function listGuardsHandler(req, res) {
       filter.$or = [{ name: rx }, { email: rx }];
     }
 
-    const docs = await col
-      .find(filter, {
-        projection: {
-          _id: 1,
-          name: 1,
-          email: 1,
-          active: 1,
-          roles: 1,
-        },
-      })
-      .toArray();
+    const docs = await UsersCol.find(filter, {
+      projection: {
+        _id: 1,
+        name: 1,
+        email: 1,
+        active: 1,
+        roles: 1,
+      },
+    }).toArray();
 
     res.json({ ok: true, items: docs });
   } catch (e) {
@@ -565,6 +665,152 @@ async function listGuardsHandler(req, res) {
 // lista de guardias con y sin /api
 app.get("/api/iam/v1/users/guards", listGuardsHandler);
 app.get("/iam/v1/users/guards", listGuardsHandler);
+
+// POST /users
+app.post("/api/iam/v1/users", async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const email = String(
+      payload.email ||
+        payload.correo ||
+        payload.correoPersona ||
+        ""
+    ).trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ ok: false, error: "email requerido" });
+    }
+
+    const name = String(
+      payload.nombreCompleto ||
+        payload.name ||
+        payload.nombre ||
+        email.split("@")[0]
+    ).trim();
+
+    let roles = [];
+    if (Array.isArray(payload.roles)) roles = payload.roles;
+    else if (typeof payload.roles === "string") {
+      roles = payload.roles
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    const active = payload.active !== false;
+
+    const now = new Date();
+    const doc = {
+      name,
+      email,
+      dni: payload.dni || null,
+      roles,
+      active,
+      correoPersona: email,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const r = await UsersCol.insertOne(doc);
+    doc._id = r.insertedId;
+
+    res.json({ ok: true, item: doc });
+  } catch (e) {
+    console.error("[IAM] create user error:", e);
+    res.status(500).json({ ok: false, error: "Error creando usuario" });
+  }
+});
+
+// PATCH /users/:id
+app.patch("/api/iam/v1/users/:id", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+
+    const payload = req.body || {};
+    const $set = { updatedAt: new Date() };
+
+    if (payload.nombreCompleto || payload.name) {
+      $set.name = payload.nombreCompleto || payload.name;
+    }
+    if (payload.email || payload.correoPersona || payload.correo) {
+      $set.email =
+        payload.email || payload.correoPersona || payload.correo;
+      $set.correoPersona = $set.email;
+    }
+    if (payload.dni !== undefined) $set.dni = payload.dni;
+    if (payload.active !== undefined) $set.active = !!payload.active;
+
+    if (payload.roles !== undefined) {
+      if (Array.isArray(payload.roles)) $set.roles = payload.roles;
+      else if (typeof payload.roles === "string") {
+        $set.roles = payload.roles
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+
+    // Contraseña: la almacenamos en texto plano SOLO para pruebas
+    if (payload.password) {
+      $set.password = String(payload.password);
+    }
+
+    await UsersCol.updateOne({ _id }, { $set });
+    const item = await UsersCol.findOne({ _id });
+    res.json({ ok: true, item });
+  } catch (e) {
+    console.error("[IAM] update user error:", e);
+    res.status(500).json({ ok: false, error: "Error actualizando usuario" });
+  }
+});
+
+// enable / disable / "delete"
+app.post("/api/iam/v1/users/:id/enable", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    await UsersCol.updateOne(
+      { _id },
+      { $set: { active: true, updatedAt: new Date() } }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[IAM] enable user error:", e);
+    res.status(500).json({ ok: false, error: "Error activando usuario" });
+  }
+});
+
+app.post("/api/iam/v1/users/:id/disable", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    await UsersCol.updateOne(
+      { _id },
+      { $set: { active: false, updatedAt: new Date() } }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[IAM] disable user error:", e);
+    res.status(500).json({ ok: false, error: "Error desactivando usuario" });
+  }
+});
+
+// delete = disable
+app.post("/api/iam/v1/users/:id/delete", async (req, res) => {
+  try {
+    const _id = toId(req.params.id);
+    if (!_id) return res.status(400).json({ ok: false, error: "id inválido" });
+    await UsersCol.updateOne(
+      { _id },
+      { $set: { active: false, updatedAt: new Date() } }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[IAM] delete user error:", e);
+    res.status(500).json({ ok: false, error: "Error eliminando usuario" });
+  }
+});
 
 /* ─────────── Email verify (opcional) ─────────── */
 
@@ -809,7 +1055,6 @@ function shutdown(sig) {
     });
   });
 }
-
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
