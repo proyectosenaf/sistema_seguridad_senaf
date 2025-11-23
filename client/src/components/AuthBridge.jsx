@@ -11,7 +11,6 @@ export default function AuthBridge() {
   useEffect(() => {
     const wireProviders = async () => {
       if (!isAuthenticated) {
-        // limpiar providers si no hay sesión
         attachAuth0(null);
         attachRondasAuth(null);
         if (typeof window !== "undefined") {
@@ -20,7 +19,6 @@ export default function AuthBridge() {
         return;
       }
 
-      // único provider para TODAS las libs
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
@@ -39,11 +37,9 @@ export default function AuthBridge() {
         }
       };
 
-      // API general
       attachAuth0(provider);
-      // Rondas
       attachRondasAuth(provider);
-      // 🔹 IAM (lo usa iamApi.js -> window.__iamTokenProvider)
+
       if (typeof window !== "undefined") {
         window.__iamTokenProvider = provider;
       }
