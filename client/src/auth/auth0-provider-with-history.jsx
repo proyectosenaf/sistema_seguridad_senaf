@@ -36,7 +36,7 @@ export default function Auth0ProviderWithHistory({ children }) {
       useRefreshTokens={true}
       cacheLocation="localstorage"
     >
-      {/* 👇 AQUÍ se monta el bridge que publica window.__iamTokenProvider */}
+      {/* 👇 AQUÍ se monta el bridge que conecta Auth0 → Axios / Rondas / IAM */}
       <AuthBridge />
       {children}
     </Auth0Provider>

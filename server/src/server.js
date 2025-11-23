@@ -217,8 +217,12 @@ try {
 /* ───────────── DEV headers → payload IAM + req.user (bridge) ───────────── */
 
 function iamDevMerge(req, _res, next) {
-  const allow = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
-  if (!allow) return next();
+  const isProd = process.env.NODE_ENV === "production";
+  const allowDevHeaders =
+    !isProd &&
+    String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+
+  if (!allowDevHeaders) return next();
 
   const devEmail = req.headers["x-user-email"];
   const devRolesArr = String(req.headers["x-roles"] || "")
@@ -657,9 +661,7 @@ async function listGuardsHandler(req, res) {
     res.json({ ok: true, items: docs });
   } catch (e) {
     console.error("[GET /iam users/guards] error:", e);
-    res
-      .status(500)
-      .json({ ok: false, error: "Error al listar guardias" });
+    res.status(500).json({ ok: false, error: "Error al listar guardias" });
   }
 }
 
@@ -945,13 +947,18 @@ app.get("/api/_debug/ping-assign", (req, res) => {
   });
 });
 
+/* ──────────────── RUTA DUMMY PARA CHAT (para evitar 404) ─────────────── */
+
+app.get("/api/chat/messages", (_req, res) => {
+  res.json({ ok: true, items: [] });
+});
+
 /* ───────────────────── Módulo Rondas QR (v1) ──────────────────── */
 
 const pingHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
-
 
 // Con /api (compatibilidad)
 app.get("/api/rondasqr/v1/ping", pingHandler);
