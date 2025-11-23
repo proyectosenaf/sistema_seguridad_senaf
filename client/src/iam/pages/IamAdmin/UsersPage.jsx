@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../../api/iamApi.js";
 import { Edit3, Trash2 } from "lucide-react";
 
@@ -36,6 +37,8 @@ const ESTADOS_CIVILES = [
   "Unión libre",
 ];
 
+const AUTH_AUDIENCE = import.meta.env.VITE_AUTH0_AUDIENCE;
+
 /* ===================== Helpers ===================== */
 function getPath(obj, path) {
   return path
@@ -55,6 +58,7 @@ function toDateInputSafe(value) {
   if (Number.isNaN(d.getTime())) return "";
   return d.toISOString().slice(0, 10);
 }
+
 /** Normaliza el objeto de backend a las claves del form */
 function mapUserToFormSafe(api = {}) {
   const nombreFromParts = [
@@ -319,7 +323,7 @@ function passwordRules(p = "") {
   };
 }
 
-/* ========= NUEVO (helper robusto de mapeo) ========= */
+/* ========= NUEVO (helper robusto de mapeo alternativo) ========= */
 function firstNonEmpty(...vals) {
   for (const v of vals) {
     if (
@@ -406,6 +410,8 @@ function mapUserToForm(u = {}) {
 /* =================================================== */
 
 export default function UsersPage() {
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
@@ -455,11 +461,42 @@ export default function UsersPage() {
   const firstFieldRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Helper centralizado para pedir token
+  const getToken = async () => {
+    if (!isAuthenticated) return null;
+    try {
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: AUTH_AUDIENCE,
+          scope:
+            "openid profile email offline_access",
+        },
+      });
+      return token || null;
+    } catch (e) {
+      console.warn(
+        "[UsersPage] no se pudo obtener token:",
+        e?.message || e
+      );
+      return null;
+    }
+  };
+
   async function load() {
     try {
       setLoading(true);
       setErr("");
-      const res = await iamApi.listUsers("");
+
+      const token = await getToken();
+      if (!token) {
+        setErr(
+          "No se pudo obtener token de sesión. Inicia sesión de nuevo."
+        );
+        setItems([]);
+        return;
+      }
+
+      const res = await iamApi.listUsers("", token);
       setItems(res.items || []);
     } catch (e) {
       setErr(e?.message || "Error al cargar usuarios");
@@ -467,8 +504,10 @@ export default function UsersPage() {
       setLoading(false);
     }
   }
+
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredAll = useMemo(() => {
@@ -542,15 +581,25 @@ export default function UsersPage() {
   }
   const [errors, setErrors] = useState({});
 
+  // ⬇️ ahora pide token adentro
   async function triggerVerification(userId, email) {
     if (!/^\S+@\S+\.\S+$/.test(email || ""))
       throw new Error(
         "Correo inválido para verificación"
       );
+
+    const token = await getToken();
+    if (!token) {
+      throw new Error(
+        "No se pudo obtener token para enviar verificación"
+      );
+    }
+
     if (typeof iamApi.sendVerificationEmail === "function") {
       return await iamApi.sendVerificationEmail(
         userId,
-        email
+        email,
+        token
       );
     } else if (
       typeof iamApi.sendVerification === "function"
@@ -558,6 +607,7 @@ export default function UsersPage() {
       return await iamApi.sendVerification({
         userId,
         email,
+        token,
       });
     } else {
       throw new Error(
@@ -580,6 +630,15 @@ export default function UsersPage() {
 
     try {
       setSubmitting(true);
+
+      const token = await getToken();
+      if (!token) {
+        alert(
+          "No se pudo obtener token de sesión. Inicia sesión nuevamente."
+        );
+        return;
+      }
+
       const payload = { ...form };
       if (creds.password)
         payload.password = creds.password;
@@ -589,7 +648,11 @@ export default function UsersPage() {
       let savedId = editing;
 
       if (editing) {
-        res = await iamApi.updateUser(editing, payload);
+        res = await iamApi.updateUser(
+          editing,
+          payload,
+          token
+        );
         savedId =
           res?._id ||
           res?.id ||
@@ -598,7 +661,7 @@ export default function UsersPage() {
           savedId;
         alert("Usuario actualizado correctamente");
       } else {
-        res = await iamApi.createUser(payload);
+        res = await iamApi.createUser(payload, token);
         savedId =
           res?._id ||
           res?.id ||
@@ -658,9 +721,17 @@ export default function UsersPage() {
 
   async function toggleActive(u) {
     try {
+      const token = await getToken();
+      if (!token) {
+        alert(
+          "No se pudo obtener token de sesión. Inicia sesión nuevamente."
+        );
+        return;
+      }
+
       if (u.active === false)
-        await iamApi.enableUser(u._id);
-      else await iamApi.disableUser(u._id);
+        await iamApi.enableUser(u._id, token);
+      else await iamApi.disableUser(u._id, token);
       await load();
     } catch (e) {
       alert(
@@ -693,15 +764,21 @@ export default function UsersPage() {
 
     try {
       setLoading(true);
+
+      const token = await getToken();
       let full = u;
 
-      if (typeof iamApi.getUser === "function") {
-        const r = await iamApi.getUser(u._id);
+      if (token && typeof iamApi.getUser === "function") {
+        const r = await iamApi.getUser(u._id, token);
         full = r?.item || r?.user || r || u;
       } else if (
+        token &&
         typeof iamApi.getUserById === "function"
       ) {
-        const res = await iamApi.getUserById(u._id);
+        const res = await iamApi.getUserById(
+          u._id,
+          token
+        );
         full =
           res?.data?.item?.usuario ??
           res?.data?.item?.user ??
@@ -759,12 +836,21 @@ export default function UsersPage() {
       `¿Seguro que deseas eliminar a ${nombre}? Esta acción no se puede deshacer.`
     );
     if (!ok) return;
+
+    const token = await getToken();
+    if (!token) {
+      alert(
+        "No se pudo obtener token de sesión. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
     const prev = items;
     setItems((curr) =>
       curr.filter((x) => x._id !== u._id)
     );
     try {
-      await iamApi.deleteUser(u._id);
+      await iamApi.deleteUser(u._id, token);
       if (editing === u._id) cancelEdit();
       alert("Usuario eliminado correctamente.");
     } catch (e) {
@@ -944,6 +1030,7 @@ export default function UsersPage() {
             <input
               name="correoPersona"
               type="email"
+              autoComplete="email"
               className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
               value={form.correoPersona ?? ""}
               onChange={(e) =>
@@ -968,6 +1055,7 @@ export default function UsersPage() {
             <div className="relative">
               <input
                 type={showPwd ? "text" : "password"}
+                autoComplete="new-password"
                 className="w-full px-3 py-2 pr-24 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
                 value={creds.password}
                 onChange={(e) =>
@@ -1018,6 +1106,7 @@ export default function UsersPage() {
             </span>
             <input
               type={showPwd ? "text" : "password"}
+              autoComplete="new-password"
               className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
               value={creds.confirm}
               onChange={(e) =>
