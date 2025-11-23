@@ -102,8 +102,12 @@ export function getUserFromReq(req) {
 export function requireAdmin(req, res, next) {
   const user = getUserFromReq(req);
 
+  const normalizedRoles = (user.roles || []).map((r) =>
+    String(r).toLowerCase()
+  );
+
   const isAdmin =
-    user.roles.includes("Admin") || user.permissions.includes("*");
+    normalizedRoles.includes("admin") || user.permissions.includes("*");
 
   if (!isAdmin) {
     return res

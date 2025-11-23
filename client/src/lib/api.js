@@ -66,7 +66,6 @@ function getDevIdentity() {
 const api = axios.create({
   baseURL: API_ROOT,
   // Usamos Bearer token, no cookies de sesión.
-  // Si algo depende de cookies, puedes volver a `true`.
   withCredentials: false,
 });
 
@@ -110,7 +109,7 @@ api.interceptors.request.use(
         window.location.hostname === "localhost")
     ) {
       // Modo DEV local: usamos x-user-headers,
-      // que el server fusiona con iamDevMerge
+      // que el server fusiona con iamDevMerge (si IAM_ALLOW_DEV_HEADERS=1)
       const { email, roles, perms } = getDevIdentity();
       if (email) config.headers["x-user-email"] = email;
       if (roles) config.headers["x-roles"] = roles;

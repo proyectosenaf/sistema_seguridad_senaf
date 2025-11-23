@@ -122,16 +122,18 @@ function getUser(req) {
  *    cualquier requireRole(...) (rol administrador global).
  */
 export function requireRole(role) {
+  const target = String(role).toLowerCase();
+
   return function (req, res, next) {
     const user = getUser(req);
-    const roles = user.roles || [];
+    const roles = (user.roles || []).map((r) => String(r).toLowerCase());
 
     // admin siempre pasa
     if (roles.includes("admin")) {
       return next();
     }
 
-    if (!roles.includes(role)) {
+    if (!roles.includes(target)) {
       return res.status(403).json({ error: `Requires role: ${role}` });
     }
     next();
@@ -144,16 +146,18 @@ export function requireRole(role) {
  * ⚠️ admin siempre pasa como rol global.
  */
 export function requireAnyRole(roles) {
+  const targets = (roles || []).map((r) => String(r).toLowerCase());
+
   return function (req, res, next) {
     const user = getUser(req);
-    const userRoles = user.roles || [];
+    const userRoles = (user.roles || []).map((r) => String(r).toLowerCase());
 
     if (userRoles.includes("admin")) {
       // admin es rol global
       return next();
     }
 
-    const ok = userRoles.some((r) => roles.includes(r));
+    const ok = userRoles.some((r) => targets.includes(r));
     if (!ok) {
       return res.status(403).json({
         error: `Requires any role: ${roles.join(",")}`,
@@ -172,9 +176,11 @@ export function requireAnyRole(roles) {
  *  - sino → debe tener el scope específico
  */
 export function requireScope(scope) {
+  const target = String(scope).trim();
+
   return function (req, res, next) {
     const user = getUser(req);
-    const roles = user.roles || [];
+    const roles = (user.roles || []).map((r) => String(r).toLowerCase());
     const scopes = user.scopes || [];
 
     // admin o scope global "*" pasan siempre
@@ -182,7 +188,7 @@ export function requireScope(scope) {
       return next();
     }
 
-    if (!scopes.includes(scope)) {
+    if (!scopes.includes(target)) {
       return res
         .status(403)
         .json({ error: `Requires scope: ${scope}` });
@@ -200,18 +206,21 @@ export function requireScope(scope) {
  */
 export function hasRole(req, role) {
   const user = getUser(req);
-  const roles = user.roles || [];
+  const roles = (user.roles || []).map((r) => String(r).toLowerCase());
+  const target = String(role).toLowerCase();
+
   if (roles.includes("admin")) return true;
-  return roles.includes(role);
+  return roles.includes(target);
 }
 
 export function hasScope(req, scope) {
   const user = getUser(req);
-  const roles = user.roles || [];
+  const roles = (user.roles || []).map((r) => String(r).toLowerCase());
   const scopes = user.scopes || [];
+  const target = String(scope).trim();
 
   if (roles.includes("admin")) return true;
   if (scopes.includes("*")) return true;
 
-  return scopes.includes(scope);
+  return scopes.includes(target);
 }

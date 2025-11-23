@@ -7,15 +7,12 @@ import morgan from "morgan";
 import compression from "compression";
 import http from "http";
 import { Server as SocketIOServer } from "socket.io";
-import mongoose from "mongoose";
+import mongoose, { Types as MTypes } from "mongoose";
 import nodemailer from "nodemailer";
 import path from "node:path";
 import fs from "node:fs";
 
-// ❌ IMPORT VIEJO ELIMINADO:
-// import { registerIAMModule } from "../modules/iam/index.js";
-
-// Auth opcional (pero ya casi no lo usamos para IAM)
+// Auth opcional
 import { requireAuth } from "./middleware/auth.js";
 
 // Core de notificaciones
@@ -73,8 +70,12 @@ console.log("[iam] ROOT_ADMINS:", ROOT_ADMINS);
  */
 function applyRootAdmin(email, rolesArr = [], permsArr = []) {
   const emailNorm = (email || "").toLowerCase();
-  const roles = new Set(Array.isArray(rolesArr) ? rolesArr : []);
-  const perms = new Set(Array.isArray(permsArr) ? permsArr : []);
+  const roles = new Set(
+    Array.isArray(rolesArr) ? rolesArr.map((r) => String(r).trim()) : []
+  );
+  const perms = new Set(
+    Array.isArray(permsArr) ? permsArr.map((p) => String(p).trim()) : []
+  );
 
   if (emailNorm && ROOT_ADMINS.includes(emailNorm)) {
     roles.add("admin");
@@ -325,14 +326,12 @@ app.use(authBridgeToReqUser);
 
 /* ─────────────────── IAM SIMPLE (SIN registerIAMModule) ─────────────────── */
 
-// Colecciones base
 const iamDb = mongoose.connection;
 const UsersCol = iamDb.collection("iamusers");
 const RolesCol = iamDb.collection("iamroles");
 const PermsCol = iamDb.collection("iampermissions");
 
 // Helper para ObjectId seguro
-import { Types as MTypes } from "mongoose";
 function toId(id) {
   try {
     return new MTypes.ObjectId(String(id));
@@ -394,7 +393,9 @@ app.get("/iam/v1/me", optionalAuth, (req, res) =>
 // GET /permissions
 app.get("/api/iam/v1/permissions", async (_req, res) => {
   try {
-    const items = await PermsCol.find({}).sort({ module: 1, key: 1 }).toArray();
+    const items = await PermsCol.find({})
+      .sort({ module: 1, key: 1 })
+      .toArray();
     res.json({ ok: true, items });
   } catch (e) {
     console.error("[IAM] list permissions error:", e);
@@ -950,6 +951,7 @@ const pingHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
+
 
 // Con /api (compatibilidad)
 app.get("/api/rondasqr/v1/ping", pingHandler);
