@@ -6,6 +6,8 @@ import { attachAuth0 } from "./lib/api.js";
 
 // ✅ también inyectamos el token al módulo Rondas QR
 import { attachRondasAuth } from "./modules/rondasqr/api/rondasqrApi.js";
+// ✅ NUEVO: también IAM
+import { attachIamAuth } from "./iam/api/iamApi.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
@@ -215,7 +217,7 @@ function RoleRedirectInline() {
   return <div className="p-6">Redirigiendo…</div>;
 }
 
-/** Inyecta token de Auth0 a la lib/api y al módulo Rondas QR */
+/** Inyecta token de Auth0 a la lib/api, Rondas QR e IAM */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
@@ -224,6 +226,7 @@ function AuthTokenBridge({ children }) {
       if (!isAuthenticated) {
         attachAuth0(null);
         attachRondasAuth(null);
+        attachIamAuth(null); // 👈 limpiar IAM también
         return;
       }
       const provider = async () => {
@@ -243,6 +246,7 @@ function AuthTokenBridge({ children }) {
       };
       attachAuth0(provider);
       attachRondasAuth(provider);
+      attachIamAuth(provider); // 👈 ahora IAM usa el mismo token
     };
     setProvider();
   }, [isAuthenticated, getAccessTokenSilently]);

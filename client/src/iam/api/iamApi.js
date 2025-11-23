@@ -9,6 +9,18 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
+/* ─────────── NUEVO: provider de token tipo attachAuth0 ─────────── */
+
+let tokenProvider = null;
+
+/**
+ * Llamado desde App.jsx para decirle a este módulo cómo conseguir el token
+ * Ej: attachIamAuth(async () => { const t = await getAccessTokenSilently(...); return t; })
+ */
+export function attachIamAuth(fn) {
+  tokenProvider = fn; // fn es async () => token | null
+}
+
 /** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
@@ -36,7 +48,7 @@ function getDevIdentity() {
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
-  if (token) h.Authorization = `Bearer ${token}`;
+  if (token) h.Authorization = `Bearer token`;
 
   // Enviar headers DEV si:
   // - Fuerzas modo dev (VITE_FORCE_DEV_IAM=1), o
@@ -73,15 +85,15 @@ async function rawFetch(
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
-  // 🔹 Si no nos pasaron token, intentamos usar el provider global de AuthBridge
-  if (!token && typeof window !== "undefined" && window.__senafAuthTokenProvider) {
+  // 🔹 Si no nos pasaron token, intentamos usar el provider global attachIamAuth
+  if (!token && tokenProvider) {
     try {
-      const autoToken = await window.__senafAuthTokenProvider();
+      const autoToken = await tokenProvider();
       if (autoToken) token = autoToken;
     } catch (err) {
       if (DEBUG) {
         console.warn(
-          "[iamApi] no se pudo obtener token desde window.__senafAuthTokenProvider:",
+          "[iamApi] no se pudo obtener token desde tokenProvider:",
           err?.message || err
         );
       }

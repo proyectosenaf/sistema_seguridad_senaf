@@ -1,58 +1,11 @@
 // client/src/components/AuthBridge.jsx
-import { useEffect } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
 
-import { attachAuth0 } from "../lib/api.js";
-import { attachRondasAuth } from "../modules/rondasqr/api/rondasqrApi.js";
+// 🔹 Componente legado:
+// Antes se usaba para inyectar el token de Auth0 a la API, Rondas, e IAM
+// mediante window.__iamTokenProvider y attachAuth0 / attachRondasAuth.
+// Esa lógica ahora está centralizada en App.jsx (AuthTokenBridge),
+// así que este componente queda como NO-OP para no causar conflictos.
 
 export default function AuthBridge() {
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
-
-  useEffect(() => {
-    const wireProviders = async () => {
-      if (!isAuthenticated) {
-        attachAuth0(null);
-        attachRondasAuth(null);
-        if (typeof window !== "undefined") {
-          window.__iamTokenProvider = null;
-        }
-        return;
-      }
-
-      const provider = async () => {
-        try {
-          const token = await getAccessTokenSilently({
-            authorizationParams: {
-              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              scope: "openid profile email offline_access",
-            },
-          });
-          return token || null;
-        } catch (err) {
-          console.warn(
-            "[AuthBridge] no se pudo obtener token:",
-            err?.message || err
-          );
-          return null;
-        }
-      };
-
-      attachAuth0(provider);
-      attachRondasAuth(provider);
-
-      if (typeof window !== "undefined") {
-        window.__iamTokenProvider = provider;
-      }
-    };
-
-    wireProviders();
-
-    return () => {
-      if (typeof window !== "undefined") {
-        window.__iamTokenProvider = null;
-      }
-    };
-  }, [isAuthenticated, getAccessTokenSilently]);
-
   return null;
 }
