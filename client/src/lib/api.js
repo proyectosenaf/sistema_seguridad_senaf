@@ -35,6 +35,7 @@ export const SOCKET_BASE_URL = SOCKET_HOST;  // 👈 por si algún código viejo
 
 // Flags de modo dev / auth
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
+// ⚠️ Este flag déjalo en 0 en producción. Solo sirve para forzar modo dev.
 const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
 
 // Identidad DEV (igual idea que en iamApi)
@@ -100,15 +101,19 @@ api.interceptors.request.use(
     }
 
     if (token) {
-      // Modo normal: JWT real
+      // 🔐 Modo normal: JWT real de Auth0
       config.headers.Authorization = `Bearer ${token}`;
     } else if (
+      // Solo permitimos modo DEV si:
+      //  - Se desactivó auth explícitamente, o
+      //  - Estamos en localhost, o
+      //  - Se forzó con VITE_FORCE_DEV_API (solo úsalo en DEV)
       DISABLE_AUTH ||
-      FORCE_DEV_API ||
       (typeof window !== "undefined" &&
-        window.location.hostname === "localhost")
+        window.location.hostname === "localhost") ||
+      FORCE_DEV_API
     ) {
-      // Modo DEV local: usamos x-user-headers,
+      // 🧪 Modo DEV: usamos x-user-headers,
       // que el server fusiona con iamDevMerge (si IAM_ALLOW_DEV_HEADERS=1)
       const { email, roles, perms } = getDevIdentity();
       if (email) config.headers["x-user-email"] = email;
