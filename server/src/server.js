@@ -1,3 +1,4 @@
+// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -272,7 +273,7 @@ function iamDevMerge(req, _res, next) {
 }
 
 /* ─────────── Bridge Auth0/JWT → req.user si existe req.auth ─────────── */
-// ⚠️ Esto es SOLO backend y no tiene relación con el componente React <AuthBridge />.
+
 function authBridgeToReqUser(req, _res, next) {
   if (!req?.auth?.payload) return next();
 
@@ -343,6 +344,17 @@ function toId(id) {
   }
 }
 
+// 🔹 Helper slug para keys de roles/permisos
+function slug(str = "") {
+  return String(str)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 /* ---- /me ---- */
 
 function pickMe(req) {
@@ -410,13 +422,17 @@ app.get("/api/iam/v1/permissions", async (_req, res) => {
 app.post("/api/iam/v1/permissions", async (req, res) => {
   try {
     const payload = req.body || {};
-    if (!payload.key) {
+
+    let key = payload.key;
+    if (!key || typeof key !== "string" || !key.trim()) {
       return res.status(400).json({ ok: false, error: "key requerida" });
     }
+    key = key.trim();
+
     const now = new Date();
     const doc = {
-      key: String(payload.key),
-      name: String(payload.name || payload.label || payload.key),
+      key,
+      name: String(payload.name || payload.label || key),
       module: String(payload.module || payload.modulo || "general"),
       description: String(payload.description || payload.descripcion || ""),
       createdAt: now,
@@ -427,6 +443,14 @@ app.post("/api/iam/v1/permissions", async (req, res) => {
     res.json({ ok: true, item: doc });
   } catch (e) {
     console.error("[IAM] create permission error:", e);
+
+    // key duplicada
+    if (e?.code === 11000 && e?.keyPattern?.key) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Ya existe un permiso con esta key" });
+    }
+
     res.status(500).json({ ok: false, error: "Error creando permiso" });
   }
 });
@@ -484,27 +508,56 @@ app.get("/api/iam/v1/roles", async (_req, res) => {
 app.post("/api/iam/v1/roles", async (req, res) => {
   try {
     const payload = req.body || {};
-    if (!payload.key) {
-      return res.status(400).json({ ok: false, error: "key requerida" });
+
+    // 🔥 Aceptamos key, o la generamos desde name/label
+    let key = payload.key;
+    const rawName = payload.name || payload.label || "";
+
+    if (!key || typeof key !== "string" || !key.trim()) {
+      if (!rawName) {
+        return res.status(400).json({ ok: false, error: "key requerida" });
+      }
+      key = slug(rawName);
+    } else {
+      key = key.trim();
     }
+
+    const name = String(rawName || key).trim();
+
+    let permKeys = [];
+    if (Array.isArray(payload.permissionKeys)) {
+      permKeys = payload.permissionKeys;
+    } else if (Array.isArray(payload.permissions)) {
+      permKeys = payload.permissions;
+    }
+    permKeys = permKeys
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
     const now = new Date();
     const doc = {
-      key: String(payload.key),
-      name: String(payload.name || payload.label || payload.key),
+      key,
+      code: key, // importante para el índice code_1
+      name,
       description: String(payload.description || payload.descripcion || ""),
-      permissionKeys: Array.isArray(payload.permissionKeys)
-        ? payload.permissionKeys
-        : Array.isArray(payload.permissions)
-        ? payload.permissions
-        : [],
+      permissionKeys: permKeys,
       createdAt: now,
       updatedAt: now,
     };
+
     const r = await RolesCol.insertOne(doc);
     doc._id = r.insertedId;
     res.json({ ok: true, item: doc });
   } catch (e) {
     console.error("[IAM] create role error:", e);
+
+    // code/key duplicada
+    if (e?.code === 11000 && (e?.keyPattern?.code || e?.keyPattern?.key)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Ya existe un rol con esta key" });
+    }
+
     res.status(500).json({ ok: false, error: "Error creando rol" });
   }
 });
@@ -517,9 +570,21 @@ app.patch("/api/iam/v1/roles/:id", async (req, res) => {
 
     const payload = req.body || {};
     const $set = { updatedAt: new Date() };
-    ["key", "name", "description"].forEach((k) => {
-      if (payload[k] !== undefined) $set[k] = payload[k];
-    });
+
+    if (payload.key !== undefined) {
+      const newKey = String(payload.key || "").trim();
+      $set.key = newKey;
+      $set.code = newKey; // mantenemos code alineado con key
+    }
+    if (payload.name !== undefined || payload.label !== undefined) {
+      $set.name = String(payload.name || payload.label || "").trim();
+    }
+    if (payload.description !== undefined || payload.descripcion !== undefined) {
+      $set.description = String(
+        payload.description || payload.descripcion || ""
+      );
+    }
+
     if (payload.permissionKeys) {
       $set.permissionKeys = payload.permissionKeys;
     } else if (payload.permissions) {
@@ -719,6 +784,14 @@ app.post("/api/iam/v1/users", async (req, res) => {
     res.json({ ok: true, item: doc });
   } catch (e) {
     console.error("[IAM] create user error:", e);
+
+    // correo duplicado
+    if (e?.code === 11000 && e?.keyPattern?.email) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Ya existe un usuario con este correo" });
+    }
+
     res.status(500).json({ ok: false, error: "Error creando usuario" });
   }
 });

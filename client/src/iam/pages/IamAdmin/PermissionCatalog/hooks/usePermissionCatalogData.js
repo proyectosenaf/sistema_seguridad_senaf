@@ -1,12 +1,12 @@
-// client/src/iam/pages/IamAdmin/PermissionCatalog/usePermissionCatalogData.js
+// client/src/iam/pages/IamAdmin/PermissionCatalog/hooks/usePermissionCatalogData.js
 import { useEffect, useMemo, useState } from "react";
-import { iamApi } from "../../../../api/iamApi";
+import { iamApi } from "../../../../api/iamApi.js";
 import {
   normalizeAndMergeGroups,
   MODULES,
   emptyFlagsForRoles,
-  coerceFlagsByRoleIds
-} from "../utils/catalogUtils";
+  coerceFlagsByRoleIds,
+} from "../utils/catalogUtils.js";
 
 /* ──────────────────────────────────────────────────────────────
    Helpers para evitar la duplicación del nombre del módulo
@@ -76,6 +76,21 @@ function sanitizeGroups(groups = []) {
     .sort((a, b) => String(a.group).localeCompare(String(b.group)));
 }
 
+/** Agrupa un array plano de permisos en [{group, items}] */
+function groupFromItems(items = []) {
+  const byGroup = new Map();
+  for (const p of items) {
+    const group =
+      String(p.group || p.module || "General").trim() || "General";
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push(p);
+  }
+  return Array.from(byGroup.entries()).map(([group, items]) => ({
+    group,
+    items,
+  }));
+}
+
 export function usePermissionCatalogData() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setError] = useState("");
@@ -98,18 +113,29 @@ export function usePermissionCatalogData() {
     (async () => {
       setLoading(true);
       try {
-        // Roles
+        // 1) Roles
         const rRoles = await iamApi.listRoles();
-        const roleItems = (rRoles?.items || [])
+        const roleItems = (rRoles?.items || rRoles?.roles || [])
           .slice()
           .sort((a, b) =>
             String(a.name || a.code).localeCompare(String(b.name || b.code))
           );
         setRoles(roleItems);
 
-        // Catálogo crudo
-        const rPerms = await iamApi.listPerms(); // { items, groups }
-        const normalized = normalizeAndMergeGroups(rPerms?.groups || []);
+        // 2) Catálogo de permisos desde la API
+        const rPerms = await iamApi.listPerms(); // puede traer {groups} o {items}
+        let baseGroups = [];
+
+        if (Array.isArray(rPerms?.groups) && rPerms.groups.length > 0) {
+          baseGroups = rPerms.groups;
+        } else if (Array.isArray(rPerms?.items) && rPerms.items.length > 0) {
+          baseGroups = groupFromItems(rPerms.items);
+        } else {
+          baseGroups = [];
+        }
+
+        // Normaliza (por si vienen duplicados o con estructura antigua)
+        const normalized = normalizeAndMergeGroups(baseGroups);
 
         // 1) Unir grupos duplicados por nombre (RAW)
         const merged = mergeGroupsByName(normalized);
@@ -119,19 +145,23 @@ export function usePermissionCatalogData() {
         const prepared = sanitizeGroups(merged);
         setGroups(prepared);
 
-        // Base matrix (derivada de los items saneados)
+        // 3) Base matrix (derivada de los items saneados)
         const base = {};
         for (const g of prepared) {
-          for (const it of g.items) base[it.key] = emptyFlagsForRoles(roleItems);
+          for (const it of g.items) {
+            base[it.key] = emptyFlagsForRoles(roleItems);
+          }
         }
 
-        // Rellenar por rol
+        // 4) Rellenar por rol
         const filled = { ...base };
         for (const role of roleItems) {
-          const r = await iamApi.getRolePerms(role._id); // { permissionKeys: string[] }
+          // { permissionKeys: string[] }
+          const r = await iamApi.getRolePerms(role._id);
           const setKeys = new Set(r?.permissionKeys || []);
-          for (const k of Object.keys(filled))
+          for (const k of Object.keys(filled)) {
             if (setKeys.has(k)) filled[k][role._id] = true;
+          }
         }
 
         setRoleMatrix(filled);
@@ -158,8 +188,6 @@ export function usePermissionCatalogData() {
 
   /* ──────────────────────────────────────────────────────────────
      Datos para la pantalla compacta (Ver menos)
-     - roleHeaders: encabezado fijo con nombres de roles
-     - compactSummary: [{ group, count }] para listar módulos con su badge
      ────────────────────────────────────────────────────────────── */
   const roleHeaders = useMemo(
     () =>
@@ -176,7 +204,9 @@ export function usePermissionCatalogData() {
     const rows = merged
       .map((g) => ({
         group: g.group,
-        count: Array.isArray(g.items) ? g.items.filter(it => !isHeaderLikeItem(it, g.group)).length : 0,
+        count: Array.isArray(g.items)
+          ? g.items.filter((it) => !isHeaderLikeItem(it, g.group)).length
+          : 0,
       }))
       .sort((a, b) => String(a.group).localeCompare(String(b.group)));
     return rows;
@@ -195,8 +225,9 @@ export function usePermissionCatalogData() {
     for (const k of Object.keys(roleMatrix)) {
       const a = roleMatrix[k] || {};
       const b = origMatrix[k] || {};
-      for (const r of roles)
+      for (const r of roles) {
         if (Boolean(a[r._id]) !== Boolean(b[r._id])) changedIds.add(r._id);
+      }
     }
     if (changedIds.size === 0) {
       setBanner({ type: "warn", msg: "No hay cambios para guardar." });
@@ -206,8 +237,9 @@ export function usePermissionCatalogData() {
     try {
       for (const roleId of changedIds) {
         const keys = [];
-        for (const [permKey, flags] of Object.entries(roleMatrix))
+        for (const [permKey, flags] of Object.entries(roleMatrix)) {
           if (flags?.[roleId]) keys.push(permKey);
+        }
         await iamApi.setRolePerms(roleId, keys);
       }
       setOrigMatrix(JSON.parse(JSON.stringify(roleMatrix)));
@@ -238,7 +270,7 @@ export function usePermissionCatalogData() {
     try {
       const created = await iamApi.createPerm({ key: k, label: l, group });
 
-      // agrega al estado RAW (mergeado)
+      // agrega al estado RAW y recalcula groups en base al nuevo RAW
       setRawGroups((prevRaw) => {
         const raw = prevRaw.map((g) => ({
           group: g.group,
@@ -255,19 +287,27 @@ export function usePermissionCatalogData() {
           label: l,
           group,
         });
-        return mergeGroupsByName(raw);
+        const merged = mergeGroupsByName(raw);
+        setGroups(sanitizeGroups(merged));
+        return merged;
       });
 
-      // Recalcular visible (siempre sin headers internos)
-      setGroups((curr) => sanitizeGroups(rawGroups.length ? rawGroups : curr));
-
-      setRoleMatrix((prev) => ({ ...prev, [k]: emptyFlagsForRoles(roles) }));
-      setOrigMatrix((prev) => ({ ...prev, [k]: emptyFlagsForRoles(roles) }));
+      setRoleMatrix((prev) => ({
+        ...prev,
+        [k]: emptyFlagsForRoles(roles),
+      }));
+      setOrigMatrix((prev) => ({
+        ...prev,
+        [k]: emptyFlagsForRoles(roles),
+      }));
       setBanner({ type: "ok", msg: "Permiso creado." });
       setTimeout(() => setBanner(null), 2500);
       return true;
     } catch (e) {
-      setBanner({ type: "err", msg: e?.message || "No se pudo crear el permiso." });
+      setBanner({
+        type: "err",
+        msg: e?.message || "No se pudo crear el permiso.",
+      });
       setTimeout(() => setBanner(null), 3500);
       return false;
     }
@@ -282,15 +322,13 @@ export function usePermissionCatalogData() {
           group: g.group,
           items: g.items.filter((it) => it.key !== key),
         }));
-        return mergeGroupsByName(raw);
-      });
-
-      // Recalcular visible (siempre sin headers internos)
-      setGroups((curr) =>
-        sanitizeGroups(rawGroups.length ? rawGroups : curr).filter(
+        const merged = mergeGroupsByName(raw);
+        const sanitized = sanitizeGroups(merged).filter(
           (g) => g.items.length > 0
-        )
-      );
+        );
+        setGroups(sanitized);
+        return merged;
+      });
 
       const { [key]: _, ...nextM } = roleMatrix;
       const { [key]: __, ...nextO } = origMatrix;
@@ -299,7 +337,10 @@ export function usePermissionCatalogData() {
       setBanner({ type: "ok", msg: "Permiso eliminado." });
       setTimeout(() => setBanner(null), 2500);
     } catch (e) {
-      setBanner({ type: "err", msg: e?.message || "No se pudo eliminar el permiso." });
+      setBanner({
+        type: "err",
+        msg: e?.message || "No se pudo eliminar el permiso.",
+      });
       setTimeout(() => setBanner(null), 3500);
     }
   };
@@ -311,7 +352,7 @@ export function usePermissionCatalogData() {
     banner,
     setBanner,
     roles,
-    groups,            // lista detallada (vista normal)
+    groups, // lista detallada (vista normal)
     roleMatrix,
     origMatrix,
     query,
@@ -319,9 +360,9 @@ export function usePermissionCatalogData() {
     compactView,
     setCompactView,
 
-    // NUEVO: datos para "Ver menos"
-    roleHeaders,       // [{ id, name }]
-    compactSummary,    // [{ group, count }]
+    // datos para "Ver menos"
+    roleHeaders, // [{ id, name }]
+    compactSummary, // [{ group, count }]
 
     // acciones
     onToggle,

@@ -1,5 +1,6 @@
-import { permisosKeys, rolesKeys } from "../catalog/perms";
-import { iamApi } from "../api/iamApi";
+// client/src/iam/tools/seedIam.js
+import { permisosKeys, rolesKeys } from "../catalog/perms.js";
+import { iamApi } from "../api/iamApi.js";
 
 /**
  * Crea (si faltan) las entradas de /permissions a partir del catálogo local.
@@ -43,11 +44,7 @@ export async function seedPermissionsAndRoles(token) {
         // eslint-disable-next-line no-console
         console.log("[seed] permiso creado:", key);
       } catch (e) {
-        console.warn(
-          "[seed] no se pudo crear permiso",
-          key,
-          e?.message || e
-        );
+        console.warn("[seed] no se pudo crear permiso", key, e?.message || e);
       }
     }
   }
@@ -57,10 +54,7 @@ export async function seedPermissionsAndRoles(token) {
     const res = await iamApi.listPerms(token);
     existingPerms = res?.items || res?.permissions || [];
   } catch (e) {
-    console.warn(
-      "[seed] no se pudo volver a listar permisos:",
-      e?.message || e
-    );
+    console.warn("[seed] no se pudo volver a listar permisos:", e?.message || e);
   }
 
   // 2) ROLES
@@ -75,36 +69,34 @@ export async function seedPermissionsAndRoles(token) {
 
   const roleIdx = new Map();
   for (const r of existingRoles) {
-    const key = r?.key || r?.name || r?._id || "";
-    if (!key) continue;
-    roleIdx.set(key, r);
+    const code = r?.code || r?.key || r?.name || r?._id || "";
+    if (!code) continue;
+    roleIdx.set(code, r);
   }
 
-  for (const [roleKey, permList] of Object.entries(rolesKeys)) {
-    const role = roleIdx.get(roleKey);
+  for (const [roleCode, permList] of Object.entries(rolesKeys)) {
+    const role = roleIdx.get(roleCode);
     const desired = Array.isArray(permList) ? permList : [];
 
     if (!role) {
       try {
         await iamApi.createRole(
           {
-            key: roleKey,
-            name: roleKey,
-            description: "",
+            code: roleCode,        // 🔹 el backend espera `code`
+            name: roleCode,
+            description: roleCode,
             permissions: desired,
           },
           token
         );
-        console.log("[seed] rol creado:", roleKey);
+        console.log("[seed] rol creado:", roleCode);
       } catch (e) {
-        console.warn(
-          "[seed] no se pudo crear rol",
-          roleKey,
-          e?.message || e
-        );
+        console.warn("[seed] no se pudo crear rol", roleCode, e?.message || e);
       }
     } else {
-      const current = Array.isArray(role.permissionKeys || role.permissions || role.perms)
+      const current = Array.isArray(
+        role.permissionKeys || role.permissions || role.perms
+      )
         ? role.permissionKeys || role.permissions || role.perms
         : [];
       const same =
@@ -116,18 +108,18 @@ export async function seedPermissionsAndRoles(token) {
           await iamApi.updateRole(
             role._id || role.id,
             {
-              key: roleKey,
-              name: roleKey,
-              description: role.description || "",
+              code: roleCode,
+              name: roleCode,
+              description: role.description || roleCode,
               permissions: desired,
             },
             token
           );
-          console.log("[seed] rol actualizado:", roleKey);
+          console.log("[seed] rol actualizado:", roleCode);
         } catch (e) {
           console.warn(
             "[seed] no se pudo actualizar rol",
-            roleKey,
+            roleCode,
             e?.message || e
           );
         }

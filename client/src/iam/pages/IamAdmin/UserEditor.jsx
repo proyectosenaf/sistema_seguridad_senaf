@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { iamApi } from "../../api/iamApi";
+import { iamApi } from "../../api/iamApi.js";
 
 const ESTADOS_CIVILES = [
   "Soltero/a",
@@ -9,12 +9,13 @@ const ESTADOS_CIVILES = [
   "Unión libre",
 ];
 
+// mapeo UI ⇄ DB actualizado a los códigos nuevos
 const ROLE_MAP_UI_TO_DB = {
-  Administrador: "admin",
+  Administrador: "administrador",
   Supervisor: "supervisor",
   Guardia: "guardia",
-  "Administrador IT": "ti",
-  "Visita Externa": "visitante",
+  "Administrador IT": "administrador_it",
+  "Visita Externa": "visita_externa",
 };
 
 const ROLE_MAP_DB_TO_UI = Object.fromEntries(
@@ -45,7 +46,11 @@ function pick(obj, ...paths) {
       if (value == null) break;
       value = value[s];
     }
-    if (value !== undefined && value !== null && String(value).trim() !== "") {
+    if (
+      value !== undefined &&
+      value !== null &&
+      String(value).trim() !== ""
+    ) {
       return value;
     }
   }
@@ -65,11 +70,22 @@ function mapUserToFormSafe(u = {}) {
 
   return {
     nombreCompleto:
-      pick(u, "nombreCompleto", "name", "fullName", "persona.nombreCompleto") ||
-      "",
+      pick(
+        u,
+        "nombreCompleto",
+        "name",
+        "fullName",
+        "persona.nombreCompleto"
+      ) || "",
     tipoDni: pick(u, "tipoDni", "persona.tipoDni") || "Identidad",
     dni:
-      pick(u, "dni", "documento", "num_documento", "persona.dni") || "",
+      pick(
+        u,
+        "dni",
+        "documento",
+        "num_documento",
+        "persona.dni"
+      ) || "",
     estadoCivil: civilOk,
     fechaNacimiento: toDateInputSafe(
       pick(
@@ -82,8 +98,13 @@ function mapUserToFormSafe(u = {}) {
       )
     ),
     paisNacimiento:
-      pick(u, "paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais") ||
-      "",
+      pick(
+        u,
+        "paisNacimiento",
+        "pais_nacimiento",
+        "countryOfBirth",
+        "persona.pais"
+      ) || "",
     ciudadNacimiento:
       pick(
         u,
@@ -93,7 +114,12 @@ function mapUserToFormSafe(u = {}) {
         "persona.ciudad"
       ) || "",
     municipio:
-      pick(u, "municipio", "municipioNacimiento", "persona.municipio") || "",
+      pick(
+        u,
+        "municipio",
+        "municipioNacimiento",
+        "persona.municipio"
+      ) || "",
     correoelectrónico:
       pick(
         u,
@@ -104,7 +130,9 @@ function mapUserToFormSafe(u = {}) {
         "mail",
         "persona.correo"
       ) || "",
-    profesion: pick(u, "profesion", "ocupacion", "persona.ocupacion") || "",
+    profesion:
+      pick(u, "profesion", "ocupacion", "persona.ocupacion") ||
+      "",
     lugarTrabajo:
       pick(
         u,
@@ -130,13 +158,17 @@ function mapUserToFormSafe(u = {}) {
         "address",
         "persona.direccion"
       ) || "",
-    roles: Array.isArray(u.roles) ? u.roles : u.roles ? [u.roles] : [],
+    roles: Array.isArray(u.roles)
+      ? u.roles
+      : u.roles
+      ? [u.roles]
+      : [],
     active: u.active !== false,
   };
 }
 
 export default function UserEditor({ value, onClose, onSaved }) {
-  const [roles, setRoles] = useState([]); // codes: ["admin","guardia",...]
+  const [roles, setRoles] = useState([]); // codes: ["administrador","guardia",...]
 
   // Cargar roles disponibles desde el backend (codes)
   useEffect(() => {
@@ -146,18 +178,28 @@ export default function UserEditor({ value, onClose, onSaved }) {
         const items = r?.items || r?.roles || [];
         const codes = items
           .map((it) =>
-            typeof it === "string" ? it : it.code || it.name || it._id
+            typeof it === "string"
+              ? it
+              : it.code || it.name || it._id
           )
           .filter(Boolean);
         setRoles(codes);
       } catch {
         // fallback por si la API falla
-        setRoles(["admin", "guardia", "supervisor", "ti", "visitante"]);
+        setRoles([
+          "administrador",
+          "guardia",
+          "supervisor",
+          "administrador_it",
+          "visita_externa",
+        ]);
       }
     })();
   }, []);
 
-  const [form, setForm] = useState(mapUserToFormSafe(value || {}));
+  const [form, setForm] = useState(
+    mapUserToFormSafe(value || {})
+  );
 
   // Sincroniza el formulario cuando cambia `value`
   useEffect(() => {
@@ -171,7 +213,7 @@ export default function UserEditor({ value, onClose, onSaved }) {
   async function save() {
     try {
       const payload = { ...form };
-      // El backend usará correoelectrónico -> email mediante iamApi.createUser
+      // El backend usará correoelectrónico -> email mediante iamApi
       if (value?._id) {
         await iamApi.updateUser(value._id, payload);
       } else {
@@ -195,7 +237,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
           <Field
             label="Nombre completo"
             value={form.nombreCompleto}
-            onChange={(v) => setField("nombreCompleto", v)}
+            onChange={(v) =>
+              setField("nombreCompleto", v)
+            }
           />
 
           <div className="md:col-span-2">
@@ -204,7 +248,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
               <select
                 className="px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
                 value={form.tipoDni}
-                onChange={(e) => setField("tipoDni", e.target.value)}
+                onChange={(e) =>
+                  setField("tipoDni", e.target.value)
+                }
               >
                 <option>Identidad</option>
                 <option>Pasaporte</option>
@@ -212,7 +258,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
               <input
                 className="flex-1 px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
                 value={form.dni}
-                onChange={(e) => setField("dni", e.target.value)}
+                onChange={(e) =>
+                  setField("dni", e.target.value)
+                }
               />
             </div>
           </div>
@@ -227,18 +275,24 @@ export default function UserEditor({ value, onClose, onSaved }) {
             type="date"
             label="Fecha de nacimiento"
             value={form.fechaNacimiento}
-            onChange={(v) => setField("fechaNacimiento", v)}
+            onChange={(v) =>
+              setField("fechaNacimiento", v)
+            }
           />
 
           <Field
             label="País nacimiento"
             value={form.paisNacimiento}
-            onChange={(v) => setField("paisNacimiento", v)}
+            onChange={(v) =>
+              setField("paisNacimiento", v)
+            }
           />
           <Field
             label="Ciudad nacimiento"
             value={form.ciudadNacimiento}
-            onChange={(v) => setField("ciudadNacimiento", v)}
+            onChange={(v) =>
+              setField("ciudadNacimiento", v)
+            }
           />
           <Field
             label="Municipio"
@@ -249,7 +303,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
           <Field
             label="Correo electrónico"
             value={form.correoelectrónico}
-            onChange={(v) => setField("correoelectrónico", v)}
+            onChange={(v) =>
+              setField("correoelectrónico", v)
+            }
           />
           <Field
             label="Profesión u oficio"
@@ -259,18 +315,24 @@ export default function UserEditor({ value, onClose, onSaved }) {
           <Field
             label="Lugar de trabajo"
             value={form.lugarTrabajo}
-            onChange={(v) => setField("lugarTrabajo", v)}
+            onChange={(v) =>
+              setField("lugarTrabajo", v)
+            }
           />
           <Field
             label="Teléfono"
             value={form.telefono}
-            onChange={(v) => setField("telefono", v)}
+            onChange={(v) =>
+              setField("telefono", v)
+            }
           />
           <Field
             className="md:col-span-2"
             label="Domicilio actual"
             value={form.domicilio}
-            onChange={(v) => setField("domicilio", v)}
+            onChange={(v) =>
+              setField("domicilio", v)
+            }
           />
 
           {/* Roles */}
@@ -279,7 +341,8 @@ export default function UserEditor({ value, onClose, onSaved }) {
             <div className="flex flex-wrap gap-2">
               {roles.map((code) => {
                 const on = form.roles?.includes(code);
-                const label = ROLE_MAP_DB_TO_UI[code] || code;
+                const label =
+                  ROLE_MAP_DB_TO_UI[code] || code;
                 return (
                   <button
                     key={code}
@@ -306,7 +369,9 @@ export default function UserEditor({ value, onClose, onSaved }) {
             <input
               type="checkbox"
               checked={form.active}
-              onChange={(e) => setField("active", e.target.checked)}
+              onChange={(e) =>
+                setField("active", e.target.checked)
+              }
             />
             Activo
           </label>
@@ -331,7 +396,13 @@ export default function UserEditor({ value, onClose, onSaved }) {
   );
 }
 
-function Field({ label, value, onChange, type = "text", className = "" }) {
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+  className = "",
+}) {
   return (
     <label className={`space-y-1 ${className}`}>
       <div className="text-sm">{label}</div>

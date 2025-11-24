@@ -1,16 +1,24 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import { useSearchParams } from "react-router-dom";
+import { useAuth0 } from "@auth0/auth0-react";
 
 import IamGuard from "../../api/IamGuard.jsx";
 
 // Páginas
 import UsersPage from "./UsersPage.jsx";
 import RolesPage from "./RolesPage.jsx";
-import PermissionCatalog from "./PermissionCatalog";
+import PermissionCatalog from "./PermissionCatalog/PermissionCatalog.jsx";
 import AuditPage from "./AuditPage.jsx";
 
 import { iamApi } from "../../api/iamApi.js";
 import { permisosKeys, rolesKeys } from "../../catalog/perms.js";
+
+const AUTH_AUDIENCE = import.meta.env.VITE_AUTH0_AUDIENCE;
 
 /** Si BD está vacía, crea permisos/roles desde el catálogo local */
 async function seedFromLocalCatalog(token) {
@@ -35,7 +43,11 @@ async function seedFromLocalCatalog(token) {
       await iamApi.createPerm({ key, label, group, order }, token);
       console.log("[IAM seed] permiso creado:", key);
     } catch (e) {
-      console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
+      console.warn(
+        "[IAM seed] no se pudo crear permiso",
+        key,
+        e?.message || e
+      );
     }
   }
 
@@ -48,31 +60,33 @@ async function seedFromLocalCatalog(token) {
     existingRoles = [];
   }
 
-  const byName = new Map(
+  // Index por code (o name como fallback)
+  const byCode = new Map(
     existingRoles
-      .map((r) => [r?.name || r?._id, r])
+      .map((r) => [r?.code || r?.name || r?._id, r])
       .filter(([k]) => !!k)
   );
 
-  for (const [name, perms] of Object.entries(rolesKeys)) {
+  for (const [code, perms] of Object.entries(rolesKeys)) {
     const desired = Array.isArray(perms) ? perms : [];
-    const currentRole = byName.get(name);
+    const currentRole = byCode.get(code);
 
     if (!currentRole) {
       try {
         await iamApi.createRole(
           {
-            name,
+            code,
+            name: code, // luego lo puedes renombrar en la UI
             description: "",
             permissions: desired,
           },
           token
         );
-        console.log("[IAM seed] rol creado:", name);
+        console.log("[IAM seed] rol creado:", code);
       } catch (e) {
         console.warn(
           "[IAM seed] no se pudo crear rol",
-          name,
+          code,
           e?.message || e
         );
       }
@@ -82,25 +96,28 @@ async function seedFromLocalCatalog(token) {
       )
         ? currentRole.permissions || currentRole.perms
         : [];
+
       const same =
         current.length === desired.length &&
         current.every((k) => desired.includes(k));
+
       if (!same) {
         try {
           await iamApi.updateRole(
             currentRole._id || currentRole.id,
             {
-              name,
+              code,
+              name: currentRole.name || code,
               description: currentRole.description || "",
               permissions: desired,
             },
             token
           );
-          console.log("[IAM seed] rol actualizado:", name);
+          console.log("[IAM seed] rol actualizado:", code);
         } catch (e) {
           console.warn(
             "[IAM seed] no se pudo actualizar rol",
-            name,
+            code,
             e?.message || e
           );
         }
@@ -110,7 +127,8 @@ async function seedFromLocalCatalog(token) {
 }
 
 export default function IamAdmin() {
-  // Tabs definidos una sola vez
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
@@ -151,15 +169,41 @@ export default function IamAdmin() {
   const [seeding, setSeeding] = useState(false);
   const [checkErr, setCheckErr] = useState("");
 
+  // helper para token
+  const getToken = useCallback(async () => {
+    if (!isAuthenticated) return null;
+    try {
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: AUTH_AUDIENCE,
+          scope: "openid profile email offline_access",
+        },
+      });
+      return token || null;
+    } catch (e) {
+      console.warn("[IamAdmin] no se pudo obtener token:", e?.message || e);
+      return null;
+    }
+  }, [isAuthenticated, getAccessTokenSilently]);
+
   // Verificamos si BD tiene permisos/roles
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
+        const token = await getToken();
+        if (!token) {
+          if (alive) {
+            setNeedsSeed(true);
+            setCheckErr("No se pudo obtener token de sesión.");
+          }
+          return;
+        }
+
         setCheckErr("");
         const [p, r] = await Promise.all([
-          iamApi.listPerms(),
-          iamApi.listRoles(),
+          iamApi.listPerms(token),
+          iamApi.listRoles(token),
         ]);
         const pCount = (p?.items || p?.permissions || []).length;
         const rCount = (r?.items || r?.roles || []).length;
@@ -174,15 +218,20 @@ export default function IamAdmin() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [getToken]);
 
   const runSeed = useCallback(async () => {
     try {
       setSeeding(true);
-      await seedFromLocalCatalog(); // token opcional (usa cookies / dev headers)
+      const token = await getToken();
+      if (!token) {
+        throw new Error("No se pudo obtener token de sesión.");
+      }
+
+      await seedFromLocalCatalog(token);
       const [p, r] = await Promise.all([
-        iamApi.listPerms(),
-        iamApi.listRoles(),
+        iamApi.listPerms(token),
+        iamApi.listRoles(token),
       ]);
       const pCount = (p?.items || p?.permissions || []).length;
       const rCount = (r?.items || r?.roles || []).length;
@@ -193,7 +242,7 @@ export default function IamAdmin() {
     } finally {
       setSeeding(false);
     }
-  }, []);
+  }, [getToken]);
 
   const onKeyDownTabs = useCallback(
     (e) => {
@@ -213,7 +262,7 @@ export default function IamAdmin() {
   );
 
   return (
-    <IamGuard anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
+    <IamGuard anyOf={["iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
       <div className="p-4 md:p-6 space-y-4 layer-content">
         {/* Banner para sembrar catálogo si está vacío */}
         {needsSeed && (

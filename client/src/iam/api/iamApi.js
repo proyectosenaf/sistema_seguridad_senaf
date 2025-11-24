@@ -15,10 +15,11 @@ let tokenProvider = null;
 
 /**
  * Llamado desde App.jsx para decirle a este módulo cómo conseguir el token
- * Ej: attachIamAuth(async () => {
+ * Ej:
+ * attachIamAuth(async () => {
  *   const t = await getAccessTokenSilently(...);
  *   return t;
- * })
+ * });
  */
 export function attachIamAuth(fn) {
   tokenProvider = fn; // fn es async () => token | null
@@ -48,11 +49,22 @@ function getDevIdentity() {
   };
 }
 
+/** slug simple para códigos de rol, etc. */
+function slugify(str = "") {
+  return String(str)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
 
-  // ✅ Ahora sí mandamos el token real
+  // ✅ Mandamos el token real (Auth0 / JWT)
   if (token) h.Authorization = `Bearer ${token}`;
 
   // Enviar headers DEV si:
@@ -140,6 +152,7 @@ async function rawFetch(
     const text = await r.text().catch(() => "");
     return text || {};
   } catch (e) {
+    // Error típico de red / CORS en fetch
     if (e?.name === "TypeError") {
       const err = new Error(
         "No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL."
@@ -182,6 +195,7 @@ const PATHS = {
     list: () => `${V1}/permissions`,
     create: () => `${V1}/permissions`,
     byId: (id) => `${V1}/permissions/${id}`,
+    // Esta ruta vieja ya no se usa, pero la dejamos por compatibilidad
     listByRole: (roleId) =>
       `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
@@ -285,19 +299,91 @@ export const iamApi = {
 
   /* ---------- ROLES ---------- */
   listRoles: (t) => rawFetch(PATHS.roles.list(), { token: t }),
-  createRole: (p, t) =>
-    rawFetch(PATHS.roles.create(), { method: "POST", body: p, token: t }),
+
+  // Normaliza para que siempre haya name, code, key y permissions como KEYS (string[])
+  createRole: (p, t) => {
+    const body = { ...(p || {}) };
+
+    // Aceptar distintos nombres de campo desde el formulario
+    const rawName =
+      body.name ||
+      body.role ||
+      body.label ||
+      body.displayName ||
+      "";
+
+    if (!rawName) {
+      throw new Error("name es requerido para crear rol (faltan datos)");
+    }
+
+    body.name = String(rawName).trim();
+
+    // 🔥 Asegurar GENERACIÓN DE code aunque venga null/undefined/vacío
+    if (
+      !body.code ||
+      typeof body.code !== "string" ||
+      !body.code.trim()
+    ) {
+      body.code = slugify(body.name);
+    }
+
+    // 🔥 key = code (compatibilidad con backend simple que usa 'key')
+    if (
+      !body.key ||
+      typeof body.key !== "string" ||
+      !body.key.trim()
+    ) {
+      body.key = body.code;
+    }
+
+    // Normalizar permissions:
+    // - puede venir como array de strings
+    // - o array de objetos { key, _id, code }
+    if (Array.isArray(body.permissions)) {
+      body.permissions = body.permissions
+        .map((perm) => {
+          if (!perm) return null;
+          if (typeof perm === "string") return perm.trim();
+          if (typeof perm === "object") {
+            return perm.key || perm.code || perm._id || null;
+          }
+          return null;
+        })
+        .filter(Boolean);
+    }
+
+    // Si no hay permissionKeys pero sí permissions, duplicamos
+    if (
+      !Array.isArray(body.permissionKeys) &&
+      Array.isArray(body.permissions)
+    ) {
+      body.permissionKeys = body.permissions;
+    }
+
+    if (DEBUG) {
+      console.log("[iamApi.createRole] body que se envía:", body);
+    }
+
+    return rawFetch(PATHS.roles.create(), {
+      method: "POST",
+      body,
+      token: t,
+    });
+  },
+
   updateRole: (id, p, t) =>
     rawFetch(PATHS.roles.byId(id), {
       method: "PATCH",
       body: p,
       token: t,
     }),
+
   deleteRole: (id, t) =>
     rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
   getRolePerms: (id, t) =>
     rawFetch(PATHS.roles.permissions(id), { token: t }),
+
   setRolePerms: (id, keys, t) =>
     rawFetch(PATHS.roles.permissions(id), {
       method: "PUT",
@@ -307,16 +393,50 @@ export const iamApi = {
 
   /* ---------- PERMISOS ---------- */
   listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
-  listPermsForRole: (roleId, t) =>
-    rawFetch(PATHS.perms.listByRole(roleId), { token: t }),
+
+  /**
+   * Nueva implementación:
+   * - lee TODO el catálogo de permisos
+   * - lee las permissionKeys del rol
+   * - devuelve { items: [{...perm, selected:true|false}, ...] }
+   */
+  listPermsForRole: async (roleId, t) => {
+    const [allPerms, rolePerms] = await Promise.all([
+      rawFetch(PATHS.perms.list(), { token: t }),
+      rawFetch(PATHS.roles.permissions(roleId), { token: t }),
+    ]);
+
+    const allItems =
+      allPerms?.items || allPerms?.permissions || [];
+
+    const keysFromRole =
+      rolePerms?.permissionKeys ||
+      rolePerms?.keys ||
+      rolePerms?.items ||
+      [];
+
+    const setKeys = new Set(
+      Array.isArray(keysFromRole) ? keysFromRole : []
+    );
+
+    const items = allItems.map((p) => ({
+      ...p,
+      selected: setKeys.has(p.key) || setKeys.has(p._id),
+    }));
+
+    return { items };
+  },
+
   createPerm: (p, t) =>
     rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
+
   updatePerm: (id, p, t) =>
     rawFetch(PATHS.perms.byId(id), {
       method: "PATCH",
       body: p,
       token: t,
     }),
+
   deletePerm: (id, t) =>
     rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
@@ -351,13 +471,14 @@ export const iamApi = {
         obj.active !== undefined
           ? obj.active === true || obj.active === "true"
           : true;
-      if (obj.perms)
+      if (obj.perms) {
         perms = Array.isArray(obj.perms)
           ? obj.perms
           : String(obj.perms)
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
+      }
       password =
         obj.password ??
         obj.clave ??
@@ -388,13 +509,14 @@ export const iamApi = {
             .filter(Boolean)
         : [];
       active = obj.active === undefined ? true : !!obj.active;
-      if (obj.perms)
+      if (obj.perms) {
         perms = Array.isArray(obj.perms)
           ? obj.perms
           : String(obj.perms)
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
+      }
       password =
         obj.password ??
         obj.clave ??
@@ -440,8 +562,10 @@ export const iamApi = {
       body: p,
       token: t,
     }),
+
   enableUser: (id, t) =>
     rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
+
   disableUser: (id, t) =>
     rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
@@ -460,8 +584,9 @@ export const iamApi = {
         e?.status === 404 ||
         msg.includes("not found") ||
         msg.includes("404")
-      )
+      ) {
         return { ok: false, items: [] };
+      }
       throw e;
     }
   },
