@@ -15,7 +15,10 @@ let tokenProvider = null;
 
 /**
  * Llamado desde App.jsx para decirle a este módulo cómo conseguir el token
- * Ej: attachIamAuth(async () => { const t = await getAccessTokenSilently(...); return t; })
+ * Ej: attachIamAuth(async () => {
+ *   const t = await getAccessTokenSilently(...);
+ *   return t;
+ * })
  */
 export function attachIamAuth(fn) {
   tokenProvider = fn; // fn es async () => token | null
@@ -49,7 +52,7 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
 
-  // 👈 AQUÍ ESTABA EL BUG: ahora sí mandamos el token real
+  // ✅ Ahora sí mandamos el token real
   if (token) h.Authorization = `Bearer ${token}`;
 
   // Enviar headers DEV si:
