@@ -1,6 +1,6 @@
 // client/src/iam/pages/IamAdmin/RoleEditor.jsx
 import React, { useMemo, useRef, useState } from "react";
-import { iamApi } from "../../api/iamApi";
+import { iamApi } from "../../api/iamApi.js";
 
 // Pon esto en true si tu backend entiende el comodín "*"
 const BACKEND_SUPPORTS_WILDCARD = true;
@@ -8,9 +8,12 @@ const BACKEND_SUPPORTS_WILDCARD = true;
 export default function RoleEditor({ role, perms, onChanged }) {
   const [form, setForm] = useState(() => ({
     _id: role?._id,
+    code: role?.code || "",
     name: role?.name || "",
     description: role?.description || "",
-    permissions: Array.isArray(role?.permissions) ? role.permissions : [],
+    permissions: Array.isArray(role?.permissions)
+      ? role.permissions
+      : [],
   }));
 
   // Guarda el último set de permisos "granulares" para restaurarlo al desactivar "*"
@@ -44,31 +47,38 @@ export default function RoleEditor({ role, perms, onChanged }) {
           (a, b) =>
             (Number.isFinite(a.order) ? a.order : 0) -
               (Number.isFinite(b.order) ? b.order : 0) ||
-            String(a.key || "").localeCompare(String(b.key || ""))
+            String(a.key || "").localeCompare(
+              String(b.key || "")
+            )
         ),
     }));
   }, [perms]);
 
   const hasAll = form.permissions.includes("*");
-  const has = (key) => (form.permissions || []).includes(key);
+  const has = (key) =>
+    (form.permissions || []).includes(key);
 
-  const setPerms = (next) => setForm((f) => ({ ...f, permissions: next }));
+  const setPerms = (next) =>
+    setForm((f) => ({ ...f, permissions: next }));
 
   const toggle = (key) => {
     if (hasAll) return; // con "*" activo, no se pueden cambiar individuales
     const set = new Set(form.permissions || []);
     set.has(key) ? set.delete(key) : set.add(key);
-    setPerms([...set]);
-    lastGranularRef.current = [...set];
+    const arr = [...set];
+    setPerms(arr);
+    lastGranularRef.current = arr;
   };
 
   const selectGroup = (group, turnOn) => {
     if (hasAll) return;
-    const keys = (groups.find((g) => g.group === group)?.items || []).map(
-      (i) => i.key
-    );
+    const keys = (
+      groups.find((g) => g.group === group)?.items || []
+    ).map((i) => i.key);
     const set = new Set(form.permissions || []);
-    keys.forEach((k) => (turnOn ? set.add(k) : set.delete(k)));
+    keys.forEach((k) =>
+      turnOn ? set.add(k) : set.delete(k)
+    );
     const arr = [...set];
     setPerms(arr);
     lastGranularRef.current = arr;
@@ -77,11 +87,17 @@ export default function RoleEditor({ role, perms, onChanged }) {
   const toggleAllSwitch = (on) => {
     if (on) {
       // Guarda el snapshot granular y activa "*"
-      lastGranularRef.current = (form.permissions || []).filter((k) => k !== "*");
+      lastGranularRef.current = (
+        form.permissions || []
+      ).filter((k) => k !== "*");
       setPerms(["*"]);
     } else {
       // Restaura el snapshot granular
-      setPerms(lastGranularRef.current.length ? lastGranularRef.current : []);
+      setPerms(
+        lastGranularRef.current.length
+          ? lastGranularRef.current
+          : []
+      );
     }
   };
 
@@ -93,13 +109,26 @@ export default function RoleEditor({ role, perms, onChanged }) {
       permissions = allKeys;
     }
 
+    let code = form.code || role?.code || "";
+    if (!code) {
+      code = form.name
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
+    }
+
     const payload = {
+      code,
       name: form.name,
       description: form.description,
       permissions,
     };
 
-    if (form._id) await iamApi.updateRole(form._id, payload);
+    if (form._id)
+      await iamApi.updateRole(form._id, payload);
     else await iamApi.createRole(payload);
 
     onChanged?.();
@@ -107,7 +136,7 @@ export default function RoleEditor({ role, perms, onChanged }) {
 
   const remove = async () => {
     if (!form._id) return;
-    if (!confirm("¿Eliminar rol?")) return;
+    if (!window.confirm("¿Eliminar rol?")) return;
     await iamApi.deleteRole(form._id);
     onChanged?.();
   };
@@ -119,14 +148,14 @@ export default function RoleEditor({ role, perms, onChanged }) {
           className="border rounded px-3 py-2"
           placeholder="Nombre del rol"
           value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              name: e.target.value,
+            })
+          }
         />
-        <input
-          className="border rounded px-3 py-2"
-          placeholder="Descripción"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-        />
+        {/* El code no se muestra, se calcula, pero si quieres puedes mostrarlo aquí */}
       </div>
 
       <div className="rounded border p-3 flex items-center justify-between">
@@ -134,13 +163,16 @@ export default function RoleEditor({ role, perms, onChanged }) {
           <input
             type="checkbox"
             checked={hasAll}
-            onChange={(e) => toggleAllSwitch(e.target.checked)}
+            onChange={(e) =>
+              toggleAllSwitch(e.target.checked)
+            }
           />
           <span>Todos los permisos (*)</span>
         </label>
         {hasAll && (
           <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800">
-            Concedido el 100% de permisos — los checks están bloqueados
+            Concedido el 100% de permisos — los checks
+            están bloqueados
           </span>
         )}
       </div>
@@ -148,14 +180,21 @@ export default function RoleEditor({ role, perms, onChanged }) {
       {/* Matriz por grupos */}
       <div className="space-y-4">
         {groups.map((g) => (
-          <div key={g.group} className="border rounded p-3">
+          <div
+            key={g.group}
+            className="border rounded p-3"
+          >
             <div className="flex items-center justify-between">
-              <div className="font-medium">{g.group}</div>
+              <div className="font-medium">
+                {g.group}
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
                   className="text-sm px-2 py-1 rounded bg-gray-200 disabled:opacity-60"
-                  onClick={() => selectGroup(g.group, true)}
+                  onClick={() =>
+                    selectGroup(g.group, true)
+                  }
                   disabled={hasAll}
                 >
                   Seleccionar todo
@@ -163,7 +202,9 @@ export default function RoleEditor({ role, perms, onChanged }) {
                 <button
                   type="button"
                   className="text-sm px-2 py-1 rounded bg-gray-200 disabled:opacity-60"
-                  onClick={() => selectGroup(g.group, false)}
+                  onClick={() =>
+                    selectGroup(g.group, false)
+                  }
                   disabled={hasAll}
                 >
                   Quitar todo
@@ -181,11 +222,15 @@ export default function RoleEditor({ role, perms, onChanged }) {
                 >
                   <input
                     type="checkbox"
-                    checked={hasAll ? true : has(p.key)}
+                    checked={
+                      hasAll ? true : has(p.key)
+                    }
                     onChange={() => toggle(p.key)}
                     disabled={hasAll}
                   />
-                  <span className="text-sm">{p.label}</span>
+                  <span className="text-sm">
+                    {p.label}
+                  </span>
                   <span className="text-[10px] text-gray-500 ml-auto font-mono">
                     {p.key}
                   </span>
@@ -205,7 +250,10 @@ export default function RoleEditor({ role, perms, onChanged }) {
             Eliminar
           </button>
         )}
-        <button className="px-3 py-2 rounded bg-blue-600 text-white" onClick={save}>
+        <button
+          className="px-3 py-2 rounded bg-blue-600 text-white"
+          onClick={save}
+        >
           Guardar
         </button>
       </div>

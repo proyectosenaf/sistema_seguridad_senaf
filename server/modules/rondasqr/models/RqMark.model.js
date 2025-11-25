@@ -35,7 +35,7 @@ const RqMarkSchema = new mongoose.Schema(
     officerName: { type: String, trim: true },
     officerEmail: { type: String, trim: true },
     guardName: { type: String, trim: true }, // compatibilidad
-    guardId: { type: String, trim: true },   // compatibilidad (Auth0 sub / legajo)
+    guardId: { type: String, trim: true }, // compatibilidad (Auth0 sub / legajo)
 
     steps: { type: Number, default: 0 },
     message: { type: String, default: "" },
@@ -71,7 +71,7 @@ RqMarkSchema.index({ "gps.lat": 1, "gps.lon": 1 });
 RqMarkSchema.index({ loc: "2dsphere" });
 RqMarkSchema.index({ officerEmail: 1, at: -1 });
 RqMarkSchema.index({ guardId: 1, at: -1 });
-RqMarkSchema.index({ siteId: 1, roundId: 1, at: -1 }); // 🔥 nuevo índice útil para reportes
+RqMarkSchema.index({ siteId: 1, roundId: 1, at: -1 }); // 🔥 índice útil para reportes
 
 /* ──────────────── Sincronización gps <-> loc ──────────────── */
 RqMarkSchema.pre("save", function syncGpsToLoc(next) {

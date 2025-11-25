@@ -5,10 +5,25 @@ import { useLocation, useNavigate, Link } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
 import {
-  Menu, LogOut, Search, Bell, Plus, X, ArrowLeft,
-  DoorOpen, KeyRound, Footprints, Route,
-  AlertTriangle, UsersRound, Users, NotebookPen,
-  ClipboardList, ClipboardCheck, Award, BarChart3,
+  Menu,
+  LogOut,
+  Search,
+  Bell,
+  Plus,
+  X,
+  ArrowLeft,
+  DoorOpen,
+  KeyRound,
+  Footprints,
+  Route,
+  AlertTriangle,
+  UsersRound,
+  Users,
+  NotebookPen,
+  ClipboardList,
+  ClipboardCheck,
+  Award,
+  BarChart3,
   ShieldCheck,
 } from "lucide-react";
 
@@ -19,7 +34,10 @@ import { io } from "socket.io-client";
 import NotificationsAPI from "../lib/notificationsApi.js";
 
 // Raíz del backend (sin /api) para sockets
-const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(
+  /\/$/,
+  ""
+);
 const SOCKET_URL = API_ROOT;
 
 const PATH_LABELS = {
@@ -36,22 +54,22 @@ const PATH_LABELS = {
 };
 
 // Íconos alineados con “Secciones”
-const IconDoor       = DoorOpen || KeyRound;
+const IconDoor = DoorOpen || KeyRound;
 const IconFootprints = Footprints || Route;
-const IconVisitors   = UsersRound || Users;
-const IconEval       = ClipboardCheck || Award;
-const IconIAM        = ShieldCheck || Users;
+const IconVisitors = UsersRound || Users;
+const IconEval = ClipboardCheck || Award;
+const IconIAM = ShieldCheck || Users;
 
 const MODULES = [
-  { to: "/accesos",     label: "Control de Acceso",     Icon: IconDoor },
-  { to: "/rondas",      label: "Rondas de Vigilancia",  Icon: IconFootprints },
-  { to: "/incidentes",  label: "Gestión de Incidentes", Icon: AlertTriangle },
-  { to: "/visitas",     label: "Control de Visitas",    Icon: IconVisitors },
-  { to: "/bitacora",    label: "Bitácora Digital",      Icon: NotebookPen },
-  { to: "/supervision", label: "Supervisión",           Icon: ClipboardList },
-  { to: "/evaluacion",  label: "Evaluación",            Icon: IconEval },
-  // 👇 NUEVO: aparece en el menú rápido del topbar
-  { to: "/iam/admin",   label: "Usuarios y Permisos",   Icon: IconIAM },
+  { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
+  { to: "/rondas", label: "Rondas de Vigilancia", Icon: IconFootprints },
+  { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
+  { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
+  { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
+  { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
+  { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
+  // 👇 Aparece en el menú rápido del topbar
+  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
 ];
 
 // ---------- Breadcrumbs ----------
@@ -93,7 +111,7 @@ function useDismissOnOutside(open, refs, onClose) {
   React.useEffect(() => {
     if (!open) return;
     function handler(e) {
-      const inside = refs.some(r => r.current && r.current.contains(e.target));
+      const inside = refs.some((r) => r.current && r.current.contains(e.target));
       if (!inside) onClose();
     }
     document.addEventListener("mousedown", handler);
@@ -113,22 +131,29 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     function onKey(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setSearchOpen(v => !v);
+        setSearchOpen((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   function runSearch() {
-    const base =
-      pathname.startsWith("/visitas") ? "/visitas" :
-      pathname.startsWith("/supervision") ? "/supervision" :
-      pathname.startsWith("/bitacora") ? "/bitacora" :
-      "/incidentes";
-    if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`); else nav(base);
+    const base = pathname.startsWith("/visitas")
+      ? "/visitas"
+      : pathname.startsWith("/supervision")
+      ? "/supervision"
+      : pathname.startsWith("/bitacora")
+      ? "/bitacora"
+      : "/incidentes";
+    if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`);
+    else nav(base);
     setSearchOpen(false);
   }
-  function goBack() { if (window.history.length > 2) nav(-1); else nav("/"); }
+
+  // 🔙 Regresar: SIEMPRE a panel principal (evita volver a la URL de Auth0)
+  function goBack() {
+    nav("/");
+  }
 
   // -------- menú + (fixed responsive) --------
   const quickBtnRef = React.useRef(null);
@@ -137,7 +162,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   const [quickPos, setQuickPos] = React.useState({ left: 0, top: 0 });
 
   const toggleQuick = () => {
-    setQuickOpen(next => {
+    setQuickOpen((next) => {
       const willOpen = !next;
       if (willOpen && quickBtnRef.current) {
         const r = quickBtnRef.current.getBoundingClientRect();
@@ -153,7 +178,8 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     const recalc = () => {
       if (!quickBtnRef.current) return;
       const r = quickBtnRef.current.getBoundingClientRect();
-      const menuW = 320; const gap = 8;
+      const menuW = 320;
+      const gap = 8;
       setQuickPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
     };
     window.addEventListener("resize", recalc);
@@ -267,7 +293,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       {/* Botón campana */}
       <div ref={bellBtnRef} className="relative">
         <button
-          onClick={() => setBellOpen(v => !v)}
+          onClick={() => setBellOpen((v) => !v)}
           className="relative inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           aria-label="Notificaciones"
           aria-haspopup="menu"
@@ -286,7 +312,10 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
           <BellMenu
             anchorRef={bellBtnRef}
             counts={counts}
-            onClear={() => { clearCounts(); setBellOpen(false); }}
+            onClear={() => {
+              clearCounts();
+              setBellOpen(false);
+            }}
             onClose={() => setBellOpen(false)}
             setPosFn={setBellPos}
             pos={bellPos}
@@ -319,7 +348,10 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         <button
           onClick={() =>
             logout({
-              logoutParams: { returnTo: `${window.location.origin}/login`, federated: true },
+              logoutParams: {
+                returnTo: `${window.location.origin}/login`,
+                federated: true,
+              },
             })
           }
           className="btn-outline-neon inline-flex items-center gap-1"
@@ -383,11 +415,12 @@ function TopbarQuickMenu({ nav }) {
   const [pos, setPos] = React.useState({ left: 0, top: 0 });
 
   const toggle = () => {
-    setOpen(next => {
+    setOpen((next) => {
       const willOpen = !next;
       if (willOpen && btnRef.current) {
         const r = btnRef.current.getBoundingClientRect();
-        const menuW = 320, gap = 8;
+        const menuW = 320,
+          gap = 8;
         setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
       }
       return willOpen;
@@ -399,7 +432,8 @@ function TopbarQuickMenu({ nav }) {
     const recalc = () => {
       if (!btnRef.current) return;
       const r = btnRef.current.getBoundingClientRect();
-      const menuW = 320, gap = 8;
+      const menuW = 320,
+        gap = 8;
       setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
     };
     window.addEventListener("resize", recalc);
@@ -437,7 +471,10 @@ function TopbarQuickMenu({ nav }) {
           {MODULES.map(({ to, label, Icon }) => (
             <button
               key={to}
-              onClick={() => { setOpen(false); nav(to); }}
+              onClick={() => {
+                setOpen(false);
+                nav(to);
+              }}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-left"
               role="menuitem"
             >
@@ -455,7 +492,8 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
   React.useEffect(() => {
     if (!anchorRef.current) return;
     const r = anchorRef.current.getBoundingClientRect();
-    const menuW = 320, gap = 8;
+    const menuW = 320,
+      gap = 8;
     setPosFn({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
   }, [anchorRef, setPosFn]);
 
@@ -495,10 +533,7 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
         >
           Marcar todo como leído
         </button>
-        <button
-          onClick={onClose}
-          className="px-3 py-2 rounded-lg border dark:border-neutral-700"
-        >
+        <button onClick={onClose} className="px-3 py-2 rounded-lg border dark:border-neutral-700">
           Cerrar
         </button>
       </div>

@@ -1,9 +1,16 @@
 // client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
+import { useAuth0 } from "@auth0/auth0-react";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import VideoRecorder from "../../components/VideoRecorder.jsx";
 import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
-import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
+import iamApi from "../../iam/api/iamApi.js"; // 👈 para traer guardias
+
+// 👉 librerías para exportar
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 // helper para mostrar bonito el nombre del guardia
 function guardLabel(g) {
@@ -12,6 +19,8 @@ function guardLabel(g) {
 }
 
 export default function IncidentesList() {
+  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
+
   const [incidentes, setIncidentes] = useState([]);
   const [stats, setStats] = useState({
     abiertos: 0,
@@ -26,12 +35,16 @@ export default function IncidentesList() {
     type: "Acceso no autorizado",
     description: "",
     reportedBy: "",
+    reportedByGuardId: "", // 👈 ID del guardia seleccionado
     zone: "",
     priority: "alta",
     status: "abierto",
   });
-  const [photos, setPhotos] = useState([]);
+
+  // media = [{ type: "image" | "video", src }]
+  const [media, setMedia] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
@@ -40,7 +53,7 @@ export default function IncidentesList() {
   // Le quitamos el /api del final para servir /uploads correctamente
   const API_HOST = (API || "").replace(/\/api$/, "");
 
-  // 👇 NUEVO: catálogo de guardias (IAM)
+  // 👇 catálogo de guardias (IAM)
   const [guards, setGuards] = useState([]);
 
   function recomputeStats(list) {
@@ -55,7 +68,7 @@ export default function IncidentesList() {
   useEffect(() => {
     (async () => {
       try {
-        // 👇 api ya tiene baseURL tipo http://localhost:4000/api
+        // api ya tiene baseURL tipo http://localhost:4000/api
         const res = await api.get("/incidentes", {
           params: { limit: 500 },
         });
@@ -73,16 +86,35 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── NUEVO: cargar guardias desde IAM ─────────
+  // ───────── cargar guardias desde IAM (con token) ─────────
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         let items = [];
+
         if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards("", true);
-          items = r.items || [];
+          let token;
+          try {
+            if (isAuthenticated) {
+              token = await getAccessTokenSilently({
+                authorizationParams: {
+                  audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+                },
+              });
+            }
+          } catch (e) {
+            console.warn(
+              "[IncidentesList] no se pudo obtener access token para IAM:",
+              e?.message || e
+            );
+          }
+
+          const r = await iamApi.listGuards("", true, token);
+          items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
+          // Fallback si no existe listGuards
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || []).filter((u) => {
@@ -112,10 +144,11 @@ export default function IncidentesList() {
         if (mounted) setGuards([]);
       }
     })();
+
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [getAccessTokenSilently, isAuthenticated]);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
@@ -151,41 +184,97 @@ export default function IncidentesList() {
   const handleFormChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
+  // cambio específico del select de guardia
+  const handleReporterChange = (e) => {
+    const opId = e.target.value;
+    const g = guards.find((x) => String(x.opId) === String(opId));
+    setForm((prev) => ({
+      ...prev,
+      reportedByGuardId: opId,
+      reportedBy: g ? guardLabel(g) : "",
+    }));
+  };
+
+  // archivo desde input (imagen o video)
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const b64 = await fileToBase64(file);
-    setPhotos((prev) => [...prev, b64]);
+    const isVideo = file.type?.startsWith("video/");
+    setMedia((prev) => [
+      ...prev,
+      { type: isVideo ? "video" : "image", src: b64 },
+    ]);
     e.target.value = "";
   };
 
+  // foto desde cámara full screen
   const handleCameraCapture = (dataUrl) => {
-    setPhotos((prev) => [...prev, dataUrl]);
+    setMedia((prev) => [...prev, { type: "image", src: dataUrl }]);
     setShowCamera(false);
   };
 
-  const removePhoto = (idx) =>
-    setPhotos((prev) => prev.filter((_, i) => i !== idx));
+  // video desde grabador full screen
+  const handleVideoCapture = (dataUrl) => {
+    setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
+    setShowVideoRecorder(false);
+  };
+
+  const removeMedia = (idx) =>
+    setMedia((prev) => prev.filter((_, i) => i !== idx));
 
   const resetForm = () => {
     setForm({
       type: "Acceso no autorizado",
       description: "",
       reportedBy: "",
+      reportedByGuardId: "",
       zone: "",
       priority: "alta",
       status: "abierto",
     });
-    setPhotos([]);
+    setMedia([]);
     setEditingId(null);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!form.description.trim()) {
+      alert("Describa el incidente.");
+      return;
+    }
+    if (!form.reportedByGuardId) {
+      alert("Seleccione el guardia que reporta el incidente.");
+      return;
+    }
+
     try {
+      // resolvemos guardia para mandar datos ricos al backend
+      const guard = guards.find(
+        (g) => String(g.opId) === String(form.reportedByGuardId)
+      );
+      const label = guard ? guardLabel(guard) : form.reportedBy;
+
+      const photosBase64 = media
+        .filter((m) => m.type === "image")
+        .map((m) => m.src);
+      const videosBase64 = media
+        .filter((m) => m.type === "video")
+        .map((m) => m.src);
+
       const payload = {
-        ...form,
-        photosBase64: photos,
+        type: form.type,
+        description: form.description,
+        zone: form.zone,
+        priority: form.priority,
+        status: form.status,
+        reportedBy: label, // texto visible
+        guardId: form.reportedByGuardId || undefined, // ID para enlazar con IAM
+        guardName: guard?.name || undefined,
+        guardEmail: guard?.email || undefined,
+        photosBase64,
+        videosBase64,
       };
 
       if (editingId) {
@@ -226,15 +315,36 @@ export default function IncidentesList() {
   const startEdit = (incidente) => {
     setShowForm(true);
     setEditingId(incidente._id);
+
+    // intentamos recuperar guardId si ya viene desde backend
+    let guardId =
+      incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
+    let reportedByLabel = incidente.reportedBy || "";
+
+    // si no viene guardId pero sí label, intentamos machear con el catálogo
+    if (!guardId && incidente.reportedBy && guards.length) {
+      const match = guards.find(
+        (g) => guardLabel(g) === incidente.reportedBy
+      );
+      if (match) {
+        guardId = match.opId;
+        reportedByLabel = guardLabel(match);
+      }
+    }
+
     setForm({
       type: incidente.type || "Acceso no autorizado",
       description: incidente.description || "",
-      reportedBy: incidente.reportedBy || "",
+      reportedBy: reportedByLabel,
+      reportedByGuardId: guardId,
       zone: incidente.zone || "",
       priority: incidente.priority || "alta",
       status: incidente.status || "abierto",
     });
-    setPhotos(extractPhotos(incidente));
+
+    // cargamos fotos antiguas como media de tipo imagen
+    const oldPhotos = extractPhotos(incidente);
+    setMedia(oldPhotos.map((src) => ({ type: "image", src })));
   };
 
   const handleDelete = async (id) => {
@@ -256,10 +366,95 @@ export default function IncidentesList() {
     }
   };
 
-  // para que en edición no se pierda el valor si no coincide con la lista de guardias
-  const hasReportedOption =
-    form.reportedBy &&
-    guards.some((g) => guardLabel(g) === form.reportedBy);
+  // ───────── EXPORTAR PDF ─────────
+  const handleExportPDF = () => {
+    if (!incidentes.length) {
+      alert("No hay incidentes para exportar.");
+      return;
+    }
+
+    const doc = new jsPDF("l", "pt", "a4"); // horizontal para más columnas
+
+    const columns = [
+      "#",
+      "Tipo",
+      "Descripción",
+      "Reportado por",
+      "Zona",
+      "Fecha",
+      "Prioridad",
+      "Estado",
+    ];
+
+    const rows = incidentes.map((i, idx) => {
+      const fecha =
+        i.date || i.createdAt
+          ? new Date(i.date || i.createdAt).toLocaleString()
+          : "";
+      let estadoLegible = "Abierto";
+      if (i.status === "en_proceso") estadoLegible = "En proceso";
+      else if (i.status === "resuelto") estadoLegible = "Resuelto";
+
+      return [
+        idx + 1,
+        i.type || "",
+        i.description || "",
+        i.reportedBy || "",
+        i.zone || "",
+        fecha,
+        i.priority || "",
+        estadoLegible,
+      ];
+    });
+
+    doc.setFontSize(14);
+    doc.text("Reporte de Incidentes", 40, 30);
+
+    doc.autoTable({
+      head: [columns],
+      body: rows,
+      startY: 50,
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [15, 27, 45] },
+    });
+
+    doc.save("incidentes.pdf");
+  };
+
+  // ───────── EXPORTAR EXCEL ─────────
+  const handleExportExcel = () => {
+    if (!incidentes.length) {
+      alert("No hay incidentes para exportar.");
+      return;
+    }
+
+    const data = incidentes.map((i, idx) => {
+      const fecha =
+        i.date || i.createdAt
+          ? new Date(i.date || i.createdAt).toLocaleString()
+          : "";
+      let estadoLegible = "Abierto";
+      if (i.status === "en_proceso") estadoLegible = "En proceso";
+      else if (i.status === "resuelto") estadoLegible = "Resuelto";
+
+      return {
+        "#": idx + 1,
+        Tipo: i.type || "",
+        Descripción: i.description || "",
+        "Reportado por": i.reportedBy || "",
+        Zona: i.zone || "",
+        Fecha: fecha,
+        Prioridad: i.priority || "",
+        Estado: estadoLegible,
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Incidentes");
+
+    XLSX.writeFile(wb, "incidentes.xlsx");
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
@@ -292,7 +487,7 @@ export default function IncidentesList() {
 
       {/* FORM inline */}
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg.white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
+        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
@@ -332,26 +527,21 @@ export default function IncidentesList() {
 
             {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 👇 AHORA ES SELECT DE GUARDIAS */}
+              {/* SELECT DE GUARDIAS */}
               <div>
                 <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
                 </label>
                 <select
-                  name="reportedBy"
-                  value={form.reportedBy}
-                  onChange={handleFormChange}
+                  name="reportedByGuardId"
+                  value={form.reportedByGuardId}
+                  onChange={handleReporterChange}
                   className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                   required
                 >
                   <option value="">Seleccione un guardia…</option>
-                  {form.reportedBy && !hasReportedOption && (
-                    <option value={form.reportedBy}>
-                      {form.reportedBy} (actual)
-                    </option>
-                  )}
                   {guards.map((g) => (
-                    <option key={g._id} value={guardLabel(g)}>
+                    <option key={g._id || g.opId} value={g.opId}>
                       {guardLabel(g)}
                     </option>
                   ))}
@@ -393,7 +583,7 @@ export default function IncidentesList() {
             {/* Evidencias */}
             <div className="space-y-2">
               <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
-                Evidencias (fotos)
+                Evidencias (fotos / videos)
               </label>
               <div className="flex flex-wrap gap-3">
                 <button
@@ -409,37 +599,54 @@ export default function IncidentesList() {
                   onClick={() => setShowCamera(true)}
                   className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
-                  📷 Tomar foto
+                  📷 Tomar foto (pantalla completa)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowVideoRecorder(true)}
+                  className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                >
+                  🎥 Grabar video (pantalla completa)
                 </button>
 
                 <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                  Puede adjuntar varias imágenes como evidencia.
+                  Puede adjuntar imágenes o videos desde archivos, o grabarlos
+                  en tiempo real (vertical u horizontal).
                 </p>
               </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 onChange={handleFile}
                 className="hidden"
               />
 
-              {photos.length > 0 && (
+              {media.length > 0 && (
                 <div className="flex flex-wrap gap-3 mt-2">
-                  {photos.map((src, idx) => (
+                  {media.map((item, idx) => (
                     <div
                       key={idx}
                       className="relative w-24 h-24 rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40"
                     >
-                      <img
-                        src={src}
-                        alt={`evidencia-${idx + 1}`}
-                        className="w-full h-full object-cover"
-                      />
+                      {item.type === "image" ? (
+                        <img
+                          src={item.src}
+                          alt={`evidencia-${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <video
+                          src={item.src}
+                          className="w-full h-full object-cover"
+                          controls
+                        />
+                      )}
                       <button
                         type="button"
-                        onClick={() => removePhoto(idx)}
+                        onClick={() => removeMedia(idx)}
                         className="absolute top-1 right-1 bg-black/70 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
                       >
                         ✕
@@ -458,7 +665,7 @@ export default function IncidentesList() {
                   setShowForm(false);
                   resetForm();
                 }}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text.white transition-all"
+                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
                 Cancelar
               </button>
@@ -503,7 +710,7 @@ export default function IncidentesList() {
           </div>
         </div>
         <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
-          <div className="text-xs uppercase text-yellow-300 font-medium flex items-center gap-2">
+          <div className="text-xs uppercase text-yellow-300 font-medium flex items.center gap-2">
             <span className="w-2 h-2 rounded-full bg-yellow-400" />
             Alta prioridad
           </div>
@@ -514,30 +721,47 @@ export default function IncidentesList() {
       </div>
 
       {/* LISTA */}
-      <div className="bg-[#0f1b2d] border border-cyan-400/20 rounded-lg shadow-[0_0_30px_rgba(0,255,255,0.08)] overflow-hidden">
-        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-cyan-400/10 gap-3">
+      <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
+        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
           <div>
             <h2 className="font-semibold text-lg text-white">
               Lista de Incidentes
             </h2>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-300">
               Historial de reportes registrados en el sistema
             </p>
           </div>
-          <div className="w-full md:w-1/3">
+          <div className="w-full md:w-1/3 flex flex-col gap-2">
             <input
-              className="w-full bg-[#1e2a3f] text-white text-sm rounded-md px-3 py-2 
-                         border border-cyan-400/20 placeholder-gray-500 
-                         focus:outline-none focus:ring-2 focus:ring-cyan-400/40 
-                         transition-all duración-200"
+              className="w-full bg-black/30 text-white text-sm rounded-md px-3 py-2 
+                         border border-purple-400/40 placeholder-gray-500 
+                         focus:outline-none focus:ring-2 focus:ring-purple-400/60 
+                         transition-all duration-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
+            {/* BOTONES EXPORTAR */}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={handleExportPDF}
+                className="text-xs bg-indigo-600/90 hover:bg-indigo-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+              >
+                Exportar PDF
+              </button>
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white.font-medium rounded px-3 py-2 transition-all duration-200"
+              >
+                Exportar Excel
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-gray-200">
-            <thead className="bg-[#1e2a3f] text-gray-400 uppercase text-xs border-b border-cyan-400/10">
+            <thead className="bg-white/5 text-gray-300 uppercase text-xs border-b border-white/10">
               <tr>
                 <th className="px-4 py-3 font-medium">TIPO</th>
                 <th className="px-4 py-3 font-medium">DESCRIPCIÓN</th>
@@ -555,7 +779,7 @@ export default function IncidentesList() {
                 <tr>
                   <td
                     colSpan={9}
-                    className="text-center text-gray-500 py-10 text-sm"
+                    className="text-center text-gray-400 py-10 text-sm"
                   >
                     No hay incidentes registrados.
                   </td>
@@ -572,19 +796,19 @@ export default function IncidentesList() {
                   return (
                     <tr
                       key={i._id}
-                      className="border-b border-cyan-400/5 hover:bg-[#1b2d44] transition-colors"
+                      className="border-b border-white/5 hover:bg-white/5 transition-colors"
                     >
                       <td className="px-4 py-3 text-white font-medium">
                         {i.type}
                       </td>
-                      <td className="px-4 py-3 text-gray-300 max-w-[320px] truncate">
+                      <td className="px-4 py-3 text-gray-200 max-w-[320px] truncate">
                         {i.description}
                       </td>
                       <td className="px-4 py-3 text-gray-200">
                         {i.reportedBy}
                       </td>
                       <td className="px-4 py-3 text-gray-200">{i.zone}</td>
-                      <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-xs">
+                      <td className="px-4 py-3 whitespace-nowrap text-gray-300 text-xs">
                         {i.date || i.createdAt
                           ? new Date(i.date || i.createdAt).toLocaleString()
                           : "—"}
@@ -594,10 +818,10 @@ export default function IncidentesList() {
                           className={
                             "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
                             (i.priority === "alta"
-                              ? "bg-red-600/20 text-red-400 border border-red-500/40"
+                              ? "bg-red-600/25 text-red-300 border border-red-400/60"
                               : i.priority === "media"
-                              ? "bg-yellow-400/20 text-yellow-300 border border-yellow-400/40"
-                              : "bg-green-600/20 text-green-400 border border-green-500/40")
+                              ? "bg-yellow-400/20 text-yellow-200 border border-yellow-300/60"
+                              : "bg-green-600/20 text-green-300 border border-green-400/60")
                           }
                         >
                           {i.priority}
@@ -608,10 +832,10 @@ export default function IncidentesList() {
                           className={
                             "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
                             (i.status === "resuelto"
-                              ? "bg-green-600/20 text-green-400 border border-green-500/40"
+                              ? "bg-green-600/20 text-green-300 border border-green-400/60"
                               : i.status === "en_proceso"
-                              ? "bg-blue-600/20 text-blue-400 border border-blue-500/40"
-                              : "bg-red-600/20 text-red-400 border border-red-500/40")
+                              ? "bg-blue-600/20 text-blue-300 border border-blue-400/60"
+                              : "bg-red-600/20 text-red-300 border border-red-400/60")
                           }
                         >
                           {i.status === "en_proceso"
@@ -637,7 +861,7 @@ export default function IncidentesList() {
                                   href={src}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="block w-12 h-12 rounded overflow-hidden border border-cyan-400/20 bg-black/30"
+                                  className="block w-12 h-12 rounded overflow-hidden border border-purple-400/40 bg-black/40"
                                 >
                                   <img
                                     src={src}
@@ -648,7 +872,7 @@ export default function IncidentesList() {
                               );
                             })}
                             {photos.length > 3 && (
-                              <span className="text-xs text-gray-400">
+                              <span className="text-xs text-gray-300">
                                 +{photos.length - 3}
                               </span>
                             )}
@@ -663,7 +887,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "en_proceso")
                             }
-                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duración-300"
+                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
                           >
                             Procesar
                           </button>
@@ -673,7 +897,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "resuelto")
                             }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transición-all duración-300"
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all.duration-300"
                           >
                             Resolver
                           </button>
@@ -681,13 +905,13 @@ export default function IncidentesList() {
 
                         <button
                           onClick={() => startEdit(i)}
-                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transición-all duración-300"
+                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
                           Editar
                         </button>
                         <button
                           onClick={() => handleDelete(i._id)}
-                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transición-all duración-300"
+                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
                           Eliminar
                         </button>
@@ -699,21 +923,12 @@ export default function IncidentesList() {
             </tbody>
           </table>
         </div>
-
-        <div className="flex.justify-end p-4 border-t border-cyan-400/10">
-          <button
-            onClick={startCreate}
-            className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 transición-all duración-300"
-          >
-            {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
-          </button>
-        </div>
       </div>
 
       <div className="text-xs text-gray-500">
         <Link
           to="/"
-          className="hover:text-white hover:underline underline-offset-4 transición-colors"
+          className="hover:text-white hover:underline underline-offset-4 transition-colors"
         >
           ← Volver al panel principal
         </Link>
@@ -723,6 +938,13 @@ export default function IncidentesList() {
         <CameraCapture
           onCapture={handleCameraCapture}
           onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {showVideoRecorder && (
+        <VideoRecorder
+          onCapture={handleVideoCapture}
+          onClose={() => setShowVideoRecorder(false)}
         />
       )}
     </div>

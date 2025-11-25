@@ -1,3 +1,4 @@
+// client/src/iam/api/IamGuard.jsx
 import React, { useEffect, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../api/iamApi";
@@ -38,7 +39,7 @@ export default function IamGuard({
   fallback = null,
   children,
 }) {
-  const { user } = useAuth0(); // 👈 correo que viene de Auth0
+  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0(); // 👈 Auth0
 
   // 👇 Estado base: si estamos en modo "skip", arrancamos como admin con wildcard
   const [state, setState] = useState(
@@ -55,7 +56,23 @@ export default function IamGuard({
 
     (async () => {
       try {
-        const me = await iamApi.me(); // /api/iam/v1/me
+        let token;
+        try {
+          if (isAuthenticated) {
+            token = await getAccessTokenSilently({
+              authorizationParams: {
+                audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+              },
+            });
+          }
+        } catch (e) {
+          console.warn(
+            "[IamGuard] no se pudo obtener access token para /iam/v1/me:",
+            e?.message || e
+          );
+        }
+
+        const me = await iamApi.me(token); // /api/iam/v1/me con Bearer
 
         // ----- email que viene del microservicio IAM -----
         const emailFromMe =
@@ -70,10 +87,7 @@ export default function IamGuard({
 
         // ----- roles / permisos básicos que vengan del backend -----
         let roles =
-          me?.roles ||
-          me?.user?.roles ||
-          me?.data?.roles ||
-          [];
+          me?.roles || me?.user?.roles || me?.data?.roles || [];
         let perms =
           me?.perms ||
           me?.permissions ||
@@ -115,7 +129,7 @@ export default function IamGuard({
     return () => {
       cancel = true;
     };
-  }, [user]);
+  }, [user, isAuthenticated, getAccessTokenSilently]);
 
   if (state.loading) return <div className="p-6">Cargando…</div>;
 

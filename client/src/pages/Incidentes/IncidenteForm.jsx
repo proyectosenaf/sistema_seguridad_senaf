@@ -2,7 +2,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import VideoRecorder from "../../components/VideoRecorder.jsx";
 import api from "../../lib/api.js";
+import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
 
 export default function IncidenteForm({
   stayOnFinish = false,
@@ -28,51 +30,158 @@ export default function IncidenteForm({
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
-    reportedBy: "",
+    reportedBy: "", // nombre / etiqueta que verá el supervisor
+    reportedByGuardId: "", // 👈 opId/guardId seleccionado en el combo
     zone: "",
     priority: "alta",
     status: "abierto",
   });
 
-  const [photos, setPhotos] = useState([]);
+  // media = [{ type: "image"|"video", src: dataUrl }]
+  const [media, setMedia] = useState([]);
   const [sending, setSending] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const fileInputRef = useRef(null);
+
+  // 🧑‍🏭 Guardias para el select "Reportado por"
+  const [guards, setGuards] = useState([]);
+  const [loadingGuards, setLoadingGuards] = useState(false);
+
+  /* ================== helpers guardias ================== */
+  function getGuardLabel(g) {
+    if (!g) return "";
+    return g.email
+      ? `${g.name || "(Sin nombre)"} — ${g.email}`
+      : g.name || "(Sin nombre)";
+  }
+
+  // carga catálogo de guardias desde IAM
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        setLoadingGuards(true);
+        let items = [];
+        if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true);
+          items = r.items || [];
+        } else {
+          // fallback por si no existe listGuards
+          const r = await iamApi.listUsers("");
+          const NS = "https://senaf.local/roles";
+          items = (r.items || [])
+            .filter((u) => {
+              const roles = [
+                ...(Array.isArray(u.roles) ? u.roles : []),
+                ...(Array.isArray(u[NS]) ? u[NS] : []),
+              ].map((x) => String(x).toLowerCase());
+              return (
+                roles.includes("guardia") ||
+                roles.includes("guard") ||
+                roles.includes("rondasqr.guard")
+              );
+            })
+            .map((u) => ({
+              _id: u._id,
+              name: u.name,
+              email: u.email,
+              opId: u.opId || u.sub || u.legacyId || String(u._id),
+              active: u.active !== false,
+            }));
+        }
+
+        const normalized = (items || []).map((u) => ({
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          opId: u.opId || u.sub || u.legacyId || String(u._id),
+          active: u.active !== false,
+        }));
+
+        if (mounted) setGuards(normalized);
+      } catch (e) {
+        console.warn("[IncidenteForm] listGuards error:", e);
+        if (mounted) setGuards([]);
+      } finally {
+        if (mounted) setLoadingGuards(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // si viene en modo edición, precargar datos
   useEffect(() => {
     if (!editingIncident) return;
 
-    setForm({
+    setForm((prev) => ({
+      ...prev,
       type: editingIncident.type || "Acceso no autorizado",
       description: editingIncident.description || "",
       reportedBy: editingIncident.reportedBy || "",
+      // tratamos de recuperar guardId/opId si existiera
+      reportedByGuardId:
+        editingIncident.reportedByGuardId ||
+        editingIncident.guardId ||
+        editingIncident.opId ||
+        "",
       zone: editingIncident.zone || "",
       priority: editingIncident.priority || "alta",
       status: editingIncident.status || "abierto",
-    });
+    }));
 
-    if (Array.isArray(editingIncident.photosBase64)) {
-      setPhotos(editingIncident.photosBase64);
-    } else if (Array.isArray(editingIncident.photos)) {
-      setPhotos(editingIncident.photos);
-    }
+    // Cargamos fotos antiguas como media de tipo imagen
+    const prevPhotos =
+      (Array.isArray(editingIncident.photosBase64) &&
+        editingIncident.photosBase64) ||
+      (Array.isArray(editingIncident.photos) && editingIncident.photos) ||
+      [];
+    const asMedia = prevPhotos.map((src) => ({ type: "image", src }));
+    setMedia(asMedia);
   }, [editingIncident]);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
+  // cambio específico del select de guardia
+  const handleReporterChange = (e) => {
+    const opId = e.target.value;
+    const g = guards.find((x) => String(x.opId) === String(opId));
+    setForm((prev) => ({
+      ...prev,
+      reportedByGuardId: opId,
+      reportedBy: g ? getGuardLabel(g) : "",
+    }));
+  };
+
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const b64 = await fileToBase64(file);
-    setPhotos((prev) => [...prev, b64]);
+
+    const base64 = await fileToBase64(file);
+    const isVideo = file.type?.startsWith("video/");
+    const item = {
+      type: isVideo ? "video" : "image",
+      src: base64,
+    };
+
+    setMedia((prev) => [...prev, item]);
     e.target.value = "";
   };
 
+  // Captura de foto desde cámara (full screen)
   const handleCameraCapture = (dataUrl) => {
-    setPhotos((prev) => [...prev, dataUrl]);
+    setMedia((prev) => [...prev, { type: "image", src: dataUrl }]);
     setShowCamera(false);
+  };
+
+  // Captura de video desde grabador (full screen)
+  const handleVideoCapture = (dataUrl) => {
+    setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
+    setShowVideoRecorder(false);
   };
 
   const resetForm = () => {
@@ -80,20 +189,50 @@ export default function IncidenteForm({
       type: "Acceso no autorizado",
       description: "",
       reportedBy: "",
+      reportedByGuardId: "",
       zone: "",
       priority: "alta",
       status: "abierto",
     });
-    setPhotos([]);
+    setMedia([]);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!form.description.trim()) {
+      alert("Describa el incidente.");
+      return;
+    }
+    if (!form.reportedByGuardId) {
+      alert("Seleccione el guardia que reporta el incidente.");
+      return;
+    }
+
     try {
       setSending(true);
+
+      // resolvemos guardia seleccionado para mandar datos ricos al backend
+      const guard = guards.find(
+        (g) => String(g.opId) === String(form.reportedByGuardId)
+      );
+      const guardLabel = guard ? getGuardLabel(guard) : form.reportedBy;
+
+      const photosBase64 = media
+        .filter((m) => m.type === "image")
+        .map((m) => m.src);
+      const videosBase64 = media
+        .filter((m) => m.type === "video")
+        .map((m) => m.src);
+
       const payload = {
         ...form,
-        photosBase64: photos,
+        reportedBy: guardLabel, // texto visible
+        guardId: form.reportedByGuardId || undefined, // 👈 ID opId/guardId
+        guardName: guard?.name || undefined,
+        guardEmail: guard?.email || undefined,
+        photosBase64, // compatibilidad con backend actual
+        videosBase64, // NUEVO campo para videos
         ...(origin ? { origin } : {}),
         ...extraData,
       };
@@ -215,19 +354,31 @@ export default function IncidenteForm({
 
           {/* Reportado / Zona */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Reportado por: SELECT de guardias */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Reportado por
               </label>
-              <input
-                name="reportedBy"
-                value={form.reportedBy}
-                onChange={handleChange}
-                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
-                placeholder="Nombre del guardia o responsable"
+              <select
+                name="reportedByGuardId"
+                value={form.reportedByGuardId}
+                onChange={handleReporterChange}
+                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
                 required
-              />
+              >
+                <option value="">
+                  {loadingGuards
+                    ? "Cargando guardias..."
+                    : "Seleccione el guardia que reporta"}
+                </option>
+                {guards.map((g) => (
+                  <option key={g._id || g.opId} value={g.opId}>
+                    {getGuardLabel(g)}
+                  </option>
+                ))}
+              </select>
             </div>
+
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Zona / Ubicación
@@ -263,7 +414,7 @@ export default function IncidenteForm({
           {/* Evidencias */}
           <div className="space-y-2">
             <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
-              Evidencias (fotos)
+              Evidencias (fotos / videos)
             </label>
             <div className="flex flex-wrap gap-3">
               <button
@@ -278,35 +429,51 @@ export default function IncidenteForm({
                 onClick={() => setShowCamera(true)}
                 className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
               >
-                📷 Tomar foto
+                📷 Tomar foto (pantalla completa)
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowVideoRecorder(true)}
+                className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+              >
+                🎥 Grabar video (pantalla completa)
               </button>
               <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                Puede adjuntar varias imágenes como evidencia.
+                Puede adjuntar imágenes o videos desde archivos, o grabarlos en
+                tiempo real (vertical u horizontal).
               </p>
             </div>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*"
               onChange={handleFile}
               className="hidden"
             />
-            {photos.length > 0 && (
+            {media.length > 0 && (
               <div className="flex flex-wrap gap-3 mt-2">
-                {photos.map((src, idx) => (
+                {media.map((item, idx) => (
                   <div
                     key={idx}
                     className="relative w-24 h-24 rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40"
                   >
-                    <img
-                      src={src}
-                      alt={`evidencia-${idx + 1}`}
-                      className="w-full h-full object-cover"
-                    />
+                    {item.type === "image" ? (
+                      <img
+                        src={item.src}
+                        alt={`evidencia-${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <video
+                        src={item.src}
+                        className="w-full h-full object-cover"
+                        controls
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() =>
-                        setPhotos((prev) => prev.filter((_, i) => i !== idx))
+                        setMedia((prev) => prev.filter((_, i) => i !== idx))
                       }
                       className="absolute top-1 right-1 bg-black/70 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
                     >
@@ -347,6 +514,13 @@ export default function IncidenteForm({
         <CameraCapture
           onCapture={handleCameraCapture}
           onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {showVideoRecorder && (
+        <VideoRecorder
+          onCapture={handleVideoCapture}
+          onClose={() => setShowVideoRecorder(false)}
         />
       )}
     </div>

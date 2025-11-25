@@ -120,21 +120,6 @@ function esGuardia(empleado) {
   );
 }
 
-/* Helper para mapear observaciones desde backend */
-function mapObservacionItem(d) {
-  const created = d.createdAt ? new Date(d.createdAt) : null;
-  return {
-    id: d._id || d.id,
-    texto: d.observacion || "",
-    fechaIso: d.createdAt || null,
-    fechaTexto: created ? created.toLocaleString() : "",
-    personaNombre: d.personaNombre || "",
-    sitio: d.sitio || "",
-    supervisor:
-      d.supervisadoPorNombre || d.supervisadoPorEmail || "",
-  };
-}
-
 /* =======================
    COMPONENTE PRINCIPAL
    ======================= */
@@ -167,10 +152,8 @@ export default function Supervision() {
   // 🔹 Filtro: tipo de personal (Guardias vs resto empleados)
   const [filtroTipoEmpleado, setFiltroTipoEmpleado] = useState("Todos"); // Todos | Guardias | Empleados
 
-  // 🔹 Observaciones desde backend
+  // 🔹 Lista de observaciones de supervisión (nuevo apartado)
   const [observaciones, setObservaciones] = useState([]);
-  const [cargandoObs, setCargandoObs] = useState(false);
-  const [errorObs, setErrorObs] = useState("");
 
   /* =======================
      1) Cargar catálogo de usuarios IAM
@@ -347,53 +330,8 @@ export default function Supervision() {
   }, []);
 
   /* =======================
-     4) Cargar observaciones desde backend
+     4) Mapear assignments + usuarios
      ======================= */
-  useEffect(() => {
-    let cancel = false;
-
-    async function fetchObservaciones() {
-      try {
-        setCargandoObs(true);
-        setErrorObs("");
-
-        const res = await fetch(
-          `${API_BASE}/supervision/observaciones`,
-          { credentials: "include" }
-        );
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok || data.ok === false) {
-          throw new Error(data.error || "Error al cargar observaciones");
-        }
-
-        const items = Array.isArray(data.items) ? data.items : [];
-        if (!cancel) {
-          setObservaciones(items.map(mapObservacionItem));
-        }
-      } catch (e) {
-        console.error("[Supervision] Error cargando observaciones:", e);
-        if (!cancel) {
-          setErrorObs(
-            e.message || "No se pudieron cargar las observaciones."
-          );
-          setObservaciones([]);
-        }
-      } finally {
-        if (!cancel) setCargandoObs(false);
-      }
-    }
-
-    fetchObservaciones();
-    return () => {
-      cancel = true;
-    };
-  }, []);
-
-  /* =======================
-     5) Derivados / filtros globales
-     ======================= */
-
   const turnos = useMemo(() => {
     return (turnosRaw || []).map((a) => {
       const userId =
@@ -456,6 +394,11 @@ export default function Supervision() {
     });
   }, [turnosRaw, usuariosMap]);
 
+  /* =======================
+     5) Derivados / filtros globales
+     ======================= */
+
+  // Nombres desde turnos + nombres reales desde Control de Acceso
   const personasUnicas = useMemo(() => {
     const fromTurnos = turnos.map((t) => t.guardia).filter(Boolean);
     const fromAcceso = empleadosAcceso
@@ -476,12 +419,13 @@ export default function Supervision() {
      6) Derivados para CONTROL DE ASISTENCIA
      ======================= */
 
+  // Construimos las filas de asistencia a partir de empleadosAcceso
   const asistenciaRows = useMemo(() => {
     const hoy = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     return empleadosAcceso.map((e) => ({
       id: e._id,
       persona: e.nombreCompleto || "—",
-      fecha: hoy,
+      fecha: hoy, // por ahora una fecha de referencia; luego se sustituye por marcajes reales
       entrada: "—",
       salida: "—",
       metodo: "—",
@@ -511,17 +455,22 @@ export default function Supervision() {
      ======================= */
 
   const handleGuardarSupervision = async () => {
-    try {
-      const payload = {
-        limpiezaAreaTrabajo: checkLimpieza,
-        herramientasAMano: checkHerramientas,
-        vestimentaAdecuada: checkVestimenta,
-        observacion: observacion || "",
-        personaId: "",
-        personaNombre: "",
-        sitio: "",
-      };
+    const payload = {
+      limpiezaAreaTrabajo: checkLimpieza,
+      herramientasAMano: checkHerramientas,
+      vestimentaAdecuada: checkVestimenta,
+      observacion,
 
+      // Más adelante puedes llenar estos campos con una persona/sitio real
+      personaId: "",
+      personaNombre: "",
+      sitio: "",
+    };
+
+    let data = null;
+    let guardadoEnBD = false;
+
+    try {
       const res = await fetch(`${API_BASE}/supervision`, {
         method: "POST",
         headers: {
@@ -531,31 +480,50 @@ export default function Supervision() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json().catch(() => ({}));
+      data = await res.json().catch(() => ({}));
 
-      if (!res.ok || data.ok === false) {
-        throw new Error(data.error || "Error al guardar la supervisión");
+      if (res.ok && data.ok !== false) {
+        guardadoEnBD = true;
+        console.log("Supervisión guardada en BD:", data.item);
+      } else {
+        console.warn(
+          "[Supervision] El servidor devolvió un error al guardar:",
+          res.status,
+          data
+        );
       }
-
-      const item = data.item;
-      if (item && item.observacion) {
-        // Insertar la nueva observación en el estado (arriba de todo)
-        setObservaciones((prev) => [
-          mapObservacionItem(item),
-          ...prev,
-        ]);
-      }
-
-      // Limpiar formulario
-      setCheckLimpieza(false);
-      setCheckHerramientas(false);
-      setCheckVestimenta(false);
-      setObservacion("");
-
-      alert("✅ Supervisión guardada correctamente.");
     } catch (err) {
       console.error("Error guardando supervisión:", err);
-      alert("❌ No se pudo guardar la supervisión.");
+    }
+
+    // ➜ Siempre registramos la observación en el apartado de Observaciones
+    if (observacion && observacion.trim()) {
+      const now = new Date();
+      const fechaIso = data?.item?.createdAt || now.toISOString();
+      const textoObs = data?.item?.observacion || observacion.trim();
+
+      const nuevaObs = {
+        id: data?.item?._id || fechaIso,
+        fecha: fechaIso,
+        fechaTexto: new Date(fechaIso).toLocaleString(),
+        texto: textoObs,
+      };
+
+      setObservaciones((prev) => [nuevaObs, ...prev]);
+    }
+
+    // Limpiar formulario
+    setCheckLimpieza(false);
+    setCheckHerramientas(false);
+    setCheckVestimenta(false);
+    setObservacion("");
+
+    if (guardadoEnBD) {
+      alert("✅ Supervisión guardada correctamente.");
+    } else {
+      alert(
+        "⚠️ La observación se registró en el apartado de Observaciones, pero el servidor devolvió un error al guardar en la base de datos. Revisa la consola del backend para más detalles."
+      );
     }
   };
 
@@ -590,7 +558,7 @@ export default function Supervision() {
   const navBtnClass = (key) =>
     "sup-nav-btn" + (vista === key ? " sup-active" : "");
 
-  /* ========= EXPORTAR ASISTENCIA ========= */
+  /* ========= NUEVOS HANDLERS: EXPORTAR ASISTENCIA ========= */
 
   const handleExportAsistenciaCSV = () => {
     try {
@@ -612,6 +580,7 @@ export default function Supervision() {
         r.estado,
       ]);
 
+      // Usar ; como separador y BOM UTF-8 para Excel en español
       const separator = ";";
       const csvLines = [headers, ...rows]
         .map((row) =>
@@ -625,7 +594,7 @@ export default function Supervision() {
         )
         .join("\r\n");
 
-      const BOM = "\uFEFF";
+      const BOM = "\uFEFF"; // marca UTF-8
       const blob = new Blob([BOM + csvLines], {
         type: "text/csv;charset=utf-8;",
       });
@@ -928,7 +897,7 @@ export default function Supervision() {
             </section>
           )}
 
-          {/* ==== ASISTENCIA ==== */}
+          {/* ==== ASISTENCIA (usando datos de CONTROL DE ACCESO) ==== */}
           {vista === "asistencia" && (
             <section className="sup-section">
               <article className="card">
@@ -1016,7 +985,15 @@ export default function Supervision() {
                   </table>
 
                   {/* Botones de exportación abajo, esquina inferior derecha */}
-                  <div className="sup-export-actions">
+                  <div
+                    className="sup-export-actions"
+                    style={{
+                      marginTop: "1rem",
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      gap: "0.5rem",
+                    }}
+                  >
                     <button
                       type="button"
                       className="btn-guardar"
@@ -1206,34 +1183,27 @@ export default function Supervision() {
             </section>
           )}
 
-          {/* ==== OBSERVACIONES ==== */}
+          {/* ==== OBSERVACIONES (nuevo apartado) ==== */}
           {vista === "observaciones" && (
             <section className="sup-section">
               <article className="card">
                 <div className="card-header">
                   <h2>Observaciones de supervisión</h2>
                   <p>
-                    Historial de comentarios registrados durante las
-                    supervisiones de lugar de trabajo y equipo.
+                    Registro histórico de las observaciones realizadas en los
+                    puestos de trabajo.
                   </p>
                 </div>
                 <div className="card-body card-body-scroll">
-                  {cargandoObs && (
-                    <p className="texto-vacio">Cargando observaciones...</p>
-                  )}
-                  {errorObs && !cargandoObs && (
-                    <p className="texto-vacio">{errorObs}</p>
-                  )}
-                  {!cargandoObs && observaciones.length === 0 && !errorObs && (
+                  {observaciones.length === 0 ? (
                     <p className="texto-vacio">
-                      Aún no hay observaciones registradas.
+                      Todavía no hay observaciones registradas.
                     </p>
-                  )}
-                  {!cargandoObs && observaciones.length > 0 && (
+                  ) : (
                     <table className="tabla">
                       <thead>
                         <tr>
-                          <th>Fecha y hora</th>
+                          <th>Fecha</th>
                           <th>Observación</th>
                         </tr>
                       </thead>

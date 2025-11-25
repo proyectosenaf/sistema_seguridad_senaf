@@ -1,3 +1,9 @@
+import { eliminarEmpleado } from "../controllers/acceso.controller.js";
+import {
+  crearMovimientoManual,
+  listarMovimientosManual,
+} from "../controllers/movimientosManual.controller.js";
+
 import { Router } from "express";
 import {
   listarEmpleadosVehiculos,
@@ -22,7 +28,7 @@ router.get("/ping", (_req, res) =>
  * Devuelve empleados con sus vehículos (lo que consume Accesos.jsx)
  */
 router.get("/empleados-vehiculos", listarEmpleadosVehiculos);
-
+router.delete("/empleados/:id", eliminarEmpleado);
 /**
  * (Opcional) GET /api/acceso/empleados
  * Para compatibilidad: usa el mismo listado.
@@ -34,7 +40,9 @@ router.get("/empleados", listarEmpleadosVehiculos);
  * Crear nuevo empleado (NuevoEmpleadoModal)
  */
 router.post("/empleados", crearEmpleado);
-
+// Movimientos manuales (entradas, salidas y permisos)
+router.post("/movimientos-manual", crearMovimientoManual);
+router.get("/movimientos-manual", listarMovimientosManual);
 /**
  * PATCH /api/acceso/empleados/:id
  * Actualizar datos del empleado (EditarEmpleadoModal)

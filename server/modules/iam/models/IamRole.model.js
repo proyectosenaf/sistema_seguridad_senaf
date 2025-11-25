@@ -5,7 +5,7 @@ const schema = new mongoose.Schema(
     code: {
       type: String,
       required: true,
-      unique: true,           // esto ya crea índice único
+      unique: true,           // índice único
       trim: true,
       lowercase: true,        // siempre en minúsculas
     }, // ej: "admin"
@@ -20,7 +20,6 @@ const schema = new mongoose.Schema(
     permissions: {
       type: [String],
       default: [],
-      // 👇 sin index:true; definimos el índice abajo
     },
   },
   {

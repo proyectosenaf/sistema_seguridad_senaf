@@ -49,6 +49,7 @@ export default function PermissionCatalog() {
       return next;
     });
   };
+
   const toggleGroupFull = (groupKey) => {
     setExpandedGroupsFull((prev) => {
       const next = new Set(prev);

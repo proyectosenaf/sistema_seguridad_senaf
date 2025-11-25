@@ -1,10 +1,12 @@
-// src/components/CameraCapture.jsx
+// src/components/VideoRecorder.jsx
 import React, { useEffect, useRef, useState } from "react";
 
-export default function CameraCapture({ onCapture, onClose }) {
+export default function VideoRecorder({ onCapture, onClose }) {
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
   const [stream, setStream] = useState(null);
+  const [recording, setRecording] = useState(false);
+  const chunksRef = useRef([]);
   const [rotated, setRotated] = useState(false);
 
   useEffect(() => {
@@ -14,7 +16,7 @@ export default function CameraCapture({ onCapture, onClose }) {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
-          audio: false,
+          audio: true,
         });
         if (!active) {
           s.getTracks().forEach((t) => t.stop());
@@ -25,8 +27,8 @@ export default function CameraCapture({ onCapture, onClose }) {
           videoRef.current.srcObject = s;
         }
       } catch (err) {
-        console.error("[CameraCapture] getUserMedia error:", err);
-        alert("No se pudo acceder a la cámara.");
+        console.error("[VideoRecorder] getUserMedia error:", err);
+        alert("No se pudo acceder a la cámara/micrófono.");
         onClose?.();
       }
     }
@@ -41,33 +43,39 @@ export default function CameraCapture({ onCapture, onClose }) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const takePhoto = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+  const startRecording = () => {
+    if (!stream) return;
+    const mr = new MediaRecorder(stream, { mimeType: "video/webm" });
+    mediaRecorderRef.current = mr;
+    chunksRef.current = [];
 
-    const w = video.videoWidth || 720;
-    const h = video.videoHeight || 1280;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        chunksRef.current.push(e.data);
+      }
+    };
 
-    if (rotated) {
-      // si está rotado, dibujamos rotando el contexto
-      canvas.width = h;
-      canvas.height = w;
-      ctx.translate(h / 2, w / 2);
-      ctx.rotate((90 * Math.PI) / 180);
-      ctx.drawImage(video, -w / 2, -h / 2, w, h);
-    } else {
-      ctx.drawImage(video, 0, 0, w, h);
-    }
+    mr.onstop = async () => {
+      const blob = new Blob(chunksRef.current, { type: "video/webm" });
+      const dataUrl = await blobToBase64(blob);
+      onCapture?.(dataUrl);
+    };
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-    onCapture?.(dataUrl);
+    mr.start();
+    setRecording(true);
   };
 
-  const handleClose = () => {
+  const stopRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    mediaRecorderRef.current.stop();
+    setRecording(false);
+    onClose?.();
+  };
+
+  const handleCancel = () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+    }
     onClose?.();
   };
 
@@ -75,16 +83,16 @@ export default function CameraCapture({ onCapture, onClose }) {
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col">
       {/* Barra superior */}
       <div className="flex items-center justify-between px-4 py-3 text-white text-sm">
-        <span className="font-semibold">Tomar foto — SENAF</span>
+        <span className="font-semibold">Grabar video — SENAF</span>
         <button
-          onClick={handleClose}
+          onClick={handleCancel}
           className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-xs"
         >
           Cerrar
         </button>
       </div>
 
-      {/* Área de cámara full screen */}
+      {/* Área de video full screen */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 pb-4">
         <div className="relative w-full max-w-3xl aspect-[9/16] md:aspect-video bg-black overflow-hidden rounded-2xl border border-white/10">
           <video
@@ -112,23 +120,39 @@ export default function CameraCapture({ onCapture, onClose }) {
 
         {/* Controles */}
         <div className="mt-5 flex items-center gap-4">
-          <button
-            onClick={takePhoto}
-            className="px-6 py-2 rounded-full bg-cyan-500 hover:bg-cyan-400 text-white font-semibold text-sm shadow-lg"
-          >
-            📷 Capturar foto
-          </button>
+          {!recording ? (
+            <button
+              onClick={startRecording}
+              className="px-6 py-2 rounded-full bg-red-600 hover:bg-red-500 text-white font-semibold text-sm shadow-lg"
+            >
+              ● Iniciar grabación
+            </button>
+          ) : (
+            <button
+              onClick={stopRecording}
+              className="px-6 py-2 rounded-full bg-green-500 hover:bg-green-400 text-white font-semibold text-sm shadow-lg"
+            >
+              ■ Detener y guardar
+            </button>
+          )}
 
           <button
-            onClick={handleClose}
+            onClick={handleCancel}
             className="px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs"
           >
             Cancelar
           </button>
         </div>
       </div>
-
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   );
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
 }

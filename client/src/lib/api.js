@@ -1,26 +1,41 @@
 // client/src/lib/api.js
 import axios from "axios";
 
-// En producción VITE_API_BASE_URL = "https://urchin-app-fuirh.ondigitalocean.app/api"
+// En producción VITE_API_BASE_URL puede ser:
+//   "https://urchin-app-fuirh.ondigitalocean.app/api"
+// o incluso solo el host:
+//   "https://urchin-app-fuirh.ondigitalocean.app"
 // En dev, si no hay env, usamos "http://localhost:4000/api"
 const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
 
 // Quitamos solo el slash final, no el /api
-const API_ROOT = RAW.replace(/\/$/, "");
+let API_ROOT = RAW.replace(/\/$/, "");
+
+// 👉 Para Socket.IO necesitamos SOLO el host, SIN /api
+//    - Si API_ROOT termina en "/api" → SOCKET_HOST sin "api"
+//    - Si API_ROOT ya es sólo el host → SOCKET_HOST = API_ROOT
+let SOCKET_HOST = API_ROOT.replace(/\/api\/?$/, "");
+
+// Por si alguien pone accidentalmente "/api/" con más cosas
+if (SOCKET_HOST === API_ROOT && API_ROOT.endsWith("/api")) {
+  SOCKET_HOST = API_ROOT.slice(0, -4);
+}
 
 // 👉 Este es el endpoint base de la API, tipo:
 //    http://localhost:4000/api
 //    https://urchin-app-fuirh.ondigitalocean.app/api
 export const API = API_ROOT;
 
-// 👉 Para Socket.IO necesitamos SOLO el host, SIN /api
+// 👉 Para Socket.IO:
 //    http://localhost:4000
 //    https://urchin-app-fuirh.ondigitalocean.app
-export const SOCKET_BASE = API_ROOT.replace(/\/api\/?$/, "");
+// Exportamos con los dos nombres para compatibilidad
+export const SOCKET_BASE = SOCKET_HOST;      // 👈 el que usa tu hook
+export const SOCKET_BASE_URL = SOCKET_HOST;  // 👈 por si algún código viejo lo usa
 
 // Flags de modo dev / auth
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
-// opcional: si algún día quieres forzar dev sólo para API
+// ⚠️ Este flag déjalo en 0 en producción. Solo sirve para forzar modo dev.
 const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
 
 // Identidad DEV (igual idea que en iamApi)
@@ -48,17 +63,17 @@ function getDevIdentity() {
   };
 }
 
+// Instancia principal de Axios
 const api = axios.create({
   baseURL: API_ROOT,
   // Usamos Bearer token, no cookies de sesión.
-  // Si tienes algo que dependa de cookies, puedes volver a true.
   withCredentials: false,
 });
 
 // Guardamos un proveedor de token (Auth0)
 let tokenProvider = null;
 
-/** Conecta tu proveedor de tokens (Auth0) */
+/** Conecta tu proveedor de tokens (Auth0, etc.) */
 export function attachAuth0(provider) {
   tokenProvider = typeof provider === "function" ? provider : null;
 }
@@ -79,16 +94,27 @@ api.interceptors.request.use(
     if (tokenProvider) {
       try {
         token = await tokenProvider();
-      } catch {
+      } catch (err) {
+        console.warn("[api] error obteniendo token:", err);
         token = null;
       }
     }
 
     if (token) {
-      // Modo normal: JWT real
+      // 🔐 Modo normal: JWT real de Auth0
       config.headers.Authorization = `Bearer ${token}`;
-    } else if (DISABLE_AUTH || FORCE_DEV_API) {
-      // Modo DEV local: usamos x-user-headers, que server fusiona con iamDevMerge
+    } else if (
+      // Solo permitimos modo DEV si:
+      //  - Se desactivó auth explícitamente, o
+      //  - Estamos en localhost, o
+      //  - Se forzó con VITE_FORCE_DEV_API (solo úsalo en DEV)
+      DISABLE_AUTH ||
+      (typeof window !== "undefined" &&
+        window.location.hostname === "localhost") ||
+      FORCE_DEV_API
+    ) {
+      // 🧪 Modo DEV: usamos x-user-headers,
+      // que el server fusiona con iamDevMerge (si IAM_ALLOW_DEV_HEADERS=1)
       const { email, roles, perms } = getDevIdentity();
       if (email) config.headers["x-user-email"] = email;
       if (roles) config.headers["x-roles"] = roles;

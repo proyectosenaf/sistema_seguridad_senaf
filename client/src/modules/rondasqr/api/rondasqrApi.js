@@ -60,7 +60,7 @@ function normalizePlanBody(body = {}) {
       roundId,
       points: body.pointIds
         .filter(Boolean)
-        .map((id, i) => ({ pointId: String(id), order: i + 1 })),
+        .map((id, i) => ({ pointId: String(id), order: i + 1 })), // orden base 1 solo para crear
     };
   }
 
@@ -310,6 +310,46 @@ export const rondasqrApi = {
       method: "PUT",
       body: JSON.stringify({ roundId, pointIds }),
     });
+  },
+
+  /* =========================================================
+     QR helpers: imagen PNG, PDF, rotación y repositorio
+  ========================================================= */
+
+  /** URL directa a la imagen PNG del QR de un punto. */
+  pointQrPngUrl(id) {
+    if (!id) return "";
+    return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.png`;
+  },
+
+  /** URL a un PDF con el QR del punto (para imprimir). */
+  pointQrPdfUrl(id) {
+    if (!id) return "";
+    return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.pdf`;
+  },
+
+  /** Endpoint para rotar el QR de un punto. */
+  async rotatePointQr(id) {
+    if (!id) throw new Error("id requerido");
+    return fetchJson(
+      `${BASE}/admin/points/${encodeURIComponent(id)}/rotate-qr`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      }
+    );
+  },
+
+  /** Llama al backend y devuelve JSON con el repositorio de QRs. */
+  async listQrRepo(params = {}) {
+    const qs = toQS(params);
+    return fetchJson(`${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`);
+  },
+
+  /** Solo la URL (para abrir en una pestaña nueva desde el front). */
+  qrRepoUrl(params = {}) {
+    const qs = toQS(params);
+    return `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
   },
 
   // -------- Plans --------

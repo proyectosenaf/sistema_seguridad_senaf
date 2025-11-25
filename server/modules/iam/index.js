@@ -1,3 +1,4 @@
+// server/modules/iam/index.js
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -8,7 +9,7 @@ import authRoutes from "./routes/auth.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import rolesRoutes from "./routes/roles.routes.js";
 import permissionsRoutes from "./routes/permissions.routes.js";
-import auditRoutes from "./routes/audit.routes.js"; // 👈 NUEVA LÍNEA IMPORTANTE
+import auditRoutes from "./routes/audit.routes.js";
 
 import {
   parseExcelRolesPermissions,
@@ -21,13 +22,19 @@ const ah =
   (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
+/**
+ * Registra el módulo IAM en la app principal de Express.
+ *
+ * - basePath por defecto: "/api/iam/v1"
+ * - Alias legacy: "/api/iam"
+ */
 export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   const router = express.Router();
 
   // Body parser SOLO para el módulo (evita límites globales)
   router.use(express.json({ limit: "5mb" }));
 
-  // Auth (JWT si está configurado; en dev pasa sin token)
+  // Auth (JWT si está configurado; en dev puede pasar sin token según makeAuthMw)
   const authMw = makeAuthMw();
 
   // Subrutas protegidas
@@ -35,7 +42,7 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);
-  router.use("/audit", authMw, auditRoutes); // 👈 NUEVA RUTA REGISTRADA
+  router.use("/audit", authMw, auditRoutes);
 
   // -------- Importar Excel → seed (UI: subir archivo .xlsx) --------
   router.post(
@@ -46,13 +53,17 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
       abortOnLimit: true,
       useTempFiles: false,
     }),
-    devOr((_req, _res, next) => next()), // pasa si es DEV; si no, bloquea
+    // Solo permitido en DEV (o según tu lógica de devOr)
+    devOr((_req, _res, next) => next()),
     ah(async (req, res) => {
       // Validaciones básicas
       if (!req.files || !req.files.file) {
         return res
           .status(400)
-          .json({ ok: false, message: "Sube un archivo Excel en el campo 'file'." });
+          .json({
+            ok: false,
+            message: "Sube un archivo Excel en el campo 'file'.",
+          });
       }
 
       const up = req.files.file;
@@ -78,20 +89,24 @@ export async function registerIAMModule({ app, basePath = "/api/iam/v1" }) {
   );
 
   // -------- Registro del router en la app --------
-  app.use(basePath, router); // v1 oficial
-  app.use("/api/iam", router); // alias legacy
+  // v1 oficial: /api/iam/v1/...
+  app.use(basePath, router);
+  // Alias legacy: /api/iam/...
+  app.use("/api/iam", router);
 
   // Manejo de errores SÓLO para este módulo (no tumbar el proceso)
   const errorMw = (err, _req, res, _next) => {
     const status = Number(err?.status || err?.statusCode || 500);
     const code = status >= 400 && status < 600 ? status : 500;
-    // Log mínimo (ajusta según necesidad)
+
     console.error("[IAM]", err?.stack || err?.message || err);
+
     res.status(code).json({
       ok: false,
       error: err?.message || "Internal Server Error",
     });
   };
+
   app.use(basePath, errorMw);
   app.use("/api/iam", errorMw);
 

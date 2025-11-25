@@ -1,3 +1,4 @@
+// src/modules/rondasqr/supervisor/MapView.jsx
 import React, { useMemo } from "react";
 import { MapContainer, TileLayer, Polyline, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -14,14 +15,24 @@ export default function MapView({ items = [] }) {
   const coords = useMemo(
     () =>
       items
-        .map((m) => m?.loc?.coordinates || (typeof m.lon === "number" && typeof m.lat === "number" ? [m.lon, m.lat] : null))
+        .map(
+          (m) =>
+            m?.loc?.coordinates ||
+            (typeof m.lon === "number" && typeof m.lat === "number"
+              ? [m.lon, m.lat]
+              : null)
+        )
         .filter((v) => Array.isArray(v) && v.length === 2)
         .map(([lon, lat]) => [lat, lon]),
     [items]
   );
 
   if (!coords.length) {
-    return <div className="text-sm text-white/70">No hay ubicaciones para graficar.</div>;
+    return (
+      <div className="text-sm text-white/70">
+        No hay ubicaciones para graficar.
+      </div>
+    );
   }
 
   const center = coords[Math.floor(coords.length / 2)];

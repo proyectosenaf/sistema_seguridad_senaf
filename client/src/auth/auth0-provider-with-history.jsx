@@ -24,6 +24,7 @@ export default function Auth0ProviderWithHistory({ children }) {
       domain={domain}
       clientId={clientId}
       authorizationParams={{
+        // callback fijo que coincide con tu ruta /callback en App.jsx
         redirect_uri: `${window.location.origin}/callback`,
         ...(audience ? { audience } : {}),
         scope: "openid profile email offline_access",

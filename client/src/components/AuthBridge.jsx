@@ -2,27 +2,28 @@
 import { useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 
-// Inyectores de token a tus capas de red
 import { attachAuth0 } from "../lib/api.js";
 import { attachRondasAuth } from "../modules/rondasqr/api/rondasqrApi.js";
+// 👇 NUEVO: importar attachIamAuth
+import { attachIamAuth } from "../iam/api/iamApi.js";
 
-/**
- * No renderiza UI: solo registra (o limpia) proveedores de token.
- * Mantiene sincronizadas todas las libs de red con el access_token de Auth0.
- */
 export default function AuthBridge() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
     const wireProviders = async () => {
       if (!isAuthenticated) {
-        // Si el usuario no está autenticado, limpia proveedores
+        // Sin sesión → limpiar todos los providers
         attachAuth0(null);
         attachRondasAuth(null);
+        attachIamAuth(null);
+
+        if (typeof window !== "undefined") {
+          window.__iamTokenProvider = null;
+        }
         return;
       }
 
-      // Un único provider para todas tus libs
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
@@ -41,11 +42,23 @@ export default function AuthBridge() {
         }
       };
 
+      // 👉 inyectar provider en TODAS las capas
       attachAuth0(provider);
       attachRondasAuth(provider);
+      attachIamAuth(provider);
+
+      if (typeof window !== "undefined") {
+        window.__iamTokenProvider = provider; // opcional, por compat
+      }
     };
 
     wireProviders();
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.__iamTokenProvider = null;
+      }
+    };
   }, [isAuthenticated, getAccessTokenSilently]);
 
   return null;
