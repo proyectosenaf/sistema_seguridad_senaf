@@ -597,7 +597,7 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowCamera(true)}
-                  className="bg-gradient.to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
                   📷 Tomar foto (pantalla completa)
                 </button>
@@ -605,7 +605,7 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowVideoRecorder(true)}
-                  className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex.items-center gap-2"
+                  className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
                   🎥 Grabar video (pantalla completa)
                 </button>
@@ -671,7 +671,7 @@ export default function IncidentesList() {
               </button>
               <button
                 type="submit"
-                className="text-sm bg-gradient.to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
+                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
               >
                 {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>
@@ -710,7 +710,7 @@ export default function IncidentesList() {
           </div>
         </div>
         <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
-          <div className="text-xs uppercase text-yellow-300 font-medium flex items-center gap-2">
+          <div className="text-xs uppercase text-yellow-300 font-medium flex items.center gap-2">
             <span className="w-2 h-2 rounded-full bg-yellow-400" />
             Alta prioridad
           </div>
@@ -721,13 +721,8 @@ export default function IncidentesList() {
       </div>
 
       {/* LISTA */}
-<<<<<<< HEAD
-      <div className="bg-[#0f1b2d] border border-cyan-400/20 rounded-lg shadow-[0_0_30px_rgba(0,255,255,0.08)] overflow-hidden">
-        <div className="flex flex-col md:flex-row justify-between.items-center p-4 border-b border-cyan-400/10 gap-3">
-=======
       <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
         <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
->>>>>>> 0aea1fc9ef5625d0a99d53c6d28ef19f96d5c5cd
           <div>
             <h2 className="font-semibold text-lg text-white">
               Lista de Incidentes
@@ -756,7 +751,7 @@ export default function IncidentesList() {
               <button
                 type="button"
                 onClick={handleExportExcel}
-                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white.font-medium rounded px-3 py-2 transition-all duration-200"
               >
                 Exportar Excel
               </button>
