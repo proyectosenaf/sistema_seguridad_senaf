@@ -730,7 +730,8 @@ function NuevaEvaluacionModal({
               </div>
               <div className="space-y-3">
                 <div className="h-4" />
-                <div className="mt-1 p-2.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg.white/5">
+                {/* 🔹 Cambio de fondo: ahora transparente para que no se vea el recuadro */}
+                <div className="mt-1 p-2.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent dark:bg-transparent">
                   <div className="text-center font-extrabold text-sm">
                     Promedio:{" "}
                     <span className="text-neutral-900 dark:text-neutral-100">
@@ -1683,7 +1684,7 @@ export default function Evaluacion() {
                 <tr>
                   <td
                     colSpan={9}
-                    className="text-center py-6 opacity-70"
+                    className="text-center py-6.opacity-70"
                   >
                     Sin registros.
                   </td>
