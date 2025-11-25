@@ -5,16 +5,15 @@ import NewVisitorModal from "../components/NewVisitorModal.jsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import { QRCodeSVG } from "qrcode.react"; // QR dinámico
+import { QRCodeSVG } from "qrcode.react";
 
-// 🔹 BASE DEL BACKEND (igual que en otros módulos)
+// 🔹 BASE DEL BACKEND
 const ROOT = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
 ).replace(/\/$/, "");
 
-// 🔹 ENDPOINT DEL BACKEND PARA VISITAS (CREATE VISITA)
+// 🔹 ENDPOINTS
 const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
-// 🔹 ENDPOINT PARA CITAS (para actualizar estado desde la vista principal)
 const CITAS_API_URL = `${ROOT}/citas`;
 
 // Rango del día actual
@@ -29,15 +28,15 @@ function getTodayRange() {
 const STORAGE_KEY = "visitas_demo";
 const CITA_STORAGE_KEY = "citas_demo";
 
-// Helper para mostrar el texto del estado de la cita
+// ===================== Helpers Citas =====================
+
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada"; // 👈 cambio de texto
+  if (value === "autorizada") return "ingresada";
   return value;
 }
 
-// Helper para la pastilla de estado de cita
 function CitaEstadoPill({ estado }) {
   const val = prettyCitaEstado(estado);
   let cls =
@@ -60,7 +59,7 @@ function CitaEstadoPill({ estado }) {
       cls +=
         " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
       break;
-    default: // solicitada
+    default:
       cls +=
         " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
       break;
@@ -69,13 +68,11 @@ function CitaEstadoPill({ estado }) {
   return <span className={cls}>{val}</span>;
 }
 
-// 🔹 Helper para quitar tildes del texto (para que el lector de QR no las dañe)
 function stripDiacritics(str) {
   if (!str) return str;
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-// Contenido del QR (texto tipo ficha) a partir de la cita
 function buildQrValueForCita(cita) {
   if (!cita) return "";
 
@@ -118,9 +115,10 @@ function buildQrValueForCita(cita) {
     `Estado: ${estadoLegible}`,
   ].join("\n");
 
-  // 🔹 Devolvemos el texto SIN tildes para evitar caracteres raros al escanear
   return stripDiacritics(text);
 }
+
+// ===================== Componente =====================
 
 export default function VisitsPage() {
   const navigate = useNavigate();
@@ -132,25 +130,20 @@ export default function VisitsPage() {
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
 
-  // citas de pre-registro
+  // Citas
   const [onlineCitas, setOnlineCitas] = useState([]);
-
-  // cita seleccionada para mostrar QR
   const [qrCita, setQrCita] = useState(null);
 
-  // visitante que se está editando (null si es nuevo)
+  // Visitante que se está editando
   const [editingVisitor, setEditingVisitor] = useState(null);
 
-  const sendEmpleadoAsId = false; // queda por si lo usas después
-
-  // vista actual: "citas" o "visitas"
+  // Vista actual
   const [viewMode, setViewMode] = useState("citas");
 
-  // ------- Helpers de storage (visitas) -------
+  // ========= Storage VISITAS =========
   function saveToStorage(next) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      console.log("[visitas] guardado en localStorage:", next);
     } catch (e) {
       console.warn("[visitas] no se pudo guardar en localStorage:", e);
     }
@@ -162,46 +155,35 @@ export default function VisitsPage() {
       if (!raw) return [];
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr)) return [];
-      const restored = arr.map((v) => ({
+      return arr.map((v) => ({
         ...v,
         entryAt: v.entryAt ? new Date(v.entryAt) : null,
         exitAt: v.exitAt ? new Date(v.exitAt) : null,
-        // Si no trae tipo (visitas viejas), asumimos PRESENCIAL
         kind: v.kind || "Presencial",
       }));
-      console.log("[visitas] cargado desde localStorage:", restored);
-      return restored;
     } catch (e) {
       console.warn("[visitas] no se pudo leer de localStorage:", e);
       return [];
     }
   }
 
-  // ------- Helpers de storage (citas) -------
+  // ========= Storage CITAS =========
   function loadCitasFromStorage() {
     try {
       const raw = localStorage.getItem(CITA_STORAGE_KEY);
       if (!raw) return [];
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr)) return [];
-      const restored = arr.map((c, idx) => {
+      return arr.map((c, idx) => {
         const baseId = c._id || c.id || `local-cita-${idx}`;
         let citaAt = null;
         if (c.citaAt) {
           citaAt = new Date(c.citaAt);
         } else if (c.fecha && c.hora) {
-          // fecha YYYY-MM-DD, hora HH:mm
           citaAt = new Date(`${c.fecha}T${c.hora}:00`);
         }
-        return {
-          ...c,
-          _id: baseId,
-          id: baseId,
-          citaAt,
-        };
+        return { ...c, _id: baseId, id: baseId, citaAt };
       });
-      console.log("[citas] cargadas desde localStorage:", restored);
-      return restored;
     } catch (e) {
       console.warn("[citas] no se pudo leer de localStorage:", e);
       return [];
@@ -211,21 +193,19 @@ export default function VisitsPage() {
   function saveCitasToStorage(next) {
     try {
       localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(next));
-      console.log("[citas] guardadas en localStorage:", next);
     } catch (e) {
       console.warn("[citas] no se pudieron guardar en localStorage:", e);
     }
   }
 
-  // Al montar el módulo, cargar desde localStorage
+  // Carga inicial
   useEffect(() => {
-    const restored = loadFromStorage();
-    setVisitors(restored);
+    setVisitors(loadFromStorage());
     setOnlineCitas(loadCitasFromStorage());
     setLoading(false);
   }, []);
 
-  // KPI
+  // ========= KPIs =========
   const kpiActivos = useMemo(
     () => visitors.filter((v) => v.status === "Dentro").length,
     [visitors]
@@ -246,7 +226,7 @@ export default function VisitsPage() {
     return new Set(empresasDeHoy).size;
   }, [visitors]);
 
-  // 🔍 normalizamos texto de búsqueda UNA sola vez
+  // ========= Filtros =========
   const normalizedSearch = search.toLowerCase().trim();
   const hasSearch = normalizedSearch.length > 0;
   const hasMinSearch = normalizedSearch.length >= 2;
@@ -255,7 +235,6 @@ export default function VisitsPage() {
     return visitors.filter((v) => {
       const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
 
-      // Si no hay búsqueda o hay menos de 2 caracteres, no filtramos por texto
       const matchesSearch =
         !hasSearch || !hasMinSearch ? true : full.includes(normalizedSearch);
 
@@ -268,7 +247,6 @@ export default function VisitsPage() {
     });
   }, [visitors, normalizedSearch, hasSearch, hasMinSearch, statusFilter]);
 
-  // Citas ordenadas por fecha/hora (se usan solo para mostrar)
   const sortedCitas = useMemo(() => {
     const list = [...onlineCitas];
     list.sort((a, b) => {
@@ -279,7 +257,6 @@ export default function VisitsPage() {
     return list;
   }, [onlineCitas]);
 
-  // 🔍 Citas filtradas por el mismo buscador (nombre / documento / empresa / empleado / motivo)
   const filteredCitas = useMemo(() => {
     return sortedCitas.filter((c) => {
       const full = `${c.nombre || c.visitante || ""} ${
@@ -295,7 +272,7 @@ export default function VisitsPage() {
     });
   }, [sortedCitas, normalizedSearch, hasSearch, hasMinSearch]);
 
-  // ------- Registrar / editar visitante (FRONT + BD) -------
+  // ========= Registrar / editar visitante =========
   async function handleAddVisitor(formData) {
     const isEditing = !!editingVisitor;
 
@@ -310,11 +287,9 @@ export default function VisitsPage() {
           }${vehiclePlate ? ` (${vehiclePlate})` : ""}`
         : "—";
 
-    // Si estamos editando una visita existente
     if (isEditing && editingVisitor?.id) {
       const id = editingVisitor.id;
 
-      // 🔹 Intentar actualizar en backend (si existe endpoint)
       try {
         const payload = {
           nombre: formData.name?.trim(),
@@ -349,14 +324,11 @@ export default function VisitsPage() {
             res.status,
             data
           );
-        } else {
-          console.log("[visitas] actualizada en backend:", data);
         }
       } catch (err) {
         console.warn("[visitas] error de red al actualizar en backend:", err);
       }
 
-      // 🔹 Actualizar en estado/localStorage
       setVisitors((prev) => {
         const next = prev.map((row) =>
           row.id === id
@@ -385,7 +357,7 @@ export default function VisitsPage() {
       return;
     }
 
-    // ------- CREAR NUEVO VISITANTE (igual que antes) -------
+    // Crear nuevo visitante
     const entryDate = new Date();
 
     const fmtEntry = `${entryDate.toLocaleDateString("es-ES", {
@@ -396,7 +368,6 @@ export default function VisitsPage() {
       minute: "2-digit",
     })}`;
 
-    // 🔹 1) Intentar guardar en la BASE DE DATOS
     let backendId = null;
     try {
       const payload = {
@@ -437,7 +408,6 @@ export default function VisitsPage() {
           data?.visita?._id ||
           data?.visita?.id ||
           null;
-        console.log("[visitas] creada en backend:", data);
       } else {
         console.warn("[visitas] fallo al crear en backend:", data);
       }
@@ -445,7 +415,6 @@ export default function VisitsPage() {
       console.warn("[visitas] error de red al crear en backend:", err);
     }
 
-    // 🔹 2) Siempre guardar en el estado/localStorage
     const newRow = {
       id: backendId || `local-${Date.now()}`,
       kind: formData.visitType || "Presencial",
@@ -474,7 +443,7 @@ export default function VisitsPage() {
     setShowModal(false);
   }
 
-  // ------- Marcar salida -------
+  // ========= Marcar salida =========
   async function handleExit(id) {
     if (!id) return;
     setSavingExit(id);
@@ -502,13 +471,13 @@ export default function VisitsPage() {
     }
   }
 
-  // ------- Abrir modal en modo edición -------
+  // ========= Editar visitante =========
   function handleEditVisitor(visitor) {
     setEditingVisitor(visitor);
     setShowModal(true);
   }
 
-  // ------- Cambiar estado de una cita (pre-registro) -------
+  // ========= Cambiar estado cita =========
   async function updateCitaStatus(citaId, nuevoEstado) {
     if (!citaId) return;
 
@@ -536,22 +505,19 @@ export default function VisitsPage() {
           res.status,
           data
         );
-      } else {
-        console.log("[citas] estado actualizado en backend:", data);
       }
     } catch (err) {
       console.warn("[citas] error de red al actualizar estado:", err);
     }
   }
 
-  // ------- Export helpers -------
+  // ========= Export VISITAS =========
   function buildExportRows(list) {
     return list.map((v) => ({
       Visitante: v.name || "",
       DNI: v.document || "",
       Empresa: v.company || "",
       Empleado: v.employee || "",
-      // Tipo en exportes
       Tipo: v.kind || "",
       VehiculoMarca: v.vehicleBrand || "",
       VehiculoModelo: v.vehicleModel || "",
@@ -560,45 +526,6 @@ export default function VisitsPage() {
       Salida: v.exit || "",
       Estado: v.status || "",
     }));
-  }
-
-  function exportCSV(list) {
-    const rows = buildExportRows(list);
-    if (rows.length === 0) {
-      alert("No hay datos para exportar.");
-      return;
-    }
-
-    const headers = Object.keys(rows[0]);
-    const csvLines = [
-      headers.join(","),
-      ...rows.map((r) =>
-        headers
-          .map((h) => {
-            const cell = String(r[h] ?? "");
-            if (
-              cell.includes('"') ||
-              cell.includes(",") ||
-              cell.includes("\n")
-            ) {
-              return `"${cell.replace(/"/g, '""')}"`;
-            }
-            return cell;
-          })
-          .join(",")
-      ),
-    ];
-    const csv = csvLines.join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    a.download = `visitas-${ts}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }
 
   async function exportExcel(list) {
@@ -626,7 +553,6 @@ export default function VisitsPage() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.warn("Error generando XLSX:", err);
-      exportCSV(list);
     }
   }
 
@@ -644,9 +570,8 @@ export default function VisitsPage() {
         format: "a4",
       });
 
-      const title = "Reporte de Visitantes";
       doc.setFontSize(14);
-      doc.text(title, 40, 40);
+      doc.text("Reporte de Visitantes", 40, 40);
 
       const headers = Object.keys(rows[0]);
       const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
@@ -671,7 +596,117 @@ export default function VisitsPage() {
     }
   }
 
-  // ------- Render -------
+  // ========= Export CITAS =========
+  function buildExportCitasRows(list) {
+    return list.map((c) => {
+      const tipoLegible =
+        c.tipoCita === "profesional"
+          ? "Profesional"
+          : c.tipoCita === "personal"
+          ? "Personal"
+          : "";
+
+      let fecha = "";
+      let hora = "";
+      if (c.citaAt instanceof Date && !isNaN(c.citaAt.getTime())) {
+        fecha = c.citaAt.toLocaleDateString("es-ES", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        });
+        hora = c.citaAt.toLocaleTimeString("es-ES", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } else {
+        fecha = c.fecha || "";
+        hora = c.hora || "";
+      }
+
+      return {
+        Visitante: c.nombre || c.visitante || "",
+        DNI: c.documento || "",
+        Empresa: c.empresa || "",
+        Empleado: c.empleado || "",
+        Motivo: c.motivo || "",
+        Telefono: c.telefono || "",
+        TipoCita: tipoLegible,
+        Fecha: fecha,
+        Hora: hora,
+        Estado: prettyCitaEstado(c.estado),
+      };
+    });
+  }
+
+  async function exportCitasExcel(list) {
+    const rows = buildExportCitasRows(list);
+    if (rows.length === 0) {
+      alert("No hay citas para exportar.");
+      return;
+    }
+    try {
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Citas");
+      const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbout], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.download = `citas-${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn("Error generando XLSX de citas:", err);
+    }
+  }
+
+  function exportCitasPDF(list) {
+    const rows = buildExportCitasRows(list);
+    if (rows.length === 0) {
+      alert("No hay citas para exportar.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "pt",
+        format: "a4",
+      });
+
+      doc.setFontSize(14);
+      doc.text("Reporte de Citas (pre-registro)", 40, 40);
+
+      const headers = Object.keys(rows[0]);
+      const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
+
+      autoTable(doc, {
+        startY: 60,
+        head: [headers],
+        body,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [30, 30, 30], textColor: 255 },
+        theme: "grid",
+        margin: { left: 20, right: 20 },
+      });
+
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      doc.save(`citas-${ts}.pdf`);
+    } catch (err) {
+      console.error("Error generando PDF de citas:", err);
+      alert(
+        "No se pudo generar el PDF de citas. Revisa las dependencias (jspdf, jspdf-autotable)."
+      );
+    }
+  }
+
+  // ========= Render =========
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon" />
@@ -773,7 +808,7 @@ export default function VisitsPage() {
         <div className="flex flex-col-reverse md:flex-row md:items-center gap-3 w-full md:w-auto">
           <div className="flex-1 md:flex-none">
             <input
-              className="input-fx w-full md:w[300px] md:w-[300px]"
+              className="input-fx w-full md:w-[300px]"
               placeholder="Buscar por nombre, DNI, empresa o placa…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -797,7 +832,7 @@ export default function VisitsPage() {
       </div>
 
       {/* Citas */}
-      {viewMode === "citas" && filteredCitas.length > 0 && (
+      {viewMode === "citas" && (
         <section className="card-rich p-4 md:p-5 text-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
@@ -825,10 +860,8 @@ export default function VisitsPage() {
                   <th>Empresa</th>
                   <th>Empleado</th>
                   <th>Motivo</th>
-                  {/* NUEVO */}
                   <th>Teléfono</th>
                   <th>Tipo de cita</th>
-                  {/* FIN NUEVO */}
                   <th>Fecha</th>
                   <th>Hora</th>
                   <th>Estado</th>
@@ -836,115 +869,7 @@ export default function VisitsPage() {
                 </tr>
               </thead>
               <tbody className="text-neutral-200">
-                {filteredCitas.map((cita) => {
-                  const tipoLegible =
-                    cita.tipoCita === "profesional"
-                      ? "Profesional"
-                      : cita.tipoCita === "personal"
-                      ? "Personal"
-                      : "—";
-
-                  return (
-                    <tr
-                      key={cita._id}
-                      className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
-                    >
-                      <td className="font-medium text-neutral-100">
-                        {cita.nombre || cita.visitante}
-                      </td>
-                      <td className="text-neutral-300">
-                        {cita.documento || "-"}
-                      </td>
-                      <td className="text-neutral-200">
-                        {cita.empresa || "—"}
-                      </td>
-                      <td className="text-neutral-200">
-                        {cita.empleado || "—"}
-                      </td>
-                      <td className="text-neutral-300">
-                        {cita.motivo || "—"}
-                      </td>
-                      {/* NUEVO: Teléfono */}
-                      <td className="text-neutral-200">
-                        {cita.telefono || "—"}
-                      </td>
-                      {/* NUEVO: Tipo de cita */}
-                      <td className="text-neutral-200">{tipoLegible}</td>
-                      {/* FIN NUEVO */}
-                      <td className="text-neutral-300">
-                        {cita.citaAt
-                          ? cita.citaAt.toLocaleDateString("es-ES", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                            })
-                          : cita.fecha || "—"}
-                      </td>
-                      <td className="text-neutral-300">
-                        {cita.citaAt
-                          ? cita.citaAt.toLocaleTimeString("es-ES", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                          : cita.hora || "—"}
-                      </td>
-                      <td>
-                        <CitaEstadoPill estado={cita.estado} />
-                      </td>
-                      <td className="text-right">
-                        <div className="flex flex-wrap gap-2 justify-end">
-                          {cita.estado === "autorizada" && (
-                            <button
-                              type="button"
-                              onClick={() => setQrCita(cita)}
-                              className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
-                            >
-                              Ver QR
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCitaStatus(cita._id, "en_revision")
-                            }
-                            className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-700/60 hover:bg-neutral-600"
-                          >
-                            En revisión
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCitaStatus(cita._id, "autorizada")
-                            }
-                            className="px-2 py-1 rounded-md text-xs font-semibold bg-green-200 text-green-800 hover:bg-green-300 dark:bg-green-600/20 dark:text-green-300 dark:hover:bg-green-600/30"
-                          >
-                            Ingresar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCitaStatus(cita._id, "denegada")
-                            }
-                            className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-800 hover:bg-red-300 dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
-                          >
-                            Denegar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCitaStatus(cita._id, "cancelada")
-                            }
-                            className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-500/40 text-neutral-50 hover:bg-neutral-500/60"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filteredCitas.length === 0 && (
+                {filteredCitas.length === 0 ? (
                   <tr>
                     <td
                       colSpan={11}
@@ -953,9 +878,134 @@ export default function VisitsPage() {
                       Sin resultados
                     </td>
                   </tr>
+                ) : (
+                  filteredCitas.map((cita) => {
+                    const tipoLegible =
+                      cita.tipoCita === "profesional"
+                        ? "Profesional"
+                        : cita.tipoCita === "personal"
+                        ? "Personal"
+                        : "—";
+
+                    return (
+                      <tr
+                        key={cita._id}
+                        className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                      >
+                        <td className="font-medium text-neutral-100">
+                          {cita.nombre || cita.visitante}
+                        </td>
+                        <td className="text-neutral-300">
+                          {cita.documento || "-"}
+                        </td>
+                        <td className="text-neutral-200">
+                          {cita.empresa || "—"}
+                        </td>
+                        <td className="text-neutral-200">
+                          {cita.empleado || "—"}
+                        </td>
+                        <td className="text-neutral-300">
+                          {cita.motivo || "—"}
+                        </td>
+                        <td className="text-neutral-200">
+                          {cita.telefono || "—"}
+                        </td>
+                        <td className="text-neutral-200">{tipoLegible}</td>
+                        <td className="text-neutral-300">
+                          {cita.citaAt
+                            ? cita.citaAt.toLocaleDateString("es-ES", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                year: "numeric",
+                              })
+                            : cita.fecha || "—"}
+                        </td>
+                        <td className="text-neutral-300">
+                          {cita.citaAt
+                            ? cita.citaAt.toLocaleTimeString("es-ES", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                            : cita.hora || "—"}
+                        </td>
+                        <td>
+                          <CitaEstadoPill estado={cita.estado} />
+                        </td>
+                        <td className="text-right">
+                          <div className="flex flex-wrap gap-2 justify-end">
+                            {cita.estado === "autorizada" && (
+                              <button
+                                type="button"
+                                onClick={() => setQrCita(cita)}
+                                className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+                              >
+                                Ver QR
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCitaStatus(cita._id, "en_revision")
+                              }
+                              className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-700/60 hover:bg-neutral-600"
+                            >
+                              En revisión
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCitaStatus(cita._id, "autorizada")
+                              }
+                              className="px-2 py-1 rounded-md text-xs font-semibold bg-green-200 text-green-800 hover:bg-green-300 dark:bg-green-600/20 dark:text-green-300 dark:hover:bg-green-600/30"
+                            >
+                              Ingresar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCitaStatus(cita._id, "denegada")
+                              }
+                              className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-800 hover:bg-red-300 dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
+                            >
+                              Denegar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCitaStatus(cita._id, "cancelada")
+                              }
+                              className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-500/40 text-neutral-50 hover:bg-neutral-500/60"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* FOOTER EXPORT Citas */}
+          <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
+            <button
+              onClick={() => exportCitasExcel(filteredCitas)}
+              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              title="Exportar citas (xlsx)"
+            >
+              Exportar Excel
+            </button>
+
+            <button
+              onClick={() => exportCitasPDF(filteredCitas)}
+              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              title="Exportar citas (PDF)"
+            >
+              Exportar PDF
+            </button>
           </div>
         </section>
       )}
@@ -977,7 +1027,7 @@ export default function VisitsPage() {
                 <th>Empresa</th>
                 <th>Empleado</th>
                 <th>Teléfono</th>
-                {/* QUITAMOS CORREO */}
+                {/* sin columna correo */}
                 <th>Tipo</th>
                 <th>Vehículo</th>
                 <th>Entrada</th>
@@ -1018,7 +1068,6 @@ export default function VisitsPage() {
                     <td className="text-neutral-200">{v.company}</td>
                     <td className="text-neutral-200">{v.employee}</td>
                     <td className="text-neutral-200">{v.phone || "—"}</td>
-                    {/* QUITAMOS CELDA DE CORREO */}
                     <td className="text-neutral-200">
                       {v.kind || "Presencial"}
                     </td>
@@ -1066,7 +1115,7 @@ export default function VisitsPage() {
             </tbody>
           </table>
 
-          {/* FOOTER EXPORT */}
+          {/* FOOTER EXPORT Visitas */}
           <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
             <button
               onClick={() => exportExcel(filteredVisitors)}
@@ -1094,8 +1143,8 @@ export default function VisitsPage() {
             setEditingVisitor(null);
           }}
           onSubmit={handleAddVisitor}
-          knownVisitors={visitors} // 👈 lista para autocompletar
-          editingVisitor={editingVisitor} // 👈 (lo usaremos en el modal cuando me lo pidas)
+          knownVisitors={visitors}
+          editingVisitor={editingVisitor}
         />
       )}
 
