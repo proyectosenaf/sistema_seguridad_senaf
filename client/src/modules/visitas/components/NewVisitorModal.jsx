@@ -69,7 +69,14 @@ const EMP_MAX = 20;
 const REASON_MAX = 20;
 const EMAIL_MAX = 25;
 
-export default function NewVisitorModal({ onClose, onSubmit }) {
+export default function NewVisitorModal({
+  onClose,
+  onSubmit,
+  knownVisitors = [],
+  editingVisitor = null, // 👈 NUEVO: para modo edición
+}) {
+  const allKnown = Array.isArray(knownVisitors) ? knownVisitors : [];
+
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
   const [company, setCompany] = useState("");
@@ -78,6 +85,12 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
   const [phone, setPhone] = useState("+504 ");
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Tipo de visita
+  const [visitType, setVisitType] = useState("Personal");
+
+  // Acompañado
+  const [acompanado, setAcompanado] = useState(false);
 
   // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
@@ -90,6 +103,7 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
   const [errors, setErrors] = useState({});
 
   const firstInputRef = useRef(null);
+  const [autoFilledByName, setAutoFilledByName] = useState(false);
 
   // ===== Horario (modo pruebas) =====
   function isWithinBusinessHours(date) {
@@ -101,6 +115,47 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     return "Modo pruebas: actualmente se permite registrar visitas en cualquier horario.";
   }
   // ==================================
+
+  // 🔹 PRE-LLENADO CUANDO ESTAMOS EDITANDO UN VISITANTE
+  useEffect(() => {
+    if (!editingVisitor) return;
+
+    setName(editingVisitor.name || "");
+    setDocument(editingVisitor.document || "");
+    setCompany(editingVisitor.company || "");
+    setEmployee(editingVisitor.employee || "");
+    setReason(editingVisitor.reason || ""); // puede venir vacío en tus datos actuales
+    setPhone(editingVisitor.phone || "+504 ");
+    setEmail(editingVisitor.email || "");
+    setVisitType(
+      editingVisitor.visitType ||
+        editingVisitor.kind || // en VisitsPage guardas kind
+        "Personal"
+    );
+    setAcompanado(!!editingVisitor.acompanado);
+
+    const hasVeh =
+      !!editingVisitor.vehiclePlate ||
+      !!editingVisitor.vehicleBrand ||
+      !!editingVisitor.vehicleModel;
+
+    if (hasVeh) {
+      setHasVehicle(true);
+      setVehicleBrand(editingVisitor.vehicleBrand || "");
+      setVehicleModel(editingVisitor.vehicleModel || "");
+      setVehicleModelCustom("");
+      setVehiclePlate(editingVisitor.vehiclePlate || "");
+    } else {
+      setHasVehicle(false);
+      setVehicleBrand("");
+      setVehicleModel("");
+      setVehicleModelCustom("");
+      setVehiclePlate("");
+    }
+
+    setErrors({});
+    setAutoFilledByName(false);
+  }, [editingVisitor]);
 
   useEffect(() => {
     firstInputRef.current?.focus();
@@ -114,6 +169,57 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  // ---------- Helpers de autocompletado ----------
+  const normalizeDni = (str) => (str || "").replace(/\D/g, "");
+  const normalizeName = (str) => (str || "").trim().toLowerCase();
+
+  function autofillFromKnownVisitor(visitor) {
+    if (!visitor) return;
+
+    setCompany(visitor.company || "");
+    setEmployee(visitor.employee || "");
+    setPhone(visitor.phone || "+504 ");
+    setEmail(visitor.email || "");
+    setAcompanado(!!visitor.acompanado);
+
+    // Si ya tenía empresa, asumimos que la visita anterior fue profesional
+    if (visitor.company) {
+      setVisitType("Profesional");
+    } else {
+      setVisitType("Personal");
+    }
+
+    const hasVeh =
+      !!visitor.vehiclePlate ||
+      !!visitor.vehicleBrand ||
+      !!visitor.vehicleModel;
+
+    if (hasVeh) {
+      setHasVehicle(true);
+      setVehicleBrand(visitor.vehicleBrand || "");
+      setVehicleModel(visitor.vehicleModel || "");
+      setVehicleModelCustom("");
+      setVehiclePlate(visitor.vehiclePlate || "");
+    } else {
+      setHasVehicle(false);
+      setVehicleBrand("");
+      setVehicleModel("");
+      setVehicleModelCustom("");
+      setVehiclePlate("");
+    }
+
+    setErrors((prev) => ({
+      ...prev,
+      company: undefined,
+      employee: undefined,
+      phone: undefined,
+      email: undefined,
+      vehicleBrand: undefined,
+      vehicleModel: undefined,
+      vehiclePlate: undefined,
+    }));
+  }
+
   // ---------- Handlers de cambio + limpieza de errores ----------
 
   const handleNameChange = (e) => {
@@ -121,8 +227,46 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, NAME_MAX);
+
     setName(val);
     setErrors((prev) => ({ ...prev, name: undefined }));
+
+    const trimmed = val.trim();
+
+    // Si borra todo el nombre, volvemos a permitir autocompletar
+    if (!trimmed) {
+      setAutoFilledByName(false);
+      return;
+    }
+
+    const words = trimmed.split(/\s+/).filter(Boolean);
+
+    // Cuando hay al menos dos nombres y aún no hemos autocompletado
+    if (!autoFilledByName && words.length >= 2) {
+      const first = words[0].toLowerCase();
+      const second = words[1].toLowerCase();
+
+      const match = allKnown.find((v) => {
+        const vWords = normalizeName(v.name).split(/\s+/).filter(Boolean);
+        if (vWords.length < 2) return false;
+        return vWords[0] === first && vWords[1] === second;
+      });
+
+      if (match) {
+        // Nombre completo según el registro anterior
+        setName(match.name || trimmed);
+
+        // DNI también se autocompleta
+        if (match.document) {
+          setDocument(match.document);
+          setErrors((prev) => ({ ...prev, document: undefined }));
+        }
+
+        // Resto de campos (empresa, empleado, teléfono, correo, vehículo…)
+        autofillFromKnownVisitor(match);
+        setAutoFilledByName(true);
+      }
+    }
   };
 
   const handleDocumentChange = (e) => {
@@ -140,6 +284,21 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
 
     setDocument(formatted);
     setErrors((prev) => ({ ...prev, document: undefined }));
+
+    // Autocompletar cuando ya tiene los 13 dígitos
+    if (digits.length === DNI_DIGITS) {
+      const match = allKnown.find((v) => normalizeDni(v.document) === digits);
+      if (match) {
+        // Si no hay nombre escrito, llenamos el nombre completo
+        if (!name.trim()) {
+          setName(match.name || "");
+          setErrors((prev) => ({ ...prev, name: undefined }));
+        }
+
+        // Resto de campos
+        autofillFromKnownVisitor(match);
+      }
+    }
   };
 
   const handleCompanyChange = (e) => {
@@ -259,9 +418,19 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
       newErrors.document = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
-    // Empresa: opcional, pero si la escribe máx 20
-    if (company.trim() && company.trim().length > COMPANY_MAX) {
-      newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+    // Empresa:
+    const trimmedCompany = company.trim();
+    if (visitType === "Profesional") {
+      if (!trimmedCompany) {
+        newErrors.company =
+          "La empresa es obligatoria para visitas profesionales.";
+      } else if (trimmedCompany.length > COMPANY_MAX) {
+        newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+      }
+    } else {
+      if (trimmedCompany && trimmedCompany.length > COMPANY_MAX) {
+        newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+      }
     }
 
     // Empleado anfitrión: obligatorio, máx 20
@@ -364,6 +533,8 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
         reason: reason.trim(),
         phone: phone.trim(),
         email: email.trim(),
+        visitType, // 👈 Personal / Profesional
+        acompanado,
         vehicle: hasVehicle
           ? {
               brand: vehicleBrand.trim(),
@@ -463,16 +634,42 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             )}
           </div>
 
+          {/* Tipo de visita + Empresa opcional si es profesional */}
           <div>
-            <label className="text-xs text-neutral-400">Empresa</label>
-            <input
+            <label className="text-xs text-neutral-400">Tipo de visita</label>
+            <select
               className="input-fx w-full"
-              value={company}
-              onChange={handleCompanyChange}
-              placeholder="SENAF / Munily"
-            />
-            {errors.company && (
-              <p className="text-xs text-red-400 mt-1">{errors.company}</p>
+              value={visitType}
+              onChange={(e) => {
+                const val = e.target.value;
+                setVisitType(val);
+                if (val === "Personal") {
+                  setCompany("");
+                }
+                setErrors((prev) => ({ ...prev, company: undefined }));
+              }}
+            >
+              <option value="Personal">Personal</option>
+              <option value="Profesional">Profesional</option>
+            </select>
+
+            {visitType === "Profesional" && (
+              <>
+                <label className="text-xs text-neutral-400 mt-3 block">
+                  Empresa
+                </label>
+                <input
+                  className="input-fx w-full"
+                  value={company}
+                  onChange={handleCompanyChange}
+                  placeholder="Nombre de la empresa"
+                />
+                {errors.company && (
+                  <p className="text-xs text-red-400 mt-1">
+                    {errors.company}
+                  </p>
+                )}
+              </>
             )}
           </div>
 
@@ -533,6 +730,25 @@ export default function NewVisitorModal({ onClose, onSubmit }) {
             {errors.email && (
               <p className="text-xs text-red-400 mt-1">{errors.email}</p>
             )}
+          </div>
+
+          {/* Acompañado */}
+          <div className="md:col-span-2 mt-1">
+            <div className="flex items-center gap-2">
+              <input
+                id="acompanado"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={acompanado}
+                onChange={(e) => setAcompanado(e.target.checked)}
+              />
+              <label
+                htmlFor="acompanado"
+                className="text-xs text-neutral-300 cursor-pointer select-none"
+              >
+                El visitante viene acompañado
+              </label>
+            </div>
           </div>
 
           {/* ================== SECCIÓN VEHÍCULO ================== */}

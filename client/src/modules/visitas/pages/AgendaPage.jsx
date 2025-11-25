@@ -118,6 +118,7 @@ function saveStoredCitas(list) {
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
+  if (value === "autorizada") return "ingresada"; // 👈 cambio de texto
   return value;
 }
 
@@ -159,9 +160,10 @@ export default function AgendaPage() {
   const [tab, setTab] = useState("agendar"); // "agendar" | "citas"
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
-  const [form, setForm] = useState({
+  const initialFormState = {
     visitante: "",
     documento: "",
+    tipoCita: "personal", // tipo de cita
     empresa: "",
     empleado: "",
     motivo: "",
@@ -169,11 +171,16 @@ export default function AgendaPage() {
     hora: "",
     telefono: "+504 ",
     correo: "",
-  });
+  };
+
+  const [form, setForm] = useState(initialFormState);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [okMsg, setOkMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Acompañante
+  const [hasCompanion, setHasCompanion] = useState(false);
 
   // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
@@ -181,6 +188,9 @@ export default function AgendaPage() {
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
+
+  // Cita que se está editando (null si se está creando una nueva)
+  const [editingCita, setEditingCita] = useState(null);
 
   function onChange(e) {
     const { name, value } = e.target;
@@ -234,10 +244,27 @@ export default function AgendaPage() {
     } else if (name === "correo") {
       // Sin espacios, máx 25
       newValue = value.replace(/\s/g, "").slice(0, EMAIL_MAX);
+    } else if (name === "tipoCita") {
+      newValue = value;
     }
 
-    setForm((f) => ({ ...f, [name]: newValue }));
-    setErrors((err) => ({ ...err, [name]: "" }));
+    setForm((f) => {
+      const next = { ...f, [name]: newValue };
+      // Si cambia a personal, limpiamos empresa
+      if (name === "tipoCita" && newValue === "personal") {
+        next.empresa = "";
+      }
+      return next;
+    });
+
+    setErrors((err) => {
+      const next = { ...err, [name]: "" };
+      if (name === "tipoCita" && newValue === "personal") {
+        delete next.empresa;
+      }
+      return next;
+    });
+
     setOkMsg("");
     setErrorMsg("");
   }
@@ -265,12 +292,20 @@ export default function AgendaPage() {
       e.documento = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
-    // Empresa: requerida, solo texto, máx 20
+    // Tipo de cita
+    const tipo = form.tipoCita || "personal";
+    if (!["personal", "profesional"].includes(tipo)) {
+      e.tipoCita = "Seleccione el tipo de cita.";
+    }
+
+    // Empresa: requerida SOLO si la cita es profesional
     const empresa = form.empresa.trim();
-    if (!empresa) {
-      e.empresa = "La empresa es obligatoria.";
-    } else if (empresa.length > COMPANY_MAX) {
-      e.empresa = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+    if (tipo === "profesional") {
+      if (!empresa) {
+        e.empresa = "La empresa es obligatoria para citas profesionales.";
+      } else if (empresa.length > COMPANY_MAX) {
+        e.empresa = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
+      }
     }
 
     // Empleado a visitar: requerido, solo texto, máx 20
@@ -350,17 +385,83 @@ export default function AgendaPage() {
     setOkMsg("");
     setErrorMsg("");
 
+    const fecha = form.fecha; // YYYY-MM-DD
+    const hora = form.hora; // HH:mm
+    const citaAtDate = new Date(`${fecha}T${hora}:00`);
+
+    const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+    const tipo = form.tipoCita || "personal";
+
     try {
-      const fecha = form.fecha; // YYYY-MM-DD
-      const hora = form.hora; // HH:mm
-      const citaAtDate = new Date(`${fecha}T${hora}:00`);
+      // ========== MODO EDICIÓN ==========
+      if (editingCita) {
+        const updated = {
+          ...editingCita,
+          nombre: form.visitante.trim(),
+          documento: form.documento.trim(),
+          tipoCita: tipo,
+          empresa: form.empresa.trim(),
+          empleado: form.empleado.trim(),
+          motivo: form.motivo.trim(),
+          telefono: form.telefono.trim() || undefined,
+          correo: form.correo.trim() || undefined,
+          fecha,
+          hora,
+          citaAt: citaAtDate.toISOString(),
+          tieneAcompanante: !!hasCompanion,
+          vehiculo: hasVehicle
+            ? {
+                marca: vehicleBrand.trim(),
+                modelo: finalModel,
+                placa: vehiclePlate.trim(),
+              }
+            : null,
+        };
 
-      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+        // Actualizar listado actual
+        setItems((prev) =>
+          prev.map((it) => (it._id === editingCita._id ? updated : it))
+        );
 
+        // Actualizar respaldo local (aunque la cita venga del backend)
+        const stored = loadStoredCitas();
+        let found = false;
+        const storedUpdated = stored.map((it) => {
+          const key = it._id || it.id;
+          if (key === editingCita._id) {
+            found = true;
+            return { ...it, ...updated };
+          }
+          return it;
+        });
+        if (!found) {
+          storedUpdated.push(updated);
+        }
+        saveStoredCitas(storedUpdated);
+
+        setOkMsg("✅ Cita actualizada correctamente.");
+        setErrorMsg("");
+        setEditingCita(null);
+
+        // Limpiar formulario
+        setForm(initialFormState);
+        setHasCompanion(false);
+        setHasVehicle(false);
+        setVehicleBrand("");
+        setVehicleModel("");
+        setVehicleModelCustom("");
+        setVehiclePlate("");
+
+        setSubmitting(false);
+        return;
+      }
+
+      // ========== CREAR NUEVA CITA ==========
       const nuevaCita = {
         _id: `local-${Date.now()}`,
         nombre: form.visitante.trim(),
         documento: form.documento.trim(),
+        tipoCita: tipo,
         empresa: form.empresa.trim(),
         empleado: form.empleado.trim(),
         motivo: form.motivo.trim(),
@@ -370,6 +471,7 @@ export default function AgendaPage() {
         hora,
         citaAt: citaAtDate.toISOString(),
         estado: "solicitada",
+        tieneAcompanante: !!hasCompanion,
         vehiculo: hasVehicle
           ? {
               marca: vehicleBrand.trim(),
@@ -396,6 +498,8 @@ export default function AgendaPage() {
               placa: nuevaCita.vehiculo.placa,
             }
           : null,
+        tipoCita: tipo,
+        tieneAcompanante: !!hasCompanion,
       };
 
       let syncedWithServer = false;
@@ -435,6 +539,7 @@ export default function AgendaPage() {
       if (serverError) {
         setErrorMsg(serverError);
         setOkMsg("");
+        setSubmitting(false);
         return;
       }
 
@@ -453,17 +558,8 @@ export default function AgendaPage() {
         setErrorMsg("");
       }
 
-      setForm({
-        visitante: "",
-        documento: "",
-        empresa: "",
-        empleado: "",
-        motivo: "",
-        fecha: "",
-        hora: "",
-        telefono: "+504 ",
-        correo: "",
-      });
+      setForm(initialFormState);
+      setHasCompanion(false);
       setHasVehicle(false);
       setVehicleBrand("");
       setVehicleModel("");
@@ -538,7 +634,7 @@ export default function AgendaPage() {
 
       let list = Array.isArray(data.items) ? data.items : [];
 
-      // 👇 Mezclar con estados del localStorage (citas_demo)
+      // 👇 Mezclar con datos del localStorage (no solo estado)
       const stored = loadStoredCitas();
       const storedMap = new Map(
         stored.map((c) => [c._id || c.id, c])
@@ -546,8 +642,9 @@ export default function AgendaPage() {
       list = list.map((it) => {
         const key = it._id || it.id;
         const local = storedMap.get(key);
-        if (local && local.estado) {
-          return { ...it, estado: local.estado };
+        if (local) {
+          // local pisa los campos del backend (incluye cambios de edición)
+          return { ...it, ...local };
         }
         return it;
       });
@@ -621,6 +718,60 @@ export default function AgendaPage() {
     setMode("month");
     setMonth(ym);
     setDateFilter("");
+  }
+
+  // 👉 Editar cita: cargar en el formulario y cambiar a pestaña "agendar"
+  function handleEditCita(it) {
+    const fechaInput =
+      it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
+    const horaInput =
+      it.hora ||
+      (it.citaAt
+        ? new Date(it.citaAt).toISOString().slice(11, 16)
+        : "");
+
+    const tipo =
+      it.tipoCita ||
+      (it.empresa ? "profesional" : "personal");
+
+    setForm({
+      visitante: it.nombre || it.visitante || "",
+      documento: it.documento || "",
+      tipoCita: tipo,
+      empresa: it.empresa || "",
+      empleado: it.empleado || "",
+      motivo: it.motivo || "",
+      fecha: fechaInput || "",
+      hora: horaInput || "",
+      telefono: it.telefono || "+504 ",
+      correo: it.correo || "",
+    });
+
+    setHasCompanion(
+      !!it.tieneAcompanante ||
+        !!it.conAcompanante ||
+        !!it.acompanante
+    );
+
+    const hasVeh = !!it.vehiculo;
+    setHasVehicle(hasVeh);
+    if (hasVeh) {
+      setVehicleBrand(it.vehiculo.marca || "");
+      setVehicleModel(it.vehiculo.modelo || "");
+      setVehicleModelCustom("");
+      setVehiclePlate(it.vehiculo.placa || "");
+    } else {
+      setVehicleBrand("");
+      setVehicleModel("");
+      setVehicleModelCustom("");
+      setVehiclePlate("");
+    }
+
+    setErrors({});
+    setOkMsg("");
+    setErrorMsg("");
+    setEditingCita(it);
+    setTab("agendar");
   }
 
   // Cargar citas cuando cambian filtros o pestaña
@@ -705,7 +856,10 @@ export default function AgendaPage() {
       {/* Tabs */}
       <div className="flex items-center gap-2">
         <button
-          onClick={() => setTab("agendar")}
+          onClick={() => {
+            setTab("agendar");
+            setEditingCita(null);
+          }}
           className={`px-3 py-2 rounded-lg text-sm ${
             tab === "agendar"
               ? "bg-blue-600/80 text-white"
@@ -751,14 +905,36 @@ export default function AgendaPage() {
                 error={errors.documento}
                 placeholder="DNI / Pasaporte"
               />
+
+              {/* Tipo de cita */}
               <Field
-                label="Empresa *"
-                name="empresa"
-                value={form.empresa}
-                onChange={onChange}
-                error={errors.empresa}
-                placeholder="Empresa"
-              />
+                label="Tipo de cita *"
+                name="tipoCita"
+                error={errors.tipoCita}
+              >
+                <select
+                  name="tipoCita"
+                  value={form.tipoCita}
+                  onChange={onChange}
+                  className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                >
+                  <option value="personal">Personal</option>
+                  <option value="profesional">Profesional</option>
+                </select>
+              </Field>
+
+              {/* Empresa solo si es profesional */}
+              {form.tipoCita === "profesional" && (
+                <Field
+                  label="Empresa *"
+                  name="empresa"
+                  value={form.empresa}
+                  onChange={onChange}
+                  error={errors.empresa}
+                  placeholder="Empresa"
+                />
+              )}
+
               <Field
                 label="Empleado a visitar *"
                 name="empleado"
@@ -815,6 +991,25 @@ export default function AgendaPage() {
                   error={errors.correo}
                   placeholder="correo@dominio.com"
                 />
+              </div>
+            </div>
+
+            {/* ===== Acompañante ===== */}
+            <div className="md:col-span-2 border-t border-neutral-800/60 pt-3 mt-1">
+              <div className="flex items-center gap-2 mb-1">
+                <input
+                  id="has-companion-agenda"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={hasCompanion}
+                  onChange={(e) => setHasCompanion(e.target.checked)}
+                />
+                <label
+                  htmlFor="has-companion-agenda"
+                  className="text-xs text-neutral-300 cursor-pointer select-none"
+                >
+                  El visitante llegará con acompañante
+                </label>
               </div>
             </div>
 
@@ -989,7 +1184,9 @@ export default function AgendaPage() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => navigate("/visitas/control")}
+                  onClick={() => {
+                    navigate("/visitas/control");
+                  }}
                   className="px-3 py-2 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
                 >
                   Cancelar
@@ -999,7 +1196,13 @@ export default function AgendaPage() {
                   disabled={submitting}
                   className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600 disabled:opacity-60"
                 >
-                  {submitting ? "Agendando..." : "Agendar cita"}
+                  {submitting
+                    ? editingCita
+                      ? "Actualizando..."
+                      : "Agendando..."
+                    : editingCita
+                    ? "Guardar cambios"
+                    : "Agendar cita"}
                 </button>
               </div>
             </div>
@@ -1111,7 +1314,7 @@ export default function AgendaPage() {
                 <option value="todos">Todos los estados</option>
                 <option value="solicitada">Solicitada</option>
                 <option value="en_revision">En revisión</option>
-                <option value="autorizada">Autorizada</option>
+                <option value="autorizada">Ingresada</option>
                 <option value="denegada">Denegada</option>
                 <option value="cancelada">Cancelada</option>
               </select>
@@ -1154,6 +1357,7 @@ export default function AgendaPage() {
                           <th>Motivo</th>
                           <th>Hora</th>
                           <th>Estado</th>
+                          <th className="text-right">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="text-neutral-200">
@@ -1172,8 +1376,16 @@ export default function AgendaPage() {
                             </td>
                             <td>{fmtTime(it.citaAt)}</td>
                             <td>
-                              {/* Usa los mismos colores/estados que la pantalla principal */}
                               <CitaEstadoPill estado={it.estado} />
+                            </td>
+                            <td className="text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleEditCita(it)}
+                                className="px-2 py-1 rounded-md text-xs font-semibold bg-blue-500/80 text-neutral-50 hover:bg-blue-400"
+                              >
+                                Editar
+                              </button>
                             </td>
                           </tr>
                         ))}
