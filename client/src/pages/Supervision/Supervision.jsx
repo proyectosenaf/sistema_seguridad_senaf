@@ -5,38 +5,17 @@ import { rondasqrApi } from "../../modules/rondasqr/api/rondasqrApi";
 import { iamApi } from "../../iam/api/iamApi.js";
 
 /* =======================
-   DATOS MOCK (otras secciones)
+   API BASE (mismo criterio que Accesos.jsx)
    ======================= */
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:4000/api"
+).replace(/\/$/, "");
 
-const asistenciaMock = [
-  {
-    id: 1,
-    guardia: "Juan Pérez",
-    fecha: "2025-11-15",
-    horaEntrada: "05:50",
-    horaSalida: "",
-    metodo: "QR",
-    estado: "A tiempo",
-  },
-  {
-    id: 2,
-    guardia: "María López",
-    fecha: "2025-11-15",
-    horaEntrada: "14:10",
-    horaSalida: "",
-    metodo: "NFC",
-    estado: "Retardo",
-  },
-  {
-    id: 3,
-    guardia: "Carlos Sánchez",
-    fecha: "2025-11-14",
-    horaEntrada: "",
-    horaSalida: "",
-    metodo: "Geo-checkin",
-    estado: "Ausencia",
-  },
-];
+/* =======================
+   DATOS MOCK (para otras secciones, no asistencia)
+   ======================= */
 
 const alertasMock = [
   {
@@ -118,11 +97,50 @@ const rondasMock = [
 ];
 
 /* =======================
+   Normalizador de empleados desde CONTROL DE ACCESO
+   ======================= */
+function normalizeAccesoEmpleados(itemsRaw) {
+  const items = Array.isArray(itemsRaw) ? itemsRaw : [];
+  return items.map((e) => ({
+    _id: e._id,
+    nombreCompleto: e.nombreCompleto || e.nombre || "",
+    departamento: e.departamento || e.depto || "",
+    cargo: e.cargo || "",
+  }));
+}
+
+/* Heurística para saber si alguien es guardia */
+function esGuardia(empleado) {
+  const dep = (empleado.departamento || "").toLowerCase();
+  const cargo = (empleado.cargo || "").toLowerCase();
+  return (
+    dep.includes("seguridad") ||
+    cargo.includes("guardia") ||
+    cargo.includes("vigilante")
+  );
+}
+
+/* Helper para mapear observaciones desde backend */
+function mapObservacionItem(d) {
+  const created = d.createdAt ? new Date(d.createdAt) : null;
+  return {
+    id: d._id || d.id,
+    texto: d.observacion || "",
+    fechaIso: d.createdAt || null,
+    fechaTexto: created ? created.toLocaleString() : "",
+    personaNombre: d.personaNombre || "",
+    sitio: d.sitio || "",
+    supervisor:
+      d.supervisadoPorNombre || d.supervisadoPorEmail || "",
+  };
+}
+
+/* =======================
    COMPONENTE PRINCIPAL
    ======================= */
 
 export default function Supervision() {
-  const [vista, setVista] = useState("turnos"); // turnos | asistencia | alertas | rondas | lugar
+  const [vista, setVista] = useState("turnos"); // turnos | asistencia | alertas | rondas | lugar | observaciones
 
   // Turnos (asignaciones de rondas)
   const [turnosRaw, setTurnosRaw] = useState([]);
@@ -140,6 +158,19 @@ export default function Supervision() {
   const [checkHerramientas, setCheckHerramientas] = useState(false);
   const [checkVestimenta, setCheckVestimenta] = useState(false);
   const [observacion, setObservacion] = useState("");
+
+  // 🔹 Empleados traídos desde CONTROL DE ACCESO (para asistencia)
+  const [empleadosAcceso, setEmpleadosAcceso] = useState([]);
+  const [loadingAcceso, setLoadingAcceso] = useState(false);
+  const [errorAcceso, setErrorAcceso] = useState("");
+
+  // 🔹 Filtro: tipo de personal (Guardias vs resto empleados)
+  const [filtroTipoEmpleado, setFiltroTipoEmpleado] = useState("Todos"); // Todos | Guardias | Empleados
+
+  // 🔹 Observaciones desde backend
+  const [observaciones, setObservaciones] = useState([]);
+  const [cargandoObs, setCargandoObs] = useState(false);
+  const [errorObs, setErrorObs] = useState("");
 
   /* =======================
      1) Cargar catálogo de usuarios IAM
@@ -171,9 +202,6 @@ export default function Supervision() {
             persona.email ||
             "";
 
-          // 👇 AQUÍ EL CAMBIO IMPORTANTE:
-          // Registramos al usuario bajo TODOS los IDs posibles,
-          // incluyendo persona._id, persona.id_persona, etc.
           const posiblesIds = [
             u._id,
             u.id,
@@ -262,8 +290,110 @@ export default function Supervision() {
   }, [usuariosCargados]);
 
   /* =======================
-     3) Mapear assignments + usuarios
+     3) Cargar empleados desde CONTROL DE ACCESO
      ======================= */
+  useEffect(() => {
+    let cancel = false;
+
+    async function fetchEmpleadosAcceso() {
+      try {
+        setLoadingAcceso(true);
+        setErrorAcceso("");
+
+        let res = await fetch(`${API_BASE}/acceso/empleados-vehiculos`, {
+          credentials: "include",
+        });
+        let data = await res.json().catch(() => ({}));
+
+        if (!res.ok || data?.ok === false || !Array.isArray(data?.items)) {
+          // Fallback a /acceso/empleados
+          res = await fetch(`${API_BASE}/acceso/empleados`, {
+            credentials: "include",
+          });
+          data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.ok === false) {
+            throw new Error(
+              data?.error || "Error de API al cargar empleados"
+            );
+          }
+        }
+
+        const normalizados = normalizeAccesoEmpleados(data.items);
+
+        if (!cancel) {
+          setEmpleadosAcceso(normalizados);
+          console.log(
+            "[Supervision] Empleados desde Control de Acceso:",
+            normalizados
+          );
+        }
+      } catch (e) {
+        console.error("[Supervision] Error cargando empleados Acceso:", e);
+        if (!cancel) {
+          setErrorAcceso(
+            e.message || "No se pudieron cargar los empleados de acceso."
+          );
+          setEmpleadosAcceso([]);
+        }
+      } finally {
+        if (!cancel) setLoadingAcceso(false);
+      }
+    }
+
+    fetchEmpleadosAcceso();
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  /* =======================
+     4) Cargar observaciones desde backend
+     ======================= */
+  useEffect(() => {
+    let cancel = false;
+
+    async function fetchObservaciones() {
+      try {
+        setCargandoObs(true);
+        setErrorObs("");
+
+        const res = await fetch(
+          `${API_BASE}/supervision/observaciones`,
+          { credentials: "include" }
+        );
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || "Error al cargar observaciones");
+        }
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!cancel) {
+          setObservaciones(items.map(mapObservacionItem));
+        }
+      } catch (e) {
+        console.error("[Supervision] Error cargando observaciones:", e);
+        if (!cancel) {
+          setErrorObs(
+            e.message || "No se pudieron cargar las observaciones."
+          );
+          setObservaciones([]);
+        }
+      } finally {
+        if (!cancel) setCargandoObs(false);
+      }
+    }
+
+    fetchObservaciones();
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  /* =======================
+     5) Derivados / filtros globales
+     ======================= */
+
   const turnos = useMemo(() => {
     return (turnosRaw || []).map((a) => {
       const userId =
@@ -296,11 +426,7 @@ export default function Supervision() {
       }
 
       const creado =
-        a.createdAt ||
-        a.fechaCreacion ||
-        a.fecha ||
-        a.date ||
-        null;
+        a.createdAt || a.fechaCreacion || a.fecha || a.date || null;
 
       return {
         id: a._id || a.id,
@@ -330,13 +456,13 @@ export default function Supervision() {
     });
   }, [turnosRaw, usuariosMap]);
 
-  /* =======================
-     Derivados / filtros
-     ======================= */
-
-  const guardiasUnicos = Array.from(
-    new Set(turnos.map((t) => t.guardia).filter(Boolean))
-  );
+  const personasUnicas = useMemo(() => {
+    const fromTurnos = turnos.map((t) => t.guardia).filter(Boolean);
+    const fromAcceso = empleadosAcceso
+      .map((e) => e.nombreCompleto)
+      .filter(Boolean);
+    return Array.from(new Set([...fromTurnos, ...fromAcceso]));
+  }, [turnos, empleadosAcceso]);
 
   const turnosFiltrados = turnos.filter((t) =>
     filtroGuardia ? t.guardia === filtroGuardia : true
@@ -347,19 +473,90 @@ export default function Supervision() {
   );
 
   /* =======================
+     6) Derivados para CONTROL DE ASISTENCIA
+     ======================= */
+
+  const asistenciaRows = useMemo(() => {
+    const hoy = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    return empleadosAcceso.map((e) => ({
+      id: e._id,
+      persona: e.nombreCompleto || "—",
+      fecha: hoy,
+      entrada: "—",
+      salida: "—",
+      metodo: "—",
+      estado: esGuardia(e) ? "Guardia" : "Empleado",
+      esGuardia: esGuardia(e),
+    }));
+  }, [empleadosAcceso]);
+
+  const asistenciaFiltrada = useMemo(() => {
+    let base = asistenciaRows;
+
+    if (filtroGuardia) {
+      base = base.filter((r) => r.persona === filtroGuardia);
+    }
+
+    if (filtroTipoEmpleado === "Guardias") {
+      base = base.filter((r) => r.esGuardia);
+    } else if (filtroTipoEmpleado === "Empleados") {
+      base = base.filter((r) => !r.esGuardia);
+    }
+
+    return base;
+  }, [asistenciaRows, filtroGuardia, filtroTipoEmpleado]);
+
+  /* =======================
      Handlers auxiliares
      ======================= */
 
-  const handleGuardarSupervision = () => {
-    const payload = {
-      limpiezaAreaTrabajo: checkLimpieza,
-      herramientasAMano: checkHerramientas,
-      vestimentaAdecuada: checkVestimenta,
-      observacion,
-      fecha: new Date().toISOString(),
-    };
-    console.log("Supervisión guardada:", payload);
-    alert("Supervisión guardada (ejemplo, datos en consola).");
+  const handleGuardarSupervision = async () => {
+    try {
+      const payload = {
+        limpiezaAreaTrabajo: checkLimpieza,
+        herramientasAMano: checkHerramientas,
+        vestimentaAdecuada: checkVestimenta,
+        observacion: observacion || "",
+        personaId: "",
+        personaNombre: "",
+        sitio: "",
+      };
+
+      const res = await fetch(`${API_BASE}/supervision`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || "Error al guardar la supervisión");
+      }
+
+      const item = data.item;
+      if (item && item.observacion) {
+        // Insertar la nueva observación en el estado (arriba de todo)
+        setObservaciones((prev) => [
+          mapObservacionItem(item),
+          ...prev,
+        ]);
+      }
+
+      // Limpiar formulario
+      setCheckLimpieza(false);
+      setCheckHerramientas(false);
+      setCheckVestimenta(false);
+      setObservacion("");
+
+      alert("✅ Supervisión guardada correctamente.");
+    } catch (err) {
+      console.error("Error guardando supervisión:", err);
+      alert("❌ No se pudo guardar la supervisión.");
+    }
   };
 
   const getBadgeClase = (estado) => {
@@ -393,6 +590,153 @@ export default function Supervision() {
   const navBtnClass = (key) =>
     "sup-nav-btn" + (vista === key ? " sup-active" : "");
 
+  /* ========= EXPORTAR ASISTENCIA ========= */
+
+  const handleExportAsistenciaCSV = () => {
+    try {
+      const headers = [
+        "Persona",
+        "Fecha",
+        "Entrada",
+        "Salida",
+        "Método",
+        "Estado / Tipo",
+      ];
+
+      const rows = asistenciaFiltrada.map((r) => [
+        r.persona,
+        r.fecha,
+        r.entrada,
+        r.salida,
+        r.metodo,
+        r.estado,
+      ]);
+
+      const separator = ";";
+      const csvLines = [headers, ...rows]
+        .map((row) =>
+          row
+            .map((value) => {
+              const v = value == null ? "" : String(value);
+              const escaped = v.replace(/"/g, '""');
+              return `"${escaped}"`;
+            })
+            .join(separator)
+        )
+        .join("\r\n");
+
+      const BOM = "\uFEFF";
+      const blob = new Blob([BOM + csvLines], {
+        type: "text/csv;charset=utf-8;",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const fecha = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `asistencia_supervision_${fecha}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error exportando asistencia a CSV:", err);
+      alert("❌ No se pudo exportar la asistencia a Excel/CSV.");
+    }
+  };
+
+  const handlePrintAsistencia = () => {
+    try {
+      const fechaHoy = new Date().toLocaleDateString();
+      const rowsHtml = asistenciaFiltrada
+        .map(
+          (r) => `
+          <tr>
+            <td>${r.persona || ""}</td>
+            <td>${r.fecha || ""}</td>
+            <td>${r.entrada || ""}</td>
+            <td>${r.salida || ""}</td>
+            <td>${r.metodo || ""}</td>
+            <td>${r.estado || ""}</td>
+          </tr>`
+        )
+        .join("");
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charSet="utf-8" />
+          <title>Control de asistencia</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              padding: 16px;
+            }
+            h1 {
+              font-size: 20px;
+              margin-bottom: 4px;
+            }
+            .subtitle {
+              font-size: 12px;
+              margin-bottom: 12px;
+              color: #555;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 12px;
+            }
+            th, td {
+              border: 1px solid #ccc;
+              padding: 6px 8px;
+              text-align: left;
+            }
+            th {
+              background-color: #f3f4f6;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Control de asistencia</h1>
+          <div class="subtitle">Fecha de generación: ${fechaHoy}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Persona</th>
+                <th>Fecha</th>
+                <th>Entrada</th>
+                <th>Salida</th>
+                <th>Método</th>
+                <th>Estado / Tipo</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || ""}
+            </tbody>
+          </table>
+        </body>
+        </html>
+      `;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert(
+          "No se pudo abrir la ventana para imprimir. Verifica que el bloqueador de ventanas emergentes esté desactivado."
+        );
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      win.print();
+    } catch (err) {
+      console.error("Error al imprimir/exportar asistencia a PDF:", err);
+      alert("❌ No se pudo preparar el listado para PDF/impresión.");
+    }
+  };
+
   /* =======================
      Render
      ======================= */
@@ -420,13 +764,13 @@ export default function Supervision() {
 
             <div className="gt-header-filtros">
               <div className="filtro">
-                <label>Filtrar por guardia</label>
+                <label>Filtrar por persona</label>
                 <select
                   value={filtroGuardia}
                   onChange={(e) => setFiltroGuardia(e.target.value)}
                 >
                   <option value="">Todos</option>
-                  {guardiasUnicos.map((g) => (
+                  {personasUnicas.map((g) => (
                     <option key={g} value={g}>
                       {g}
                     </option>
@@ -500,6 +844,15 @@ export default function Supervision() {
                 onClick={() => setVista("lugar")}
               >
                 <span>Lugar de trabajo y equipo</span>
+                <span className="sup-dot" />
+              </button>
+
+              <button
+                type="button"
+                className={navBtnClass("observaciones")}
+                onClick={() => setVista("observaciones")}
+              >
+                <span>Observaciones</span>
                 <span className="sup-dot" />
               </button>
             </div>
@@ -582,39 +935,103 @@ export default function Supervision() {
                 <div className="card-header">
                   <h2>Control de asistencia</h2>
                   <p>
-                    Registros de entrada y salida por guardia: fichaje,
-                    QR/NFC/geo-checkin, ausencias y retardos.
+                    Registros de asistencia basados en el catálogo de empleados
+                    del módulo de Control de Acceso. Aquí podés separar guardias
+                    del resto de empleados.
                   </p>
                 </div>
+
                 <div className="card-body card-body-scroll">
+                  <div className="sup-filtros-asistencia">
+                    <div className="filtro">
+                      <label>Tipo de personal</label>
+                      <select
+                        value={filtroTipoEmpleado}
+                        onChange={(e) =>
+                          setFiltroTipoEmpleado(e.target.value)
+                        }
+                      >
+                        <option value="Todos">Todos</option>
+                        <option value="Guardias">Solo guardias</option>
+                        <option value="Empleados">
+                          Otros empleados de la empresa
+                        </option>
+                      </select>
+                    </div>
+
+                    <div className="filtro">
+                      {loadingAcceso && (
+                        <span className="sup-help-text">
+                          Cargando datos desde Control de Acceso...
+                        </span>
+                      )}
+                      {errorAcceso && !loadingAcceso && (
+                        <span className="sup-help-text sup-help-error">
+                          {errorAcceso}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
                   <table className="tabla">
                     <thead>
                       <tr>
-                        <th>Guardia</th>
+                        <th>Persona</th>
                         <th>Fecha</th>
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Método</th>
-                        <th>Estado</th>
+                        <th>Estado / Tipo</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {asistenciaMock
-                        .filter((a) =>
-                          filtroGuardia ? a.guardia === filtroGuardia : true
-                        )
-                        .map((a) => (
-                          <tr key={a.id}>
-                            <td>{a.guardia}</td>
-                            <td>{a.fecha}</td>
-                            <td>{a.horaEntrada || "—"}</td>
-                            <td>{a.horaSalida || "—"}</td>
-                            <td>{a.metodo}</td>
-                            <td>{a.estado}</td>
+                      {asistenciaFiltrada.map((r) => (
+                        <tr key={r.id}>
+                          <td>{r.persona}</td>
+                          <td>{r.fecha}</td>
+                          <td>{r.entrada}</td>
+                          <td>{r.salida}</td>
+                          <td>{r.metodo}</td>
+                          <td>{r.estado}</td>
+                        </tr>
+                      ))}
+
+                      {!loadingAcceso &&
+                        asistenciaFiltrada.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="texto-vacio">
+                              No hay registros para el filtro seleccionado.
+                            </td>
                           </tr>
-                        ))}
+                        )}
+
+                      {loadingAcceso && (
+                        <tr>
+                          <td colSpan={6} className="texto-vacio">
+                            Cargando empleados desde Control de Acceso...
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
+
+                  {/* Botones de exportación abajo, esquina inferior derecha */}
+                  <div className="sup-export-actions">
+                    <button
+                      type="button"
+                      className="btn-guardar"
+                      onClick={handlePrintAsistencia}
+                    >
+                      PDF / Imprimir
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-guardar"
+                      onClick={handleExportAsistenciaCSV}
+                    >
+                      Exportar a Excel
+                    </button>
+                  </div>
                 </div>
               </article>
             </section>
@@ -784,6 +1201,52 @@ export default function Supervision() {
                   >
                     Guardar supervisión
                   </button>
+                </div>
+              </article>
+            </section>
+          )}
+
+          {/* ==== OBSERVACIONES ==== */}
+          {vista === "observaciones" && (
+            <section className="sup-section">
+              <article className="card">
+                <div className="card-header">
+                  <h2>Observaciones de supervisión</h2>
+                  <p>
+                    Historial de comentarios registrados durante las
+                    supervisiones de lugar de trabajo y equipo.
+                  </p>
+                </div>
+                <div className="card-body card-body-scroll">
+                  {cargandoObs && (
+                    <p className="texto-vacio">Cargando observaciones...</p>
+                  )}
+                  {errorObs && !cargandoObs && (
+                    <p className="texto-vacio">{errorObs}</p>
+                  )}
+                  {!cargandoObs && observaciones.length === 0 && !errorObs && (
+                    <p className="texto-vacio">
+                      Aún no hay observaciones registradas.
+                    </p>
+                  )}
+                  {!cargandoObs && observaciones.length > 0 && (
+                    <table className="tabla">
+                      <thead>
+                        <tr>
+                          <th>Fecha y hora</th>
+                          <th>Observación</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {observaciones.map((o) => (
+                          <tr key={o.id}>
+                            <td>{o.fechaTexto}</td>
+                            <td>{o.texto}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </article>
             </section>

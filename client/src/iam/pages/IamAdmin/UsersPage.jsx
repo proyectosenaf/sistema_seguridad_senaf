@@ -1,5 +1,6 @@
 // client/src/iam/pages/IamAdmin/UsersPage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../../api/iamApi.js";
 import { Edit3, Trash2 } from "lucide-react";
 
@@ -23,7 +24,16 @@ const ROLE_MAP_DB_TO_UI = Object.fromEntries(
   Object.entries(ROLE_MAP_UI_TO_DB).map(([ui, db]) => [db, ui])
 );
 
-const ESTADOS_CIVILES = ["Soltero/a", "Casado/a", "Divorciado/a", "Viudo/a", "Unión libre"];
+const ESTADOS_CIVILES = [
+  "Soltero/a",
+  "Casado/a",
+  "Divorciado/a",
+  "Viudo/a",
+  "Unión libre",
+];
+
+// mismo flag que en iamApi.js, pero del lado del cliente
+const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 
 /* ===================== Helpers ===================== */
 function getPath(obj, path) {
@@ -82,19 +92,79 @@ function mapUserToFormSafe(api = {}) {
 
   return {
     // PERSONALES
-    nombreCompleto: getVal(api, ["nombreCompleto", "fullName", "name", "persona.nombreCompleto"], nombreFromParts || ""),
+    nombreCompleto: getVal(
+      api,
+      ["nombreCompleto", "fullName", "name", "persona.nombreCompleto"],
+      nombreFromParts || ""
+    ),
     tipoDni: getVal(api, ["tipoDni", "persona.tipoDni"], "Identidad"),
-    dni: getVal(api, ["dni", "documento", "num_documento", "numeroDocumento", "persona.dni", "persona.numeroDocumento"], ""),
+    dni: getVal(
+      api,
+      ["dni", "documento", "num_documento", "numeroDocumento", "persona.dni", "persona.numeroDocumento"],
+      ""
+    ),
     estadoCivil: civilOk,
     fechaNacimiento: toDateInputSafe(fechaRaw),
-    paisNacimiento: getVal(api, ["paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais", "datosNacimiento.pais", "nacimiento.pais"], ""),
-    ciudadNacimiento: getVal(api, ["ciudadNacimiento", "ciudad_nacimiento", "cityOfBirth", "persona.ciudad", "datosNacimiento.ciudad", "nacimiento.ciudad"], ""),
-    municipioNacimiento: getVal(api, ["municipioNacimiento", "municipio", "persona.municipio", "datosNacimiento.municipio", "nacimiento.municipio", "ubicacion.municipio"], ""),
-    correoPersona: getVal(api, ["correoPersona", "email", "correo", "mail", "persona.correo", "persona.email"], ""),
+    paisNacimiento: getVal(
+      api,
+      ["paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais", "datosNacimiento.pais", "nacimiento.pais"],
+      ""
+    ),
+    ciudadNacimiento: getVal(
+      api,
+      [
+        "ciudadNacimiento",
+        "ciudad_nacimiento",
+        "cityOfBirth",
+        "persona.ciudad",
+        "datosNacimiento.ciudad",
+        "nacimiento.ciudad",
+      ],
+      ""
+    ),
+    municipioNacimiento: getVal(
+      api,
+      [
+        "municipioNacimiento",
+        "municipio",
+        "persona.municipio",
+        "datosNacimiento.municipio",
+        "nacimiento.municipio",
+        "ubicacion.municipio",
+      ],
+      ""
+    ),
+    correoPersona: getVal(
+      api,
+      ["correoPersona", "email", "correo", "mail", "persona.correo", "persona.email"],
+      ""
+    ),
     profesion: getVal(api, ["profesion", "ocupacion", "persona.ocupacion"], ""),
-    lugarTrabajo: getVal(api, ["lugarTrabajo", "dondeLabora", "empresa", "persona.lugar_trabajo", "persona.dondeLabora"], ""),
-    telefono: getVal(api, ["telefono", "phone", "celular", "tel", "telefono1", "telefono2", "persona.telefono", "persona.celular", "contacto.telefono"], ""),
-    domicilio: getVal(api, ["domicilio", "direccion", "address", "direccionResidencia", "persona.direccion", "persona.domicilio", "ubicacion.direccion"], ""),
+    lugarTrabajo: getVal(
+      api,
+      ["lugarTrabajo", "dondeLabora", "empresa", "persona.lugar_trabajo", "persona.dondeLabora"],
+      ""
+    ),
+    telefono: getVal(
+      api,
+      [
+        "telefono",
+        "phone",
+        "celular",
+        "tel",
+        "telefono1",
+        "telefono2",
+        "persona.telefono",
+        "persona.celular",
+        "contacto.telefono",
+      ],
+      ""
+    ),
+    domicilio: getVal(
+      api,
+      ["domicilio", "direccion", "address", "direccionResidencia", "persona.direccion", "persona.domicilio", "ubicacion.direccion"],
+      ""
+    ),
     // IAM
     roles,
     active,
@@ -172,7 +242,12 @@ function firstNonEmpty(...vals) {
 function mapUserToForm(u = {}) {
   const p = u.persona || u.profile || {};
   return {
-    nombreCompleto: firstNonEmpty(u.nombreCompleto, u.name, p.nombreCompleto, [p.nombres, p.apellidos].filter(Boolean).join(" ")),
+    nombreCompleto: firstNonEmpty(
+      u.nombreCompleto,
+      u.name,
+      p.nombreCompleto,
+      [p.nombres, p.apellidos].filter(Boolean).join(" ")
+    ),
     tipoDni: firstNonEmpty(u.tipoDni, p.tipoDni, "Identidad"),
     dni: firstNonEmpty(u.dni, p.dni),
     estadoCivil: firstNonEmpty(u.estadoCivil, p.estadoCivil),
@@ -192,6 +267,9 @@ function mapUserToForm(u = {}) {
 /* =================================================== */
 
 export default function UsersPage() {
+  // 🔐 Auth0
+  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
+
   const [items, setItems] = useState([]);
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
@@ -231,13 +309,29 @@ export default function UsersPage() {
   const showPwdRules = creds.password && creds.password.length > 0;
 
   const firstFieldRef = useRef(null);
+  const tokenRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // 👉 helper centralizado para obtener el token
+  const getToken = async () => {
+    // si desactivas auth en .env, no se pide token y se usan x-user-*
+    if (DISABLE_AUTH) return null;
+    if (tokenRef.current) return tokenRef.current;
+
+    const t = await getAccessTokenSilently({
+      audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+    });
+    tokenRef.current = t;
+    return t;
+  };
 
   async function load() {
     try {
       setLoading(true);
       setErr("");
-      const res = await iamApi.listUsers("");
+
+      const token = await getToken();
+      const res = await iamApi.listUsers("", token); // 👈 ahora con token (o null en dev)
       setItems(res.items || []);
     } catch (e) {
       setErr(e?.message || "Error al cargar usuarios");
@@ -245,9 +339,13 @@ export default function UsersPage() {
       setLoading(false);
     }
   }
+
   useEffect(() => {
+    // En modo dev (DISABLE_AUTH=1) siempre cargamos; en prod solo si está autenticado
+    if (!DISABLE_AUTH && !isAuthenticated) return;
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   const filteredAll = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -291,10 +389,12 @@ export default function UsersPage() {
 
   async function triggerVerification(userId, email) {
     if (!/^\S+@\S+\.\S+$/.test(email || "")) throw new Error("Correo inválido para verificación");
+    const token = await getToken();
+
     if (typeof iamApi.sendVerificationEmail === "function") {
-      return await iamApi.sendVerificationEmail(userId, email);
+      return await iamApi.sendVerificationEmail(userId, email, token);
     } else if (typeof iamApi.sendVerification === "function") {
-      return await iamApi.sendVerification({ userId, email });
+      return await iamApi.sendVerification({ userId, email, token });
     } else {
       throw new Error("La API de verificación no está implementada en iamApi");
     }
@@ -318,13 +418,14 @@ export default function UsersPage() {
 
       let res;
       let savedId = editing;
+      const token = await getToken();
 
       if (editing) {
-        res = await iamApi.updateUser(editing, payload);
+        res = await iamApi.updateUser(editing, payload, token);
         savedId = res?._id || res?.id || res?.userId || res?.data?._id || savedId;
         alert("Usuario actualizado correctamente");
       } else {
-        res = await iamApi.createUser(payload);
+        res = await iamApi.createUser(payload, token);
         savedId = res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id;
         alert("Usuario creado correctamente ✅");
       }
@@ -354,8 +455,9 @@ export default function UsersPage() {
 
   async function toggleActive(u) {
     try {
-      if (u.active === false) await iamApi.enableUser(u._id);
-      else await iamApi.disableUser(u._id);
+      const token = await getToken();
+      if (u.active === false) await iamApi.enableUser(u._id, token);
+      else await iamApi.disableUser(u._id, token);
       await load();
     } catch (e) {
       alert(e?.message || "No se pudo cambiar el estado");
@@ -375,11 +477,14 @@ export default function UsersPage() {
       setLoading(true);
       let full = u;
 
+      // ahora mismo iamApi no tiene getUser/getUserById, pero dejamos el código
       if (typeof iamApi.getUser === "function") {
-        const r = await iamApi.getUser(u._id);
+        const token = await getToken();
+        const r = await iamApi.getUser(u._id, token);
         full = r?.item || r?.user || r || u;
       } else if (typeof iamApi.getUserById === "function") {
-        const res = await iamApi.getUserById(u._id);
+        const token = await getToken();
+        const res = await iamApi.getUserById(u._id, token);
         full =
           res?.data?.item?.usuario ??
           res?.data?.item?.user ??
@@ -427,7 +532,8 @@ export default function UsersPage() {
     const prev = items;
     setItems((curr) => curr.filter((x) => x._id !== u._id));
     try {
-      await iamApi.deleteUser(u._id);
+      const token = await getToken();
+      await iamApi.deleteUser(u._id, token);
       if (editing === u._id) cancelEdit();
       alert("Usuario eliminado correctamente.");
     } catch (e) {
@@ -457,11 +563,22 @@ export default function UsersPage() {
       )}
 
       {/* Formulario */}
-      <form onSubmit={handleSubmit} className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3"
+      >
         <h3 className="font-semibold text-lg">{editing ? "Editar usuario" : "Crear usuario"}</h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Nombre completo" name="nombreCompleto" value={form.nombreCompleto ?? ""} onChange={setField} error={errors.nombreCompleto} required inputRef={firstFieldRef} />
+          <Field
+            label="Nombre completo"
+            name="nombreCompleto"
+            value={form.nombreCompleto ?? ""}
+            onChange={setField}
+            error={errors.nombreCompleto}
+            required
+            inputRef={firstFieldRef}
+          />
 
           <div className="md:col-span-2">
             <span className="text-sm">Documento</span>
@@ -487,7 +604,13 @@ export default function UsersPage() {
           </div>
 
           <Select label="Estado civil" name="estadoCivil" value={form.estadoCivil ?? ""} onChange={setField} options={ESTADOS_CIVILES} />
-          <Field type="date" label="Fecha de nacimiento" name="fechaNacimiento" value={form.fechaNacimiento ?? ""} onChange={setField} />
+          <Field
+            type="date"
+            label="Fecha de nacimiento"
+            name="fechaNacimiento"
+            value={form.fechaNacimiento ?? ""}
+            onChange={setField}
+          />
 
           <Field label="País nacimiento" name="paisNacimiento" value={form.paisNacimiento ?? ""} onChange={setField} />
           <Field label="Ciudad nacimiento" name="ciudadNacimiento" value={form.ciudadNacimiento ?? ""} onChange={setField} />
@@ -561,7 +684,9 @@ export default function UsersPage() {
               placeholder="••••••••"
             />
             {errors.confirm && <span className="text-xs text-red-500">{errors.confirm}</span>}
-            {!errors.confirm && creds.confirm && !match && <span className="text-xs text-red-500">No coincide con la contraseña.</span>}
+            {!errors.confirm && creds.confirm && !match && (
+              <span className="text-xs text-red-500">No coincide con la contraseña.</span>
+            )}
           </label>
 
           <label className="flex items-center gap-2">

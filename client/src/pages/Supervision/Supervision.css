@@ -507,6 +507,71 @@
 }
 
 /* =============================
+   REPORTES – EXPORTAR EXCEL / PDF
+   ============================= */
+
+.sup-report-footer {
+  margin-top: 1rem;
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.25rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  background: #020617;
+}
+
+.sup-report-label {
+  font-size: 0.85rem;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.sup-report-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Botón base */
+.sup-btn {
+  border: none;
+  cursor: pointer;
+  padding: 0.55rem 1.6rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #f9fafb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.9);
+  transition: transform 0.08s ease-out, box-shadow 0.08s ease-out, filter 0.08s ease-out;
+}
+
+.sup-btn:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 1);
+}
+
+/* Verde tipo Excel */
+.sup-btn-excel {
+  background-color: #16a34a;
+}
+
+.sup-btn-excel:hover {
+  filter: brightness(1.05);
+}
+
+/* Azul tipo PDF */
+.sup-btn-pdf {
+  background-color: #2563eb;
+}
+
+.sup-btn-pdf:hover {
+  filter: brightness(1.05);
+}
+
+/* =============================
    RESPONSIVO
    ============================= */
 
@@ -532,6 +597,16 @@
   .supervision-nav {
     width: 100%;
     overflow-x: auto;
+  }
+
+  .sup-report-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sup-report-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 
