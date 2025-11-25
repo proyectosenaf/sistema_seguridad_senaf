@@ -357,22 +357,11 @@ const PROFESIONES_OFICIOS = [
   "Otro",
 ];
 
-<<<<<<< HEAD
-const ESTADOS_CIVILES = [
-  "Soltero/a",
-  "Casado/a",
-  "Divorciado/a",
-  "Viudo/a",
-  "Unión libre",
-];
-
 // mismo flag que en iamApi.js, pero del lado del cliente
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
-=======
 const AUTH_AUDIENCE = import.meta.env.VITE_AUTH0_AUDIENCE;
 
 /* ===================== Helpers básicos ===================== */
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
 
 function getPath(obj, path) {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -432,7 +421,11 @@ function mapUserToFormSafe(api = {}) {
   if (typeof roles === "string") roles = [roles];
   if (Array.isArray(roles)) {
     roles = roles
-      .map((r) => (typeof r === "string" ? r : r?.code || r?.name || r?.nombre || ""))
+      .map((r) =>
+        typeof r === "string"
+          ? r
+          : r?.code || r?.name || r?.nombre || r?.key || ""
+      )
       .filter(Boolean);
   } else {
     roles = [];
@@ -463,9 +456,6 @@ function mapUserToFormSafe(api = {}) {
     tipoDni: getVal(api, ["tipoDni", "persona.tipoDni"], "Identidad"),
     dni: getVal(
       api,
-<<<<<<< HEAD
-      ["dni", "documento", "num_documento", "numeroDocumento", "persona.dni", "persona.numeroDocumento"],
-=======
       [
         "dni",
         "documento",
@@ -474,16 +464,12 @@ function mapUserToFormSafe(api = {}) {
         "persona.dni",
         "persona.numeroDocumento",
       ],
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       ""
     ),
     estadoCivil: civilOk,
     fechaNacimiento: toDateInputSafe(fechaRaw),
     paisNacimiento: getVal(
       api,
-<<<<<<< HEAD
-      ["paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais", "datosNacimiento.pais", "nacimiento.pais"],
-=======
       [
         "paisNacimiento",
         "pais_nacimiento",
@@ -492,7 +478,6 @@ function mapUserToFormSafe(api = {}) {
         "datosNacimiento.pais",
         "nacimiento.pais",
       ],
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       ""
     ),
     ciudadNacimiento: getVal(
@@ -521,9 +506,6 @@ function mapUserToFormSafe(api = {}) {
     ),
     correoPersona: getVal(
       api,
-<<<<<<< HEAD
-      ["correoPersona", "email", "correo", "mail", "persona.correo", "persona.email"],
-=======
       [
         "correoPersona",
         "email",
@@ -532,15 +514,11 @@ function mapUserToFormSafe(api = {}) {
         "persona.correo",
         "persona.email",
       ],
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       ""
     ),
     profesion: getVal(api, ["profesion", "ocupacion", "persona.ocupacion"], ""),
     lugarTrabajo: getVal(
       api,
-<<<<<<< HEAD
-      ["lugarTrabajo", "dondeLabora", "empresa", "persona.lugar_trabajo", "persona.dondeLabora"],
-=======
       [
         "lugarTrabajo",
         "dondeLabora",
@@ -548,7 +526,6 @@ function mapUserToFormSafe(api = {}) {
         "persona.lugar_trabajo",
         "persona.dondeLabora",
       ],
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       ""
     ),
     telefono: getVal(
@@ -568,9 +545,6 @@ function mapUserToFormSafe(api = {}) {
     ),
     domicilio: getVal(
       api,
-<<<<<<< HEAD
-      ["domicilio", "direccion", "address", "direccionResidencia", "persona.direccion", "persona.domicilio", "ubicacion.direccion"],
-=======
       [
         "domicilio",
         "direccion",
@@ -580,7 +554,6 @@ function mapUserToFormSafe(api = {}) {
         "persona.domicilio",
         "ubicacion.direccion",
       ],
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       ""
     ),
     // IAM
@@ -722,7 +695,9 @@ function CountrySelect({ label, name, value, onChange }) {
                 type="button"
                 onClick={() => handleSelect(c)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-cyan-500/15 ${
-                  selected === c ? "bg-cyan-500/20 text-cyan-100" : "text-neutral-100"
+                  selected === c
+                    ? "bg-cyan-500/20 text-cyan-100"
+                    : "text-neutral-100"
                 }`}
               >
                 {c}
@@ -781,7 +756,7 @@ function ProfessionSelect({ value, onChange }) {
         <span className={selected ? "text-neutral-100" : "text-neutral-400"}>
           {selected || "Seleccionar profesión u oficio"}
         </span>
-        <span className="ml-auto text-xs.opacity-70">▾</span>
+        <span className="ml-auto text-xs opacity-70">▾</span>
       </button>
 
       {open && (
@@ -793,7 +768,9 @@ function ProfessionSelect({ value, onChange }) {
                 type="button"
                 onClick={() => handleSelect(p)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-cyan-500/15 ${
-                  selected === p ? "bg-cyan-500/20 text-cyan-100" : "text-neutral-100"
+                  selected === p
+                    ? "bg-cyan-500/20 text-cyan-100"
+                    : "text-neutral-100"
                 }`}
               >
                 {p}
@@ -895,7 +872,7 @@ function BirthDatePicker({ label, name, value, onChange }) {
 
       {open && (
         <div className="absolute z-40 mt-1 w-72 rounded-xl border border-cyan-500/60 bg-slate-950/95 backdrop-blur-sm shadow-[0_0_25px_rgba(34,211,238,0.55)] p-3">
-          <div className="flex items-center justify-between.mb-2 text-sm text-neutral-100">
+          <div className="flex items-center justify-between mb-2 text-sm text-neutral-100">
             <button
               type="button"
               onClick={() => goMonth(-1)}
@@ -957,45 +934,18 @@ function BirthDatePicker({ label, name, value, onChange }) {
 /* Reglas para validar password */
 function passwordRules(p = "") {
   return {
-<<<<<<< HEAD
-    nombreCompleto: firstNonEmpty(
-      u.nombreCompleto,
-      u.name,
-      p.nombreCompleto,
-      [p.nombres, p.apellidos].filter(Boolean).join(" ")
-    ),
-    tipoDni: firstNonEmpty(u.tipoDni, p.tipoDni, "Identidad"),
-    dni: firstNonEmpty(u.dni, p.dni),
-    estadoCivil: firstNonEmpty(u.estadoCivil, p.estadoCivil),
-    fechaNacimiento: (firstNonEmpty(u.fechaNacimiento, p.fechaNacimiento) || "").toString().slice(0, 10),
-    paisNacimiento: firstNonEmpty(u.paisNacimiento, p.paisNacimiento),
-    ciudadNacimiento: firstNonEmpty(u.ciudadNacimiento, p.ciudadNacimiento),
-    municipioNacimiento: firstNonEmpty(u.municipioNacimiento, p.municipioNacimiento),
-    correoPersona: firstNonEmpty(u.correoPersona, u.email, p.correoPersona),
-    profesion: firstNonEmpty(u.profesion, p.profesion),
-    lugarTrabajo: firstNonEmpty(u.lugarTrabajo, p.lugarTrabajo),
-    telefono: firstNonEmpty(u.telefono, p.telefono, u.phone),
-    domicilio: firstNonEmpty(u.domicilio, p.domicilio),
-    roles: Array.isArray(u.roles) ? u.roles : Array.isArray(u.role) ? u.role : [],
-    active: u.active !== false,
-=======
     length: p.length >= 8,
     upper: /[A-Z]/.test(p),
     lower: /[a-z]/.test(p),
     digit: /\d/.test(p),
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
   };
 }
 
 /* ===================== Página principal ===================== */
 
 export default function UsersPage() {
-<<<<<<< HEAD
   // 🔐 Auth0
-  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
-=======
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
 
   const [items, setItems] = useState([]);
   const [roleCatalog, setRoleCatalog] = useState([]);
@@ -1003,6 +953,7 @@ export default function UsersPage() {
   const [onlyActive, setOnlyActive] = useState(true);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [errors, setErrors] = useState({});
 
   const STEP = 10;
   const [visibleCount, setVisibleCount] = useState(STEP);
@@ -1043,19 +994,6 @@ export default function UsersPage() {
   const tokenRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
 
-<<<<<<< HEAD
-  // 👉 helper centralizado para obtener el token
-  const getToken = async () => {
-    // si desactivas auth en .env, no se pide token y se usan x-user-*
-    if (DISABLE_AUTH) return null;
-    if (tokenRef.current) return tokenRef.current;
-
-    const t = await getAccessTokenSilently({
-      audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-    });
-    tokenRef.current = t;
-    return t;
-=======
   const roleLabelMap = useMemo(
     () =>
       Object.fromEntries(
@@ -1067,22 +1005,26 @@ export default function UsersPage() {
     [roleCatalog]
   );
 
-  // Helper para pedir token Auth0
+  // 👉 helper centralizado para obtener el token
   const getToken = async () => {
+    // si desactivas auth en .env, no se pide token y se usan x-user-*
+    if (DISABLE_AUTH) return null;
     if (!isAuthenticated) return null;
+    if (tokenRef.current) return tokenRef.current;
+
     try {
-      const token = await getAccessTokenSilently({
+      const t = await getAccessTokenSilently({
         authorizationParams: {
           audience: AUTH_AUDIENCE,
           scope: "openid profile email offline_access",
         },
       });
-      return token || null;
+      tokenRef.current = t;
+      return t || null;
     } catch (e) {
       console.warn("[UsersPage] no se pudo obtener token:", e?.message || e);
       return null;
     }
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
   };
 
   async function load() {
@@ -1091,11 +1033,8 @@ export default function UsersPage() {
       setErr("");
 
       const token = await getToken();
-<<<<<<< HEAD
-      const res = await iamApi.listUsers("", token); // 👈 ahora con token (o null en dev)
-      setItems(res.items || []);
-=======
-      if (!token) {
+
+      if (!DISABLE_AUTH && !token) {
         setErr(
           "No se pudo obtener token de sesión. Inicia sesión de nuevo para gestionar usuarios."
         );
@@ -1113,7 +1052,6 @@ export default function UsersPage() {
 
       const rolesRaw = resRoles?.items || resRoles?.roles || [];
       setRoleCatalog(Array.isArray(rolesRaw) ? rolesRaw : []);
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
     } catch (e) {
       setErr(e?.message || "Error al cargar usuarios");
     } finally {
@@ -1126,11 +1064,7 @@ export default function UsersPage() {
     if (!DISABLE_AUTH && !isAuthenticated) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-<<<<<<< HEAD
   }, [isAuthenticated]);
-=======
-  }, []);
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
 
   const filteredAll = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -1181,18 +1115,13 @@ export default function UsersPage() {
   }
 
   async function triggerVerification(userId, email) {
-<<<<<<< HEAD
-    if (!/^\S+@\S+\.\S+$/.test(email || "")) throw new Error("Correo inválido para verificación");
-    const token = await getToken();
-=======
     if (!/^\S+@\S+\.\S+$/.test(email || ""))
       throw new Error("Correo inválido para verificación");
 
     const token = await getToken();
-    if (!token) {
+    if (!DISABLE_AUTH && !token) {
       throw new Error("No hay token para enviar verificación");
     }
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
 
     if (typeof iamApi.sendVerificationEmail === "function") {
       return await iamApi.sendVerificationEmail(userId, email, token);
@@ -1206,6 +1135,7 @@ export default function UsersPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     const v = validate();
+    setErrors(v);
     const keys = Object.keys(v);
     if (keys.length) {
       const firstKey = keys[0];
@@ -1219,7 +1149,7 @@ export default function UsersPage() {
       setSubmitting(true);
 
       const token = await getToken();
-      if (!token) {
+      if (!DISABLE_AUTH && !token) {
         alert(
           "No se pudo obtener token de sesión. Inicia sesión nuevamente para guardar."
         );
@@ -1232,22 +1162,15 @@ export default function UsersPage() {
 
       let res;
       let savedId = editing;
-      const token = await getToken();
 
       if (editing) {
         res = await iamApi.updateUser(editing, payload, token);
-<<<<<<< HEAD
-        savedId = res?._id || res?.id || res?.userId || res?.data?._id || savedId;
-        alert("Usuario actualizado correctamente");
-      } else {
-        res = await iamApi.createUser(payload, token);
-        savedId = res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id;
-=======
         savedId =
           res?._id ||
           res?.id ||
           res?.userId ||
           res?.data?._id ||
+          res?.data?.item?._id ||
           savedId;
         alert("Usuario actualizado correctamente");
       } else {
@@ -1258,14 +1181,11 @@ export default function UsersPage() {
           res?.userId ||
           res?.data?._id ||
           res?.data?.item?._id;
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
         alert("Usuario creado correctamente ✅");
       }
 
-      if (creds.sendVerification) {
+      if (creds.sendVerification && savedId && form.correoPersona) {
         try {
-          if (!savedId)
-            throw new Error("No se obtuvo el id del usuario guardado");
           await triggerVerification(savedId, form.correoPersona);
           alert(
             "Se envió el correo de verificación a " + form.correoPersona
@@ -1282,6 +1202,7 @@ export default function UsersPage() {
       setForm(empty);
       setEditing(null);
       setCreds({ password: "", confirm: "", sendVerification: false });
+      setErrors({});
       await load();
     } catch (e2) {
       alert("⚠️ Error al guardar: " + (e2?.message || "Revisa la consola"));
@@ -1294,18 +1215,17 @@ export default function UsersPage() {
   async function toggleActive(u) {
     try {
       const token = await getToken();
-<<<<<<< HEAD
-=======
-      if (!token) {
+
+      if (!DISABLE_AUTH && !token) {
         alert(
           "No se pudo obtener token de sesión. Inicia sesión nuevamente para cambiar estado."
         );
         return;
       }
 
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
       if (u.active === false) await iamApi.enableUser(u._id, token);
       else await iamApi.disableUser(u._id, token);
+
       await load();
     } catch (e) {
       alert(e?.message || "No se pudo cambiar el estado");
@@ -1322,14 +1242,10 @@ export default function UsersPage() {
       behavior: "smooth",
     });
 
-    const mapped = mapUserToFormSafe(u);
-    setForm((prev) => ({
-      ...prev,
-      ...mapped,
-    }));
+    setLoading(true);
+    let full = u;
 
-<<<<<<< HEAD
-      // ahora mismo iamApi no tiene getUser/getUserById, pero dejamos el código
+    try {
       if (typeof iamApi.getUser === "function") {
         const token = await getToken();
         const r = await iamApi.getUser(u._id, token);
@@ -1349,51 +1265,50 @@ export default function UsersPage() {
           res ??
           u;
       }
-
-      // Intenta el mapeo seguro; si falla, usa el alternativo
-      try {
-        setForm(mapUserToFormSafe(full));
-      } catch {
-        setForm(mapUserToForm(full));
-      }
     } catch (e) {
-      console.warn("[UsersPage] no se pudo obtener detalle; usando item de lista:", e);
-      try {
-        setForm(mapUserToFormSafe(u));
-      } catch {
-        setForm(mapUserToForm(u));
-      }
+      console.warn(
+        "[UsersPage] no se pudo obtener detalle; usando item de lista:",
+        e
+      );
     } finally {
       setLoading(false);
-      setTimeout(() => firstFieldRef.current?.focus?.(), 120);
     }
+
+    try {
+      setForm((prev) => ({
+        ...prev,
+        ...mapUserToFormSafe(full),
+      }));
+    } catch {
+      setForm((prev) => ({
+        ...prev,
+        ...mapUserToFormSafe(u),
+      }));
+    }
+
+    setTimeout(() => firstFieldRef.current?.focus?.(), 120);
   }
-  /* ================================================ */
 
   function cancelEdit() {
     setEditing(null);
     setForm(empty);
     setCreds({ password: "", confirm: "", sendVerification: false });
     setErrors({});
-=======
     setTimeout(() => firstFieldRef.current?.focus?.(), 300);
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
   }
 
   async function handleDelete(u) {
     const ok = window.confirm(
-      `¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`
+      `¿Seguro que deseas eliminar al usuario "${
+        u.nombreCompleto || u.name || ""
+      }"?`
     );
     if (!ok) return;
 
     try {
       const token = await getToken();
-<<<<<<< HEAD
-      await iamApi.deleteUser(u._id, token);
-      if (editing === u._id) cancelEdit();
-      alert("Usuario eliminado correctamente.");
-=======
-      if (!token) {
+
+      if (!DISABLE_AUTH && !token) {
         alert(
           "No se pudo obtener token de sesión. Inicia sesión nuevamente para eliminar."
         );
@@ -1406,9 +1321,9 @@ export default function UsersPage() {
         throw new Error("La API no soporta eliminar usuarios aún");
       }
 
+      if (editing === u._id) cancelEdit();
       await load();
-      alert("Usuario eliminado");
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
+      alert("Usuario eliminado correctamente.");
     } catch (e) {
       alert(e?.message || "No se pudo eliminar el usuario");
     }
@@ -1428,25 +1343,7 @@ export default function UsersPage() {
         </p>
       </header>
 
-      {/* Formulario */}
-<<<<<<< HEAD
-      <form
-        onSubmit={handleSubmit}
-        className="rounded-lg border border-neutral-200 dark:border-neutral-700 p-4 bg-white dark:bg-neutral-900 space-y-3"
-      >
-        <h3 className="font-semibold text-lg">{editing ? "Editar usuario" : "Crear usuario"}</h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field
-            label="Nombre completo"
-            name="nombreCompleto"
-            value={form.nombreCompleto ?? ""}
-            onChange={setField}
-            error={errors.nombreCompleto}
-            required
-            inputRef={firstFieldRef}
-          />
-=======
+      {/* Formulario principal */}
       <section className="max-w-5xl mx-auto bg-slate-900/60 border border-cyan-500/30 rounded-2xl shadow-[0_0_30px_rgba(34,211,238,0.25)] p-5 md:p-7 space-y-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-lg md:text-xl font-semibold">
@@ -1462,6 +1359,7 @@ export default function UsersPage() {
                 confirm: "",
                 sendVerification: false,
               });
+              setErrors({});
             }}
             className="text-xs md:text-sm px-3 py-1.5 rounded-lg border border-cyan-500/60 hover:bg-cyan-500/10 transition-colors"
           >
@@ -1474,7 +1372,6 @@ export default function UsersPage() {
             {err}
           </div>
         )}
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Datos personales */}
@@ -1491,6 +1388,11 @@ export default function UsersPage() {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="Ej. Juan Pérez"
               />
+              {errors.nombreCompleto && (
+                <p className="text-xs text-red-400">
+                  {errors.nombreCompleto}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1518,12 +1420,13 @@ export default function UsersPage() {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="0000-0000-00000"
               />
+              {errors.dni && (
+                <p className="text-xs text-red-400">{errors.dni}</p>
+              )}
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Estado civil
-              </label>
+              <label className="text-sm text-neutral-200">Estado civil</label>
               <select
                 name="estadoCivil"
                 value={form.estadoCivil}
@@ -1540,46 +1443,6 @@ export default function UsersPage() {
             </div>
           </div>
 
-<<<<<<< HEAD
-          <Select label="Estado civil" name="estadoCivil" value={form.estadoCivil ?? ""} onChange={setField} options={ESTADOS_CIVILES} />
-          <Field
-            type="date"
-            label="Fecha de nacimiento"
-            name="fechaNacimiento"
-            value={form.fechaNacimiento ?? ""}
-            onChange={setField}
-          />
-
-          <Field label="País nacimiento" name="paisNacimiento" value={form.paisNacimiento ?? ""} onChange={setField} />
-          <Field label="Ciudad nacimiento" name="ciudadNacimiento" value={form.ciudadNacimiento ?? ""} onChange={setField} />
-          <Field label="Municipio" name="municipioNacimiento" value={form.municipioNacimiento ?? ""} onChange={setField} />
-
-          {/* 🔀 El correo electrónico ahora vive en "Credenciales de acceso" */}
-          <Field label="Profesión u oficio" name="profesion" value={form.profesion ?? ""} onChange={setField} />
-          <Field label="Lugar de trabajo" name="lugarTrabajo" value={form.lugarTrabajo ?? ""} onChange={setField} />
-          <Field label="Teléfono" name="telefono" value={form.telefono ?? ""} onChange={setField} />
-          <Field className="md:col-span-2" label="Domicilio actual" name="domicilio" value={form.domicilio ?? ""} onChange={setField} />
-
-          <label className="space-y-1 md:col-span-2">
-            <span className="text-sm">Rol del usuario</span>
-            <RoleSelect value={form.roles} onChange={(rolesDb) => setField("roles", rolesDb)} />
-          </label>
-        </div>
-
-        <section className="mt-3 space-y-2">
-          <h4 className="font-semibold">Credenciales de acceso</h4>
-
-          {/* Correo electrónico */}
-          <label className="space-y-1">
-            <span className="text-sm">Correo electrónico</span>
-            <input
-              name="correoPersona"
-              type="email"
-              className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
-              value={form.correoPersona ?? ""}
-              onChange={(e) => setField("correoPersona", e.target.value)}
-              placeholder="usuario@dominio.com"
-=======
           {/* Fecha / país / ciudad / municipio */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <BirthDatePicker
@@ -1587,7 +1450,6 @@ export default function UsersPage() {
               name="fechaNacimiento"
               value={form.fechaNacimiento}
               onChange={setField}
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
             />
             <CountrySelect
               label="País de nacimiento"
@@ -1631,11 +1493,17 @@ export default function UsersPage() {
               </label>
               <input
                 name="correoPersona"
+                type="email"
                 value={form.correoPersona}
                 onChange={(e) => setField("correoPersona", e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-                placeholder="ejemplo@dominio.com"
+                placeholder="usuario@dominio.com"
               />
+              {errors.correoPersona && (
+                <p className="text-xs text-red-400">
+                  {errors.correoPersona}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1698,6 +1566,9 @@ export default function UsersPage() {
                 onChange={(val) => setField("roles", val)}
                 availableRoles={roleCatalog}
               />
+              {errors.roles && (
+                <p className="text-xs text-red-400">{errors.roles}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1716,6 +1587,7 @@ export default function UsersPage() {
             </div>
           </div>
 
+          {/* Contraseña y verificación */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
             <div className="space-y-1">
               <label className="text-sm text-neutral-200">
@@ -1737,6 +1609,7 @@ export default function UsersPage() {
                     }))
                   }
                   className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                  placeholder="••••••••"
                 />
                 <button
                   type="button"
@@ -1746,6 +1619,9 @@ export default function UsersPage() {
                   {showPwd ? "Ocultar" : "Ver"}
                 </button>
               </div>
+              {errors.password && (
+                <p className="text-xs text-red-400">{errors.password}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1754,75 +1630,26 @@ export default function UsersPage() {
               </label>
               <input
                 type={showPwd ? "text" : "password"}
-<<<<<<< HEAD
-                className="w-full px-3 py-2 pr-24 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
-                value={creds.password}
-                onChange={(e) => setCreds((c) => ({ ...c, password: e.target.value }))}
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPwd((s) => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-sm px-2 py-1 rounded bg-neutral-200 dark:bg-neutral-700"
-              >
-                {showPwd ? "Ocultar" : "Mostrar"}
-              </button>
-            </div>
-            {errors.password && <span className="text-xs text-red-500">{errors.password}</span>}
-            {showPwdRules && (
-              <ul className="text-xs opacity-80 mt-1 grid grid-cols-2 gap-x-4">
-                <li>{pwdR.length ? "✅" : "❌"} Mínimo 8 caracteres</li>
-                <li>{pwdR.upper ? "✅" : "❌"} Una mayúscula</li>
-                <li>{pwdR.lower ? "✅" : "❌"} Una minúscula</li>
-                <li>{pwdR.digit ? "✅" : "❌"} Un número</li>
-              </ul>
-            )}
-          </label>
-
-          <label className="space-y-1">
-            <span className="text-sm">Confirmar contraseña</span>
-            <input
-              type={showPwd ? "text" : "password"}
-              className="w-full px-3 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800"
-              value={creds.confirm}
-              onChange={(e) => setCreds((c) => ({ ...c, confirm: e.target.value }))}
-              placeholder="••••••••"
-            />
-            {errors.confirm && <span className="text-xs text-red-500">{errors.confirm}</span>}
-            {!errors.confirm && creds.confirm && !match && (
-              <span className="text-xs text-red-500">No coincide con la contraseña.</span>
-            )}
-          </label>
-
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!creds.sendVerification}
-              onChange={async (e) => {
-                const checked = e.target.checked;
-                setCreds((c) => ({ ...c, sendVerification: checked }));
-                if (checked && editing && /^\S+@\S+\.\S+$/.test(form.correoPersona || "")) {
-                  try {
-                    setSubmitting(true);
-                    await triggerVerification(editing, form.correoPersona);
-                    alert("Se envió el correo de verificación a " + form.correoPersona);
-                  } catch (ev) {
-                    console.warn("[UsersPage] verificación inmediata falló:", ev);
-                    alert("⚠️ No se pudo enviar verificación ahora: " + (ev?.message || "se enviará al guardar"));
-                  } finally {
-                    setSubmitting(false);
-                  }
-=======
+                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 value={creds.confirm}
                 onChange={(e) =>
                   setCreds((prev) => ({
                     ...prev,
                     confirm: e.target.value,
                   }))
->>>>>>> 46bafd784cc0d255f8e9693769662b8efbdee44e
                 }
-                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="••••••••"
               />
+              {errors.confirm && (
+                <span className="text-xs text-red-500">
+                  {errors.confirm}
+                </span>
+              )}
+              {!errors.confirm && creds.confirm && !match && (
+                <span className="text-xs text-red-500">
+                  No coincide con la contraseña.
+                </span>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1831,12 +1658,40 @@ export default function UsersPage() {
                 <input
                   type="checkbox"
                   checked={creds.sendVerification}
-                  onChange={(e) =>
+                  onChange={async (e) => {
+                    const checked = e.target.checked;
                     setCreds((prev) => ({
                       ...prev,
-                      sendVerification: e.target.checked,
-                    }))
-                  }
+                      sendVerification: checked,
+                    }));
+                    // opción de enviar inmediato cuando se marca en edición
+                    if (
+                      checked &&
+                      editing &&
+                      /^\S+@\S+\.\S+$/.test(form.correoPersona || "")
+                    ) {
+                      try {
+                        setSubmitting(true);
+                        await triggerVerification(editing, form.correoPersona);
+                        alert(
+                          "Se envió el correo de verificación a " +
+                            form.correoPersona
+                        );
+                      } catch (ev) {
+                        console.warn(
+                          "[UsersPage] verificación inmediata falló:",
+                          ev
+                        );
+                        alert(
+                          "⚠️ No se pudo enviar verificación ahora: " +
+                            (ev?.message ||
+                              "se intentará al guardar, si está habilitado")
+                        );
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }
+                  }}
                 />
                 Enviar correo de verificación al guardar
               </label>
@@ -1849,22 +1704,30 @@ export default function UsersPage() {
                 Requisitos de contraseña:
               </div>
               <div>
-                <span className={pwdR.length ? "text-green-400" : "text-red-400"}>
+                <span
+                  className={pwdR.length ? "text-green-400" : "text-red-400"}
+                >
                   • Al menos 8 caracteres
                 </span>
               </div>
               <div>
-                <span className={pwdR.upper ? "text-green-400" : "text-red-400"}>
+                <span
+                  className={pwdR.upper ? "text-green-400" : "text-red-400"}
+                >
                   • Una letra mayúscula
                 </span>
               </div>
               <div>
-                <span className={pwdR.lower ? "text-green-400" : "text-red-400"}>
+                <span
+                  className={pwdR.lower ? "text-green-400" : "text-red-400"}
+                >
                   • Una letra minúscula
                 </span>
               </div>
               <div>
-                <span className={pwdR.digit ? "text-green-400" : "text-red-400"}>
+                <span
+                  className={pwdR.digit ? "text-green-400" : "text-red-400"}
+                >
                   • Un número
                 </span>
               </div>
@@ -1879,15 +1742,7 @@ export default function UsersPage() {
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={() => {
-                setForm(empty);
-                setEditing(null);
-                setCreds({
-                  password: "",
-                  confirm: "",
-                  sendVerification: false,
-                });
-              }}
+              onClick={cancelEdit}
               className="px-4 py-2 text-sm rounded-lg border border-neutral-500/50 text-neutral-200 hover:bg-neutral-700/40"
             >
               Cancelar
@@ -1911,7 +1766,9 @@ export default function UsersPage() {
       <section className="max-w-6xl mx-auto space-y-4">
         <div className="flex flex-col md:flex-row gap-3 justify-between items-start">
           <div>
-            <h2 className="text-lg font-semibold mb-1">Usuarios registrados</h2>
+            <h2 className="text-lg font-semibold mb-1">
+              Usuarios registrados
+            </h2>
             <p className="text-xs text-neutral-400">
               {filteredAll.length} usuario(s) encontrados
             </p>
