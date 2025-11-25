@@ -3,6 +3,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 import CameraCapture from "../../components/CameraCapture.jsx";
+import VideoRecorder from "../../components/VideoRecorder.jsx";
 import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
 import iamApi from "../../iam/api/iamApi.js"; // 👈 para traer guardias
 
@@ -34,8 +35,11 @@ export default function IncidentesList() {
     priority: "alta",
     status: "abierto",
   });
-  const [photos, setPhotos] = useState([]);
+
+  // media = [{ type: "image" | "video", src }]
+  const [media, setMedia] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
+  const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null); // null → creando, id → editando
 
@@ -186,21 +190,33 @@ export default function IncidentesList() {
     }));
   };
 
+  // archivo desde input (imagen o video)
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const b64 = await fileToBase64(file);
-    setPhotos((prev) => [...prev, b64]);
+    const isVideo = file.type?.startsWith("video/");
+    setMedia((prev) => [
+      ...prev,
+      { type: isVideo ? "video" : "image", src: b64 },
+    ]);
     e.target.value = "";
   };
 
+  // foto desde cámara full screen
   const handleCameraCapture = (dataUrl) => {
-    setPhotos((prev) => [...prev, dataUrl]);
+    setMedia((prev) => [...prev, { type: "image", src: dataUrl }]);
     setShowCamera(false);
   };
 
-  const removePhoto = (idx) =>
-    setPhotos((prev) => prev.filter((_, i) => i !== idx));
+  // video desde grabador full screen
+  const handleVideoCapture = (dataUrl) => {
+    setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
+    setShowVideoRecorder(false);
+  };
+
+  const removeMedia = (idx) =>
+    setMedia((prev) => prev.filter((_, i) => i !== idx));
 
   const resetForm = () => {
     setForm({
@@ -212,7 +228,7 @@ export default function IncidentesList() {
       priority: "alta",
       status: "abierto",
     });
-    setPhotos([]);
+    setMedia([]);
     setEditingId(null);
   };
 
@@ -235,17 +251,25 @@ export default function IncidentesList() {
       );
       const label = guard ? guardLabel(guard) : form.reportedBy;
 
+      const photosBase64 = media
+        .filter((m) => m.type === "image")
+        .map((m) => m.src);
+      const videosBase64 = media
+        .filter((m) => m.type === "video")
+        .map((m) => m.src);
+
       const payload = {
         type: form.type,
         description: form.description,
         zone: form.zone,
         priority: form.priority,
         status: form.status,
-        reportedBy: label,                         // texto visible
+        reportedBy: label, // texto visible
         guardId: form.reportedByGuardId || undefined, // ID para enlazar con IAM
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
-        photosBase64: photos,
+        photosBase64,
+        videosBase64,
       };
 
       if (editingId) {
@@ -312,7 +336,10 @@ export default function IncidentesList() {
       priority: incidente.priority || "alta",
       status: incidente.status || "abierto",
     });
-    setPhotos(extractPhotos(incidente));
+
+    // cargamos fotos antiguas como media de tipo imagen
+    const oldPhotos = extractPhotos(incidente);
+    setMedia(oldPhotos.map((src) => ({ type: "image", src })));
   };
 
   const handleDelete = async (id) => {
@@ -461,7 +488,7 @@ export default function IncidentesList() {
             {/* Evidencias */}
             <div className="space-y-2">
               <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
-                Evidencias (fotos)
+                Evidencias (fotos / videos)
               </label>
               <div className="flex flex-wrap gap-3">
                 <button
@@ -477,37 +504,54 @@ export default function IncidentesList() {
                   onClick={() => setShowCamera(true)}
                   className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
-                  📷 Tomar foto
+                  📷 Tomar foto (pantalla completa)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowVideoRecorder(true)}
+                  className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex.items-center gap-2"
+                >
+                  🎥 Grabar video (pantalla completa)
                 </button>
 
                 <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                  Puede adjuntar varias imágenes como evidencia.
+                  Puede adjuntar imágenes o videos desde archivos, o grabarlos
+                  en tiempo real (vertical u horizontal).
                 </p>
               </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 onChange={handleFile}
                 className="hidden"
               />
 
-              {photos.length > 0 && (
+              {media.length > 0 && (
                 <div className="flex flex-wrap gap-3 mt-2">
-                  {photos.map((src, idx) => (
+                  {media.map((item, idx) => (
                     <div
                       key={idx}
                       className="relative w-24 h-24 rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40"
                     >
-                      <img
-                        src={src}
-                        alt={`evidencia-${idx + 1}`}
-                        className="w-full h-full object-cover"
-                      />
+                      {item.type === "image" ? (
+                        <img
+                          src={item.src}
+                          alt={`evidencia-${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <video
+                          src={item.src}
+                          className="w-full h-full object-cover"
+                          controls
+                        />
+                      )}
                       <button
                         type="button"
-                        onClick={() => removePhoto(idx)}
+                        onClick={() => removeMedia(idx)}
                         className="absolute top-1 right-1 bg-black/70 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
                       >
                         ✕
@@ -583,7 +627,7 @@ export default function IncidentesList() {
 
       {/* LISTA */}
       <div className="bg-[#0f1b2d] border border-cyan-400/20 rounded-lg shadow-[0_0_30px_rgba(0,255,255,0.08)] overflow-hidden">
-        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-cyan-400/10 gap-3">
+        <div className="flex flex-col md:flex-row justify-between.items-center p-4 border-b border-cyan-400/10 gap-3">
           <div>
             <h2 className="font-semibold text-lg text-white">
               Lista de Incidentes
@@ -741,7 +785,7 @@ export default function IncidentesList() {
                             onClick={() =>
                               actualizarEstado(i._id, "resuelto")
                             }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all.duration-300"
                           >
                             Resolver
                           </button>
@@ -791,6 +835,13 @@ export default function IncidentesList() {
         <CameraCapture
           onCapture={handleCameraCapture}
           onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {showVideoRecorder && (
+        <VideoRecorder
+          onCapture={handleVideoCapture}
+          onClose={() => setShowVideoRecorder(false)}
         />
       )}
     </div>
