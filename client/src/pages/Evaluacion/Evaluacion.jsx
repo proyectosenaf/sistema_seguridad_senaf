@@ -20,6 +20,34 @@ const pct = (done, total) => {
   return clamp((d / t) * 100);
 };
 
+// Valida formato AAAA-MM-DD
+const isValidISODate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+
+// Calcula tipo de evaluación según rango de días
+const calcTipoEvaluacion = (inicio, fin) => {
+  if (!isValidISODate(inicio) || !isValidISODate(fin)) return "Mensual";
+  const d1 = new Date(inicio + "T00:00:00");
+  const d2 = new Date(fin + "T00:00:00");
+  if (Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime()) || d2 < d1) {
+    return "Mensual";
+  }
+  const diffMs = d2.getTime() - d1.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+  if (diffDays <= 31) return "Mensual";
+  if (diffDays <= 93) return "Trimestral";
+  if (diffDays <= 183) return "Semestral";
+  return "Anual";
+};
+
+// ✅ Rendimiento basado SOLO en puntualidad y tareas
+const computeRendimiento = (item) => {
+  const p = Number(item?.puntualidad ?? 0);
+  const t = Number(item?.tareas ?? 0);
+  if (Number.isNaN(p) || Number.isNaN(t)) return 0;
+  return clamp((p + t) / 2);
+};
+
 function normalizeEmployees(rows) {
   const byEmp = new Map();
   for (const r of rows || []) {
@@ -236,7 +264,7 @@ function Stat({ icon, label, value }) {
   return (
     <div className="fx-kpi">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl grid place-items-center bg-white/60 dark:bg-white/10 shadow-sm">
+        <div className="w-10 h-10 rounded-xl grid place-items-center bg-white/60 dark:bg.white/10 shadow-sm">
           <span className="text-lg">{icon}</span>
         </div>
         <div>
@@ -288,14 +316,14 @@ function ModalShell({ open, onRequestClose, children, width = "w-[min(600px,94vw
   if (!open) return null;
   return (
     <div
-      className={`fixed inset-0 z-[120] grid place-items-center bg-black/50 backdrop-blur-sm p-2 transition-opacity duration-200 ${
+      className={`fixed inset-0 z-[120] grid place-items-center bg-black/50 backdrop-blur-sm p-2 transition-opacity.duration-200 ${
         show ? "opacity-100" : "opacity-0"
       }`}
       aria-modal="true"
       role="dialog"
     >
       <div
-        className={`${width} max-h-[88vh] overflow-y-auto rounded-lg bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 shadow-2xl transform transition-all duration-200 ${
+        className={`${width} max-h-[88vh] overflow-y-auto rounded-lg bg-white dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 shadow-2xl.transform transition-all.duration-200 ${
           show
             ? "opacity-100 scale-100 translate-y-0"
             : "opacity-0 scale-[0.97] translate-y-1"
@@ -318,6 +346,9 @@ function ViewEvalModal({ open, item, onClose }) {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+
+  // ✅ rendimiento calculado solo con puntualidad + tareas
+  const rendimiento = computeRendimiento(item);
 
   return (
     <ModalShell
@@ -354,7 +385,7 @@ function ViewEvalModal({ open, item, onClose }) {
 
           <div className="p-4 grid gap-3 text-sm">
             <div className="grid grid-cols-3 gap-3 max-[520px]:grid-cols-1">
-              <InfoCard label="Rendimiento" value={`${item.rendimiento}%`} tone="ok" />
+              <InfoCard label="Rendimiento" value={`${rendimiento}%`} tone="ok" />
               <InfoCard label="Puntualidad" value={`${item.puntualidad}%`} tone="ok" />
               <InfoCard label="Tareas" value={`${item.tareas}%`} tone="ok" />
             </div>
@@ -371,7 +402,7 @@ function ViewEvalModal({ open, item, onClose }) {
               >
                 {item.estado}
               </Chip>
-              <span className="ml-auto text-xs opacity-70">
+              <span className="ml-auto text-xs.opacity-70">
                 Fecha: {item.fecha}
               </span>
             </div>
@@ -380,7 +411,7 @@ function ViewEvalModal({ open, item, onClose }) {
           <div className="px-4 py-3 border-t border-neutral-200 dark:border-neutral-800 text-right">
             <button
               onClick={close}
-              className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs"
+              className="px-3 py-2 rounded-lg.border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs"
             >
               Cerrar
             </button>
@@ -422,7 +453,7 @@ function ConfirmDeleteModal({ open, item, onConfirm, onCancel }) {
     >
       {(close) => (
         <>
-          <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center gap-2">
+          <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex.items-center gap-2">
             <div className="w-6 h-6 rounded-md bg-red-500/10 text-red-600 grid place-items-center">
               !
             </div>
@@ -448,7 +479,7 @@ function ConfirmDeleteModal({ open, item, onConfirm, onCancel }) {
                 close();
                 onCancel?.();
               }}
-              className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs"
+              className="px-3 py-2 rounded-lg.border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg.white/10 text-xs"
             >
               Cancelar
             </button>
@@ -499,11 +530,10 @@ function NuevaEvaluacionModal({
     empleado: "",
     periodo: "",
     tipo: "Mensual",
+    fechaInicio: "",
+    fechaFin: "",
     puntualidad: 85,
     tareas: 88,
-    comunicacion: 85,
-    iniciativa: 80,
-    actitud: 88,
     observaciones: "",
     recomendaciones: "",
   };
@@ -511,30 +541,92 @@ function NuevaEvaluacionModal({
 
   React.useEffect(() => {
     if (!open) return;
+    const today = new Date().toISOString().slice(0, 10);
     const filled = { ...baseForm, ...initial };
-    if (!filled.periodo) filled.periodo = periodItems[0]?.value || "";
+    if (!filled.fechaInicio) filled.fechaInicio = today;
+    // Internamente usamos fechaFin igual a fechaInicio para no romper la lógica
+    if (!filled.fechaFin) filled.fechaFin = filled.fechaInicio;
+    // periodo interno basado en fecha de inicio para no romper filtros
+    if (!filled.periodo) {
+      filled.periodo =
+        (filled.fechaInicio && filled.fechaInicio.slice(0, 7)) ||
+        periodItems[0]?.value ||
+        "";
+    }
+    filled.tipo = calcTipoEvaluacion(filled.fechaInicio, filled.fechaFin);
     setForm(filled);
   }, [open, initial, periodItems]);
 
   const promedio = Math.round(
-    (form.puntualidad +
-      form.tareas +
-      form.comunicacion +
-      form.iniciativa +
-      form.actitud) /
-      5
+    (form.puntualidad + form.tareas) / 2
   );
 
   const setField = (k) => (e) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
+
   const setRange = (k) => (v) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  // Cambio de fecha de inicio (sin mostrar fecha de finalización)
+  const handleFechaInicioChange = (e) => {
+    const value = e.target.value;
+    if (value && !isValidISODate(value)) return;
+    setForm((f) => {
+      const next = {
+        ...f,
+        fechaInicio: value,
+        fechaFin: value || f.fechaFin,
+      };
+      next.tipo = calcTipoEvaluacion(next.fechaInicio, next.fechaFin);
+      if (next.fechaInicio && isValidISODate(next.fechaInicio)) {
+        next.periodo = next.fechaInicio.slice(0, 7);
+      }
+      return next;
+    });
+  };
+
+  // Textareas sin números
+  const setTextOnly = (k) => (e) => {
+    const raw = e.target.value || "";
+    const cleaned = raw.replace(/[0-9]/g, "");
+    setForm((f) => ({ ...f, [k]: cleaned }));
+  };
+
   const handleSubmit = async (close) => {
-    if (!form.empleado || !form.periodo) return;
+    const fechaInicio = form.fechaInicio;
+    // Usamos internamente la misma fecha como fin
+    const fechaFin = form.fechaFin || form.fechaInicio || "";
+
+    if (!form.empleado || !fechaInicio) {
+      alert("Debe seleccionar el guardia y la fecha de inicio de evaluación.");
+      return;
+    }
+
+    if (!isValidISODate(fechaInicio) || (fechaFin && !isValidISODate(fechaFin))) {
+      alert("Las fechas deben tener un formato válido (AAAA-MM-DD).");
+      return;
+    }
+
+    const d1 = new Date(fechaInicio + "T00:00:00");
+    const d2 = new Date((fechaFin || fechaInicio) + "T00:00:00");
+    if (Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime()) || d2 < d1) {
+      alert("La fecha de finalización debe ser mayor o igual que la fecha de inicio.");
+      return;
+    }
+
+    const periodo =
+      form.periodo ||
+      (fechaInicio && fechaInicio.slice(0, 7)) ||
+      "";
+
+    const tipoEval = calcTipoEvaluacion(fechaInicio, fechaFin || fechaInicio);
 
     const payload = {
       ...form,
+      fechaInicio,
+      fechaFin: fechaFin || fechaInicio,
+      periodo,
+      tipo: tipoEval,
       promedio,
       fecha: new Date().toISOString().slice(0, 10),
     };
@@ -570,7 +662,7 @@ function NuevaEvaluacionModal({
                 : "Editar Evaluación"}
             </h2>
             <button
-              className="px-2 py-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
+              className="px-2 py-1 rounded-md.hover:bg-black/5 dark:hover:bg-white/10"
               onClick={close}
             >
               ✕
@@ -578,17 +670,18 @@ function NuevaEvaluacionModal({
           </div>
 
           <div className="p-3 grid gap-3 text-[0.9rem]">
+            {/* Guardia, fecha y tipo en UNA sola línea */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
-                  Empleado *
+                  Guardia *
                 </label>
                 <select
                   className="input-fx w-full h-9 text-[0.9rem]"
                   value={form.empleado}
                   onChange={setField("empleado")}
                 >
-                  <option value="">Seleccionar empleado</option>
+                  <option value="">Seleccionar guardia</option>
                   {empleados.map((e) => (
                     <option key={e} value={e}>
                       {e}
@@ -598,39 +691,28 @@ function NuevaEvaluacionModal({
               </div>
               <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
-                  Período *
+                  Fecha de inicio de evaluación *
                 </label>
-                <select
+                <input
+                  type="date"
                   className="input-fx w-full h-9 text-[0.9rem]"
-                  value={form.periodo}
-                  onChange={setField("periodo")}
-                >
-                  <option value="">Seleccionar período</option>
-                  {periodItems.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
+                  value={form.fechaInicio}
+                  onChange={handleFechaInicioChange}
+                />
               </div>
               <div className="w-full">
                 <label className="block text-xs opacity-70 mb-1">
-                  Tipo de Evaluación
+                  Tipo de Evaluación (automático)
                 </label>
-                <select
-                  className="input-fx w-full h-9 text-[0.9rem]"
+                <input
+                  className="input-fx w-full h-9 text-[0.9rem] bg-neutral-100/70 dark:bg-neutral-800/50"
                   value={form.tipo}
-                  onChange={setField("tipo")}
-                >
-                  <option>Mensual</option>
-                  <option>Trimestral</option>
-                  <option>Semestral</option>
-                  <option>Anual</option>
-                </select>
+                  readOnly
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="grid.grid-cols-1 lg:grid-cols-2 gap-3">
               <div className="space-y-3">
                 <h3 className="font-semibold text-xs">
                   Criterios de Evaluación
@@ -645,25 +727,10 @@ function NuevaEvaluacionModal({
                   value={form.tareas}
                   onChange={setRange("tareas")}
                 />
-                <SliderRow
-                  label="Actitud y Comportamiento"
-                  value={form.actitud}
-                  onChange={setRange("actitud")}
-                />
               </div>
               <div className="space-y-3">
                 <div className="h-4" />
-                <SliderRow
-                  label="Comunicación"
-                  value={form.comunicacion}
-                  onChange={setRange("comunicacion")}
-                />
-                <SliderRow
-                  label="Iniciativa y Proactividad"
-                  value={form.iniciativa}
-                  onChange={setRange("iniciativa")}
-                />
-                <div className="mt-1 p-2.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg-white/5">
+                <div className="mt-1 p-2.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/70 dark:bg.white/5">
                   <div className="text-center font-extrabold text-sm">
                     Promedio:{" "}
                     <span className="text-neutral-900 dark:text-neutral-100">
@@ -682,25 +749,25 @@ function NuevaEvaluacionModal({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
               <div className="w-full">
-                <label className="block text-xs opacity-70 mb-1">
+                <label className="block text-xs.opacity-70 mb-1">
                   Observaciones
                 </label>
                 <textarea
                   className="input-fx w-full text-[0.9rem]"
                   rows={2}
                   value={form.observaciones}
-                  onChange={setField("observaciones")}
+                  onChange={setTextOnly("observaciones")}
                 />
               </div>
               <div className="w-full">
-                <label className="block text-xs opacity-70 mb-1">
+                <label className="block text-xs.opacity-70 mb-1">
                   Recomendaciones
                 </label>
                 <textarea
                   className="input-fx w-full text-[0.9rem]"
                   rows={2}
                   value={form.recomendaciones}
-                  onChange={setField("recomendaciones")}
+                  onChange={setTextOnly("recomendaciones")}
                 />
               </div>
             </div>
@@ -709,13 +776,13 @@ function NuevaEvaluacionModal({
           <div className="px-3 py-2.5 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg-white/10 text-xs w-full sm:w-auto"
+              className="px-3 py-2 rounded-lg.border border-neutral-300 dark:border-neutral-700 hover:bg-black/5 dark:hover:bg.white/10 text-xs w-full sm:w-auto"
             >
               Cancelar
             </button>
             <button
               onClick={() => handleSubmit(onClose)}
-              disabled={!form.empleado || !form.periodo}
+              disabled={!form.empleado || !form.fechaInicio}
               className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-xs disabled:opacity-60 disabled:cursor-not-allowed w-full sm:w-auto"
             >
               {submitLabel}
@@ -794,7 +861,8 @@ function ReportesPanel({
       empleado: r.empleado,
       periodo: r.periodo,
       tipo: r.tipo ?? "Mensual",
-      rendimiento: r.rendimiento,
+      // ✅ rendimiento en reportes basado SOLO en puntualidad+tareas
+      rendimiento: computeRendimiento(r),
       puntualidad: r.puntualidad,
       tareas: r.tareas,
       estado: r.estado,
@@ -999,7 +1067,7 @@ function ReportesPanel({
         <header>
           <div>
             <div class="brand">SENAF</div>
-          </div>
+        </div>
           ${headerMeta}
         </header>
 
@@ -1031,16 +1099,16 @@ function ReportesPanel({
 
   return (
     <div className="card">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
+      <div className="flex flex-col.sm:flex-row sm:items-center sm:justify-between mb-3 gap-2">
         <h3 className="font-semibold text-lg">🧾 Reportes</h3>
-        <div className="text-xs opacity-70">
+        <div className="text-xs.opacity-70">
           Exporta a Excel o PDF (con marca SENAF)
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1.4fr)_minmax(0,1.6fr)] gap-3">
         <div>
-          <label className="block text-xs opacity-70 mb-1">Período</label>
+          <label className="block text-xs.opacity-70 mb-1">Período</label>
           <select
             className="input-fx w-full"
             value={rep.periodo}
@@ -1053,7 +1121,7 @@ function ReportesPanel({
           </select>
         </div>
         <div>
-          <label className="block text-xs opacity-70 mb-1">Empleado</label>
+          <label className="block text-xs.opacity-70 mb-1">Empleado</label>
           <select
             className="input-fx w-full"
             value={rep.empleado}
@@ -1069,7 +1137,7 @@ function ReportesPanel({
           </select>
         </div>
 
-        <div className="flex items-end gap-2">
+        <div className="flex items-end">
           <button
             className="w-full sm:w-auto px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
             onClick={generar}
@@ -1246,7 +1314,9 @@ export default function Evaluacion() {
     [employeesAll]
   );
 
+  // === KPIs ACTUALIZADOS ===
   const kpis = React.useMemo(() => {
+    // Rendimiento promedio (sobre los empleados agregados)
     const n = employees.length || 1;
     const punctualPcts = employees.map((e) =>
       pct(e.diasPuntuales, e.diasTotales)
@@ -1259,19 +1329,27 @@ export default function Evaluacion() {
         taskPcts.reduce((s, n) => s + n, 0)) /
         (2 * n)
     );
-    const excelentes = employees.filter(
-      (e, i) => (punctualPcts[i] + taskPcts[i]) / 2 >= 90
+
+    // Contadores basados en el HISTORIAL para el período seleccionado
+    const historyForPeriod = history.filter(
+      (h) => !filters.periodo || h.periodo === filters.periodo
+    );
+
+    const excelentes = historyForPeriod.filter(
+      (h) => h.estado === "Excelente"
     ).length;
-    const mejora = employees.filter(
-      (e, i) => (punctualPcts[i] + taskPcts[i]) / 2 < 80
+
+    const mejora = historyForPeriod.filter(
+      (h) => h.estado === "Requiere Mejora"
     ).length;
+
     return {
       rendimientoPromedio: `${rendimiento}%`,
       excelentes,
       mejora,
       evaluados: employees.length,
     };
-  }, [employees]);
+  }, [employees, history, filters.periodo]);
 
   const filteredHistory = React.useMemo(() => {
     let data = [...history];
@@ -1303,14 +1381,11 @@ export default function Evaluacion() {
             ? payload.periodo
             : copy[editIndex].periodo,
           tipo: payload.tipo,
-          rendimiento: Math.round(
-            (payload.comunicacion +
-              payload.iniciativa +
-              payload.actitud +
-              payload.puntualidad +
-              payload.tareas) /
-              5
-          ),
+          rendimiento:
+            payload.promedio ??
+            Math.round(
+              (payload.puntualidad + payload.tareas) / 2
+            ),
           puntualidad: payload.puntualidad,
           tareas: payload.tareas,
           estado:
@@ -1334,14 +1409,11 @@ export default function Evaluacion() {
           empleado: payload.empleado,
           periodo: label,
           tipo: payload.tipo,
-          rendimiento: Math.round(
-            (payload.comunicacion +
-              payload.iniciativa +
-              payload.actitud +
-              payload.puntualidad +
-              payload.tareas) /
-              5
-          ),
+          rendimiento:
+            payload.promedio ??
+            Math.round(
+              (payload.puntualidad + payload.tareas) / 2
+            ),
           puntualidad: payload.puntualidad,
           tareas: payload.tareas,
           estado:
@@ -1365,11 +1437,9 @@ export default function Evaluacion() {
       empleado: item.empleado,
       periodo: item.periodo,
       tipo: item.tipo ?? "Mensual",
+      // Para ediciones antiguas, no tenemos fechas guardadas; se tomarán por defecto
       puntualidad: item.puntualidad ?? approx,
       tareas: item.tareas ?? approx,
-      comunicacion: approx,
-      iniciativa: approx,
-      actitud: approx,
       observaciones: "",
       recomendaciones: "",
     };
@@ -1394,14 +1464,14 @@ export default function Evaluacion() {
           <h1 className="text-2xl font-extrabold">
             Evaluación de Personal
           </h1>
-          <p className="text-sm opacity-70">
+          <p className="text-sm.opacity-70">
             Monitoreo de rendimiento, horarios y cumplimiento de tareas
           </p>
         </div>
 
         <div className="w-full lg:w-auto lg:ml-auto flex flex-col sm:flex-row gap-3">
           <div className="flex-1 min-w-[180px]">
-            <label className="block text-sm opacity-70 mb-1">
+            <label className="block text-sm.opacity-70 mb-1">
               Periodo
             </label>
             <input
@@ -1415,7 +1485,7 @@ export default function Evaluacion() {
           </div>
 
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-sm opacity-70 mb-1">
+            <label className="block text-sm.opacity-70 mb-1">
               Buscar
             </label>
             <input
@@ -1429,7 +1499,7 @@ export default function Evaluacion() {
           </div>
 
           <div className="w-full sm:w-auto">
-            <label className="block text-sm opacity-0 mb-1">
+            <label className="block text-sm.opacity-0 mb-1">
               .
             </label>
             <button
@@ -1474,12 +1544,12 @@ export default function Evaluacion() {
       {/* Paneles */}
       <div className="grid grid-cols-2 gap-4 max-[1024px]:grid-cols-1">
         <div className="card">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex.items-center justify-between mb-2">
             <h3 className="font-semibold text-lg">
               🎯 Cumplimiento de Tareas
             </h3>
             {loading && (
-              <div className="text-sm opacity-70">Cargando…</div>
+              <div className="text-sm.opacity-70">Cargando…</div>
             )}
           </div>
           <div>
@@ -1492,24 +1562,18 @@ export default function Evaluacion() {
                 >
                   <div className="font-semibold">{e.name}</div>
                   <Progress value={p} />
-                  <div className="text-sm opacity-70 mt-1">
-                    Completadas: {e.tareasCompletadas}/{e.tareasTotales}
-                    <span className="ml-3">
-                      Pendientes: {e.pendientes}
-                    </span>
-                  </div>
                 </div>
               );
             })}
           </div>
         </div>
         <div className="card">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex.items-center justify-between mb-2">
             <h3 className="font-semibold text-lg">
               🕒 Cumplimiento de Horarios
             </h3>
             {loading && (
-              <div className="text-sm opacity-70">Cargando…</div>
+              <div className="text-sm.opacity-70">Cargando…</div>
             )}
           </div>
           <div>
@@ -1522,12 +1586,6 @@ export default function Evaluacion() {
                 >
                   <div className="font-semibold">{e.name}</div>
                   <Progress value={p} />
-                  <div className="text-sm opacity-70 mt-1">
-                    Puntual: {e.diasPuntuales}/{e.diasTotales}
-                    <span className="ml-3">
-                      Tardanzas: {e.tardanzas}
-                    </span>
-                  </div>
                 </div>
               );
             })}
@@ -1632,6 +1690,8 @@ export default function Evaluacion() {
                 </tr>
               )}
               {filteredHistory.map((r, i) => {
+                // ✅ Calculamos rendimiento SOLO con puntualidad+tareas
+                const rend = computeRendimiento(r);
                 const toneFor = (val) =>
                   val >= 90 ? "ok" : val >= 80 ? "warn" : "bad";
                 const estadoTone =
@@ -1654,8 +1714,8 @@ export default function Evaluacion() {
                     <td>{r.tipo ?? "Mensual"}</td>
                     <td>
                       <MiniBar
-                        value={r.rendimiento}
-                        tone={toneFor(r.rendimiento)}
+                        value={rend}
+                        tone={toneFor(rend)}
                       />
                     </td>
                     <td>
