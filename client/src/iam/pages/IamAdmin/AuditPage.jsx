@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useMemo, useState as useStateAlt } from "react";
 import { iamApi } from "../../api/iamApi.js";
 import { saveAs } from "file-saver";
@@ -6,14 +5,16 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// Valores reales que guarda el backend
-const ACTIONS = ["", "create", "update", "activate", "deactivate", "delete"];
+// Valores que puede traer el backend (compat)
+const ACTIONS = ["", "create", "update", "enable", "disable", "activate", "deactivate", "delete"];
 const ENTITIES = ["", "user", "role", "permission"];
 
 // Etiquetas en español
 const ACTION_LABEL = {
   create: "creación",
   update: "actualización",
+  enable: "activación",
+  disable: "desactivación",
   activate: "activación",
   deactivate: "desactivación",
   delete: "eliminación",
@@ -86,7 +87,6 @@ function fmtValue(v) {
   if (typeof v === "object") {
     const entries = Object.entries(v);
     if (entries.length === 0) return "—";
-    // Para objetos anidados, mostramos compacto
     return (
       <Truncate max={260}>
         {entries
@@ -109,7 +109,7 @@ function diffKeys(before = {}, after = {}) {
   return [...keys];
 }
 
-// Caja “bonita” para Antes/Después. En “Después” resalta cambios.
+// Caja “bonita” para Antes/Después.
 function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
   if (!obj || (typeof obj === "object" && Object.keys(obj).length === 0))
     return <span className="text-slate-400">—</span>;
@@ -169,7 +169,7 @@ export default function AuditPage() {
   const [dateTo, setDateTo] = useState("");     // YYYY-MM-DD
   const [dateErr, setDateErr] = useState("");
 
-  // -------- Fetch (consulta real al backend con filtros) ----------
+  // -------- Fetch real al backend ----------
   async function fetchAudits() {
     try {
       setErr("");
@@ -183,31 +183,44 @@ export default function AuditPage() {
       }
       setDateErr("");
 
-      const params = {};
-      if (filterAction) params.action = filterAction;
-      if (filterEntity) params.entity = filterEntity;
-      if (filterActor)  params.actor  = filterActor;
-      if (dateFrom)     params.from   = dateFrom;
-      if (dateTo)       params.to     = dateTo;
-      params.limit = 500;
+      const params = {
+        limit: 500,
+        skip: 0,
+        ...(filterAction ? { action: filterAction } : {}),
+        ...(filterEntity ? { entity: filterEntity } : {}),
+        ...(filterActor  ? { actor: filterActor } : {}),
+        ...(dateFrom ? { from: dateFrom } : {}),
+        ...(dateTo   ? { to: dateTo } : {}),
+      };
 
       const res = await iamApi.listAudit(params);
 
       const raw =
-        (Array.isArray(res?.data) && res.data) ||
         (Array.isArray(res?.items) && res.items) ||
         (Array.isArray(res?.data?.items) && res.data.items) ||
+        (Array.isArray(res?.data) && res.data) ||
         [];
 
-      const items = raw.map((x) => ({
-        _id: x._id,
-        createdAt: x.createdAt || x.ts || null,
-        action: x.action || "",
-        entity: x.entity || "",
-        actorEmail: x.actorEmail || x.actor || x.actorId || "",
-        before: x.before ?? null,
-        after: x.after ?? null,
-      }));
+      const items = raw.map((x) => {
+        // actor puede venir como string o como objeto
+        const actorEmail =
+          x?.actorEmail ||
+          x?.actor ||
+          x?.actorId ||
+          x?.actor?.email ||
+          x?.actor?.sub ||
+          "";
+
+        return {
+          _id: x._id,
+          createdAt: x.createdAt || x.ts || null,
+          action: x.action || "",
+          entity: x.entity || "",
+          actorEmail,
+          before: x.before ?? null,
+          after: x.after ?? null,
+        };
+      });
 
       setAudits(items);
       setFiltered(items);
@@ -220,7 +233,7 @@ export default function AuditPage() {
     }
   }
 
-  useEffect(() => { fetchAudits(); }, []);
+  useEffect(() => { fetchAudits(); }, []); // carga inicial
 
   // -------- Helpers de fecha ----------
   const toStartOfDay = (s) => (s ? new Date(`${s}T00:00:00`) : null);
@@ -310,7 +323,6 @@ export default function AuditPage() {
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative">
-      {/* Fondo */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-70"
@@ -343,27 +355,46 @@ export default function AuditPage() {
 
           {/* Filtros */}
           <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-            <select className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
-              value={filterAction} onChange={(e) => setFilterAction(e.target.value)}>
+            <select
+              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              value={filterAction}
+              onChange={(e) => setFilterAction(e.target.value)}
+            >
               {ACTIONS.map((a, idx) => (
-                <option key={idx} value={a}>{a ? ACTION_LABEL[a] : "Todas las acciones"}</option>
+                <option key={idx} value={a}>{a ? (ACTION_LABEL[a] || a) : "Todas las acciones"}</option>
               ))}
             </select>
 
-            <select className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
-              value={filterEntity} onChange={(e) => setFilterEntity(e.target.value)}>
+            <select
+              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              value={filterEntity}
+              onChange={(e) => setFilterEntity(e.target.value)}
+            >
               {ENTITIES.map((e, idx) => (
-                <option key={idx} value={e}>{e ? ENTITY_LABEL[e] : "Todas las entidades"}</option>
+                <option key={idx} value={e}>{e ? (ENTITY_LABEL[e] || e) : "Todas las entidades"}</option>
               ))}
             </select>
 
-            <input type="text" placeholder="Buscar actor…" className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none"
-              value={filterActor} onChange={(e) => setFilterActor(e.target.value)} />
+            <input
+              type="text"
+              placeholder="Buscar actor…"
+              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none"
+              value={filterActor}
+              onChange={(e) => setFilterActor(e.target.value)}
+            />
 
-            <input type="date" className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
-              value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            <input type="date" className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
-              value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <input
+              type="date"
+              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+            <input
+              type="date"
+              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+            />
           </div>
 
           {dateErr && <div className="mt-2 text-xs text-rose-300">{dateErr}</div>}
@@ -402,12 +433,10 @@ export default function AuditPage() {
                       <td className="px-3 py-2">{ENTITY_LABEL[a.entity] || a.entity || "—"}</td>
                       <td className="px-3 py-2 text-slate-300">{a.actorEmail || "—"}</td>
 
-                      {/* Antes */}
                       <td className="px-3 py-2 text-xs text-slate-300 whitespace-pre-wrap align-top">
                         <PrettyBox obj={a.before} compareWith={a.after} emphasizeChanges={false} />
                       </td>
 
-                      {/* Después (resalta cambios) */}
                       <td className="px-3 py-2 text-xs text-slate-300 whitespace-pre-wrap align-top">
                         <PrettyBox obj={a.after} compareWith={a.before} emphasizeChanges={true} />
                       </td>

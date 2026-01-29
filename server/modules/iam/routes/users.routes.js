@@ -3,7 +3,6 @@ import { Router } from "express";
 import IamUser from "../models/IamUser.model.js";
 import { devOr, requirePerm } from "../utils/rbac.util.js";
 import { hashPassword } from "../utils/password.util.js";
-// ⬇️ Mantén esta ruta según donde tengas tu helper:
 import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
@@ -64,7 +63,7 @@ function isGuardRole(u) {
 /* ===================== GET / (lista) ===================== */
 /**
  * GET /api/iam/v1/users?q=&limit=&skip=
- * Devuelve { items: [...] }
+ * Devuelve { ok:true, items:[...] }
  */
 r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
@@ -91,7 +90,6 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         perms: 1,
         createdAt: 1,
         updatedAt: 1,
-        // Si tu modelo tiene sub / legacyId, también se pueden proyectar:
         sub: 1,
         legacyId: 1,
       }
@@ -101,7 +99,7 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       .limit(limit)
       .lean();
 
-    res.json({ items });
+    res.json({ ok: true, items, count: items.length, limit, skip });
   } catch (err) {
     next(err);
   }
@@ -110,67 +108,70 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
 /* ===================== GET /guards (lista de guardias) ===================== */
 /**
  * GET /api/iam/v1/users/guards?q=&active=1
- * Devuelve { items: [{ _id, name, email, active, roles, opId }] }
- *   - opId = sub || legacyId || _id  (ID operativo para rooms de socket)
+ * Devuelve { ok:true, items:[...] }
  */
-r.get("/guards", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
-  try {
-    const q = String(req.query.q || "").trim();
-    const onlyActive = normBool(req.query.active, true);
+r.get(
+  "/guards",
+  devOr(requirePerm("iam.users.manage")),
+  async (req, res, next) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const onlyActive = normBool(req.query.active, true);
 
-    const textFilter = q
-      ? {
-          $or: [
-            { name: { $regex: q, $options: "i" } },
-            { email: { $regex: q, $options: "i" } },
-          ],
-        }
-      : {};
+      const textFilter = q
+        ? {
+            $or: [
+              { name: { $regex: q, $options: "i" } },
+              { email: { $regex: q, $options: "i" } },
+            ],
+          }
+        : {};
 
-    const base = onlyActive ? { ...textFilter, active: true } : textFilter;
+      const base = onlyActive ? { ...textFilter, active: true } : textFilter;
 
-    // Traemos un set "amplio" y filtramos por rol en memoria (si la app usa múltiples namespaces)
-    const raw = await IamUser.find(base, {
-      name: 1,
-      email: 1,
-      roles: 1,
-      active: 1,
-      sub: 1,
-      legacyId: 1,
-      // por si guardaste roles en el namespace:
-      [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
-    })
-      .sort({ name: 1, email: 1 })
-      .limit(1000)
-      .lean();
+      const raw = await IamUser.find(base, {
+        name: 1,
+        email: 1,
+        roles: 1,
+        active: 1,
+        sub: 1,
+        legacyId: 1,
+        [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
+      })
+        .sort({ name: 1, email: 1 })
+        .limit(1000)
+        .lean();
 
-    const guards = raw.map((u) => ({
-      _id: u._id,
-      name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
-      email: u.email || "",
-      active: !!u.active,
-      roles: u.roles || [],
-      opId: u.sub || u.legacyId || String(u._id),
-      isGuard: isGuardRole(u),
-    })).filter((u) => u.isGuard);
+      const guards = raw
+        .map((u) => ({
+          _id: u._id,
+          name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
+          email: u.email || "",
+          active: !!u.active,
+          roles: u.roles || [],
+          opId: u.sub || u.legacyId || String(u._id),
+          isGuard: isGuardRole(u),
+        }))
+        .filter((u) => u.isGuard);
 
-    res.json({ items: guards });
-  } catch (err) {
-    next(err);
+      res.json({ ok: true, items: guards, count: guards.length });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 /* ===================== GET /:id ===================== */
 /**
  * GET /api/iam/v1/users/:id
- * Devuelve { item }
+ * Devuelve { ok:true, item }
  */
 r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
     const item = await IamUser.findById(id).lean();
-    if (!item) return res.status(404).json({ error: "No encontrado" });
-    res.json({ item });
+    if (!item) return res.status(404).json({ ok: false, error: "No encontrado" });
+    res.json({ ok: true, item });
   } catch (err) {
     next(err);
   }
@@ -180,7 +181,6 @@ r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => 
 /**
  * POST /api/iam/v1/users
  * Body: { name, email, roles=[], perms=[], active=true, password? }
- * Devuelve { item } | 409 si ya existe por email
  */
 r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
@@ -190,15 +190,15 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       roles = [],
       perms = [],
       active = true,
-      password, // opcional
-      provider, // opcional
+      password,
+      provider,
     } = req.body || {};
 
     email = normEmail(email);
-    if (!email) return res.status(400).json({ error: "email requerido" });
+    if (!email) return res.status(400).json({ ok: false, error: "email requerido" });
 
     const exists = await IamUser.findOne({ email }).lean();
-    if (exists) return res.status(409).json({ error: "ya existe", item: exists });
+    if (exists) return res.status(409).json({ ok: false, error: "ya existe", item: exists });
 
     const doc = {
       email,
@@ -216,7 +216,6 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
 
     const item = await IamUser.create(doc);
 
-    // AUDIT: creación
     await writeAudit(req, {
       action: "create",
       entity: "user",
@@ -231,6 +230,7 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
     });
 
     res.status(201).json({
+      ok: true,
       item: {
         _id: item._id,
         email: item.email,
@@ -251,8 +251,6 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
 /* ===================== PATCH /:id (actualizar) ===================== */
 /**
  * PATCH /api/iam/v1/users/:id
- * Body parcial. Normaliza email/roles/perms/active si vienen.
- * Devuelve { item }
  */
 r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
@@ -265,13 +263,16 @@ r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) =
     if (patch.perms !== undefined) patch.perms = toStringArray(patch.perms);
     if (patch.active !== undefined) patch.active = normBool(patch.active);
 
-    // AUDIT: estado anterior
     const before = await IamUser.findById(id).lean();
 
-    const item = await IamUser.findByIdAndUpdate(id, { $set: patch }, { new: true }).lean();
-    if (!item) return res.status(404).json({ error: "No encontrado" });
+    const item = await IamUser.findByIdAndUpdate(
+      id,
+      { $set: patch },
+      { new: true }
+    ).lean();
 
-    // AUDIT: actualización
+    if (!item) return res.status(404).json({ ok: false, error: "No encontrado" });
+
     await writeAudit(req, {
       action: "update",
       entity: "user",
@@ -292,7 +293,7 @@ r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) =
       },
     });
 
-    res.json({ item });
+    res.json({ ok: true, item });
   } catch (err) {
     next(err);
   }
@@ -310,7 +311,8 @@ r.post("/:id/enable", devOr(requirePerm("iam.users.manage")), async (req, res, n
       { $set: { active: true } },
       { new: true }
     ).lean();
-    if (!item) return res.status(404).json({ error: "No encontrado" });
+
+    if (!item) return res.status(404).json({ ok: false, error: "No encontrado" });
 
     await writeAudit(req, {
       action: "activate",
@@ -320,7 +322,7 @@ r.post("/:id/enable", devOr(requirePerm("iam.users.manage")), async (req, res, n
       after: { active: true },
     });
 
-    res.json({ item });
+    res.json({ ok: true, item });
   } catch (err) {
     next(err);
   }
@@ -337,7 +339,8 @@ r.post("/:id/disable", devOr(requirePerm("iam.users.manage")), async (req, res, 
       { $set: { active: false } },
       { new: true }
     ).lean();
-    if (!item) return res.status(404).json({ error: "No encontrado" });
+
+    if (!item) return res.status(404).json({ ok: false, error: "No encontrado" });
 
     await writeAudit(req, {
       action: "deactivate",
@@ -347,7 +350,7 @@ r.post("/:id/disable", devOr(requirePerm("iam.users.manage")), async (req, res, 
       after: { active: false },
     });
 
-    res.json({ item });
+    res.json({ ok: true, item });
   } catch (err) {
     next(err);
   }
@@ -357,24 +360,24 @@ r.post("/:id/disable", devOr(requirePerm("iam.users.manage")), async (req, res, 
 /**
  * POST /api/iam/v1/users/:id/password
  * Body: { password }
- * No guarda el password en auditoría, solo marca el cambio.
  */
 r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
     const { password } = req.body || {};
     const pwd = String(password || "").trim();
-    if (!pwd) return res.status(400).json({ error: "password requerido" });
+    if (!pwd) return res.status(400).json({ ok: false, error: "password requerido" });
 
-    const before = await IamUser.findById(id).lean();
-    if (!before) return res.status(404).json({ error: "No encontrado" });
+    // ✅ IMPORTANTE: passwordHash es select:false, hay que pedirlo para auditoría
+    const before = await IamUser.findById(id).select("+passwordHash").lean();
+    if (!before) return res.status(404).json({ ok: false, error: "No encontrado" });
 
     const passwordHash = await hashPassword(pwd);
     const item = await IamUser.findByIdAndUpdate(
       id,
       { $set: { passwordHash, provider: "local" } },
       { new: true }
-    ).lean();
+    ).select("+passwordHash").lean();
 
     await writeAudit(req, {
       action: "update",
@@ -398,8 +401,9 @@ r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res,
 r.delete("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
+
     const before = await IamUser.findById(id).lean();
-    if (!before) return res.status(404).json({ error: "No encontrado" });
+    if (!before) return res.status(404).json({ ok: false, error: "No encontrado" });
 
     await IamUser.findByIdAndDelete(id);
 

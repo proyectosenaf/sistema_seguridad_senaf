@@ -9,18 +9,9 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
-/* ─────────── NUEVO: provider de token tipo attachAuth0 ─────────── */
-
+/* ─────────── provider de token tipo attachAuth0 ─────────── */
 let tokenProvider = null;
 
-/**
- * Llamado desde App.jsx para decirle a este módulo cómo conseguir el token
- * Ej:
- * attachIamAuth(async () => {
- *   const t = await getAccessTokenSilently(...);
- *   return t;
- * });
- */
 export function attachIamAuth(fn) {
   tokenProvider = fn; // fn es async () => token | null
 }
@@ -64,12 +55,12 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
 
-  // ✅ Mandamos el token real (Auth0 / JWT)
+  // ✅ Token real (Auth0 / JWT)
   if (token) h.Authorization = `Bearer ${token}`;
 
-  // Enviar headers DEV si:
-  // - Fuerzas modo dev (VITE_FORCE_DEV_IAM=1), o
-  // - No hay token y además la auth real está deshabilitada (VITE_DISABLE_AUTH=1)
+  // DEV headers si:
+  // - fuerzas modo dev, o
+  // - no hay token y además la auth real está deshabilitada
   const shouldSendDev = FORCE_DEV || (!token && DISABLE_AUTH);
   if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
@@ -102,7 +93,7 @@ async function rawFetch(
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
-  // 🔹 Si no nos pasaron token, intentamos usar el provider global attachIamAuth
+  // Si no nos pasaron token, intentamos usar el provider global
   if (!token && tokenProvider) {
     try {
       const autoToken = await tokenProvider();
@@ -147,12 +138,10 @@ async function rawFetch(
       throw err;
     }
 
-    // OK
     if (contentType.includes("application/json")) return toJson(r);
     const text = await r.text().catch(() => "");
     return text || {};
   } catch (e) {
-    // Error típico de red / CORS en fetch
     if (e?.name === "TypeError") {
       const err = new Error(
         "No se pudo conectar con la API. Revisa servidor, CORS y VITE_API_BASE_URL."
@@ -195,9 +184,11 @@ const PATHS = {
     list: () => `${V1}/permissions`,
     create: () => `${V1}/permissions`,
     byId: (id) => `${V1}/permissions/${id}`,
-    // Esta ruta vieja ya no se usa, pero la dejamos por compatibilidad
     listByRole: (roleId) =>
       `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
+  },
+  audit: {
+    list: () => `${V1}/audit`,
   },
   auth: {
     me: () => `${V1}/me`,
@@ -205,7 +196,7 @@ const PATHS = {
   },
 };
 
-/* ---------- helpers de nombre/email ---------- */
+/* ---------- helpers ---------- */
 function nameFromEmail(email) {
   const local = String(email || "").split("@")[0];
   if (!local) return "";
@@ -217,7 +208,6 @@ function nameFromEmail(email) {
     .join(" ");
 }
 
-// Busca cualquier clave con "email" o "correo" (plano o 1 nivel)
 function findEmailAny(obj) {
   const rx = /(email|correo)/i;
   const scan = (o) => {
@@ -282,10 +272,23 @@ function fromFormData(fd) {
   return toObj;
 }
 
+/* ✅ helper para construir query limpio */
+function buildQuery(params = {}) {
+  const qs = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v === null || v === undefined || v === "") return;
+    if (typeof v === "object") return;
+    qs.set(k, String(v));
+  });
+
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 /* ---------- API ---------- */
 export const iamApi = {
   async me(token) {
-    // usa rawFetch para que también aplique el provider global de token
     return rawFetch(PATHS.auth.me(), { token });
   },
 
@@ -300,89 +303,51 @@ export const iamApi = {
   /* ---------- ROLES ---------- */
   listRoles: (t) => rawFetch(PATHS.roles.list(), { token: t }),
 
-  // Normaliza para que siempre haya name, code, key y permissions como KEYS (string[])
   createRole: (p, t) => {
     const body = { ...(p || {}) };
 
-    // Aceptar distintos nombres de campo desde el formulario
     const rawName =
-      body.name ||
-      body.role ||
-      body.label ||
-      body.displayName ||
-      "";
-
-    if (!rawName) {
+      body.name || body.role || body.label || body.displayName || "";
+    if (!rawName)
       throw new Error("name es requerido para crear rol (faltan datos)");
-    }
 
     body.name = String(rawName).trim();
 
-    // 🔥 Asegurar GENERACIÓN DE code aunque venga null/undefined/vacío
-    if (
-      !body.code ||
-      typeof body.code !== "string" ||
-      !body.code.trim()
-    ) {
+    if (!body.code || typeof body.code !== "string" || !body.code.trim()) {
       body.code = slugify(body.name);
     }
-
-    // 🔥 key = code (compatibilidad con backend simple que usa 'key')
-    if (
-      !body.key ||
-      typeof body.key !== "string" ||
-      !body.key.trim()
-    ) {
+    if (!body.key || typeof body.key !== "string" || !body.key.trim()) {
       body.key = body.code;
     }
 
-    // Normalizar permissions:
-    // - puede venir como array de strings
-    // - o array de objetos { key, _id, code }
     if (Array.isArray(body.permissions)) {
       body.permissions = body.permissions
         .map((perm) => {
           if (!perm) return null;
           if (typeof perm === "string") return perm.trim();
-          if (typeof perm === "object") {
+          if (typeof perm === "object")
             return perm.key || perm.code || perm._id || null;
-          }
           return null;
         })
         .filter(Boolean);
     }
 
-    // Si no hay permissionKeys pero sí permissions, duplicamos
-    if (
-      !Array.isArray(body.permissionKeys) &&
-      Array.isArray(body.permissions)
-    ) {
+    if (!Array.isArray(body.permissionKeys) && Array.isArray(body.permissions)) {
       body.permissionKeys = body.permissions;
     }
 
-    if (DEBUG) {
-      console.log("[iamApi.createRole] body que se envía:", body);
-    }
+    if (DEBUG) console.log("[iamApi.createRole] body:", body);
 
-    return rawFetch(PATHS.roles.create(), {
-      method: "POST",
-      body,
-      token: t,
-    });
+    return rawFetch(PATHS.roles.create(), { method: "POST", body, token: t });
   },
 
   updateRole: (id, p, t) =>
-    rawFetch(PATHS.roles.byId(id), {
-      method: "PATCH",
-      body: p,
-      token: t,
-    }),
+    rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
 
   deleteRole: (id, t) =>
     rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
-  getRolePerms: (id, t) =>
-    rawFetch(PATHS.roles.permissions(id), { token: t }),
+  getRolePerms: (id, t) => rawFetch(PATHS.roles.permissions(id), { token: t }),
 
   setRolePerms: (id, keys, t) =>
     rawFetch(PATHS.roles.permissions(id), {
@@ -394,30 +359,17 @@ export const iamApi = {
   /* ---------- PERMISOS ---------- */
   listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
 
-  /**
-   * Nueva implementación:
-   * - lee TODO el catálogo de permisos
-   * - lee las permissionKeys del rol
-   * - devuelve { items: [{...perm, selected:true|false}, ...] }
-   */
   listPermsForRole: async (roleId, t) => {
     const [allPerms, rolePerms] = await Promise.all([
       rawFetch(PATHS.perms.list(), { token: t }),
       rawFetch(PATHS.roles.permissions(roleId), { token: t }),
     ]);
 
-    const allItems =
-      allPerms?.items || allPerms?.permissions || [];
-
+    const allItems = allPerms?.items || allPerms?.permissions || [];
     const keysFromRole =
-      rolePerms?.permissionKeys ||
-      rolePerms?.keys ||
-      rolePerms?.items ||
-      [];
+      rolePerms?.permissionKeys || rolePerms?.keys || rolePerms?.items || [];
 
-    const setKeys = new Set(
-      Array.isArray(keysFromRole) ? keysFromRole : []
-    );
+    const setKeys = new Set(Array.isArray(keysFromRole) ? keysFromRole : []);
 
     const items = allItems.map((p) => ({
       ...p,
@@ -431,11 +383,7 @@ export const iamApi = {
     rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
 
   updatePerm: (id, p, t) =>
-    rawFetch(PATHS.perms.byId(id), {
-      method: "PATCH",
-      body: p,
-      token: t,
-    }),
+    rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
 
   deletePerm: (id, t) =>
     rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
@@ -443,7 +391,6 @@ export const iamApi = {
   /* ---------- USUARIOS ---------- */
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
-  // lista de guardias (para selects de otros módulos)
   listGuards: (q = "", active = true, t) =>
     rawFetch(PATHS.users.guards(q, active), { token: t }),
 
@@ -462,10 +409,7 @@ export const iamApi = {
       roles = obj.roles
         ? Array.isArray(obj.roles)
           ? obj.roles
-          : String(obj.roles)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
+          : String(obj.roles).split(",").map((s) => s.trim()).filter(Boolean)
         : [];
       active =
         obj.active !== undefined
@@ -479,12 +423,7 @@ export const iamApi = {
               .map((s) => s.trim())
               .filter(Boolean);
       }
-      password =
-        obj.password ??
-        obj.clave ??
-        obj.contrasena ??
-        obj.contraseña ??
-        "";
+      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     } else {
       const obj = payload || {};
       email =
@@ -503,10 +442,7 @@ export const iamApi = {
       roles = Array.isArray(obj.roles)
         ? obj.roles
         : typeof obj.roles === "string"
-        ? obj.roles
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
+        ? obj.roles.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
       active = obj.active === undefined ? true : !!obj.active;
       if (obj.perms) {
@@ -517,28 +453,13 @@ export const iamApi = {
               .map((s) => s.trim())
               .filter(Boolean);
       }
-      password =
-        obj.password ??
-        obj.clave ??
-        obj.contrasena ??
-        obj.contraseña ??
-        "";
+      password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     }
 
     email = String(email || "").trim().toLowerCase();
     name = String(name || "").trim() || nameFromEmail(email);
 
-    if (!email) {
-      if (DEBUG) {
-        console.warn(
-          "[iamApi.createUser] payload sin email. Keys:",
-          payload instanceof FormData
-            ? Array.from(payload.keys())
-            : Object.keys(payload || {})
-        );
-      }
-      return Promise.reject(new Error("email requerido"));
-    }
+    if (!email) return Promise.reject(new Error("email requerido"));
 
     const body = {
       name,
@@ -549,19 +470,11 @@ export const iamApi = {
       ...(password ? { password: String(password) } : {}),
     };
 
-    return rawFetch(PATHS.users.create(), {
-      method: "POST",
-      body,
-      token: t,
-    });
+    return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
   },
 
   updateUser: (id, p, t) =>
-    rawFetch(PATHS.users.byId(id), {
-      method: "PATCH",
-      body: p,
-      token: t,
-    }),
+    rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
 
   enableUser: (id, t) =>
     rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
@@ -569,23 +482,38 @@ export const iamApi = {
   disableUser: (id, t) =>
     rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
-  // "Eliminar" hace soft-delete / desactivar
+  // ✅ CORRECCIÓN: borrar usuario de verdad
   deleteUser: (id, t) =>
-    rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+    rawFetch(PATHS.users.byId(id), { method: "DELETE", token: t }),
 
-  async listAudit(limit = 100, token) {
+  /* ✅ AUDIT */
+  async listAudit(arg = {}, token) {
+    const params =
+      typeof arg === "number"
+        ? { limit: arg }
+        : arg && typeof arg === "object"
+        ? { ...arg }
+        : {};
+
+    const limit = Number.isFinite(Number(params.limit)) ? Number(params.limit) : 100;
+    const skip = Number.isFinite(Number(params.skip)) ? Number(params.skip) : 0;
+
+    const q = buildQuery({
+      limit,
+      skip,
+      action: params.action || "",
+      entity: params.entity || "",
+      actor: params.actor || "",
+      from: params.from || "",
+      to: params.to || "",
+    });
+
     try {
-      return await rawFetch(`${V1}/audit?limit=${encodeURIComponent(limit)}`, {
-        token,
-      });
+      return await rawFetch(`${PATHS.audit.list()}${q}`, { token });
     } catch (e) {
       const msg = (e.message || "").toLowerCase();
-      if (
-        e?.status === 404 ||
-        msg.includes("not found") ||
-        msg.includes("404")
-      ) {
-        return { ok: false, items: [] };
+      if (e?.status === 404 || msg.includes("not found") || msg.includes("404")) {
+        return { ok: false, items: [], total: 0, limit, skip };
       }
       throw e;
     }
@@ -620,10 +548,10 @@ export const iamApi = {
 
       if (notImpl) {
         if (DEBUG)
-          console.warn(
-            "[iamApi] /verify-email no implementado; simulando envío…",
-            { userId, email }
-          );
+          console.warn("[iamApi] /verify-email no implementado; simulando…", {
+            userId,
+            email,
+          });
         await new Promise((r) => setTimeout(r, 700));
         return {
           ok: true,

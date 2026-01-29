@@ -14,12 +14,20 @@ export default function AuditPanel() {
       try {
         setLoading(true);
         setErr("");
-        const r = await iamApi.listAudit(limit);
+
+        const r = await iamApi.listAudit({ limit });
+
         if (!alive) return;
-        setItems(r.items || []);
+
+        const raw =
+          (Array.isArray(r?.items) && r.items) ||
+          (Array.isArray(r?.data?.items) && r.data.items) ||
+          [];
+
+        setItems(raw);
       } catch (e) {
         if (!alive) return;
-        // Silenciamos 404 (ruta no implementada)
+
         const msg = String(e?.message || "").toLowerCase();
         if (!msg.includes("not found") && !msg.includes("404")) {
           setErr(e?.message || "Error al cargar auditoría");
@@ -35,22 +43,26 @@ export default function AuditPanel() {
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return items;
-    return items.filter(x => JSON.stringify(x).toLowerCase().includes(term));
+    return items.filter((x) => JSON.stringify(x).toLowerCase().includes(term));
   }, [q, items]);
 
   return (
     <div className="space-y-3">
       <div className="flex flex-col sm:flex-row gap-2">
         <input
-          value={q} onChange={e=>setQ(e.target.value)}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
           placeholder="Buscar en auditoría…"
           className="flex-1 px-3 py-2 rounded border bg-white/70 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100"
         />
         <select
-          value={limit} onChange={e=>setLimit(Number(e.target.value))}
+          value={limit}
+          onChange={(e) => setLimit(Number(e.target.value))}
           className="px-3 py-2 rounded border bg-white/70 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100"
         >
-          {[50,100,200,500].map(n => <option key={n} value={n}>Últimos {n}</option>)}
+          {[50, 100, 200, 500].map((n) => (
+            <option key={n} value={n}>Últimos {n}</option>
+          ))}
         </select>
       </div>
 
@@ -64,19 +76,32 @@ export default function AuditPanel() {
         <div className="p-4">Cargando auditoría…</div>
       ) : (
         <div className="rounded border dark:border-gray-800 divide-y dark:divide-gray-800 overflow-hidden">
-          {filtered.map((it, i) => (
-            <div key={i} className="p-3 bg-white dark:bg-gray-900">
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {new Date(it.createdAt || it.ts || Date.now()).toLocaleString()} · {it.actorEmail || it.actorId || "—"}
+          {filtered.map((it, i) => {
+            const actor =
+              it?.actorEmail ||
+              it?.actorId ||
+              it?.actor ||
+              it?.actor?.email ||
+              it?.actor?.sub ||
+              "—";
+
+            const ts = it.createdAt || it.ts || Date.now();
+
+            return (
+              <div key={it._id || i} className="p-3 bg-white dark:bg-gray-900">
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {new Date(ts).toLocaleString()} · {actor}
+                </div>
+                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {it.action} — {it.entity} {it.entityId ? `(${it.entityId})` : ""}
+                </div>
+                <pre className="mt-2 text-xs overflow-auto bg-gray-50 dark:bg-gray-800 p-2 rounded">
+{JSON.stringify({ before: it.before, after: it.after }, null, 2)}
+                </pre>
               </div>
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {it.action} — {it.entity} {it.entityId ? `(${it.entityId})` : ""}
-              </div>
-              <pre className="mt-2 text-xs overflow-auto bg-gray-50 dark:bg-gray-800 p-2 rounded">
-                {JSON.stringify({ before: it.before, after: it.after }, null, 2)}
-              </pre>
-            </div>
-          ))}
+            );
+          })}
+
           {filtered.length === 0 && (
             <div className="p-4 text-gray-500 dark:text-gray-400">Sin eventos.</div>
           )}

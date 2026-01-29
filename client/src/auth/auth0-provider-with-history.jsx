@@ -8,14 +8,23 @@ export default function Auth0ProviderWithHistory({ children }) {
 
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
-  const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+
+  // ✅ Si el .env no lo trae, usamos el audience correcto por defecto
+  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+
+  // ✅ Si en algún momento quieres cambiarlo sin tocar código:
+  // VITE_AUTH0_REDIRECT_URI=http://localhost:3000/callback
+  const redirectUri =
+    import.meta.env.VITE_AUTH0_REDIRECT_URI || `${window.location.origin}/callback`;
 
   const onRedirectCallback = (appState) => {
-    // Respetar returnTo si viene desde loginWithRedirect({ appState: { returnTo: ... } })
     navigate(appState?.returnTo || "/start", { replace: true });
   };
 
   if (!(domain && clientId)) {
+    console.error(
+      "[Auth0ProviderWithHistory] Faltan variables: VITE_AUTH0_DOMAIN o VITE_AUTH0_CLIENT_ID"
+    );
     return <div>Configurando Auth0…</div>;
   }
 
@@ -24,14 +33,18 @@ export default function Auth0ProviderWithHistory({ children }) {
       domain={domain}
       clientId={clientId}
       authorizationParams={{
-        // callback fijo que coincide con tu ruta /callback en App.jsx
-        redirect_uri: `${window.location.origin}/callback`,
-        ...(audience ? { audience } : {}),
-        scope: "openid profile email offline_access",
+        redirect_uri: redirectUri,
+
+        // 🔥 CLAVE: este debe ser EXACTO a tu API Identifier
+        audience: audience,
+
+        // ✅ scopes básicos para SPA
+        // (Si luego necesitas refresh tokens reales, se ajusta)
+        scope: "openid profile email",
       }}
       onRedirectCallback={onRedirectCallback}
-      useRefreshTokens={true}
       cacheLocation="localstorage"
+      useRefreshTokens={true}
     >
       {children}
     </Auth0Provider>
