@@ -34,11 +34,25 @@ import visitasRoutes from "../modules/visitas/visitas.routes.js";
 // Cron
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 
-// ✅ IAM (la forma correcta)
+// ✅ IAM
 import { registerIAMModule } from "../modules/iam/index.js";
 
 const app = express();
 app.set("trust proxy", 1);
+
+/* ───────────────────── ENV / MODOS ───────────────────── */
+
+const IS_PROD = process.env.NODE_ENV === "production";
+const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
+/**
+ * DEV_OPEN = 1 abre todo (bypass de permisos) en DEV.
+ * Si no lo defines, DISABLE_AUTH=1 también activa modo "abierto" por compatibilidad.
+ */
+const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
+
+console.log("[env] NODE_ENV:", process.env.NODE_ENV);
+console.log("[env] DISABLE_AUTH:", DISABLE_AUTH ? "1" : "0");
+console.log("[env] DEV_OPEN:", DEV_OPEN ? "1" : "0");
 
 /* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
 
@@ -100,7 +114,7 @@ function parseOrigins(str) {
 const devDefaults = ["http://localhost:5173", "http://localhost:3000"];
 const origins =
   parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN) ||
-  (process.env.NODE_ENV !== "production" ? devDefaults : null);
+  (!IS_PROD ? devDefaults : null);
 
 app.use(
   cors({
@@ -117,7 +131,7 @@ app.use(
   })
 );
 
-if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
+if (!IS_PROD) app.use(morgan("dev"));
 app.use(compression());
 
 /* ─────────────────────── Parsers de body ──────────────────────── */
@@ -125,12 +139,67 @@ app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-if (process.env.NODE_ENV !== "production") {
+if (!IS_PROD) {
   app.use((req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
   });
 }
+
+/* ─────────────────────── DEV IDENTITY GLOBAL ─────────────────────
+   ✅ En DEV abierto (DEV_OPEN=1 o DISABLE_AUTH=1), inyecta req.user
+   para que TODOS los módulos (incluyendo Incidentes) tengan identidad.
+*/
+function devIdentity(req, _res, next) {
+  if (IS_PROD) return next();
+  if (!(DEV_OPEN || DISABLE_AUTH)) return next();
+
+  const email = (req.header("x-user-email") || process.env.SUPERADMIN_EMAIL || "dev@local")
+    .toLowerCase()
+    .trim();
+
+  const rolesHeader = req.header("x-roles") || "admin,guardia,recepcion,ti";
+  const permsHeader = req.header("x-perms") || "*";
+
+  const roles = String(rolesHeader)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const permissions =
+    String(permsHeader).trim() === "*"
+      ? ["*"]
+      : String(permsHeader)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+  const applied = applyRootAdmin(email, roles, permissions);
+
+  // Importante: deja IAM_NS y permissions como el resto del backend espera
+  req.user = {
+    sub: "dev|local",
+    email,
+    [IAM_NS]: applied.roles,
+    roles: applied.roles,
+    permissions: applied.permissions,
+    isDev: true,
+  };
+
+  // Útil para debugs rápidos
+  req.auth = req.auth || {};
+  req.auth.payload = {
+    sub: req.user.sub,
+    email: req.user.email,
+    [IAM_NS]: req.user.roles,
+    roles: req.user.roles,
+    permissions: req.user.permissions,
+  };
+
+  return next();
+}
+
+app.use(devIdentity);
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
 
@@ -145,7 +214,14 @@ app.use("/api/uploads", express.static(UPLOADS_ROOT));
 /* ───────────────────────── Health checks ──────────────────────── */
 
 app.get("/api/health", (_req, res) =>
-  res.json({ ok: true, service: "senaf-api", ts: Date.now() })
+  res.json({
+    ok: true,
+    service: "senaf-api",
+    ts: Date.now(),
+    env: process.env.NODE_ENV,
+    devOpen: DEV_OPEN,
+    disableAuth: DISABLE_AUTH,
+  })
 );
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -185,9 +261,30 @@ await mongoose
 
 console.log("[db] MongoDB conectado");
 
-/* ─────────── Bridge Auth payload → req.user (opcional) ─────────── */
+/* ─────────────────── Auth opcional (GLOBAL) ────────────────────
+   ✅ Si en PROD hay Authorization y DISABLE_AUTH != 1 -> valida token.
+   En DEV con DISABLE_AUTH=1 -> no valida (y devIdentity ya inyectó req.user).
+*/
+function optionalAuth(req, res, next) {
+  if (DISABLE_AUTH) return next(); // DEV abierto por flag
+
+  // Si quieres forzar auth solo en PROD, deja esto:
+  // if (!IS_PROD) return next();
+
+  if (req.headers.authorization) {
+    return requireAuth(req, res, next);
+  }
+  return next();
+}
+
+app.use(optionalAuth);
+
+/* ─────────── Bridge Auth payload → req.user (cuando hay JWT) ─────────── */
 
 function authBridgeToReqUser(req, _res, next) {
+  // Si devIdentity ya seteo req.user, no lo rompas
+  if (req.user?.email) return next();
+
   if (!req?.auth?.payload) return next();
 
   const p = req.auth.payload;
@@ -210,28 +307,18 @@ function authBridgeToReqUser(req, _res, next) {
   p.roles = roles;
   p.permissions = permissions;
 
-  if (!req.user) {
-    req.user = {
-      sub: p.sub || "auth|user",
-      email,
-      [IAM_NS]: roles,
-      permissions,
-    };
-  }
+  req.user = {
+    sub: p.sub || "auth|user",
+    email,
+    [IAM_NS]: roles,
+    roles,
+    permissions,
+  };
 
   next();
 }
 
 app.use(authBridgeToReqUser);
-
-/* ─────────────────── Auth opcional ─────────────────── */
-
-function optionalAuth(req, res, next) {
-  if (req.headers.authorization && String(process.env.DISABLE_AUTH || "0") !== "1") {
-    return requireAuth(req, res, next);
-  }
-  return next();
-}
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ─────────────────────
    Esto crea:
@@ -317,7 +404,7 @@ app.use("/incidentes", incidentesRoutes);
 
 /* ───────────────── Evaluaciones ───────────────── */
 
-if (process.env.NODE_ENV !== "production") {
+if (!IS_PROD) {
   app.use("/api/evaluaciones", (req, _res, next) => {
     if (req.method === "POST") {
       console.log("[debug] POST /api/evaluaciones body:", req.body);
