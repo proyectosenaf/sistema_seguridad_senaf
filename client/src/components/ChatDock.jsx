@@ -2,6 +2,7 @@
 import React from "react";
 import api, { attachAuth0 } from "../lib/api.js";
 import { useAuth0 } from "@auth0/auth0-react";
+import { socket } from "../lib/socket.js";
 
 /* === Iconos (SVG) === */
 const ChatIcon = (props) => (
@@ -45,25 +46,38 @@ const initials = (name) =>
     .map((s) => s[0]?.toUpperCase())
     .join("") || "U";
 
+function safeParseJson(raw, fallback) {
+  try {
+    if (!raw) return fallback;
+    const v = JSON.parse(raw);
+    return v == null ? fallback : v;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function ChatDock() {
   const bubbleSize = 60;
   const margin = 10;
 
+  const panelW = 360;
+  const panelH = 460;
+
   const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
   const myId = user?.sub || null;
 
-  // Adjuntar/limpiar token automáticamente en axios
+  const room = "global";
+
+  /* Inyecta provider de Auth0 al api */
   React.useEffect(() => {
     if (!isAuthenticated) {
-      attachAuth0(null); // limpia el provider si no hay sesión
+      attachAuth0(null);
       return;
     }
     attachAuth0(async () => {
       try {
         const token = await getAccessTokenSilently({
-          authorizationParams: {
-            audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-          },
+          authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
         });
         return token || null;
       } catch {
@@ -72,15 +86,38 @@ export default function ChatDock() {
     });
   }, [getAccessTokenSilently, isAuthenticated]);
 
-  // Posición persistida de la burbuja
+  const clampToViewport = React.useCallback(
+    (x, y) => {
+      const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+      const maxX = vw - bubbleSize - margin;
+      const maxY = vh - bubbleSize - margin;
+
+      return {
+        x: Math.max(margin, Math.min(maxX, x)),
+        y: Math.max(margin, Math.min(maxY, y)),
+      };
+    },
+    [bubbleSize]
+  );
+
   const [pos, setPos] = React.useState(() => {
-    const saved = localStorage.getItem("chatdock-pos");
-    if (saved) return JSON.parse(saved);
-    return {
-      x: window.innerWidth - bubbleSize - 16,
-      y: window.innerHeight - bubbleSize - 24,
-    };
+    const saved = safeParseJson(localStorage.getItem("chatdock-pos"), null);
+    const init =
+      saved && typeof saved.x === "number" && typeof saved.y === "number"
+        ? saved
+        : {
+            x: window.innerWidth - bubbleSize - 16,
+            y: window.innerHeight - bubbleSize - 24,
+          };
+    return init;
   });
+
+  // al montar: clamp por si cambió resolución
+  React.useEffect(() => {
+    setPos((p) => clampToViewport(p.x, p.y));
+  }, [clampToViewport]);
 
   const [open, setOpen] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
@@ -90,32 +127,24 @@ export default function ChatDock() {
   const [text, setText] = React.useState("");
 
   const btnRef = React.useRef(null);
-  const startRef = React.useRef({ x: 0, y: 0, px: 0, py: 0, moved: false });
   const listRef = React.useRef(null);
 
-  const clampToViewport = React.useCallback((x, y) => {
-    const maxX = window.innerWidth - bubbleSize - margin;
-    const maxY = window.innerHeight - bubbleSize - margin;
-    return {
-      x: Math.max(margin, Math.min(maxX, x)),
-      y: Math.max(margin, Math.min(maxY, y)),
-    };
-  }, []);
+  const startRef = React.useRef({ x: 0, y: 0, px: 0, py: 0, moved: false });
 
+  // resize: clamp posición
   React.useEffect(() => {
     const onResize = () => setPos((p) => clampToViewport(p.x, p.y));
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [clampToViewport]);
 
-  // Permite abrir el dock desde el footer (evento global)
+  // evento global para abrir el chat
   React.useEffect(() => {
     const openHandler = () => setOpen(true);
     window.addEventListener("chat:open", openHandler);
     return () => window.removeEventListener("chat:open", openHandler);
   }, []);
 
-  // Drag
   const onPointerDown = (e) => {
     e.preventDefault();
     btnRef.current?.setPointerCapture?.(e.pointerId);
@@ -127,75 +156,123 @@ export default function ChatDock() {
       moved: false,
     };
   };
+
   const onPointerMove = (e) => {
     if (!btnRef.current?.hasPointerCapture?.(e.pointerId)) return;
+
     const dx = e.clientX - startRef.current.px;
     const dy = e.clientY - startRef.current.py;
+
     if (!startRef.current.moved && Math.hypot(dx, dy) > 4) {
       startRef.current.moved = true;
       setDragging(true);
     }
+
     if (startRef.current.moved) {
-      const { x, y } = clampToViewport(
-        startRef.current.x + dx,
-        startRef.current.y + dy
-      );
-      setPos({ x, y });
+      const next = clampToViewport(startRef.current.x + dx, startRef.current.y + dy);
+      setPos(next);
     }
   };
+
   const onPointerUp = (e) => {
     try {
       btnRef.current?.releasePointerCapture?.(e.pointerId);
     } catch {}
-    localStorage.setItem("chatdock-pos", JSON.stringify(pos));
+
+    // Guardar la posición final (no la stale)
+    setPos((current) => {
+      try {
+        localStorage.setItem("chatdock-pos", JSON.stringify(current));
+      } catch {}
+      return current;
+    });
+
     if (!startRef.current.moved) {
-      setOpen((v) => !v);
-      if (!open) setUnread(0);
-      setTimeout(() => {
-        listRef.current?.scrollTo({
-          top: listRef.current.scrollHeight,
-          behavior: "auto",
-        });
-      }, 0);
+      setOpen((v) => {
+        const next = !v;
+        if (next) {
+          // abrir: reset unread
+          setUnread(0);
+          setTimeout(() => {
+            listRef.current?.scrollTo({
+              top: listRef.current.scrollHeight,
+              behavior: "auto",
+            });
+          }, 0);
+        }
+        return next;
+      });
     }
+
     setDragging(false);
   };
 
-  // Cargar historial (solo si autenticado)
+  // 1) historial
   React.useEffect(() => {
     if (!isAuthenticated) return;
     let alive = true;
+
     (async () => {
       try {
-        // 👇 api tiene baseURL = http://localhost:4000/api
-        const { data } = await api.get("/chat/messages");
+        const { data } = await api.get("/chat/messages", { params: { room } });
         if (alive && Array.isArray(data)) setMessages(data);
       } catch (err) {
-        console.error(
-          "[chat] GET /chat/messages",
-          err?.response?.data || err.message
-        );
+        console.error("[chat] GET /chat/messages", err?.response?.data || err?.message || err);
       }
     })();
+
     return () => {
       alive = false;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, room]);
 
-  // Enviar con optimista y “replace” por el mensaje real
+  // 2) socket room
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!socket) return;
+
+    socket.emit("chat:join", { room });
+
+    const onNew = (msg) => {
+      setMessages((prev) => {
+        const incomingId = msg?._id || msg?.id || null;
+        const incomingClientId = msg?.clientId || null;
+
+        if (incomingId && prev.some((m) => (m._id || m.id) === incomingId)) return prev;
+
+        if (incomingClientId) {
+          const idx = prev.findIndex((m) => m.clientId === incomingClientId);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = msg;
+            return copy;
+          }
+        }
+        return [...prev, msg];
+      });
+    };
+
+    socket.on("chat:new", onNew);
+
+    return () => {
+      socket.off("chat:new", onNew);
+      socket.emit("chat:leave", { room });
+    };
+  }, [isAuthenticated, room]);
+
   const send = async () => {
     const txt = text.trim();
     if (!txt) return;
 
     const tempId =
-      (crypto?.randomUUID && crypto.randomUUID()) || String(Date.now());
+      (globalThis.crypto?.randomUUID && globalThis.crypto.randomUUID()) || String(Date.now());
 
     const optimistic = {
       _id: tempId,
+      clientId: tempId,
+      room,
       text: txt,
-      user: myId
-        ? { sub: myId, name: user?.name, email: user?.email }
-        : undefined,
+      user: myId ? { sub: myId, name: user?.name, email: user?.email } : undefined,
       createdAt: new Date().toISOString(),
       optimistic: true,
     };
@@ -204,37 +281,46 @@ export default function ChatDock() {
     setText("");
 
     try {
-      // Mandamos también datos del usuario (por si el token no trae name/email)
       const { data } = await api.post("/chat/messages", {
         text: txt,
-        room: "global",
+        room,
+        clientId: tempId,
         userName: user?.name || user?.nickname || user?.email,
         userEmail: user?.email || null,
         userSub: user?.sub || null,
       });
-      setMessages((m) => m.map((msg) => (msg._id === tempId ? data : msg)));
+
+      setMessages((m) => m.map((msg) => (msg.clientId === tempId ? data : msg)));
     } catch (err) {
-      console.error(
-        "[chat] POST /chat/messages",
-        err?.response?.data || err.message
-      );
+      console.error("[chat] POST /chat/messages", err?.response?.data || err?.message || err);
       setMessages((m) =>
-        m.map((msg) => (msg._id === tempId ? { ...msg, error: true } : msg))
+        m.map((msg) => (msg.clientId === tempId ? { ...msg, error: true } : msg))
       );
     }
   };
 
-  // Autoscroll / badge
+  // autoscroll + unread (no contar si es mío)
+  const prevCountRef = React.useRef(0);
   React.useEffect(() => {
+    const prev = prevCountRef.current;
+    prevCountRef.current = messages.length;
+
+    const grew = messages.length > prev;
+    if (!grew) return;
+
+    const last = messages[messages.length - 1];
+    const isMine =
+      (last?.user?.sub && myId && last.user.sub === myId) || last?.optimistic === true;
+
     if (open) {
       listRef.current?.scrollTo({
         top: listRef.current.scrollHeight,
         behavior: "smooth",
       });
-    } else if (messages.length) {
+    } else if (!isMine) {
       setUnread((u) => u + 1);
     }
-  }, [messages.length, open]);
+  }, [messages, open, myId]);
 
   const fmtDate = (v) => {
     const d = new Date(v);
@@ -242,35 +328,46 @@ export default function ChatDock() {
     return d.toLocaleString();
   };
 
-  // Colocación del panel
-  const panelW = 360;
-  const panelH = 460;
-  const openToLeft =
-    pos.x > window.innerWidth - (panelW + bubbleSize + 20);
-  const openUp =
-    pos.y > window.innerHeight - (panelH + bubbleSize + 20);
+  // calcular posición del panel usando viewport actual (no depender de layout)
+  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+  const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+
+  const openToLeft = pos.x > vw - (panelW + bubbleSize + 20);
+  const openUp = pos.y > vh - (panelH + bubbleSize + 20);
+
   const panelLeft = openToLeft
     ? Math.max(8, pos.x - panelW - 12)
-    : Math.min(
-        pos.x + bubbleSize + 12,
-        window.innerWidth - panelW - 8
-      );
+    : Math.min(pos.x + bubbleSize + 12, vw - panelW - 8);
+
   const panelTop = openUp
     ? Math.max(8, pos.y - panelH + bubbleSize)
-    : Math.min(pos.y, window.innerHeight - panelH - 8);
+    : Math.min(pos.y, vh - panelH - 8);
+
+  // estilos mínimos inline para asegurar visibilidad aunque falte CSS
+  const fabStyle = {
+    position: "fixed",
+    left: pos.x,
+    top: pos.y,
+    width: bubbleSize,
+    height: bubbleSize,
+    zIndex: 9999,
+    pointerEvents: "auto",
+  };
+
+  const panelStyle = {
+    position: "fixed",
+    left: panelLeft,
+    top: panelTop,
+    width: panelW,
+    height: panelH,
+    zIndex: 9999,
+    pointerEvents: "auto",
+  };
 
   return (
     <>
       {open && (
-        <div
-          className="chat-panel"
-          style={{
-            left: panelLeft,
-            top: panelTop,
-            width: panelW,
-            height: panelH,
-          }}
-        >
+        <div className="chat-panel" style={panelStyle}>
           <div className="chat-header">
             <div className="chat-header__title">Chat interno</div>
             <button
@@ -289,38 +386,23 @@ export default function ChatDock() {
             ) : (
               messages.map((m) => {
                 const mine =
-                  (m.user?.sub &&
-                    myId &&
-                    m.user.sub === myId) ||
-                  m.from === "yo" ||
-                  m.optimistic === true;
+                  (m.user?.sub && myId && m.user.sub === myId) || m.optimistic === true;
 
-                const displayName = mine
-                  ? "Tú"
-                  : m.user?.name || m.user?.email || "Desconocido";
+                const displayName = mine ? "Tú" : m.user?.name || m.user?.email || "Desconocido";
 
                 return (
-                  <div
-                    key={m._id || m.id}
-                    className={`chat-row ${mine ? "me" : ""}`}
-                  >
+                  <div key={m._id || m.id || m.clientId} className={`chat-row ${mine ? "me" : ""}`}>
                     {!mine && (
-                      <div
-                        className="chat-avatar"
-                        title={displayName}
-                      >
+                      <div className="chat-avatar" title={displayName}>
                         {initials(displayName)}
                       </div>
                     )}
                     <div className="chat-bubble">
                       <div className="chat-meta">{displayName}</div>
-                      <div
-                        className={`chat-pill ${mine ? "me" : ""}`}
-                      >
-                        {m.text}
-                      </div>
+                      <div className={`chat-pill ${mine ? "me" : ""}`}>{m.text}</div>
                       <div className="chat-time">
                         {fmtDate(m.createdAt || m.at)}
+                        {m.error ? " · ERROR" : ""}
                       </div>
                     </div>
                   </div>
@@ -336,11 +418,7 @@ export default function ChatDock() {
               onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder="Escribe un mensaje…"
             />
-            <button
-              onClick={send}
-              className="chat-send"
-              disabled={!text.trim()}
-            >
+            <button onClick={send} className="chat-send" disabled={!text.trim()}>
               Enviar
             </button>
           </div>
@@ -353,21 +431,14 @@ export default function ChatDock() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         className={`chat-fab ${dragging ? "dragging" : ""}`}
-        style={{
-          left: pos.x,
-          top: pos.y,
-          width: bubbleSize,
-          height: bubbleSize,
-        }}
+        style={fabStyle}
         aria-label="Abrir chat interno"
         title="Chat"
       >
         <div className="chat-fab__glow" aria-hidden />
         <ChatIcon />
         {unread > 0 && !open && (
-          <span className="chat-badge">
-            {unread > 9 ? "9+" : unread}
-          </span>
+          <span className="chat-badge">{unread > 9 ? "9+" : unread}</span>
         )}
       </button>
     </>

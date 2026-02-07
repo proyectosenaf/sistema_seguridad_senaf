@@ -1,9 +1,5 @@
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-} from "react";
+// src/iam/pages/IamAdmin/index.jsx
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -31,9 +27,7 @@ async function seedFromLocalCatalog(token) {
     existingPerms = [];
   }
 
-  const have = new Set(
-    existingPerms.map((p) => p.key || p.name).filter(Boolean)
-  );
+  const have = new Set(existingPerms.map((p) => p.key || p.name).filter(Boolean));
 
   for (const [key, label] of Object.entries(permisosKeys)) {
     if (have.has(key)) continue;
@@ -43,11 +37,7 @@ async function seedFromLocalCatalog(token) {
       await iamApi.createPerm({ key, label, group, order }, token);
       console.log("[IAM seed] permiso creado:", key);
     } catch (e) {
-      console.warn(
-        "[IAM seed] no se pudo crear permiso",
-        key,
-        e?.message || e
-      );
+      console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
     }
   }
 
@@ -60,7 +50,6 @@ async function seedFromLocalCatalog(token) {
     existingRoles = [];
   }
 
-  // Index por code (o name como fallback)
   const byCode = new Map(
     existingRoles
       .map((r) => [r?.code || r?.name || r?._id, r])
@@ -74,26 +63,15 @@ async function seedFromLocalCatalog(token) {
     if (!currentRole) {
       try {
         await iamApi.createRole(
-          {
-            code,
-            name: code, // luego lo puedes renombrar en la UI
-            description: "",
-            permissions: desired,
-          },
+          { code, name: code, description: "", permissions: desired },
           token
         );
         console.log("[IAM seed] rol creado:", code);
       } catch (e) {
-        console.warn(
-          "[IAM seed] no se pudo crear rol",
-          code,
-          e?.message || e
-        );
+        console.warn("[IAM seed] no se pudo crear rol", code, e?.message || e);
       }
     } else {
-      const current = Array.isArray(
-        currentRole.permissions || currentRole.perms
-      )
+      const current = Array.isArray(currentRole.permissions || currentRole.perms)
         ? currentRole.permissions || currentRole.perms
         : [];
 
@@ -115,11 +93,7 @@ async function seedFromLocalCatalog(token) {
           );
           console.log("[IAM seed] rol actualizado:", code);
         } catch (e) {
-          console.warn(
-            "[IAM seed] no se pudo actualizar rol",
-            code,
-            e?.message || e
-          );
+          console.warn("[IAM seed] no se pudo actualizar rol", code, e?.message || e);
         }
       }
     }
@@ -140,12 +114,10 @@ export default function IamAdmin() {
   );
   const tabIds = useMemo(() => tabs.map((t) => t.id), [tabs]);
 
-  // Tab en la URL (?tab=users|roles|perms|audit)
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
   const activeTab = tabIds.includes(rawTab) ? rawTab : "users";
 
-  // Si no hay ?tab, establecemos "users" una sola vez
   useEffect(() => {
     if (!rawTab) {
       const next = new URLSearchParams(searchParams);
@@ -169,7 +141,6 @@ export default function IamAdmin() {
   const [seeding, setSeeding] = useState(false);
   const [checkErr, setCheckErr] = useState("");
 
-  // helper para token
   const getToken = useCallback(async () => {
     if (!isAuthenticated) return null;
     try {
@@ -186,7 +157,6 @@ export default function IamAdmin() {
     }
   }, [isAuthenticated, getAccessTokenSilently]);
 
-  // Verificamos si BD tiene permisos/roles
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -201,10 +171,7 @@ export default function IamAdmin() {
         }
 
         setCheckErr("");
-        const [p, r] = await Promise.all([
-          iamApi.listPerms(token),
-          iamApi.listRoles(token),
-        ]);
+        const [p, r] = await Promise.all([iamApi.listPerms(token), iamApi.listRoles(token)]);
         const pCount = (p?.items || p?.permissions || []).length;
         const rCount = (r?.items || r?.roles || []).length;
         if (alive) setNeedsSeed(pCount === 0 || rCount === 0);
@@ -224,18 +191,15 @@ export default function IamAdmin() {
     try {
       setSeeding(true);
       const token = await getToken();
-      if (!token) {
-        throw new Error("No se pudo obtener token de sesión.");
-      }
+      if (!token) throw new Error("No se pudo obtener token de sesión.");
 
       await seedFromLocalCatalog(token);
-      const [p, r] = await Promise.all([
-        iamApi.listPerms(token),
-        iamApi.listRoles(token),
-      ]);
+
+      const [p, r] = await Promise.all([iamApi.listPerms(token), iamApi.listRoles(token)]);
       const pCount = (p?.items || p?.permissions || []).length;
       const rCount = (r?.items || r?.roles || []).length;
       setNeedsSeed(pCount === 0 || rCount === 0);
+
       alert("✅ Permisos y roles cargados.");
     } catch (e) {
       alert(e?.message || "❌ No se pudo cargar la plantilla.");
@@ -264,7 +228,6 @@ export default function IamAdmin() {
   return (
     <IamGuard anyOf={["iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
       <div className="p-4 md:p-6 space-y-4 layer-content">
-        {/* Banner para sembrar catálogo si está vacío */}
         {needsSeed && (
           <div className="rounded-2xl border border-amber-400/40 bg-amber-50/70 dark:bg-amber-900/30 dark:border-amber-500/60 text-amber-900 dark:text-amber-100 px-4 py-3 flex items-center justify-between backdrop-blur-sm">
             <div>
@@ -285,7 +248,6 @@ export default function IamAdmin() {
           </div>
         )}
 
-        {/* Barra de pestañas */}
         <div
           role="tablist"
           aria-label="Secciones IAM"
@@ -317,44 +279,19 @@ export default function IamAdmin() {
           })}
         </div>
 
-        {/* Contenido de cada pestaña */}
-        <section
-          role="tabpanel"
-          id="panel-users"
-          aria-labelledby="tab-users"
-          hidden={activeTab !== "users"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-users" aria-labelledby="tab-users" hidden={activeTab !== "users"}>
           {activeTab === "users" && <UsersPage />}
         </section>
 
-        <section
-          role="tabpanel"
-          id="panel-roles"
-          aria-labelledby="tab-roles"
-          hidden={activeTab !== "roles"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-roles" aria-labelledby="tab-roles" hidden={activeTab !== "roles"}>
           {activeTab === "roles" && <RolesPage />}
         </section>
 
-        <section
-          role="tabpanel"
-          id="panel-perms"
-          aria-labelledby="tab-perms"
-          hidden={activeTab !== "perms"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-perms" aria-labelledby="tab-perms" hidden={activeTab !== "perms"}>
           {activeTab === "perms" && <PermissionCatalog />}
         </section>
 
-        <section
-          role="tabpanel"
-          id="panel-audit"
-          aria-labelledby="tab-audit"
-          hidden={activeTab !== "audit"}
-          className="outline-none"
-        >
+        <section role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden={activeTab !== "audit"}>
           {activeTab === "audit" && <AuditPage />}
         </section>
       </div>

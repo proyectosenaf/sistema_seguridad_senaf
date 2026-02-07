@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { Suspense, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -6,7 +5,7 @@ import { attachAuth0 } from "./lib/api.js";
 
 // ✅ también inyectamos el token al módulo Rondas QR
 import { attachRondasAuth } from "./modules/rondasqr/api/rondasqrApi.js";
-// ✅ NUEVO: también IAM
+// ✅ también IAM
 import { attachIamAuth } from "./iam/api/iamApi.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
@@ -14,115 +13,63 @@ import Layout from "./components/Layout.jsx";
 import { LayoutUIProvider } from "./components/layout-ui.jsx";
 import IamGuard from "./iam/api/IamGuard.jsx";
 
+// Auth pages
+const Entry = React.lazy(() => import("./pages/Auth/Entry.jsx"));
+const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
+const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
+
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() =>
-  import("./pages/Incidentes/IncidentesList.jsx")
-);
-const IncidenteForm = React.lazy(() =>
-  import("./pages/Incidentes/IncidenteForm.jsx")
-);
+const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
+const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
 // ✅ Rondas QR
-//   - Panel unificado (scan + widgets)
-const RondasDashboard = React.lazy(() =>
-  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
-); // informes
-const RondasScan = React.lazy(() =>
-  import("./modules/rondasqr/guard/ScanPage.jsx")
-); // panel unificado
-
-// ✅ Hub de administración (CRUD)
-const AdminHub = React.lazy(() =>
-  import("./modules/rondasqr/admin/AdminHub.jsx")
-);
+const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
+const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
+const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
-const Visitas = React.lazy(() => import("./pages/Visitas/Visitas.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() =>
-  import("./pages/Supervision/Supervision.jsx")
-);
-const Evaluacion = React.lazy(() =>
-  import("./pages/Evaluacion/Evaluacion.jsx")
-);
+const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
+const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
-const LoginRedirect = React.lazy(() =>
-  import("./pages/Auth/LoginRedirect.jsx")
-);
-const AuthCallback = React.lazy(() =>
-  import("./pages/Auth/AuthCallback.jsx")
-); // 👈 NUEVO
 
-/* 👇 NUEVO: páginas del módulo Control de Visitas */
-const VisitsPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/VisitsPage.jsx")
-);
-const AgendaPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/AgendaPage.jsx")
-);
-/* FIN NUEVO */
+// Control de visitas moderno
+const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
+const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 
-// Varios correos separados por coma: VITE_ROOT_ADMINS=correo1@x.com,correo2@y.com
-// Además, incluye VITE_SUPERADMIN_EMAIL para que coincida con el backend.
-const ROOT_ADMINS = (
-  import.meta.env.VITE_ROOT_ADMINS ||
-  import.meta.env.VITE_SUPERADMIN_EMAIL ||
-  ""
-)
+const ROOT_ADMINS = (import.meta.env.VITE_ROOT_ADMINS || import.meta.env.VITE_SUPERADMIN_EMAIL || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-/**
- * Devuelve true si el usuario actual es un "root admin" por correo.
- * Esto funciona igual en localhost y producción mientras el correo sea el mismo.
- */
 function isSuperAdminUser(user) {
-  if (!user) return false;
-  const email = (user.email || "").toLowerCase();
-  if (!email) return false;
-  return ROOT_ADMINS.includes(email);
+  const email = (user?.email || "").toLowerCase();
+  return !!email && ROOT_ADMINS.includes(email);
 }
 
-/**
- * Wrapper sobre IamGuard que:
- *  - Si eres super admin → SIEMPRE muestra children (ignora anyOf, fallback, etc.).
- *  - Si no → delega al IamGuard original.
- */
 function IamGuardSuper(props) {
   const { user } = useAuth0();
-
-  if (isSuperAdminUser(user)) {
-    // ignoramos fallback/redirecciones: el dueño del sistema ve TODO
-    return <>{props.children}</>;
-  }
-
+  if (isSuperAdminUser(user)) return <>{props.children}</>;
   return <IamGuard {...props} />;
 }
 
 /* ───────────────── LÓGICA HOME ───────────────── */
 
-/** Decide home por rol/permisos */
 function pickHome({ roles = [], perms = [] }) {
-  const R = new Set(roles.map((r) => String(r).toLowerCase()));
-  const P = new Set(perms);
+  const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
+  const P = new Set(perms || []);
 
-  // Guardia → panel de rondas
-  if (R.has("guardia")) return "/rondasqr/scan";
+  // Guardia ya NO se manda a rondas automáticamente
+  if (R.has("guardia")) return "/";
 
-  // Admin de rondas → Hub de administración
-  if (P.has("rondasqr.admin") || R.has("rondasqr.admin"))
-    return "/rondasqr/admin";
-
-  // Recepción → módulo de accesos
+  if (P.has("rondasqr.admin") || R.has("rondasqr.admin")) return "/rondasqr/admin";
   if (R.has("recepcion")) return "/accesos";
 
-  // Cualquier otro (admin general, IAM, TI, root, etc.) → Panel principal
   return "/";
 }
 
@@ -134,75 +81,50 @@ function RoleRedirectInline() {
   useEffect(() => {
     let alive = true;
 
-    // Tomamos VITE_API_BASE_URL (normalmente termina en /api)
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-    // Quitamos /api del final para quedarnos solo con el host
     const ROOT = RAW.replace(/\/api\/?$/, "").replace(/\/$/, "");
     const V1 = `${ROOT}/api/iam/v1`;
     const LEGACY = `${ROOT}/api/iam`;
     const DEV = import.meta.env.DEV;
     const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 
-    const candidates = [
-      `${V1}/me`,
-      `${V1}/auth/me`,
-      `${LEGACY}/me`,
-      `${LEGACY}/auth/me`,
-    ];
+    const candidates = [`${V1}/me`, `${V1}/auth/me`, `${LEGACY}/me`, `${LEGACY}/auth/me`];
 
     async function tryFetch(headers = {}) {
       for (const url of candidates) {
         try {
-          const res = await fetch(url, {
-            credentials: "include",
-            headers,
-          });
+          const res = await fetch(url, { credentials: "include", headers });
           if (!res.ok) continue;
           const data = (await res.json().catch(() => ({}))) || {};
           const roles = data?.roles || data?.user?.roles || [];
           const perms = data?.permissions || data?.perms || [];
-          if ((roles?.length || 0) + (perms?.length || 0) > 0)
-            return { roles, perms };
-        } catch {
-          // ignoramos y probamos la siguiente URL
-        }
+          if ((roles?.length || 0) + (perms?.length || 0) > 0) return { roles, perms };
+        } catch {}
       }
       return null;
     }
 
     (async () => {
-      // 1️⃣ En producción (o si hay sesión Auth0), intentamos con token Bearer
       let headers = {};
+
       if (isAuthenticated && audience) {
         try {
-          const token = await getAccessTokenSilently({
-            authorizationParams: { audience },
-          });
-          if (token) {
-            headers.Authorization = `Bearer ${token}`;
-          }
-        } catch (err) {
-          const msg = (err && (err.error || err.message)) || String(err);
-          console.debug("[RoleRedirectInline] getAccessTokenSilently:", msg);
-        }
+          const token = await getAccessTokenSilently({ authorizationParams: { audience } });
+          if (token) headers.Authorization = `Bearer ${token}`;
+        } catch {}
       }
 
-      // 2️⃣ Intento normal (token si existe, si no cookies)
       let me = await tryFetch(headers);
 
-      // 3️⃣ En DEV/local con IAM dev: usar x-user-email como antes
+      // DEV fallback
       if (!me && DEV) {
         const devEmail =
           user?.email ||
-          (typeof localStorage !== "undefined" &&
-            localStorage.getItem("iamDevEmail")) ||
+          (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
           import.meta.env.VITE_DEV_IAM_EMAIL ||
           "admin@local";
 
-        me = await tryFetch({
-          ...headers,
-          "x-user-email": devEmail,
-        });
+        me = await tryFetch({ ...headers, "x-user-email": devEmail });
       }
 
       const dest = me ? pickHome(me) : "/";
@@ -226,9 +148,10 @@ function AuthTokenBridge({ children }) {
       if (!isAuthenticated) {
         attachAuth0(null);
         attachRondasAuth(null);
-        attachIamAuth(null); // 👈 limpiar IAM también
+        attachIamAuth(null);
         return;
       }
+
       const provider = async () => {
         try {
           const token = await getAccessTokenSilently({
@@ -238,43 +161,20 @@ function AuthTokenBridge({ children }) {
             },
           });
           return token || null;
-        } catch (err) {
-          const msg = (err && (err.error || err.message)) || String(err);
-          console.debug("[AuthTokenBridge] getAccessTokenSilently:", msg);
+        } catch {
           return null;
         }
       };
+
       attachAuth0(provider);
       attachRondasAuth(provider);
-      attachIamAuth(provider); // 👈 ahora IAM usa el mismo token
+      attachIamAuth(provider);
     };
+
     setProvider();
   }, [isAuthenticated, getAccessTokenSilently]);
 
   return children;
-}
-
-/** ✔ Router inteligente para Rondas */
-function RondasRouterInline() {
-  return (
-    <>
-      {/* Admin → Hub */}
-      <IamGuardSuper
-        anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]}
-        fallback={null}
-      >
-        <Navigate to="/rondasqr/admin" replace />
-      </IamGuardSuper>
-
-      {/* Guardia → Scan */}
-      <IamGuardSuper anyOf={["guardia"]} fallback={null}>
-        <Navigate to="/rondasqr/scan" replace />
-      </IamGuardSuper>
-
-      {/* Por defecto → Panel unificado */}
-      <Navigate to="/rondasqr/scan" replace />
-    </>
-  );
 }
 
 export default function App() {
@@ -283,13 +183,12 @@ export default function App() {
       <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
-            {/* 🔹 Callback de Auth0: SOLO termina login y redirige */}
+            {/* Auth */}
+            <Route path="/entry" element={<Entry />} />
             <Route path="/callback" element={<AuthCallback />} />
-
-            {/* Pública: ruta /login manual (siempre fuerza login) */}
             <Route path="/login" element={<LoginRedirect />} />
 
-            {/* Protegidas */}
+            {/* Home */}
             <Route
               path="/"
               element={
@@ -301,6 +200,7 @@ export default function App() {
               }
             />
 
+            {/* Start (decide por roles/perms) */}
             <Route
               path="/start"
               element={
@@ -319,13 +219,7 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
+                      anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
                     >
                       <IncidentesList />
                     </IamGuardSuper>
@@ -333,20 +227,13 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-            {/* 👉 alias para que /incidentes/lista no dé 404 */}
             <Route
               path="/incidentes/lista"
               element={
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
+                      anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
                     >
                       <IncidentesList />
                     </IamGuardSuper>
@@ -381,9 +268,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["iam.users.manage", "iam.roles.manage", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
                       <IamAdminPage />
                     </IamGuardSuper>
                   </Layout>
@@ -391,33 +276,22 @@ export default function App() {
               }
             />
 
-            {/* ✅ RONDAS QR */}
+            {/* RondasQR */}
             <Route
               path="/rondasqr"
               element={
                 <ProtectedRoute>
-                  <Layout>
-                    <RondasRouterInline />
-                  </Layout>
+                  <Navigate to="/rondasqr/scan" replace />
                 </ProtectedRoute>
               }
             />
 
-            {/* Panel unificado (Scan) */}
             <Route
               path="/rondasqr/scan/*"
               element={
                 <ProtectedRoute>
-                  <Layout hideSidebar>
-                    <IamGuardSuper
-                      anyOf={[
-                        "guardia",
-                        "rondasqr.view",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
-                    >
+                  <Layout>
+                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "admin", "iam.users.manage", "*"]}>
                       <RondasScan />
                     </IamGuardSuper>
                   </Layout>
@@ -425,21 +299,13 @@ export default function App() {
               }
             />
 
-            {/* Informes */}
             <Route
               path="/rondasqr/reports"
               element={
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={[
-                        "rondasqr.reports",
-                        "rondasqr.view",
-                        "rondasqr.admin",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
+                      anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.users.manage", "*"]}
                     >
                       <RondasDashboard />
                     </IamGuardSuper>
@@ -448,20 +314,12 @@ export default function App() {
               }
             />
 
-            {/* Admin Hub (CRUD) */}
             <Route
               path="/rondasqr/admin"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "rondasqr.admin",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]}>
                       <AdminHub />
                     </IamGuardSuper>
                   </Layout>
@@ -469,59 +327,19 @@ export default function App() {
               }
             />
 
-            {/* Aliases de admin */}
-            <Route
-              path="/rondasqr/admin/plans"
-              element={<Navigate to="/rondasqr/admin" replace />}
-            />
-            <Route
-              path="/rondasqr/admin/checkpoints"
-              element={<Navigate to="/rondasqr/admin" replace />}
-            />
+            {/* Aliases legacy rondas */}
+            <Route path="/rondas" element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
+            <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
 
-            {/* 🔁 Redirecciones legacy */}
-            <Route
-              path="/rondasqrpanel"
-              element={<Navigate to="/rondasqr/scan" replace />}
-            />
-            <Route
-              path="/rondasqr/panel"
-              element={<Navigate to="/rondasqr/scan" replace />}
-            />
-            <Route
-              path="/rondasqr/rondasqrpanel"
-              element={<Navigate to="/rondasqr/scan" replace />}
-            />
-
-            {/* Alias legacy generales */}
-            <Route path="/rondas" element={<Navigate to="/rondasqr" replace />} />
-            <Route
-              path="/rondas/admin"
-              element={<Navigate to="/rondasqr/admin" replace />}
-            />
-            <Route
-              path="/rondas/scan"
-              element={<Navigate to="/rondasqr/scan" replace />}
-            />
-            <Route
-              path="/rondas/reports"
-              element={<Navigate to="/rondasqr/reports" replace />}
-            />
-
-            {/* Otros módulos existentes */}
+            {/* Otros módulos */}
             <Route
               path="/accesos"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "accesos.read",
-                        "accesos.write",
-                        "accesos.export",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
                       <Accesos />
                     </IamGuardSuper>
                   </Layout>
@@ -529,21 +347,37 @@ export default function App() {
               }
             />
 
-            {/* Control de visitas (moderno) */}
             <Route
               path="/visitas"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "visitas.read",
-                        "visitas.write",
-                        "visitas.close",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
                       <VisitsPageCore />
+                    </IamGuardSuper>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/visitas/control"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                      <VisitsPageCore />
+                    </IamGuardSuper>
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/visitas/agenda"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                      <AgendaPageCore />
                     </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
@@ -555,54 +389,34 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "bitacora.read",
-                        "bitacora.write",
-                        "bitacora.export",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
                       <Bitacora />
                     </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/supervision"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "supervision.read",
-                        "supervision.create",
-                        "supervision.edit",
-                        "supervision.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
                       <Supervision />
                     </IamGuardSuper>
                   </Layout>
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/evaluacion"
               element={
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={[
-                        "evaluacion.list",
-                        "evaluacion.create",
-                        "evaluacion.edit",
-                        "evaluacion.reports",
-                        "evaluacion.kpi",
-                        "*",
-                      ]}
+                      anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}
                     >
                       <Evaluacion />
                     </IamGuardSuper>
@@ -610,6 +424,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/chat"
               element={
@@ -621,49 +436,6 @@ export default function App() {
               }
             />
 
-            {/* 🔹 NUEVO: módulo Control de Visitas moderno */}
-            <Route
-              path="/visitas/control"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "visitas.read",
-                        "visitas.write",
-                        "visitas.close",
-                        "*",
-                      ]}
-                    >
-                      <VisitsPageCore />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-
-            {/* 🔹 NUEVO: submódulo Agenda de Citas */}
-            <Route
-              path="/visitas/agenda"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "visitas.read",
-                        "visitas.write",
-                        "visitas.close",
-                        "*",
-                      ]}
-                    >
-                      <AgendaPageCore />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-
-            {/* 404 */}
             <Route path="*" element={<div className="p-6">No encontrado</div>} />
           </Routes>
         </Suspense>

@@ -3,28 +3,22 @@ import api from "/src/lib/api.js";
 
 /**
  * Historial de chat
- * GET /api/chat/messages
+ * GET /chat/messages
  * Params opcionales:
  *  - room: string (default "global")
  *  - limit: number (p.ej. 50)
- *  - beforeId / afterId: para paginación si lo soporta tu backend
  */
 export async function getChatMessages(params = {}) {
-  const { room = "global", limit, beforeId, afterId } = params;
-  const { data } = await api.get("/api/chat/messages", {
-    params: { room, limit, beforeId, afterId },
+  const { room = "global", limit } = params;
+  const { data } = await api.get("/chat/messages", {
+    params: { room, limit },
   });
   return data;
 }
 
 /**
  * Enviar mensaje
- * POST /api/chat/messages
- * Body:
- *  - text: string (requerido)
- *  - room: string (default "global")
- *  - userName, userEmail, userSub: opcionales (fallback si el token no trae claims)
- *  - extra: objeto opcional para metadata adicional
+ * POST /chat/messages
  */
 export async function sendChatMessage({
   text,
@@ -35,18 +29,16 @@ export async function sendChatMessage({
   extra,
 }) {
   const payload = { text, room };
-  if (userName)  payload.userName  = userName;
+  if (userName) payload.userName = userName;
   if (userEmail) payload.userEmail = userEmail;
-  if (userSub)   payload.userSub   = userSub;
+  if (userSub) payload.userSub = userSub;
   if (extra && typeof extra === "object") payload.extra = extra;
 
-  const { data } = await api.post("/api/chat/messages", payload);
+  const { data } = await api.post("/chat/messages", payload);
   return data;
 }
 
-// Aliases opcionales
-export const getMessages  = getChatMessages;
-export const postMessage  = sendChatMessage;
+export const getMessages = getChatMessages;
+export const postMessage = sendChatMessage;
 
-const ChatAPI = { getChatMessages, sendChatMessage, getMessages, postMessage };
-export default ChatAPI;
+export default { getChatMessages, sendChatMessage, getMessages, postMessage };

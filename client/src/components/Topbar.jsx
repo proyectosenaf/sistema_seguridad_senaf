@@ -1,4 +1,4 @@
-// components/Topbar.jsx
+// client/src/components/Topbar.jsx
 import React from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
@@ -23,27 +23,21 @@ import {
   ClipboardList,
   ClipboardCheck,
   Award,
-  BarChart3,
   ShieldCheck,
 } from "lucide-react";
 
-// === Socket para eventos en vivo ===
-import { io } from "socket.io-client";
+// ✅ usar el socket global (NO crear otro)
+import { socket } from "../lib/socket.js";
 
 // === API de notificaciones (stub seguro) ===
 import NotificationsAPI from "../lib/notificationsApi.js";
-
-// Raíz del backend (sin /api) para sockets
-const API_ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(
-  /\/$/,
-  ""
-);
-const SOCKET_URL = API_ROOT;
 
 const PATH_LABELS = {
   "/": "Panel principal",
   "/accesos": "Control de Acceso",
   "/rondas": "Rondas de Vigilancia",
+  "/rondasqr": "Rondas de Vigilancia",
+  "/rondasqr/scan": "Rondas de Vigilancia",
   "/incidentes": "Gestión de Incidentes",
   "/visitas": "Control de Visitas",
   "/bitacora": "Bitácora Digital",
@@ -68,7 +62,6 @@ const MODULES = [
   { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
   { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
-  // 👇 Aparece en el menú rápido del topbar
   { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
 ];
 
@@ -119,7 +112,38 @@ function useDismissOnOutside(open, refs, onClose) {
   }, [open, refs, onClose]);
 }
 
-export default function Topbar({ onToggleMenu, showBack = false }) {
+/* =========
+   UI tokens
+   ========= */
+const fxBtn =
+  "inline-flex items-center justify-center p-2 rounded-xl " +
+  "border border-neutral-200/60 dark:border-white/10 " +
+  "bg-white/55 dark:bg-neutral-950/40 " +
+  "backdrop-blur-xl shadow-sm " +
+  "hover:bg-white/70 dark:hover:bg-neutral-900/45 " +
+  "transition";
+
+const fxBtnText =
+  "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl " +
+  "border border-neutral-200/60 dark:border-white/10 " +
+  "bg-white/55 dark:bg-neutral-950/40 " +
+  "backdrop-blur-xl shadow-sm " +
+  "hover:bg-white/70 dark:hover:bg-neutral-900/45 " +
+  "transition";
+
+const fxPopover =
+  "fixed z-[70] w-80 rounded-2xl " +
+  "border border-neutral-200/60 dark:border-white/10 " +
+  "bg-white/65 dark:bg-neutral-950/45 " +
+  "backdrop-blur-2xl shadow-2xl p-1";
+
+const fxModal =
+  "w-[min(680px,92vw)] mx-auto rounded-2xl " +
+  "border border-neutral-200/60 dark:border-white/10 " +
+  "bg-white/70 dark:bg-neutral-950/50 " +
+  "backdrop-blur-2xl shadow-2xl p-4";
+
+export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
   const { user, logout } = useAuth0();
   const nav = useNavigate();
   const { pathname } = useLocation();
@@ -127,6 +151,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   // -------- búsqueda --------
   const [q, setQ] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
+
   React.useEffect(() => {
     function onKey(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -137,6 +162,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
   function runSearch() {
     const base = pathname.startsWith("/visitas")
       ? "/visitas"
@@ -150,8 +176,9 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     setSearchOpen(false);
   }
 
-  // 🔙 Regresar: SIEMPRE a panel principal (evita volver a la URL de Auth0)
+  // ✅ Back soporta callback del Layout
   function goBack() {
+    if (back?.onClick) return back.onClick();
     nav("/");
   }
 
@@ -161,18 +188,6 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   const [quickOpen, setQuickOpen] = React.useState(false);
   const [quickPos, setQuickPos] = React.useState({ left: 0, top: 0 });
 
-  const toggleQuick = () => {
-    setQuickOpen((next) => {
-      const willOpen = !next;
-      if (willOpen && quickBtnRef.current) {
-        const r = quickBtnRef.current.getBoundingClientRect();
-        const menuW = 320; // w-80
-        const gap = 8;
-        setQuickPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
-      }
-      return willOpen;
-    });
-  };
   React.useEffect(() => {
     if (!quickOpen) return;
     const recalc = () => {
@@ -184,20 +199,33 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     };
     window.addEventListener("resize", recalc);
     window.addEventListener("scroll", recalc, true);
+    recalc();
     return () => {
       window.removeEventListener("resize", recalc);
       window.removeEventListener("scroll", recalc, true);
     };
   }, [quickOpen]);
+
   useDismissOnOutside(quickOpen, [quickBtnRef, quickMenuRef], () => setQuickOpen(false));
 
-  // -------- campana (fixed + notificaciones) --------
+  const toggleQuick = () => {
+    setQuickOpen((next) => {
+      const willOpen = !next;
+      if (willOpen && quickBtnRef.current) {
+        const r = quickBtnRef.current.getBoundingClientRect();
+        const menuW = 320;
+        const gap = 8;
+        setQuickPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
+      }
+      return willOpen;
+    });
+  };
+
+  // -------- campana (notificaciones) --------
   const bellBtnRef = React.useRef(null);
-  const bellMenuRef = React.useRef(null);
   const [bellOpen, setBellOpen] = React.useState(false);
   const [bellPos, setBellPos] = React.useState({ left: 0, top: 0 });
 
-  // Conteos de notificaciones
   const [counts, setCounts] = React.useState({ unread: 0, alerts: 0, total: 0 });
   const hasNew = (counts?.unread || 0) > 0 || (counts?.alerts || 0) > 0;
 
@@ -215,25 +243,25 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
     } catch {}
   }, [fetchCounts]);
 
+  // ✅ escuchar eventos con socket global
   React.useEffect(() => {
     fetchCounts();
-    const s = io(SOCKET_URL, { transports: ["websocket"], withCredentials: true });
+    if (!socket) return;
+
     const update = () => fetchCounts();
 
-    s.on("notifications:count-updated", update);
-    s.on("email:new", update);
-    s.on("message:new", update);
-    s.on("appointment:new", update);
+    socket.on("notifications:count-updated", update);
+    socket.on("email:new", update);
+    socket.on("message:new", update);
+    socket.on("appointment:new", update);
 
     return () => {
-      s.off("notifications:count-updated", update);
-      s.off("email:new", update);
-      s.off("message:new", update);
-      s.off("appointment:new", update);
-      s.disconnect();
+      socket.off("notifications:count-updated", update);
+      socket.off("email:new", update);
+      socket.off("message:new", update);
+      socket.off("appointment:new", update);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchCounts]);
 
   return (
     <div className="flex items-center gap-3 px-4 md:px-6 h-14">
@@ -241,7 +269,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       <button
         type="button"
         onClick={onToggleMenu}
-        className="md:hidden inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        className={"md:hidden " + fxBtn}
         aria-label="Abrir menú"
       >
         <Menu className="w-5 h-5" />
@@ -252,15 +280,14 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         <button
           type="button"
           onClick={goBack}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-          title="Regresar"
+          className={fxBtnText}
+          title={back?.label || "Regresar"}
         >
           <ArrowLeft className="w-4 h-4" />
-          <span className="hidden sm:inline">Regresar</span>
+          <span className="hidden sm:inline">{back?.label || "Regresar"}</span>
         </button>
       )}
 
-      {/* Migas */}
       <Breadcrumbs />
       <div className="flex-1" />
 
@@ -272,12 +299,12 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && runSearch()}
             placeholder="Buscar… (Ctrl/⌘+K)"
-            className="w-64 px-9 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/60 placeholder:opacity-60 focus:outline-none"
+            className="input-fx w-64 pl-9 pr-9 py-2"
           />
           <Search className="w-4 h-4 opacity-60 absolute left-3 top-1/2 -translate-y-1/2" />
           {q && (
             <button
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-neutral-200/60 dark:hover:bg-neutral-800/60"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-white/40 dark:hover:bg-white/10"
               onClick={() => setQ("")}
               aria-label="Limpiar"
             >
@@ -288,26 +315,34 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       </div>
 
       {/* Botón + */}
-      <TopbarQuickMenu nav={nav} />
+      <TopbarQuickMenu
+        nav={nav}
+        open={quickOpen}
+        toggle={toggleQuick}
+        btnRef={quickBtnRef}
+        menuRef={quickMenuRef}
+        pos={quickPos}
+        fxBtn={fxBtn}
+        fxPopover={fxPopover}
+      />
 
-      {/* Botón campana */}
+      {/* Campana */}
       <div ref={bellBtnRef} className="relative">
         <button
           onClick={() => setBellOpen((v) => !v)}
-          className="relative inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          className={"relative " + fxBtn}
           aria-label="Notificaciones"
           aria-haspopup="menu"
           aria-expanded={bellOpen}
         >
           <Bell className={"w-5 h-5 " + (hasNew ? "text-rose-500" : "")} />
           {hasNew && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center ring-2 ring-white dark:ring-neutral-950">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center ring-2 ring-white/80 dark:ring-neutral-950/80">
               {Math.min((counts.unread || 0) + (counts.alerts || 0), 99)}
             </span>
           )}
         </button>
 
-        {/* Panel de notificaciones */}
         {bellOpen && (
           <BellMenu
             anchorRef={bellBtnRef}
@@ -319,12 +354,12 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
             onClose={() => setBellOpen(false)}
             setPosFn={setBellPos}
             pos={bellPos}
+            fxPopover={fxPopover}
           />
         )}
       </div>
 
-      {/* === Paleta + Tema SIEMPRE visibles, conservando funcionalidad === */}
-      {/* MÓVIL: versión compacta visible en xs (misma lógica) */}
+      {/* MÓVIL */}
       <div className="sm:hidden flex items-center gap-2 shrink-0">
         <div className="shrink-0">
           <ThemeFxPicker />
@@ -334,7 +369,7 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
         </div>
       </div>
 
-      {/* ESCRITORIO (sm+): versión normal + usuario/salir */}
+      {/* ESCRITORIO */}
       <div className="hidden sm:flex items-center gap-2 shrink-0">
         <div className="shrink-0">
           <ThemeFxPicker />
@@ -343,7 +378,6 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
           <ThemeToggle />
         </div>
 
-        {/* Usuario + logout */}
         <span className="hidden sm:block text-sm opacity-80">{user?.name}</span>
         <button
           onClick={() =>
@@ -365,13 +399,10 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
       {/* Modal búsqueda */}
       {searchOpen && (
         <div
-          className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/40"
+          className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35"
           onClick={() => setSearchOpen(false)}
         >
-          <div
-            className="w-[min(680px,92vw)] mx-auto rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-2xl p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className={fxModal} onClick={(e) => e.stopPropagation()}>
             <div className="text-sm mb-2 opacity-70">Búsqueda global</div>
             <div className="relative">
               <input
@@ -383,12 +414,12 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
                   if (e.key === "Escape") setSearchOpen(false);
                 }}
                 placeholder="Escribe y presiona Enter…"
-                className="w-full px-10 py-3 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/60 focus:outline-none"
+                className="input-fx w-full pl-10 pr-10 py-3"
               />
               <Search className="w-4 h-4 opacity-60 absolute left-3 top-1/2 -translate-y-1/2" />
               {q && (
                 <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-neutral-200/60 dark:hover:bg-neutral-800/60"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-white/40 dark:hover:bg-white/10"
                   onClick={() => setQ("")}
                   aria-label="Limpiar"
                 >
@@ -406,52 +437,17 @@ export default function Topbar({ onToggleMenu, showBack = false }) {
   );
 }
 
-/* ---------- Subcomponentes pequeños para limpiar el JSX principal ---------- */
+/* ---------- Subcomponentes ---------- */
 
-function TopbarQuickMenu({ nav }) {
-  const btnRef = React.useRef(null);
-  const menuRef = React.useRef(null);
-  const [open, setOpen] = React.useState(false);
-  const [pos, setPos] = React.useState({ left: 0, top: 0 });
-
-  const toggle = () => {
-    setOpen((next) => {
-      const willOpen = !next;
-      if (willOpen && btnRef.current) {
-        const r = btnRef.current.getBoundingClientRect();
-        const menuW = 320,
-          gap = 8;
-        setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
-      }
-      return willOpen;
-    });
-  };
-
-  React.useEffect(() => {
-    if (!open) return;
-    const recalc = () => {
-      if (!btnRef.current) return;
-      const r = btnRef.current.getBoundingClientRect();
-      const menuW = 320,
-        gap = 8;
-      setPos({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
-    };
-    window.addEventListener("resize", recalc);
-    window.addEventListener("scroll", recalc, true);
-    return () => {
-      window.removeEventListener("resize", recalc);
-      window.removeEventListener("scroll", recalc, true);
-    };
-  }, [open]);
-
-  useDismissOnOutside(open, [btnRef, menuRef], () => setOpen(false));
+function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPopover }) {
+  useDismissOnOutside(open, [btnRef, menuRef], () => open && toggle());
 
   return (
     <>
       <div ref={btnRef}>
         <button
           onClick={toggle}
-          className="inline-flex items-center justify-center p-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          className={fxBtn}
           title="Abrir módulo"
           aria-haspopup="menu"
           aria-expanded={open}
@@ -463,7 +459,7 @@ function TopbarQuickMenu({ nav }) {
       {open && (
         <div
           ref={menuRef}
-          className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-1"
+          className={fxPopover}
           style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
           role="menu"
         >
@@ -472,10 +468,12 @@ function TopbarQuickMenu({ nav }) {
             <button
               key={to}
               onClick={() => {
-                setOpen(false);
-                nav(to);
+                // 🔁 legacy /rondas → /rondasqr/scan directo
+                if (to === "/rondas") nav("/rondasqr/scan");
+                else nav(to);
+                toggle();
               }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-left"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/40 dark:hover:bg-white/10 text-left"
               role="menuitem"
             >
               <Icon className="w-4 h-4 opacity-80" />
@@ -488,18 +486,18 @@ function TopbarQuickMenu({ nav }) {
   );
 }
 
-function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
+function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos, fxPopover }) {
   React.useEffect(() => {
     if (!anchorRef.current) return;
     const r = anchorRef.current.getBoundingClientRect();
-    const menuW = 320,
-      gap = 8;
+    const menuW = 320;
+    const gap = 8;
     setPosFn({ left: clampMenuX(r.left, menuW, gap), top: r.bottom + gap });
   }, [anchorRef, setPosFn]);
 
   return (
     <div
-      className="fixed z-[70] w-80 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-xl p-2"
+      className={fxPopover + " p-2"}
       style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
       role="menu"
     >
@@ -508,19 +506,19 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
       <div className="p-2 text-sm space-y-1">
         <div className="flex items-center justify-between">
           <span className="opacity-80">Sin leer</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
             {counts.unread || 0}
           </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Alertas</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
             {counts.alerts || 0}
           </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Total</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800">
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
             {counts.total || 0}
           </span>
         </div>
@@ -529,11 +527,14 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
       <div className="p-2 pt-1 flex gap-2">
         <button
           onClick={onClear}
-          className="flex-1 px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+          className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
         >
           Marcar todo como leído
         </button>
-        <button onClick={onClose} className="px-3 py-2 rounded-lg border dark:border-neutral-700">
+        <button
+          onClick={onClose}
+          className="px-3 py-2 rounded-xl border border-neutral-200/60 dark:border-white/10 bg-white/40 dark:bg-neutral-950/30 hover:bg-white/55 dark:hover:bg-neutral-900/40 transition"
+        >
           Cerrar
         </button>
       </div>

@@ -1,3 +1,4 @@
+// src/iam/pages/IamAdmin/PermissionCatalog/PermissionCatalog.jsx
 import React, { useMemo, useRef, useState, useEffect } from "react";
 
 import { usePermissionCatalogData } from "./hooks/usePermissionCatalogData";
@@ -34,13 +35,8 @@ export default function PermissionCatalog() {
   });
   const [openDelete, setOpenDelete] = useState(null);
 
-  // Control de módulos desplegados
-  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(
-    () => new Set()
-  );
-  const [expandedGroupsFull, setExpandedGroupsFull] = useState(
-    () => new Set()
-  );
+  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(() => new Set());
+  const [expandedGroupsFull, setExpandedGroupsFull] = useState(() => new Set());
 
   const toggleGroupCompact = (groupKey) => {
     setExpandedGroupsCompact((prev) => {
@@ -49,6 +45,7 @@ export default function PermissionCatalog() {
       return next;
     });
   };
+
   const toggleGroupFull = (groupKey) => {
     setExpandedGroupsFull((prev) => {
       const next = new Set(prev);
@@ -77,30 +74,23 @@ export default function PermissionCatalog() {
       .filter((g) => g.items.length > 0 || compactView);
   }, [groups, query, compactView]);
 
-  // Si estamos en "Mostrar" y aún no hay grupos abiertos, abrir todos por defecto
   useEffect(() => {
     if (!compactView) {
-      const all = new Set(
-        filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
-      );
-      if (
-        expandedGroupsFull.size === 0 ||
-        [...expandedGroupsFull].some((k) => !all.has(k))
-      ) {
+      const all = new Set(filtered.map((g, i) => (g.group ? g.group : `g-${i}`)));
+      if (expandedGroupsFull.size === 0 || [...expandedGroupsFull].some((k) => !all.has(k))) {
         setExpandedGroupsFull(all);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compactView, filtered]);
 
-  if (loading) {
-    return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
-  }
+  if (loading) return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
 
   const btnDark =
     "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium " +
     "bg-neutral-900/70 text-neutral-100 border border-white/10 " +
     "hover:bg-neutral-900/90 transition backdrop-blur-sm";
+
   const btnPrimary =
     "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold " +
     "bg-emerald-600 text-white border border-emerald-500/80 " +
@@ -113,6 +103,7 @@ export default function PermissionCatalog() {
           {errorMsg}
         </div>
       )}
+
       {banner && (
         <div
           className={
@@ -128,7 +119,6 @@ export default function PermissionCatalog() {
         </div>
       )}
 
-      {/* Barra superior */}
       <div className="fx-card">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <input
@@ -143,12 +133,11 @@ export default function PermissionCatalog() {
               <Plus className="w-4 h-4 opacity-90" />
               <span>Crear permiso</span>
             </button>
+
             <button
               onClick={() => {
                 setCompactView(false);
-                const all = new Set(
-                  filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
-                );
+                const all = new Set(filtered.map((g, i) => (g.group ? g.group : `g-${i}`)));
                 setExpandedGroupsFull(all);
               }}
               className={btnDark}
@@ -156,6 +145,7 @@ export default function PermissionCatalog() {
               <Eye className="w-4 h-4 opacity-90" />
               <span>Mostrar</span>
             </button>
+
             <button
               onClick={() => {
                 setCompactView(true);
@@ -167,6 +157,7 @@ export default function PermissionCatalog() {
               <Minus className="w-4 h-4 opacity-90" />
               <span>Ver menos</span>
             </button>
+
             <button onClick={onSaveAll} className={btnPrimary}>
               <Square className="w-4 h-4 opacity-95" />
               <span>Guardar</span>
@@ -175,17 +166,12 @@ export default function PermissionCatalog() {
         </div>
       </div>
 
-      {/* Contenido */}
       {filtered.length === 0 ? (
-        <div className="p-6 text-neutral-400">
-          No se encontraron permisos para “{query}”.
-        </div>
+        <div className="p-6 text-neutral-400">No se encontraron permisos para “{query}”.</div>
       ) : compactView ? (
-        /* ===== VISTA COMPACTA ===== */
         <div className="fx-card p-0 overflow-hidden">
           <div className="overflow-auto max-h-[72vh]" ref={scrollRef}>
             <div style={{ minWidth: `${minWidthPx}px` }}>
-              {/* Encabezado FIJO */}
               <div className="sticky top-0 z-20">
                 <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
                   <HeaderRow roles={roles} gridCols={gridCols} />
@@ -198,11 +184,7 @@ export default function PermissionCatalog() {
                   const isOpen = expandedGroupsCompact.has(groupKey);
 
                   return (
-                    <div
-                      key={`${groupKey}-${idx}`}
-                      className="bg-neutral-900/20"
-                    >
-                      {/* Botón de despliegue */}
+                    <div key={`${groupKey}-${idx}`} className="bg-neutral-900/20">
                       <button
                         type="button"
                         onClick={() => toggleGroupCompact(groupKey)}
@@ -211,9 +193,7 @@ export default function PermissionCatalog() {
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize text-neutral-100">
-                                {g.group}
-                              </span>
+                              <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
                               <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
                                 {g.items.length}
                               </span>
@@ -221,9 +201,7 @@ export default function PermissionCatalog() {
                           )}
                         </div>
                         <span
-                          className={`i-lucide:chevron-down transition-transform ${
-                            isOpen ? "rotate-180" : ""
-                          }`}
+                          className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
                           aria-hidden
                         />
                       </button>
@@ -239,11 +217,7 @@ export default function PermissionCatalog() {
                             origMatrix={origMatrix}
                             onToggle={onToggle}
                             onDelete={(it) =>
-                              setOpenDelete({
-                                id: it._id,
-                                key: it.key,
-                                label: it.label,
-                              })
+                              setOpenDelete({ id: it._id, key: it.key, label: it.label })
                             }
                           />
                         </div>
@@ -256,11 +230,9 @@ export default function PermissionCatalog() {
           </div>
         </div>
       ) : (
-        /* ===== VISTA COMPLETA "MOSTRAR" ===== */
         <div className="fx-card p-0">
           <div ref={scrollRef} className="overflow-auto max-h-[72vh]">
             <div style={{ minWidth: `${minWidthPx}px` }}>
-              {/* Encabezado FIJO */}
               <div className="sticky top-0 z-20">
                 <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
                   <HeaderRow roles={roles} gridCols={gridCols} />
@@ -283,9 +255,7 @@ export default function PermissionCatalog() {
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize text-neutral-100">
-                                {g.group}
-                              </span>
+                              <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
                               <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
                                 {g.items.length}
                               </span>
@@ -293,9 +263,7 @@ export default function PermissionCatalog() {
                           )}
                         </div>
                         <span
-                          className={`i-lucide:chevron-down transition-transform ${
-                            isOpen ? "rotate-180" : ""
-                          }`}
+                          className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
                           aria-hidden
                         />
                       </button>
@@ -310,11 +278,7 @@ export default function PermissionCatalog() {
                           origMatrix={origMatrix}
                           onToggle={onToggle}
                           onDelete={(it) =>
-                            setOpenDelete({
-                              id: it._id,
-                              key: it.key,
-                              label: it.label,
-                            })
+                            setOpenDelete({ id: it._id, key: it.key, label: it.label })
                           }
                         />
                       )}
@@ -327,7 +291,6 @@ export default function PermissionCatalog() {
         </div>
       )}
 
-      {/* Crear Permiso */}
       <Modal
         open={openCreate}
         title="Crear permiso"
@@ -355,9 +318,7 @@ export default function PermissionCatalog() {
             <input
               className="input-fx"
               value={form.key}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, key: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, key: e.target.value }))}
               placeholder="modulo.accion"
             />
           </div>
@@ -366,9 +327,7 @@ export default function PermissionCatalog() {
             <input
               className="input-fx"
               value={form.label}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, label: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
               placeholder="Módulo · Acción"
             />
           </div>
@@ -377,9 +336,7 @@ export default function PermissionCatalog() {
             <select
               className="input-fx"
               value={form.moduleValue}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, moduleValue: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, moduleValue: e.target.value }))}
             >
               <option value="bitacora">Bitácora</option>
               <option value="acceso">Control de Acceso</option>
@@ -394,7 +351,6 @@ export default function PermissionCatalog() {
         </div>
       </Modal>
 
-      {/* Eliminar */}
       <Modal
         open={!!openDelete}
         title="Eliminar permiso"
@@ -418,8 +374,7 @@ export default function PermissionCatalog() {
       >
         {openDelete && (
           <p className="text-sm">
-            ¿Seguro que deseas eliminar{" "}
-            <span className="font-semibold">{openDelete.label}</span>?
+            ¿Seguro que deseas eliminar <span className="font-semibold">{openDelete.label}</span>?
             <br />
             <span className="font-mono opacity-80">{openDelete.key}</span>
           </p>

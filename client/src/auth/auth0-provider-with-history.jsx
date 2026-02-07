@@ -9,16 +9,21 @@ export default function Auth0ProviderWithHistory({ children }) {
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
 
-  // ✅ Si el .env no lo trae, usamos el audience correcto por defecto
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
 
-  // ✅ Si en algún momento quieres cambiarlo sin tocar código:
-  // VITE_AUTH0_REDIRECT_URI=http://localhost:3000/callback
   const redirectUri =
-    import.meta.env.VITE_AUTH0_REDIRECT_URI || `${window.location.origin}/callback`;
+    import.meta.env.VITE_AUTH0_REDIRECT_URI ||
+    `${window.location.origin}/callback`;
 
   const onRedirectCallback = (appState) => {
-    navigate(appState?.returnTo || "/start", { replace: true });
+    const returnTo = appState?.returnTo || "/start";
+
+    // ✅ Si quieres bloquear que Auth0 te "regrese" a rondas al reingresar,
+    // agrega aquí una regla de saneamiento.
+    const blockedPrefixes = ["/rondasqr", "/rondas"]; // ajusta si deseas
+    const isBlocked = blockedPrefixes.some((p) => returnTo.startsWith(p));
+
+    navigate(isBlocked ? "/start" : returnTo, { replace: true });
   };
 
   if (!(domain && clientId)) {
@@ -34,12 +39,7 @@ export default function Auth0ProviderWithHistory({ children }) {
       clientId={clientId}
       authorizationParams={{
         redirect_uri: redirectUri,
-
-        // 🔥 CLAVE: este debe ser EXACTO a tu API Identifier
         audience: audience,
-
-        // ✅ scopes básicos para SPA
-        // (Si luego necesitas refresh tokens reales, se ajusta)
         scope: "openid profile email",
       }}
       onRedirectCallback={onRedirectCallback}

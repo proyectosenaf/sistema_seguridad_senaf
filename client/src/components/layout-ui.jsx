@@ -1,4 +1,4 @@
-// client/src/components/layout-ui.jsx
+// src/components/layout-ui.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -13,15 +13,10 @@ export function LayoutUIProvider({ children }) {
     [hideSidebar, back]
   );
 
-  return (
-    <LayoutUIContext.Provider value={value}>
-      {children}
-    </LayoutUIContext.Provider>
-  );
+  return <LayoutUIContext.Provider value={value}>{children}</LayoutUIContext.Provider>;
 }
 
-// ✅ Seguro: si no hay provider, devuelve funciones no-op y estados por default.
-// Así no rompe cuando Layout se usa fuera del provider.
+// ✅ Seguro: si no hay provider, devuelve defaults (no rompe)
 export function useLayoutUI() {
   const ctx = React.useContext(LayoutUIContext);
   if (ctx) return ctx;
@@ -36,7 +31,7 @@ export function useLayoutUI() {
 /**
  * Envuelve el contenido de un módulo para:
  * - Ocultar la barra lateral
- * - Mostrar botón "Regresar" (por defecto va al dashboard '/')
+ * - Mostrar botón "Regresar" con destino configurable
  */
 export function ModuleFullPage({ backTo = "/", backLabel = "Regresar", children }) {
   const { setHideSidebar, setBack } = useLayoutUI();
@@ -45,6 +40,7 @@ export function ModuleFullPage({ backTo = "/", backLabel = "Regresar", children 
   React.useEffect(() => {
     setHideSidebar(true);
     setBack({ label: backLabel, onClick: () => nav(backTo) });
+
     return () => {
       setHideSidebar(false);
       setBack(null);

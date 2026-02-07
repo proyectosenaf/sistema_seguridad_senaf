@@ -4,8 +4,8 @@ import { Link } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
-import api, { API } from "../../lib/api.js"; // 👈 usamos el cliente con Auth y la constante API
-import iamApi from "../../iam/api/iamApi.js"; // 👈 para traer guardias
+import api, { API } from "../../lib/api.js";
+import iamApi from "../../iam/api/iamApi.js";
 
 // 👉 librerías para exportar
 import jsPDF from "jspdf";
@@ -35,7 +35,7 @@ export default function IncidentesList() {
     type: "Acceso no autorizado",
     description: "",
     reportedBy: "",
-    reportedByGuardId: "", // 👈 ID del guardia seleccionado
+    reportedByGuardId: "",
     zone: "",
     priority: "alta",
     status: "abierto",
@@ -46,11 +46,9 @@ export default function IncidentesList() {
   const [showCamera, setShowCamera] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
   const fileInputRef = useRef(null);
-  const [editingId, setEditingId] = useState(null); // null → creando, id → editando
+  const [editingId, setEditingId] = useState(null);
 
   // ========= BASE para imágenes (solo host, sin /api) =========
-  // API viene como: http://localhost:4000/api o https://urchin-app.../api
-  // Le quitamos el /api del final para servir /uploads correctamente
   const API_HOST = (API || "").replace(/\/api$/, "");
 
   // 👇 catálogo de guardias (IAM)
@@ -68,7 +66,6 @@ export default function IncidentesList() {
   useEffect(() => {
     (async () => {
       try {
-        // api ya tiene baseURL tipo http://localhost:4000/api
         const res = await api.get("/incidentes", {
           params: { limit: 500 },
         });
@@ -114,7 +111,6 @@ export default function IncidentesList() {
           const r = await iamApi.listGuards("", true, token);
           items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
-          // Fallback si no existe listGuards
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || []).filter((u) => {
@@ -173,18 +169,15 @@ export default function IncidentesList() {
     }
   };
 
-  // ───────── helpers fotos ─────────
   function extractPhotos(inc) {
     if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
     if (Array.isArray(inc.photos)) return inc.photos;
     return [];
   }
 
-  // ───────── form inline ─────────
   const handleFormChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
-  // cambio específico del select de guardia
   const handleReporterChange = (e) => {
     const opId = e.target.value;
     const g = guards.find((x) => String(x.opId) === String(opId));
@@ -195,7 +188,6 @@ export default function IncidentesList() {
     }));
   };
 
-  // archivo desde input (imagen o video)
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -208,13 +200,11 @@ export default function IncidentesList() {
     e.target.value = "";
   };
 
-  // foto desde cámara full screen
   const handleCameraCapture = (dataUrl) => {
     setMedia((prev) => [...prev, { type: "image", src: dataUrl }]);
     setShowCamera(false);
   };
 
-  // video desde grabador full screen
   const handleVideoCapture = (dataUrl) => {
     setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
     setShowVideoRecorder(false);
@@ -250,7 +240,6 @@ export default function IncidentesList() {
     }
 
     try {
-      // resolvemos guardia para mandar datos ricos al backend
       const guard = guards.find(
         (g) => String(g.opId) === String(form.reportedByGuardId)
       );
@@ -269,8 +258,8 @@ export default function IncidentesList() {
         zone: form.zone,
         priority: form.priority,
         status: form.status,
-        reportedBy: label, // texto visible
-        guardId: form.reportedByGuardId || undefined, // ID para enlazar con IAM
+        reportedBy: label,
+        guardId: form.reportedByGuardId || undefined,
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
         photosBase64,
@@ -278,7 +267,6 @@ export default function IncidentesList() {
       };
 
       if (editingId) {
-        // UPDATE
         const res = await api.put(`/incidentes/${editingId}`, payload);
         const actualizado = res.data?.item || res.data || {};
         setIncidentes((prev) => {
@@ -289,7 +277,6 @@ export default function IncidentesList() {
           return next;
         });
       } else {
-        // CREATE
         const res = await api.post("/incidentes", payload);
         const creado = res.data?.item || res.data;
         setIncidentes((prev) => {
@@ -316,16 +303,12 @@ export default function IncidentesList() {
     setShowForm(true);
     setEditingId(incidente._id);
 
-    // intentamos recuperar guardId si ya viene desde backend
     let guardId =
       incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
     let reportedByLabel = incidente.reportedBy || "";
 
-    // si no viene guardId pero sí label, intentamos machear con el catálogo
     if (!guardId && incidente.reportedBy && guards.length) {
-      const match = guards.find(
-        (g) => guardLabel(g) === incidente.reportedBy
-      );
+      const match = guards.find((g) => guardLabel(g) === incidente.reportedBy);
       if (match) {
         guardId = match.opId;
         reportedByLabel = guardLabel(match);
@@ -342,7 +325,6 @@ export default function IncidentesList() {
       status: incidente.status || "abierto",
     });
 
-    // cargamos fotos antiguas como media de tipo imagen
     const oldPhotos = extractPhotos(incidente);
     setMedia(oldPhotos.map((src) => ({ type: "image", src })));
   };
@@ -366,14 +348,13 @@ export default function IncidentesList() {
     }
   };
 
-  // ───────── EXPORTAR PDF ─────────
   const handleExportPDF = () => {
     if (!incidentes.length) {
       alert("No hay incidentes para exportar.");
       return;
     }
 
-    const doc = new jsPDF("l", "pt", "a4"); // horizontal para más columnas
+    const doc = new jsPDF("l", "pt", "a4");
 
     const columns = [
       "#",
@@ -421,7 +402,6 @@ export default function IncidentesList() {
     doc.save("incidentes.pdf");
   };
 
-  // ───────── EXPORTAR EXCEL ─────────
   const handleExportExcel = () => {
     if (!incidentes.length) {
       alert("No hay incidentes para exportar.");
@@ -458,7 +438,6 @@ export default function IncidentesList() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
-      {/* header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-white">
@@ -485,14 +464,13 @@ export default function IncidentesList() {
         </button>
       </div>
 
-      {/* FORM inline */}
       {showForm && (
         <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
           <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
+
           <form onSubmit={handleSubmit} className="space-y-6 text-sm">
-            {/* Tipo */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Tipo de Incidente
@@ -510,7 +488,6 @@ export default function IncidentesList() {
               </select>
             </div>
 
-            {/* Descripción */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Descripción del Incidente
@@ -525,9 +502,7 @@ export default function IncidentesList() {
               />
             </div>
 
-            {/* Reportado / Zona */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* SELECT DE GUARDIAS */}
               <div>
                 <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                   Reportado por
@@ -563,7 +538,6 @@ export default function IncidentesList() {
               </div>
             </div>
 
-            {/* Prioridad */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Prioridad
@@ -580,11 +554,11 @@ export default function IncidentesList() {
               </select>
             </div>
 
-            {/* Evidencias */}
             <div className="space-y-2">
               <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
                 Evidencias (fotos / videos)
               </label>
+
               <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -657,7 +631,6 @@ export default function IncidentesList() {
               )}
             </div>
 
-            {/* botones */}
             <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:justify-end">
               <button
                 type="button"
@@ -669,6 +642,7 @@ export default function IncidentesList() {
               >
                 Cancelar
               </button>
+
               <button
                 type="submit"
                 className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
@@ -680,7 +654,6 @@ export default function IncidentesList() {
         </div>
       )}
 
-      {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-lg bg-[#0f1b2d] border border-red-400/40 p-4">
           <div className="text-xs uppercase text-red-300 font-medium flex items-center gap-2">
@@ -691,6 +664,7 @@ export default function IncidentesList() {
             {stats.abiertos}
           </div>
         </div>
+
         <div className="rounded-lg bg-[#0f1b2d] border border-blue-400/40 p-4">
           <div className="text-xs uppercase text-blue-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-blue-500" />
@@ -700,6 +674,7 @@ export default function IncidentesList() {
             {stats.enProceso}
           </div>
         </div>
+
         <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
           <div className="text-xs uppercase text-green-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500" />
@@ -709,8 +684,9 @@ export default function IncidentesList() {
             {stats.resueltos}
           </div>
         </div>
+
         <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
-          <div className="text-xs uppercase text-yellow-300 font-medium flex items.center gap-2">
+          <div className="text-xs uppercase text-yellow-300 font-medium flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-yellow-400" />
             Alta prioridad
           </div>
@@ -720,7 +696,6 @@ export default function IncidentesList() {
         </div>
       </div>
 
-      {/* LISTA */}
       <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
         <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
           <div>
@@ -731,6 +706,7 @@ export default function IncidentesList() {
               Historial de reportes registrados en el sistema
             </p>
           </div>
+
           <div className="w-full md:w-1/3 flex flex-col gap-2">
             <input
               className="w-full bg-black/30 text-white text-sm rounded-md px-3 py-2 
@@ -739,7 +715,7 @@ export default function IncidentesList() {
                          transition-all duration-200"
               placeholder="Buscar por tipo, descripción o zona..."
             />
-            {/* BOTONES EXPORTAR */}
+
             <div className="flex gap-2 justify-end">
               <button
                 type="button"
@@ -748,10 +724,11 @@ export default function IncidentesList() {
               >
                 Exportar PDF
               </button>
+
               <button
                 type="button"
                 onClick={handleExportExcel}
-                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white.font-medium rounded px-3 py-2 transition-all duration-200"
+                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
               >
                 Exportar Excel
               </button>
@@ -774,13 +751,11 @@ export default function IncidentesList() {
                 <th className="px-4 py-3 font-medium text-right">ACCIONES</th>
               </tr>
             </thead>
+
             <tbody>
               {incidentes.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="text-center text-gray-400 py-10 text-sm"
-                  >
+                  <td colSpan={9} className="text-center text-gray-400 py-10 text-sm">
                     No hay incidentes registrados.
                   </td>
                 </tr>
@@ -798,21 +773,21 @@ export default function IncidentesList() {
                       key={i._id}
                       className="border-b border-white/5 hover:bg-white/5 transition-colors"
                     >
-                      <td className="px-4 py-3 text-white font-medium">
-                        {i.type}
-                      </td>
+                      <td className="px-4 py-3 text-white font-medium">{i.type}</td>
+
                       <td className="px-4 py-3 text-gray-200 max-w-[320px] truncate">
                         {i.description}
                       </td>
-                      <td className="px-4 py-3 text-gray-200">
-                        {i.reportedBy}
-                      </td>
+
+                      <td className="px-4 py-3 text-gray-200">{i.reportedBy}</td>
                       <td className="px-4 py-3 text-gray-200">{i.zone}</td>
+
                       <td className="px-4 py-3 whitespace-nowrap text-gray-300 text-xs">
                         {i.date || i.createdAt
                           ? new Date(i.date || i.createdAt).toLocaleString()
                           : "—"}
                       </td>
+
                       <td className="px-4 py-3">
                         <span
                           className={
@@ -827,6 +802,7 @@ export default function IncidentesList() {
                           {i.priority}
                         </span>
                       </td>
+
                       <td className="px-4 py-3">
                         <span
                           className={
@@ -845,14 +821,14 @@ export default function IncidentesList() {
                             : "Abierto"}
                         </span>
                       </td>
+
                       <td className="px-4 py-3">
                         {photos.length ? (
                           <div className="flex gap-2">
                             {photos.slice(0, 3).map((p, idx) => {
                               const src =
                                 typeof p === "string" &&
-                                (p.startsWith("http") ||
-                                  p.startsWith("data:"))
+                                (p.startsWith("http") || p.startsWith("data:"))
                                   ? p
                                   : `${API_HOST}${p}`;
                               return (
@@ -881,23 +857,21 @@ export default function IncidentesList() {
                           <span className="text-xs text-gray-500">—</span>
                         )}
                       </td>
+
                       <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
                         {i.status === "abierto" && (
                           <button
-                            onClick={() =>
-                              actualizarEstado(i._id, "en_proceso")
-                            }
+                            onClick={() => actualizarEstado(i._id, "en_proceso")}
                             className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
                           >
                             Procesar
                           </button>
                         )}
+
                         {i.status === "en_proceso" && (
                           <button
-                            onClick={() =>
-                              actualizarEstado(i._id, "resuelto")
-                            }
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all.duration-300"
+                            onClick={() => actualizarEstado(i._id, "resuelto")}
+                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
                           >
                             Resolver
                           </button>
@@ -909,6 +883,7 @@ export default function IncidentesList() {
                         >
                           Editar
                         </button>
+
                         <button
                           onClick={() => handleDelete(i._id)}
                           className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
@@ -951,7 +926,6 @@ export default function IncidentesList() {
   );
 }
 
-// util
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();

@@ -1,6 +1,6 @@
 // client/src/components/Sidebar.jsx
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   Home,
   DoorOpen,
@@ -29,7 +29,10 @@ const IconIAM = ShieldCheck || Users;
 const NAV_ITEMS = [
   { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },
   { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
-  { to: "/rondasqr", label: "Rondas de Vigilancia", Icon: IconFootprints },
+
+  // ✅ Ir directo al módulo
+  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: IconFootprints },
+
   { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
   { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
   { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
@@ -38,27 +41,40 @@ const NAV_ITEMS = [
   { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
 ];
 
+// ✅ Helper para marcar activo si estás dentro de subrutas
+function isPathActive(currentPath, to) {
+  if (to === "/") return currentPath === "/";
+  return currentPath === to || currentPath.startsWith(to + "/");
+}
+
 function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
+  const { pathname } = useLocation();
+  const active = isPathActive(pathname, to);
+
   return (
     <NavLink
       to={to}
-      onClick={onClick}
-      className={({ isActive }) =>
+      onClick={(e) => onClick?.(e)}
+      className={() =>
         [
-          "group relative block rounded-xl transition-colors",
+          "group relative block rounded-2xl transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--ring]",
-          !isActive
-            ? "hover:bg-white/60 hover:ring-1 hover:ring-neutral-400/40"
-            : "bg-white/70 ring-1 ring-neutral-300/70",
-          "dark:hover:bg-white/10",
-          emphasizeDark && "dark:bg-white/10 dark:ring-1 dark:ring-white/15",
-          isActive && "dark:bg-white/14 dark:ring-white/20",
-        ].join(" ")
+          !active
+            ? "hover:bg-white/40 dark:hover:bg-white/10"
+            : "bg-white/55 dark:bg-white/12 ring-1 ring-neutral-200/70 dark:ring-white/10",
+          emphasizeDark && "dark:bg-white/10 dark:ring-1 dark:ring-white/12",
+        ]
+          .filter(Boolean)
+          .join(" ")
       }
+      aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
-        <span className="text-[17px] leading-none text-neutral-900 dark:text-white">
+        <Icon
+          className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white"
+          strokeWidth={2}
+        />
+        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
           {label}
         </span>
       </div>
@@ -69,28 +85,25 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
 export default function Sidebar({ onNavigate }) {
   const { isAuthenticated, logout } = useAuth0();
 
-  // Botón "Salir": cerrar sesión y volver al /login
   const handleLogoutClick = () => {
     onNavigate?.();
     try {
       const returnTo = `${window.location.origin}/login`;
       logout({
-        logoutParams: {
-          returnTo,
-          federated: true, // opcional, lo dejamos igual que en el topbar
-        },
+        logoutParams: { returnTo, federated: true },
       });
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error("Error al cerrar sesión:", err);
     }
   };
 
+  // ✅ SIEMPRE sidebar global → UI uniforme en toda la app
   return (
     <div
       className={[
-        "w-full h-full flex flex-col overflow-y-auto overscroll-contain",
-        "border-r border-white/10 p-4 sidebar-aurora",
+        "w-full h-full flex flex-col overflow-y-auto overscroll-contain p-4",
+        "bg-white/55 dark:bg-neutral-950/45 backdrop-blur-2xl",
+        "border-r border-neutral-200/60 dark:border-white/10",
       ].join(" ")}
       aria-label="Barra lateral"
     >
@@ -109,23 +122,25 @@ export default function Sidebar({ onNavigate }) {
         ))}
       </nav>
 
-      {/* Acciones al fondo */}
       <div className="mt-auto pt-6">
         <div className="border-t border-white/10 mb-3" />
 
-        {/* Salir (sólo si autenticado) */}
         {isAuthenticated && (
           <button
             type="button"
             onClick={handleLogoutClick}
             title="Cerrar sesión"
             className={[
-              "group w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left",
-              "bg-white/70 border border-neutral-300/70 text-neutral-900 hover:bg-white/80 hover:ring-1 hover:ring-neutral-400/40",
-              "dark:bg-white/5 dark:border-white/15 dark:text-white dark:hover:bg-white/10",
+              "group w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left transition",
+              "border border-neutral-200/60 dark:border-white/10",
+              "bg-white/55 dark:bg-neutral-950/35 backdrop-blur-xl shadow-sm",
+              "hover:bg-white/70 dark:hover:bg-neutral-900/45",
             ].join(" ")}
           >
-            <LogOut className="w-5 h-5 text-neutral-900 dark:text-white" strokeWidth={2.5} />
+            <LogOut
+              className="w-5 h-5 text-neutral-900 dark:text-white"
+              strokeWidth={2.5}
+            />
             <span className="font-medium">Salir</span>
           </button>
         )}

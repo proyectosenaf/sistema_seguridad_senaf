@@ -2,44 +2,65 @@
 import mongoose from "mongoose";
 import RqAssignment from "../models/RqAssignment.model.js";
 import RqSite from "../models/RqSite.model.js";
-import RqRound from "../models/Round.model.js";
+import RqRound from "../models/RqRound.model.js";
 
 /**
- * Crear nueva asignación de ronda
+ * Crear nueva asignación de ronda (compat)
  */
 export async function createAssignment(req, res) {
   try {
-    const { date, siteId, roundId, guardUserId, startTime, alertTime } = req.body;
+    const {
+      date,
+      siteId,
+      roundId,
+      guardId,
+      guardUserId,
+      startTime,
+      alertTime, // si tu UI lo usa
+      endTime,   // si lo mandan
+    } = req.body || {};
 
-    if (!siteId || !roundId || !guardUserId) {
+    const guard = (typeof guardId === "string" && guardId.trim())
+      ? guardId.trim()
+      : (typeof guardUserId === "string" && guardUserId.trim())
+      ? guardUserId.trim()
+      : "";
+
+    if (!siteId || !roundId || !guard) {
       return res.status(400).json({ ok: false, error: "Faltan campos obligatorios" });
     }
 
     const doc = await RqAssignment.create({
-      date,
-      siteId,
-      roundId,
-      guardUserId,
+      date: typeof date === "string" ? date.trim() : date,
+      siteId: mongoose.Types.ObjectId.isValid(siteId) ? new mongoose.Types.ObjectId(siteId) : siteId,
+      roundId: mongoose.Types.ObjectId.isValid(roundId) ? new mongoose.Types.ObjectId(roundId) : roundId,
+
+      // ✅ canónico + compat
+      guardId: guard,
+      guardUserId: guard,
+
       startTime,
-      alertTime,
-      status: "Asignado",
+      // compat: algunos usan alertTime como “fin/alerta”
+      endTime: endTime || alertTime || null,
+
+      status: "assigned",
     });
 
-    // Buscar nombres para mensaje
     const site = await RqSite.findById(siteId).lean();
     const round = await RqRound.findById(roundId).lean();
 
-    // Disparar notificación real
     const notifier = req.app.get("notifier");
-    await notifier.assignment({
-      userId: guardUserId,
-      email: null,
-      siteName: site?.name || "Sitio",
-      roundName: round?.name || "Ronda",
-      startTime,
-      endTime: alertTime || null,
-      assignmentId: doc._id?.toString(),
-    });
+    if (notifier?.assignment) {
+      await notifier.assignment({
+        userId: guard,
+        email: null,
+        siteName: site?.name || "Sitio",
+        roundName: round?.name || "Ronda",
+        startTime: doc?.startTime || startTime || null,
+        endTime: doc?.endTime || endTime || alertTime || null,
+        assignmentId: doc._id?.toString(),
+      });
+    }
 
     res.status(201).json({ ok: true, assignment: doc });
   } catch (e) {
@@ -49,17 +70,19 @@ export async function createAssignment(req, res) {
 }
 
 /**
- * Listar asignaciones del día
+ * Listar asignaciones del día (compat)
  */
 export async function listAssignments(req, res) {
   try {
-    const { date } = req.query;
+    const date = typeof req.query.date === "string" ? req.query.date.trim() : "";
     const query = date ? { date } : {};
+
     const items = await RqAssignment.find(query)
       .populate("siteId", "name")
       .populate("roundId", "name")
       .sort({ createdAt: -1 })
       .lean();
+
     res.json({ ok: true, items });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

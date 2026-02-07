@@ -156,7 +156,6 @@ export function usePermissionCatalogData() {
         // 4) Rellenar por rol
         const filled = { ...base };
         for (const role of roleItems) {
-          // { permissionKeys: string[] }
           const r = await iamApi.getRolePerms(role._id);
           const setKeys = new Set(r?.permissionKeys || []);
           for (const k of Object.keys(filled)) {
@@ -199,7 +198,6 @@ export function usePermissionCatalogData() {
   );
 
   const compactSummary = useMemo(() => {
-    // Basado SIEMPRE en rawGroups para contar correctamente
     const merged = Array.isArray(rawGroups) ? rawGroups : [];
     const rows = merged
       .map((g) => ({
@@ -220,7 +218,6 @@ export function usePermissionCatalogData() {
   };
 
   const onSaveAll = async () => {
-    // descubro roles que cambiaron
     const changedIds = new Set();
     for (const k of Object.keys(roleMatrix)) {
       const a = roleMatrix[k] || {};
@@ -257,36 +254,56 @@ export function usePermissionCatalogData() {
     }
   };
 
+  /* ──────────────────────────────────────────────────────────────
+     ✅ CORRECCIÓN CRÍTICA
+     - group debe ser el slug (MODULE.value), no el label humano.
+     - key se normaliza a minúscula y se namespacéa: group.key
+   ────────────────────────────────────────────────────────────── */
   const onCreatePerm = async ({ key, label, moduleValue }) => {
-    const k = String(key || "").trim();
+    let k = String(key || "").trim().toLowerCase();
     const l = String(label || "").trim();
+
     const m = MODULES.find((x) => x.value === moduleValue) || MODULES[0];
-    const group = m.label;
+
+    // ✅ Guardar SIEMPRE el slug del módulo como group
+    const group = String(m.value || moduleValue || "").trim().toLowerCase();
+
     if (!k || !l) {
       setBanner({ type: "warn", msg: "Completa clave y etiqueta." });
       setTimeout(() => setBanner(null), 2500);
       return false;
     }
+
+    // ✅ Evita colisiones: si no trae namespace, se lo agregamos
+    if (group && k && !k.includes(".")) {
+      k = `${group}.${k}`;
+    }
+
     try {
       const created = await iamApi.createPerm({ key: k, label: l, group });
 
-      // agrega al estado RAW y recalcula groups en base al nuevo RAW
       setRawGroups((prevRaw) => {
         const raw = prevRaw.map((g) => ({
           group: g.group,
           items: g.items.slice(),
         }));
-        let gi = raw.findIndex((g) => g.group === group);
+
+        // ✅ comparar de forma normalizada, para no duplicar "Rondas" vs "rondas"
+        let gi = raw.findIndex(
+          (g) => String(g.group || "").trim().toLowerCase() === group
+        );
         if (gi === -1) {
           raw.push({ group, items: [] });
           gi = raw.length - 1;
         }
+
         raw[gi].items.push({
           ...(created || { key: k, label: l, group }),
           key: k,
           label: l,
           group,
         });
+
         const merged = mergeGroupsByName(raw);
         setGroups(sanitizeGroups(merged));
         return merged;
@@ -300,6 +317,7 @@ export function usePermissionCatalogData() {
         ...prev,
         [k]: emptyFlagsForRoles(roles),
       }));
+
       setBanner({ type: "ok", msg: "Permiso creado." });
       setTimeout(() => setBanner(null), 2500);
       return true;
@@ -346,13 +364,12 @@ export function usePermissionCatalogData() {
   };
 
   return {
-    // estado
     loading,
     errorMsg,
     banner,
     setBanner,
     roles,
-    groups, // lista detallada (vista normal)
+    groups,
     roleMatrix,
     origMatrix,
     query,
@@ -360,11 +377,9 @@ export function usePermissionCatalogData() {
     compactView,
     setCompactView,
 
-    // datos para "Ver menos"
-    roleHeaders, // [{ id, name }]
-    compactSummary, // [{ group, count }]
+    roleHeaders,
+    compactSummary,
 
-    // acciones
     onToggle,
     onSaveAll,
     onCreatePerm,

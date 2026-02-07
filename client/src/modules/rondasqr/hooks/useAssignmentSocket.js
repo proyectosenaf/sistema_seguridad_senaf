@@ -1,29 +1,21 @@
 // client/src/modules/rondasqr/hooks/useAssignmentSocket.js
 import { useEffect } from "react";
-
-import { io } from "socket.io-client";
-import { SOCKET_BASE } from "../../../lib/api";
-
-// ✅ DEJAMOS SOLO UNA IMPORTACIÓN
 import { socket } from "../../../lib/socket.js";
 
 /**
  * Hook de socket para rondas:
- * - Une al usuario a sus rooms (user-<sub> y guard-<sub>)
  * - Escucha asignaciones nuevas, contadores y alertas de pánico
  */
 export function useAssignmentSocket(user, onNotify, onCount) {
   useEffect(() => {
     const userId = user?.sub;
     if (!userId) return;
-    if (!socket) return; // seguridad por si algún día hay SSR o algo raro
+    if (!socket) return;
 
-    // 🔔 Nueva asignación de rondas
     const handleAssignment = (payload) => {
       try {
         onNotify?.(payload);
 
-        // Notificación del navegador
         if (typeof window !== "undefined" && "Notification" in window) {
           if (Notification.permission === "granted") {
             new Notification(payload.title || "Asignación", {
@@ -42,29 +34,23 @@ export function useAssignmentSocket(user, onNotify, onCount) {
           alert(`${payload.title || "Asignación"}\n${payload.body || ""}`);
         }
 
-        // Sonido
         const audio = new Audio("/sounds/notify.mp3");
         audio.play().catch(() => {});
       } catch {
-        // ignorar fallo
+        // ignore
       }
     };
 
-    // Contador de notificaciones
     const handleCount = ({ count }) => onCount?.(count);
 
-    // Alertas de pánico
     const handlePanic = (payload) => onNotify?.({ type: "panic", payload });
-    const handleRondasPanic = (payload) =>
-      onNotify?.({ type: "rondasqr:panic", payload });
+    const handleRondasPanic = (payload) => onNotify?.({ type: "rondasqr:panic", payload });
 
-    // 🔗 Suscribir eventos
     socket.on("rondasqr:nueva-asignacion", handleAssignment);
     socket.on("notifications:count-updated", handleCount);
     socket.on("panic", handlePanic);
     socket.on("rondasqr:panic", handleRondasPanic);
 
-    // 🧹 Limpieza al desmontar / cambiar dependencias
     return () => {
       socket.off("rondasqr:nueva-asignacion", handleAssignment);
       socket.off("notifications:count-updated", handleCount);

@@ -1,7 +1,6 @@
 // client/src/modules/rondasqr/pages/ScanPage.jsx
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import SidebarGuard from "./SidebarGuard.jsx";
 import QrScanner from "./QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -20,7 +19,6 @@ import {
 function toArr(v) {
   return !v ? [] : Array.isArray(v) ? v : [v];
 }
-
 function uniqLower(arr) {
   return Array.from(
     new Set(
@@ -30,7 +28,6 @@ function uniqLower(arr) {
     )
   );
 }
-
 function readJsonLS(key, fallback) {
   try {
     if (typeof localStorage === "undefined") return fallback;
@@ -42,7 +39,6 @@ function readJsonLS(key, fallback) {
     return fallback;
   }
 }
-
 function buildAssignmentKey(a) {
   return (
     a.id ||
@@ -58,25 +54,95 @@ function buildAssignmentKey(a) {
 export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
-  const { user } = useAuth0();
 
-  /* ===== nav lateral móvil ===== */
-  const [isNavOpen, setIsNavOpen] = useState(false);
+  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const safeUser = user || {};
+
+  // ✅ estado IAM (roles/perms reales desde backend)
+  const [iamMe, setIamMe] = useState({ roles: [], perms: [] });
+
+  /* ===== cargar roles/permisos reales desde IAM ===== */
   useEffect(() => {
-    setIsNavOpen(false);
-  }, [pathname]);
-  useEffect(() => {
-    document.body.style.overflow = isNavOpen ? "hidden" : "";
+    let alive = true;
+
+    async function loadIamMe() {
+      try {
+        if (!isAuthenticated) return;
+
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const ROOT = RAW.replace(/\/api\/?$/, "").replace(/\/$/, "");
+        const V1 = `${ROOT}/api/iam/v1`;
+        const LEGACY = `${ROOT}/api/iam`;
+
+        const candidates = [`${V1}/me`, `${V1}/auth/me`, `${LEGACY}/me`, `${LEGACY}/auth/me`];
+
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+
+        let headers = {};
+        if (audience) {
+          try {
+            const token = await getAccessTokenSilently({
+              authorizationParams: { audience },
+            });
+            if (token) headers.Authorization = `Bearer ${token}`;
+          } catch (err) {
+            const msg = (err && (err.error || err.message)) || String(err);
+            console.debug("[ScanPage] getAccessTokenSilently:", msg);
+          }
+        }
+
+        // DEV fallback
+        if (import.meta.env.DEV) {
+          const devEmail =
+            safeUser?.email ||
+            (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+            import.meta.env.VITE_DEV_IAM_EMAIL ||
+            "";
+
+          if (devEmail) headers["x-user-email"] = devEmail;
+
+          const devRoles =
+            (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) || "";
+          if (devRoles) headers["x-roles"] = devRoles;
+        }
+
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, { credentials: "include", headers });
+            if (!res.ok) continue;
+
+            const data = (await res.json().catch(() => ({}))) || {};
+            const roles = data?.roles || data?.user?.roles || [];
+            const perms = data?.permissions || data?.perms || [];
+
+            if (!alive) return;
+            setIamMe({ roles, perms });
+            return;
+          } catch {
+            // prueba siguiente candidate
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    loadIamMe();
     return () => {
-      document.body.style.overflow = "";
+      alive = false;
     };
-  }, [isNavOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, getAccessTokenSilently, safeUser?.email]);
 
   /* ===== notificaciones ===== */
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    try {
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
+        }
+      }
+    } catch {}
   }, []);
 
   /* ===== audio de alerta ===== */
@@ -130,7 +196,7 @@ export default function ScanPage() {
   }
 
   /* ===== socket: alertas entrantes ===== */
-  useAssignmentSocket(user, (evt) => {
+  useAssignmentSocket(safeUser, (evt) => {
     const t = evt?.type || evt?.event || evt?.kind;
     if (t === "panic" || t === "rondasqr:panic") {
       handleIncomingPanic(evt.payload || {});
@@ -149,9 +215,9 @@ export default function ScanPage() {
   const ROLES_CLAIM = "https://senaf.local/roles";
   const PERMS_CLAIM = "https://senaf.local/permissions";
 
-  const rolesAuth0 = uniqLower(user?.roles);
-  const rolesClaim = uniqLower(user?.[ROLES_CLAIM]);
-  const permsClaim = uniqLower(user?.[PERMS_CLAIM]);
+  const rolesAuth0 = uniqLower(safeUser?.roles);
+  const rolesClaim = uniqLower(safeUser?.[ROLES_CLAIM]);
+  const permsClaim = uniqLower(safeUser?.[PERMS_CLAIM]);
 
   const devRoles = import.meta.env.DEV
     ? uniqLower((localStorage.getItem("iamDevRoles") || "").split(","))
@@ -160,11 +226,15 @@ export default function ScanPage() {
     ? uniqLower((localStorage.getItem("iamDevPerms") || "").split(","))
     : [];
 
-  const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...devRoles]);
-  const perms = uniqLower([...permsClaim, ...devPerms]);
+  const iamRoles = uniqLower(iamMe?.roles);
+  const iamPerms = uniqLower(iamMe?.perms);
+
+  const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...iamRoles, ...devRoles]);
+  const perms = uniqLower([...permsClaim, ...iamPerms, ...devPerms]);
 
   const isAdminLike =
     perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
+
   const isSupervisorLike =
     roles.includes("supervisor") ||
     perms.includes("rondasqr.view") ||
@@ -194,7 +264,7 @@ export default function ScanPage() {
   const [sendingMsg, setSendingMsg] = useState(false);
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
-  /* ===== puntos de ronda (para futuro) ===== */
+  /* ===== puntos de ronda ===== */
   const [points, setPoints] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -340,9 +410,9 @@ export default function ScanPage() {
       return;
     }
 
-    const email = (user?.email || "").toLowerCase();
-    const sub = (user?.sub || "").toLowerCase();
-    const name = (user?.name || "").toLowerCase();
+    const email = (safeUser?.email || "").toLowerCase();
+    const sub = (safeUser?.sub || "").toLowerCase();
+    const name = (safeUser?.name || "").toLowerCase();
 
     const mine = all.filter((a) => {
       const gEmail = (a.guardEmail || a.guard?.email || "").toLowerCase();
@@ -360,23 +430,23 @@ export default function ScanPage() {
   }
 
   useEffect(() => {
+    const hasIdentity = !!(safeUser?.email || safeUser?.sub || safeUser?.name);
+    if (!hasIdentity) return;
+
     loadAssignmentsForGuard();
     loadAssignmentStates();
 
     function handleStorage(e) {
       if (!e) return;
       if (e.key === "rondasqr:assignments") loadAssignmentsForGuard();
-      if (
-        e.key === "rondasqr:assignmentStates" ||
-        e.key === "rondasqr:currentAssignmentKey"
-      ) {
+      if (e.key === "rondasqr:assignmentStates" || e.key === "rondasqr:currentAssignmentKey") {
         loadAssignmentStates();
       }
     }
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, [user]);
+  }, [safeUser?.email, safeUser?.sub, safeUser?.name]);
 
   /* ===== alerta rápida por hash #alert ===== */
   useEffect(() => {
@@ -407,7 +477,7 @@ export default function ScanPage() {
         });
       }
       await rondasqrApi.panic(gps || null);
-      emitLocalPanic({ source: "home-button", user: user?.name || user?.email });
+      emitLocalPanic({ source: "home-button", user: safeUser?.name || safeUser?.email });
       playAlarmTone();
       alert("🚨 Alerta de pánico enviada.");
       return true;
@@ -612,7 +682,7 @@ export default function ScanPage() {
 
   async function sendOfflineDump() {
     try {
-      const payload = buildOfflinePayload(user);
+      const payload = buildOfflinePayload(safeUser);
       const pending = payload.outbox;
       if (!pending || !pending.length) {
         alert("No hay información offline para enviar.");
@@ -640,7 +710,7 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== AUTO-SYNC: enviar pendientes cuando haya conexión ===== */
+  /* ===== AUTO-SYNC ===== */
   useEffect(() => {
     async function autoSync() {
       try {
@@ -658,7 +728,7 @@ export default function ScanPage() {
           }
         }
 
-        const payload = buildOfflinePayload(user);
+        const payload = buildOfflinePayload(safeUser);
         const hasDumpOutbox = Array.isArray(payload.outbox) && payload.outbox.length > 0;
         const hasAssignments =
           Array.isArray(payload.assignments) && payload.assignments.length > 0;
@@ -696,31 +766,35 @@ export default function ScanPage() {
       window.addEventListener("online", handleOnline);
       return () => window.removeEventListener("online", handleOnline);
     }
-  }, [user]);
+  }, [safeUser]);
 
-  /* ===== estilos ===== */
-  const pageClass = "flex min-h-screen bg-transparent text-slate-800 dark:text-slate-100";
+  /* ==========================================================
+     ESTILOS: ahora alineados a Layout/Home (sin doble container)
+     - Quitamos min-h-screen y max-w propio
+     - Usamos layer-content y fx-card si existen
+     - Si no existen, seguimos con glass consistente
+     ========================================================== */
 
+  const pageClass = "space-y-6 layer-content"; // ✅ igual a Home
   const headerClass =
-    "rounded-2xl px-4 sm:px-6 py-3 mb-4 sm:mb-6 flex items-center justify-between " +
-    "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
-    "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
-
-  const cardClass =
-    "rounded-2xl p-4.sm:p-6 " +
-    "bg-slate-50/70 border border-slate-200/60 shadow-sm " +
-    "dark:bg-white/5 dark:border-white/10 dark:shadow-none dark:backdrop-blur";
+    "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
+  const cardClass = "fx-card rounded-2xl p-4 sm:p-6";
+  // fallback glass (si fx-card no existe, esto igual funciona porque tailwind ignora clases desconocidas)
+  const headerFallback =
+    "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
+  const cardFallback =
+    "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
 
   const neutralBtn =
     "px-4 py-2 rounded-lg border font-medium " +
-    "border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-800 " +
-    "dark:border-white/15 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white";
+    "border-neutral-300/70 bg-white/70 hover:bg-white/80 text-neutral-900 " +
+    "dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white";
 
   const neonStyles = `
     .btn-neon {
       padding:.5rem 1rem;
-      border-radius:.5rem;
-      font-weight:600;
+      border-radius:.75rem;
+      font-weight:700;
       color:#fff;
       background-image:linear-gradient(90deg,#8b5cf6,#06b6d4);
       box-shadow:0 10px 28px rgba(99,102,241,.18),0 6px 20px rgba(6,182,212,.12);
@@ -742,11 +816,24 @@ export default function ScanPage() {
     .panic-indicator { animation: panic-blink 1s ease-in-out infinite; }
   `;
 
-  const homeCols =
-    isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
+  const homeCols = isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
 
   const BEEP_SRC =
-    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+
+  // Para botón "Finalizar ronda" del panel de progreso:
+  const activeAssignment = useMemo(() => {
+    if (!currentAssignmentKey) return null;
+    const raw = readJsonLS("rondasqr:currentAssignment", null);
+    return raw || null;
+  }, [currentAssignmentKey]);
+
+  function finishActiveIfAny() {
+    if (activeAssignment) {
+      handleFinishRound(activeAssignment);
+    }
+    nav("/rondasqr/scan", { replace: true });
+  }
 
   return (
     <div className={pageClass}>
@@ -765,624 +852,462 @@ export default function ScanPage() {
         </button>
       )}
 
-      {/* sidebar desktop */}
-      <div className="hidden md:block">
-        <SidebarGuard
-          variant="desktop"
-          onSendAlert={sendAlert}
-          onDumpDb={() => nav("/rondasqr/scan/dump")}
-        />
+      {/* ✅ Ya NO usamos <main max-w...> porque el Layout ya contiene el ancho/padding */}
+      <div className={[headerClass, headerFallback].join(" ")}>
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
+            Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás tus rondas y alertas de
+            hoy.
+          </p>
+
+          <p className="text-[10px] mt-1 opacity-60">
+            roles={roles.join(",") || "—"} · perms={perms.join(",") || "—"}
+          </p>
+        </div>
+        <div className="text-right text-xs sm:text-sm">
+          <div className="opacity-70">Rondas pendientes por enviar</div>
+          <div className="font-semibold text-lg sm:text-xl">{countOutbox()}</div>
+        </div>
       </div>
 
-      {/* drawer móvil */}
-      {isNavOpen && (
-        <>
-          <div
-            onClick={() => setIsNavOpen(false)}
-            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm md:hidden"
-          />
-          <SidebarGuard
-            variant="mobile"
-            onCloseMobile={() => setIsNavOpen(false)}
-            onSendAlert={sendAlert}
-            onDumpDb={() => nav("/rondasqr/scan/dump")}
-          />
-        </>
-      )}
-
-      <main className="flex-1 flex flex-col overflow-y-auto p-4 sm:p-6 relative gap-4">
-        {/* hamburguesa SOLO móvil */}
-        <div className="md:hidden mb-1">
-          <button
-            onClick={() => setIsNavOpen(true)}
-            className="inline-flex.items-center gap-2 rounded-lg px-3 py-2
-                       border border-slate-300 bg-slate-50 text-slate-800
-                       dark:border-white/15 dark:bg-white/10 dark:text-white"
-          >
-            ☰ Menú
-          </button>
-        </div>
-
-        {/* header (más amigable) */}
-        <div className={headerClass}>
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
-            <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
-              Hola {user?.name || user?.email || "guardia"}, aquí verás tus rondas y alertas
-              de hoy.
-            </p>
-          </div>
-          <div className="text-right text-xs sm:text-sm">
-            <div className="opacity-70">Rondas pendientes por enviar</div>
-            <div className="font-semibold text-lg sm:text-xl">
-              {countOutbox()}
+      {/* HOME */}
+      {tab === "home" && (
+        <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
+          {/* bloque alerta */}
+          <section className={[cardClass, cardFallback, "text-center"].join(" ")}>
+            <div className="flex flex-col items-center">
+              <button
+                onClick={async () => {
+                  const ok = await sendAlert();
+                  if (ok) nav("/rondasqr/scan", { replace: true });
+                }}
+                disabled={sendingAlert}
+                className={[
+                  "rounded-full font-extrabold text-white",
+                  "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
+                  "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
+                  sendingAlert ? "cursor-not-allowed opacity-80" : "",
+                ].join(" ")}
+              >
+                {sendingAlert ? "ENVIANDO..." : "ALERTA"}
+              </button>
+              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
+                Oprima en caso de emergencia
+              </p>
             </div>
-          </div>
-        </div>
 
-        {/* HOME */}
-        {tab === "home" && (
-          <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
-            {/* bloque alerta */}
-            <section className={cardClass + " text-center"}>
-              <div className="flex flex-col items-center">
-                <button
-                  onClick={async () => {
-                    const ok = await sendAlert();
-                    if (ok) nav("/rondasqr/scan", { replace: true });
-                  }}
-                  disabled={sendingAlert}
-                  className={[
-                    "rounded-full font-extrabold text-white",
-                    "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
-                    "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
-                    sendingAlert ? "cursor-not-allowed opacity-80" : "",
-                  ].join(" ")}
-                >
-                  {sendingAlert ? "ENVIANDO..." : "ALERTA"}
-                </button>
-                <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
-                  Oprima en caso de emergencia
-                </p>
-              </div>
+            <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
+              <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
+                Registrador Punto Control
+              </button>
+              <button
+                onClick={() => nav("/incidentes/nuevo?from=ronda")}
+                className="w-full btn-neon btn-neon-purple"
+              >
+                Mensaje Incidente
+              </button>
+            </div>
+          </section>
 
-              <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
-                <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
-                  Registrador Punto Control
-                </button>
-                <button
-                  onClick={() => nav("/incidentes/nuevo?from=ronda")}
-                  className="w-full btn-neon btn-neon-purple"
-                >
-                  Mensaje Incidente
-                </button>
-              </div>
-            </section>
+          {/* progreso de ronda */}
+          <section className={[cardClass, cardFallback].join(" ")}>
+            <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
-            {/* progreso de ronda */}
-            <section className={cardClass}>
-              <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
-              {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
-                <>
-                  <div className="text-sm space-y-1 mb-3">
-                    {progress.lastPoint && (
-                      <div>
-                        <span className="opacity-70">Último punto: </span>
-                        <span className="font-medium">{progress.lastPoint}</span>
-                      </div>
-                    )}
-                    {progress.nextPoint && (
-                      <div>
-                        <span className="opacity-70">Siguiente: </span>
-                        <span className="font-medium">{progress.nextPoint}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="w-full h-3 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
-                      style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 text-right text-xs opacity-70">
-                    {Math.max(0, Math.min(100, progress.pct))}% completado
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
-                      Continuar ronda
-                    </button>
-                    <button
-                      onClick={() => nav("/rondasqr/scan")}
-                      className="btn-neon btn-neon-amber"
-                    >
-                      Finalizar
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-slate-600 dark:text-white/80">
-                    Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y
-                    escanea el primer punto asignado.
-                  </p>
-                  <ul className="mt-3 text-sm space-y-1 list-disc list-inside text-slate-600 dark:text-white/70">
-                    <li>Da permisos de cámara al navegador.</li>
-                    <li>Si no ves los puntos, confirma que el plan de ronda esté cargado.</li>
-                    <li>Puedes reportar un incidente desde “Mensaje Incidente”.</li>
-                  </ul>
-                </>
-              )}
-            </section>
-
-            {/* acciones admin/supervisor */}
-            {(isAdminLike || isSupervisorLike) && (
-              <section className={cardClass}>
-                <h3 className="font-semibold text-lg mb-3">Acciones</h3>
-                <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
-                  Acciones avanzadas disponibles para supervisores o administradores.
-                </p>
-                <div className="grid gap-3 max-w-sm">
-                  <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
-                    📊 Abrir informes
-                  </button>
-                  {isAdminLike && (
-                    <button
-                      onClick={() => nav("/rondasqr/admin")}
-                      className="btn-neon btn-neon-purple"
-                    >
-                      ⚙️ Administración de rondas
-                    </button>
+            {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
+              <>
+                <div className="text-sm space-y-1 mb-3">
+                  {progress.lastPoint && (
+                    <div>
+                      <span className="opacity-70">Último punto: </span>
+                      <span className="font-medium">{progress.lastPoint}</span>
+                    </div>
+                  )}
+                  {progress.nextPoint && (
+                    <div>
+                      <span className="opacity-70">Siguiente: </span>
+                      <span className="font-medium">{progress.nextPoint}</span>
+                    </div>
                   )}
                 </div>
-              </section>
-            )}
 
-            {/* rondas asignadas al guardia */}
-            <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div>
-                  <h3 className="font-semibold text-lg">Rondas asignadas para ti</h3>
-                  <p className="text-xs text-slate-500 dark:text-white/70">
-                    Aquí verás las rondas que tu supervisor te asignó para hoy.
-                  </p>
+                <div className="w-full h-3 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
+                    style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={loadAssignmentsForGuard}
-                  className="hidden sm:inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold
-                             border border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-700
-                             dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white"
-                >
-                  Actualizar lista
-                </button>
-              </div>
 
-              {myAssignments.length === 0 ? (
-                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 py-4">
-                  <div className="w-12 h-12 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center text-2xl">
-                    🕒
-                  </div>
-                  <div className="text-sm text-slate-600 dark:text-white/80">
-                    <p className="font-medium mb-1">
-                      No tienes rondas asignadas por el momento.
-                    </p>
-                    <p className="mb-2">
-                      Cuando tu supervisor te asigne rondas, aparecerán aquí con la hora,
-                      el sitio y un botón para <strong>empezar la ronda</strong>.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={loadAssignmentsForGuard}
-                      className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold btn-neon"
-                    >
-                      🔄 Volver a comprobar
-                    </button>
-                  </div>
+                <div className="mt-1 text-right text-xs opacity-70">
+                  {Math.max(0, Math.min(100, progress.pct))}% completado
                 </div>
-              ) : (
-                <div className="overflow-x-auto -mx-2 sm:mx-0">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-white/60">
-                        <th className="px-2 py-2 sm:px-3 sm:py-2">Ronda</th>
-                        <th className="px-2 py-2 sm:px-3 sm:py-2">Sitio</th>
-                        <th className="px-2 py-2 sm:px-3 sm:py-2">Fecha / Hora</th>
-                        <th className="px-2 py-2 sm:px-3 sm:py-2">Estado</th>
-                        <th className="px-2 py-2 sm:px-3 sm:py-2 text-right">Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200/70 dark:divide-white/10">
-                      {myAssignments.map((a, idx) => {
-                        const st = getAssignmentState(a);
-                        const status = st.status || "pendiente";
-                        const key = buildAssignmentKey(a);
-                        const isActive = key && key === currentAssignmentKey;
 
-                        let badgeClass =
-                          "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ";
-                        if (status === "en_progreso") {
-                          badgeClass +=
-                            "bg-amber-500/15 text-amber-500 border border-amber-500/40";
-                        } else if (status === "terminada") {
-                          badgeClass +=
-                            "bg-emerald-500/15 text-emerald-500 border border-emerald-500/40";
-                        } else if (status === "cancelada") {
-                          badgeClass +=
-                            "bg-rose-500/15 text-rose-500 border border-rose-500/40";
-                        } else {
-                          badgeClass +=
-                            "bg-slate-500/10 text-slate-500 border border-slate-500/30";
-                        }
-
-                        let mainBtnLabel = "Empezar ronda";
-                        let mainBtnOnClick = () => handleStartRound(a);
-                        let mainBtnDisabled = false;
-
-                        if (status === "en_progreso") {
-                          mainBtnLabel = isActive ? "Ronda en curso" : "Marcar como terminada";
-                          mainBtnOnClick = () =>
-                            isActive ? nav("/rondasqr/scan/qr") : handleFinishRound(a);
-                        } else if (status === "terminada") {
-                          mainBtnLabel = "Terminada";
-                          mainBtnDisabled = true;
-                        } else if (status === "cancelada") {
-                          mainBtnLabel = "Cancelada";
-                          mainBtnDisabled = true;
-                        }
-
-                        const rondaLabel =
-                          a.roundName || a.roundId || a.ronda || "Ronda sin nombre";
-                        const siteLabel = a.siteName || a.site || a.sitio || "—";
-                        const dateLabel = a.date || a.day || a.assignmentDate || "—";
-                        const timeLabel = a.startTime || a.start || a.inicio || "";
-
-                        return (
-                          <tr key={idx} className="align-middle">
-                            <td className="px-2 py-2 sm:px-3 sm:py-2">
-                              <div className="font-medium text-slate-900 dark:text-white">
-                                {rondaLabel}
-                                {isActive && status === "en_progreso" && (
-                                  <span className="ml-2 text-xs text-emerald-400">
-                                    (ronda activa)
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-white/60">
-                                Guardia:{" "}
-                                {a.guardName ||
-                                  a.guard?.name ||
-                                  a.guardEmail ||
-                                  a.guard?.email ||
-                                  "—"}
-                              </div>
-                            </td>
-                            <td className="px-2 py-2 sm:px-3 sm:py-2">
-                              <div className="text-sm">{siteLabel}</div>
-                            </td>
-                            <td className="px-2 py-2 sm:px-3 sm:py-2">
-                              <div className="text-xs text-slate-500 dark:text-white/70">
-                                {dateLabel}
-                                {timeLabel ? ` • ${timeLabel}` : ""}
-                              </div>
-                            </td>
-                            <td className="px-2 py-2 sm:px-3 sm:py-2">
-                              <span className={badgeClass}>
-                                {status === "en_progreso"
-                                  ? "En progreso"
-                                  : status === "terminada"
-                                  ? "Terminada"
-                                  : status === "cancelada"
-                                  ? "Cancelada"
-                                  : "Pendiente"}
-                              </span>
-                            </td>
-                            <td className="px-2 py-2 sm:px-3 sm:py-2">
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  onClick={mainBtnOnClick}
-                                  disabled={mainBtnDisabled}
-                                  className={[
-                                    "px-3 py-1 rounded-md text-xs font-semibold btn-neon",
-                                    mainBtnDisabled ? "opacity-60 cursor-not-allowed" : "",
-                                  ].join(" ")}
-                                >
-                                  {mainBtnLabel}
-                                </button>
-                                {status === "en_progreso" && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCancelRound(a)}
-                                    className="px-3 py-1 rounded-md text-xs font-semibold
-                                               bg-rose-600/10 text-rose-400 border border-rose-500/40
-                                               hover:bg-rose-600/20"
-                                  >
-                                    Cancelar
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-
-            {/* rendimiento del dispositivo */}
-            <section className={cardClass + " md:col-span-2 xl:col-span-3"}>
-              <h3 className="font-semibold mb-2">Rendimiento del dispositivo</h3>
-              <p className="text-sm text-slate-600 dark:text-white/70 mb-2">
-                Estado rápido del navegador y de la conexión actual.
-              </p>
-              <p className="text-sm">
-                <strong>Online:</strong>{" "}
-                {typeof navigator !== "undefined" && navigator.onLine ? "Sí" : "No"}
-              </p>
-              <p className="text-sm break-all">
-                <strong>User-Agent:</strong>{" "}
-                {typeof navigator !== "undefined" ? navigator.userAgent : ""}
-              </p>
-              <p className="text-sm">
-                <strong>Último pánico:</strong> {lastPanic ? lastPanic.at : "No registrado."}
-              </p>
-            </section>
-          </div>
-        )}
-
-        {/* QR */}
-        {tab === "qr" && (
-          <section className={cardClass}>
-            <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-            <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-slate-100/60 dark:bg-black/40">
-              <QrScanner
-                facingMode="environment"
-                once={true}
-                enableTorch
-                enableFlip
-                onResult={handleScan}
-                onError={(e) => console.warn("QR error", e)}
-              />
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                  nav("/rondasqr/scan");
-                }}
-                className="btn-neon btn-neon-amber"
-              >
-                Finalizar
-              </button>
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                  nav("/rondasqr/scan/qr");
-                }}
-                className="btn-neon btn-neon-green"
-              >
-                Reintentar
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* OUTBOX */}
-        {tab === "outbox" && (
-          <section className={cardClass}>
-            <div className="flex items-center justify-between gap-4 mb-3">
-              <h3 className="font-semibold text-lg">Transmitir Rondas Pendientes</h3>
-              <div className="text-sm opacity-70">Pendientes: {outbox.length}</div>
-            </div>
-            {outbox.length === 0 ? (
-              <div className="text-slate-600 dark:text-white/80">
-                No hay check-ins pendientes. ✨
-              </div>
-            ) : (
-              <>
-                <ul className="divide-y divide-slate-200 dark:divide-white/10 mb-4">
-                  {outbox.map((it) => (
-                    <li key={it.id} className="py-2 flex items-center justify-between gap-4">
-                      <div className="text-sm">
-                        <div className="font-medium">{it.qr}</div>
-                        <div className="opacity-70">
-                          {new Date(it.at).toLocaleString()}
-                          {it.gps
-                            ? ` • (${it.gps.lat.toFixed?.(4)}, ${it.gps.lon?.toFixed?.(4)})`
-                            : ""}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          removeById(it.id);
-                          refreshOutbox();
-                        }}
-                        className="px-2 py-1 rounded border text-sm
-                                   border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700
-                                   dark:border-rose-600/40 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 dark:text-rose-300"
-                      >
-                        Quitar
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex justify-end gap-3">
-                  <button onClick={transmitNow} disabled={syncing} className="btn-neon">
-                    {syncing ? "Transmitiendo…" : "Transmitir ahora"}
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
+                    Continuar ronda
+                  </button>
+                  <button onClick={finishActiveIfAny} className="btn-neon btn-neon-amber">
+                    Finalizar ronda
                   </button>
                 </div>
               </>
-            )}
-          </section>
-        )}
-
-        {/* BASE OFFLINE */}
-        {tab === "dump" && (
-          <section className={cardClass}>
-            <div className="flex items-center justify-between gap-4 mb-4">
-              <h3 className="font-semibold text-lg">Base de datos offline</h3>
-              <span className="text-sm opacity-70">
-                {getOutbox().length} check-ins almacenados
-              </span>
-            </div>
-
-            {getOutbox().length === 0 ? (
-              <div className="text-slate-600 dark:text-white/80 mb-4">
-                No hay información offline guardada en este dispositivo.
-              </div>
             ) : (
               <>
-                <p className="text-sm text-slate-600 dark:text-white/70 mb-3">
-                  Esto es lo que se enviará al servidor. Incluye check-ins, progreso, datos del
-                  guardia y algunos registros locales.
+                <p className="text-sm text-slate-600 dark:text-white/80">
+                  Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y
+                  escanea el primer punto asignado.
                 </p>
-
-                <div className="grid md:grid-cols-2 gap-4 mb-4">
-                  <div className="rounded-lg bg-slate-100/70 dark:bg-white/5 p-3">
-                    <h4 className="font-medium mb-2">Progreso guardado</h4>
-                    <p className="text-sm">
-                      Último punto:{" "}
-                      <strong>{localStorage.getItem("rondasqr:lastPointName") || "—"}</strong>
-                    </p>
-                    <p className="text-sm">
-                      Siguiente:{" "}
-                      <strong>{localStorage.getItem("rondasqr:nextPointName") || "—"}</strong>
-                    </p>
-                    <p className="text-sm">
-                      % completado:{" "}
-                      <strong>{Number(localStorage.getItem("rondasqr:progressPct") || 0)}%</strong>
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-slate-100/70 dark:bg-white/5 p-3 space-y-1">
-                    <h4 className="font-medium mb-2">Dispositivo / Usuario</h4>
-                    <p className="text-sm break-all">
-                      UA:{" "}
-                      <span className="opacity-70">
-                        {typeof navigator !== "undefined" ? navigator.userAgent : ""}
-                      </span>
-                    </p>
-                    <p className="text-sm">
-                      Online:{" "}
-                      <strong>
-                        {typeof navigator !== "undefined" && navigator.onLine ? "sí" : "no"}
-                      </strong>
-                    </p>
-                    <p className="text-sm">
-                      Usuario: <strong>{user?.email || user?.name || "—"}</strong>
-                    </p>
-                  </div>
-                </div>
-
-                {readJsonLS("rondasqr:assignments", []).length > 0 && (
-                  <div className="mb-4">
-                    <h4 className="font-medium mb-2">Asignaciones locales</h4>
-                    <ul className="text-sm list-disc list-inside space-y-1">
-                      {readJsonLS("rondasqr:assignments", []).map((a, idx) => (
-                        <li key={idx}>
-                          {a.roundName || a.roundId || "Ronda"} — guardia: {a.guardId || "?"} — fecha:{" "}
-                          {a.date || "?"}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {readJsonLS("rondasqr:logs", []).length > 0 && (
-                  <div className="mb-4">
-                    <h4 className="font-medium mb-2">Logs locales</h4>
-                    <pre className="text-xs bg-black/5 dark:bg-white/5 rounded p-2 max-h-40 overflow-auto">
-                      {JSON.stringify(readJsonLS("rondasqr:logs", []), null, 2)}
-                    </pre>
-                  </div>
-                )}
-
-                <div className="mb-4">
-                  <h4 className="font-medium mb-2">Check-ins en memoria</h4>
-                  <ul className="divide-y divide-slate-200 dark:divide-white/10">
-                    {getOutbox().map((it) => (
-                      <li key={it.id} className="py-2 text-sm flex justify-between gap-4">
-                        <div>
-                          <div className="font-medium">{it.qr}</div>
-                          <div className="opacity-70">
-                            {new Date(it.at).toLocaleString()}
-                            {it.gps
-                              ? ` • (${it.gps.lat?.toFixed?.(4)}, ${it.gps.lon?.toFixed?.(4)})`
-                              : ""}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            removeById(it.id);
-                            nav("/rondasqr/scan/dump", { replace: true });
-                          }}
-                          className="px-2 py-1 rounded bg-rose-500 text-white text-xs"
-                        >
-                          Quitar
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <ul className="mt-3 text-sm space-y-1 list-disc list-inside text-slate-600 dark:text-white/70">
+                  <li>Da permisos de cámara al navegador.</li>
+                  <li>Si no ves los puntos, confirma que el plan de ronda esté cargado.</li>
+                  <li>Puedes reportar un incidente desde “Mensaje Incidente”.</li>
+                </ul>
               </>
             )}
+          </section>
 
-            <div className="flex justify-end gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
-                Volver
-              </button>
+          {/* acciones admin/supervisor */}
+          {(isAdminLike || isSupervisorLike) && (
+            <section className={[cardClass, cardFallback].join(" ")}>
+              <h3 className="font-semibold text-lg mb-3">Acciones</h3>
+              <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
+                Acciones avanzadas disponibles para supervisores o administradores.
+              </p>
+              <div className="grid gap-3 max-w-sm">
+                <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
+                  📊 Abrir informes
+                </button>
+                {isAdminLike && (
+                  <button onClick={() => nav("/rondasqr/admin")} className="btn-neon btn-neon-purple">
+                    ⚙️ Administración de rondas
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* rondas asignadas */}
+          <section className={[cardClass, cardFallback, "md:col-span-2 xl:col-span-3"].join(" ")}>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 className="font-semibold text-lg">Rondas asignadas para ti</h3>
+                <p className="text-xs text-slate-500 dark:text-white/70">
+                  Aquí verás las rondas que tu supervisor te asignó para hoy.
+                </p>
+              </div>
               <button
-                onClick={sendOfflineDump}
-                className="btn-neon btn-neon-green"
-                disabled={getOutbox().length === 0}
+                type="button"
+                onClick={loadAssignmentsForGuard}
+                className="hidden sm:inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold
+                           border border-neutral-300/70 bg-white/70 hover:bg-white/80 text-neutral-700
+                           dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white"
               >
-                Enviar base de datos
+                Actualizar lista
               </button>
             </div>
-          </section>
-        )}
 
-        {/* MENSAJE legacy (fallback) */}
-        {tab === "msg" && (
-          <section className={cardClass}>
-            <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
-            <textarea
-              className="w-full rounded-lg px-3 py-2 border bg-slate-50 text-slate-800 placeholder-slate-400
-                         border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-300
-                         dark:bg-black/30 dark:text-white dark:placeholder-white/60 dark:border-white/10"
-              rows={5}
-              placeholder="Describa el incidente..."
-              value={msg}
-              onChange={(e) => setMsg(e.target.value)}
+            {myAssignments.length === 0 ? (
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 py-4">
+                <div className="w-12 h-12 rounded-full bg-indigo-500/15 text-indigo-400 flex items-center justify-center text-2xl">
+                  🕒
+                </div>
+                <div className="text-sm text-slate-600 dark:text-white/80">
+                  <p className="font-medium mb-1">No tienes rondas asignadas por el momento.</p>
+                  <p className="mb-2">
+                    Cuando tu supervisor te asigne rondas, aparecerán aquí con la hora, el sitio y un botón
+                    para <strong>empezar la ronda</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={loadAssignmentsForGuard}
+                    className="inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold btn-neon"
+                  >
+                    🔄 Volver a comprobar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto -mx-2 sm:mx-0">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-white/60">
+                      <th className="px-2 py-2 sm:px-3 sm:py-2">Ronda</th>
+                      <th className="px-2 py-2 sm:px-3 sm:py-2">Sitio</th>
+                      <th className="px-2 py-2 sm:px-3 sm:py-2">Fecha / Hora</th>
+                      <th className="px-2 py-2 sm:px-3 sm:py-2">Estado</th>
+                      <th className="px-2 py-2 sm:px-3 sm:py-2 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-200/70 dark:divide-white/10">
+                    {myAssignments.map((a, idx) => {
+                      const st = getAssignmentState(a);
+                      const status = st.status || "pendiente";
+                      const key = buildAssignmentKey(a);
+                      const isActive = key && key === currentAssignmentKey;
+
+                      let badgeClass =
+                        "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ";
+                      if (status === "en_progreso") {
+                        badgeClass += "bg-amber-500/15 text-amber-600 border border-amber-500/40";
+                      } else if (status === "terminada") {
+                        badgeClass += "bg-emerald-500/15 text-emerald-600 border border-emerald-500/40";
+                      } else if (status === "cancelada") {
+                        badgeClass += "bg-rose-500/15 text-rose-600 border border-rose-500/40";
+                      } else {
+                        badgeClass += "bg-slate-500/10 text-slate-600 border border-slate-500/30";
+                      }
+
+                      let mainBtnLabel = "Empezar ronda";
+                      let mainBtnOnClick = () => handleStartRound(a);
+                      let mainBtnDisabled = false;
+
+                      if (status === "en_progreso") {
+                        mainBtnLabel = isActive ? "Ronda en curso" : "Marcar como terminada";
+                        mainBtnOnClick = () => (isActive ? nav("/rondasqr/scan/qr") : handleFinishRound(a));
+                      } else if (status === "terminada") {
+                        mainBtnLabel = "Terminada";
+                        mainBtnDisabled = true;
+                      } else if (status === "cancelada") {
+                        mainBtnLabel = "Cancelada";
+                        mainBtnDisabled = true;
+                      }
+
+                      const rondaLabel = a.roundName || a.roundId || a.ronda || "Ronda sin nombre";
+                      const siteLabel = a.siteName || a.site || a.sitio || "—";
+                      const dateLabel = a.date || a.day || a.assignmentDate || "—";
+                      const timeLabel = a.startTime || a.start || a.inicio || "";
+
+                      return (
+                        <tr key={idx} className="align-middle">
+                          <td className="px-2 py-2 sm:px-3 sm:py-2">
+                            <div className="font-medium text-slate-900 dark:text-white">
+                              {rondaLabel}
+                              {isActive && status === "en_progreso" && (
+                                <span className="ml-2 text-xs text-emerald-500">(ronda activa)</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-white/60">
+                              Guardia:{" "}
+                              {a.guardName ||
+                                a.guard?.name ||
+                                a.guardEmail ||
+                                a.guard?.email ||
+                                "—"}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 sm:px-3 sm:py-2">
+                            <div className="text-sm">{siteLabel}</div>
+                          </td>
+                          <td className="px-2 py-2 sm:px-3 sm:py-2">
+                            <div className="text-xs text-slate-500 dark:text-white/70">
+                              {dateLabel}
+                              {timeLabel ? ` • ${timeLabel}` : ""}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 sm:px-3 sm:py-2">
+                            <span className={badgeClass}>
+                              {status === "en_progreso"
+                                ? "En progreso"
+                                : status === "terminada"
+                                ? "Terminada"
+                                : status === "cancelada"
+                                ? "Cancelada"
+                                : "Pendiente"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 sm:px-3 sm:py-2">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={mainBtnOnClick}
+                                disabled={mainBtnDisabled}
+                                className={[
+                                  "px-3 py-1 rounded-md text-xs font-semibold btn-neon",
+                                  mainBtnDisabled ? "opacity-60 cursor-not-allowed" : "",
+                                ].join(" ")}
+                              >
+                                {mainBtnLabel}
+                              </button>
+
+                              {status === "en_progreso" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelRound(a)}
+                                  className="px-3 py-1 rounded-md text-xs font-semibold
+                                             bg-rose-600/10 text-rose-600 border border-rose-500/40
+                                             hover:bg-rose-600/20 dark:text-rose-300"
+                                >
+                                  Cancelar
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* QR */}
+      {tab === "qr" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
+          <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-black/5 dark:bg-black/40">
+            <QrScanner
+              facingMode="environment"
+              once={true}
+              enableTorch
+              enableFlip
+              onResult={handleScan}
+              onError={(e) => console.warn("QR error", e)}
             />
-            <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
-                Cancelar
-              </button>
-              <button onClick={sendMessage} disabled={sendingMsg} className="btn-neon">
-                {sendingMsg ? "Enviando…" : "Enviar"}
-              </button>
-            </div>
-          </section>
-        )}
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                nav("/rondasqr/scan");
+              }}
+              className="btn-neon btn-neon-amber"
+            >
+              Finalizar
+            </button>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                nav("/rondasqr/scan/qr");
+              }}
+              className="btn-neon btn-neon-green"
+            >
+              Reintentar
+            </button>
+          </div>
+        </section>
+      )}
 
-        {/* FOTOS */}
-        {tab === "fotos" && (
-          <section className={cardClass}>
-            <h3 className="font-semibold text-lg mb-3">Enviar Fotos</h3>
-            <PhotoPicker photos={photos} setPhotos={setPhotos} />
-            <div className="mt-4 flex justify-end gap-3">
-              <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
-                Cancelar
-              </button>
-              <button onClick={sendPhotos} disabled={sendingPhotos} className="btn-neon">
-                {sendingPhotos ? "Enviando…" : "Enviar"}
-              </button>
+      {/* OUTBOX */}
+      {tab === "outbox" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <h3 className="font-semibold text-lg">Transmitir Rondas Pendientes</h3>
+            <div className="text-sm opacity-70">Pendientes: {outbox.length}</div>
+          </div>
+          {outbox.length === 0 ? (
+            <div className="text-slate-600 dark:text-white/80">No hay check-ins pendientes. ✨</div>
+          ) : (
+            <>
+              <ul className="divide-y divide-neutral-200 dark:divide-white/10 mb-4">
+                {outbox.map((it) => (
+                  <li key={it.id} className="py-2 flex items-center justify-between gap-4">
+                    <div className="text-sm">
+                      <div className="font-medium">{it.qr}</div>
+                      <div className="opacity-70">
+                        {new Date(it.at).toLocaleString()}
+                        {it.gps
+                          ? ` • (${it.gps.lat.toFixed?.(4)}, ${it.gps.lon?.toFixed?.(4)})`
+                          : ""}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        removeById(it.id);
+                        refreshOutbox();
+                      }}
+                      className="px-2 py-1 rounded border text-sm
+                                 border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700
+                                 dark:border-rose-600/40 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 dark:text-rose-300"
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-end gap-3">
+                <button onClick={transmitNow} disabled={syncing} className="btn-neon">
+                  {syncing ? "Transmitiendo…" : "Transmitir ahora"}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {/* BASE OFFLINE */}
+      {tab === "dump" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h3 className="font-semibold text-lg">Base de datos offline</h3>
+            <span className="text-sm opacity-70">{getOutbox().length} check-ins almacenados</span>
+          </div>
+
+          {getOutbox().length === 0 ? (
+            <div className="text-slate-600 dark:text-white/80 mb-4">
+              No hay información offline guardada en este dispositivo.
             </div>
-          </section>
-        )}
-      </main>
+          ) : (
+            <p className="text-sm text-slate-600 dark:text-white/70 mb-3">
+              Esto es lo que se enviará al servidor. Incluye check-ins, progreso, datos del guardia y
+              algunos registros locales.
+            </p>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+              Volver
+            </button>
+            <button
+              onClick={sendOfflineDump}
+              className="btn-neon btn-neon-green"
+              disabled={getOutbox().length === 0}
+            >
+              Enviar base de datos
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* FOTOS / MENSAJE legacy quedan igual */}
+      {tab === "fotos" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Enviar Fotos</h3>
+          <PhotoPicker photos={photos} setPhotos={setPhotos} />
+          <div className="mt-4 flex justify-end gap-3">
+            <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+              Cancelar
+            </button>
+            <button onClick={sendPhotos} disabled={sendingPhotos} className="btn-neon">
+              {sendingPhotos ? "Enviando…" : "Enviar"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {tab === "msg" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="text-lg font-semibold mb-3">Mensaje / Incidente</h3>
+          <textarea
+            className="w-full rounded-lg px-3 py-2 border bg-white/70 text-slate-800 placeholder-slate-400
+                       border-neutral-300/70 focus:outline-none focus:ring-2 focus:ring-indigo-300
+                       dark:bg-white/5 dark:text-white dark:placeholder-white/60 dark:border-white/15"
+            rows={5}
+            placeholder="Describa el incidente..."
+            value={msg}
+            onChange={(e) => setMsg(e.target.value)}
+          />
+          <div className="mt-4 flex justify-end gap-3">
+            <button onClick={() => nav("/rondasqr/scan")} className={neutralBtn}>
+              Cancelar
+            </button>
+            <button onClick={sendMessage} disabled={sendingMsg} className="btn-neon">
+              {sendingMsg ? "Enviando…" : "Enviar"}
+            </button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1418,9 +1343,7 @@ function PhotoPicker({ photos, setPhotos }) {
               Seleccionar
             </label>
             <button
-              onClick={() =>
-                setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))
-              }
+              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
             >
               Eliminar

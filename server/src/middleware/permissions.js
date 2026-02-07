@@ -1,30 +1,39 @@
-// Middleware de permisos sencillo (Auth0 RBAC).
-// Lee los permisos del access token en req.auth.payload.permissions (express-oauth2-jwt-bearer).
-// Si pones DISABLE_RBAC=1 en .env, se omite la verificación (útil en desarrollo).
+// server/modules/incidentes/routes/incident.routes.js
+import express from "express";
+import {
+  getAllIncidents,
+  createIncident,
+  updateIncident,
+  deleteIncident,
+} from "../controllers/incident.controller.js";
+import { requireAuth, requireAdmin } from "../../../src/middleware/auth.js";
 
-const BYPASS = process.env.DISABLE_RBAC === "1";
+const router = express.Router();
 
-export function requirePermissions(...required) {
-  const needed = required.flat().filter(Boolean);
-  return (req, res, next) => {
-    if (BYPASS || needed.length === 0) return next();
+/**
+ * IMPORTANTE:
+ * En dev con DISABLE_AUTH=1, requireAuth no valida JWT (pasa),
+ * pero requireAdmin debe poder leer identidad desde req.user.
+ * Esa corrección se hace en server/src/middleware/auth.js (abajo).
+ */
 
-    const perms =
-      (req.auth && req.auth.payload && req.auth.payload.permissions) ||
-      req.user?.permissions ||
-      [];
+// Todas las rutas de este módulo exigen estar autenticado (o bypass si DISABLE_AUTH=1)
+router.use(requireAuth);
 
-    const ok = needed.every((p) => perms.includes(p));
-    if (!ok) {
-      return res.status(403).json({
-        error: "forbidden",
-        required: needed,
-        have: perms,
-      });
-    }
-    next();
-  };
-}
+// Listar incidentes (solo admin)
+router.get("/", requireAdmin, getAllIncidents);
+
+// Crear incidente (solo admin)
+router.post("/", requireAdmin, createIncident);
+
+// Actualizar incidente (solo admin)
+router.put("/:id", requireAdmin, updateIncident);
+
+// Eliminar incidente (solo admin)
+router.delete("/:id", requireAdmin, deleteIncident);
+
+export default router;
+// Si necesitas permisos más específicos, puedes crear middlewares adicionales similares a requireAdmin.
 // Si quieres más control, puedes hacer un middleware por rol, o por propiedad del recurso, etc.
 // Ejemplo: requireRole("admin"), o requireOwnership(model, "createdBy.sub"), etc.
 // También puedes usar algo como casl o accesscontrol para RBAC/ABAC más avanzado.

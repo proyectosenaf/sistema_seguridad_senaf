@@ -11,6 +11,16 @@ const isId = (v) => typeof v === "string" && mongoose.Types.ObjectId.isValid(v);
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /* ───────────────────────────── Helpers ───────────────────────────── */
+
+function todayStrHN(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Tegucigalpa",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 function inferTimesByRoundName(name = "") {
   const n = String(name).toLowerCase();
   if (n.includes("diurn")) return { startTime: "06:00", endTime: "18:00" };
@@ -43,8 +53,13 @@ async function getPlanSnapshot(siteId, roundId) {
 /* GET /admin/assignments?date=YYYY-MM-DD */
 router.get("/", async (req, res, next) => {
   try {
-    const date = typeof req.query.date === "string" ? req.query.date.trim() : "";
-    const filter = date ? { date } : {};
+    // ✅ Si no mandan date, por defecto usamos HOY Honduras para evitar confusión en admin
+    const date =
+      typeof req.query.date === "string" && req.query.date.trim()
+        ? req.query.date.trim()
+        : "";
+
+    const filter = date ? { date } : {}; // si quieres por defecto HOY, cambia a: const filter = { date: date || todayStrHN() };
 
     const items = await RqAssignment.find(filter)
       .sort({ createdAt: -1 })
@@ -91,41 +106,63 @@ router.get("/", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const b = req.body || {};
-    const date = typeof b.date === "string" ? b.date.trim() : "";
-    const guardId = typeof b.guardId === "string" ? b.guardId.trim() : "";
+
+    // ✅ date: si no viene, usar HOY Honduras (evita admin guardando "hoy" incorrecto)
+    const date =
+      typeof b.date === "string" && b.date.trim() ? b.date.trim() : todayStrHN();
+
+    // ✅ compat: aceptamos guardId o guardUserId
+    const guardIdRaw =
+      typeof b.guardId === "string"
+        ? b.guardId.trim()
+        : typeof b.guardUserId === "string"
+        ? b.guardUserId.trim()
+        : "";
+
     const roundId = typeof b.roundId === "string" ? b.roundId.trim() : "";
     const startTime = typeof b.startTime === "string" ? b.startTime.trim() : "";
     const endTime = typeof b.endTime === "string" ? b.endTime.trim() : "";
 
-    if (!date || !guardId || !isId(roundId))
+    if (!date || !guardIdRaw || !isId(roundId)) {
       return res.status(400).json({ ok: false, error: "invalid_payload" });
+    }
 
     const round = await RqRound.findById(roundId).lean();
-    if (!round)
+    if (!round) {
       return res.status(404).json({ ok: false, error: "round_not_found" });
+    }
 
     const inferred = inferTimesByRoundName(round.name);
     const { planId, planSnap } = await getPlanSnapshot(round.siteId, round._id);
 
     const payload = {
       date,
-      guardId,
+      guardId: guardIdRaw, // ✅ campo canónico
+      // ✅ compat: mantenemos también guardUserId para no romper reportes/código viejo si existe
+      guardUserId: guardIdRaw,
+
       roundId: new mongoose.Types.ObjectId(round._id),
       siteId: new mongoose.Types.ObjectId(round.siteId),
+
+      // ✅ canónico: "assigned"
       status: "assigned",
+
       startTime: HHMM.test(startTime)
         ? startTime
         : inferred.startTime || undefined,
       endTime: HHMM.test(endTime) ? endTime : inferred.endTime || undefined,
+
       planId,
       planSnap,
+
       notified: false,
       notifiedAt: undefined,
       notifiedBy: null,
     };
 
     const doc = await RqAssignment.findOneAndUpdate(
-      { date, guardId, roundId },
+      // ✅ upsert idempotente
+      { date, guardId: guardIdRaw, roundId: payload.roundId },
       { $set: payload },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
@@ -139,22 +176,23 @@ router.post("/", async (req, res, next) => {
 
       if (notifier?.assignment) {
         await notifier.assignment({
-          userId: guardId,
-          email: null, // puedes poner email real si lo tienes
+          userId: guardIdRaw,
+          email: null,
           siteName,
           roundName,
-          startTime: doc.startTime,
-          endTime: doc.endTime,
-          assignmentId: String(doc._id),
+          startTime: doc?.startTime,
+          endTime: doc?.endTime,
+          assignmentId: String(doc?._id),
         });
       } else if (req.io) {
-        req.io.to(`guard-${guardId}`).emit("rondasqr:nueva-asignacion", {
+        req.io.to(`guard-${guardIdRaw}`).emit("rondasqr:nueva-asignacion", {
           title: "Nueva ronda asignada",
           body: `${roundName} en ${siteName}`,
           meta: {
-            id: doc._id,
-            startTime: doc.startTime,
-            endTime: doc.endTime,
+            id: doc?._id,
+            date,
+            startTime: doc?.startTime,
+            endTime: doc?.endTime,
           },
         });
       }
@@ -171,8 +209,9 @@ router.post("/", async (req, res, next) => {
     if (!payload.planId) resp.warning = "no_active_plan_found";
     res.status(201).json(resp);
   } catch (e) {
-    if (e?.code === 11000)
+    if (e?.code === 11000) {
       return res.status(409).json({ ok: false, error: "assignment_exists" });
+    }
     next(e);
   }
 });

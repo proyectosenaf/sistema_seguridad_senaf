@@ -6,14 +6,18 @@ import {
   updateIncident,
   deleteIncident,
 } from "../controllers/incident.controller.js";
-import {
-  requireAuth,
-  requireAdmin,
-} from "../../../src/middleware/auth.js";
+import { requireAuth, requireAdmin } from "../../../src/middleware/auth.js";
 
 const router = express.Router();
 
-// Todas las rutas de este módulo exigen estar autenticado
+/**
+ * IMPORTANTE:
+ * En dev con DISABLE_AUTH=1, requireAuth no valida JWT (pasa),
+ * pero requireAdmin debe poder leer identidad desde req.user.
+ * Esa corrección se hace en server/src/middleware/auth.js (abajo).
+ */
+
+// Todas las rutas de este módulo exigen estar autenticado (o bypass si DISABLE_AUTH=1)
 router.use(requireAuth);
 
 // Listar incidentes (solo admin)

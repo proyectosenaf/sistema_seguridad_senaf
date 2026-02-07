@@ -38,9 +38,7 @@ export default function PermissionCatalog() {
   const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(
     () => new Set()
   );
-  const [expandedGroupsFull, setExpandedGroupsFull] = useState(
-    () => new Set()
-  );
+  const [expandedGroupsFull, setExpandedGroupsFull] = useState(() => new Set());
 
   const toggleGroupCompact = (groupKey) => {
     setExpandedGroupsCompact((prev) => {
@@ -359,7 +357,7 @@ export default function PermissionCatalog() {
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, key: e.target.value }))
               }
-              placeholder="modulo.accion"
+              placeholder="modulo.accion (ej: rondas.create)"
             />
           </div>
           <div>
@@ -370,7 +368,7 @@ export default function PermissionCatalog() {
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, label: e.target.value }))
               }
-              placeholder="Módulo · Acción"
+              placeholder="Acción visible (ej: Crear ronda)"
             />
           </div>
           <div>

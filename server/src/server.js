@@ -10,7 +10,6 @@ import { Server as SocketIOServer } from "socket.io";
 import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
-import nodemailer from "nodemailer";
 
 // Auth opcional
 import { requireAuth } from "./middleware/auth.js";
@@ -31,6 +30,9 @@ import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
+// ✅ Chat (nuevo)
+import chatRoutes from "./routes/chat.routes.js";
+
 // Cron
 import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 
@@ -48,7 +50,9 @@ const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
  * DEV_OPEN = 1 abre todo (bypass de permisos) en DEV.
  * Si no lo defines, DISABLE_AUTH=1 también activa modo "abierto" por compatibilidad.
  */
-const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
+const DEV_OPEN = String(
+  process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")
+) === "1";
 
 console.log("[env] NODE_ENV:", process.env.NODE_ENV);
 console.log("[env] DISABLE_AUTH:", DISABLE_AUTH ? "1" : "0");
@@ -148,13 +152,17 @@ if (!IS_PROD) {
 
 /* ─────────────────────── DEV IDENTITY GLOBAL ─────────────────────
    ✅ En DEV abierto (DEV_OPEN=1 o DISABLE_AUTH=1), inyecta req.user
-   para que TODOS los módulos (incluyendo Incidentes) tengan identidad.
+   para que TODOS los módulos tengan identidad.
 */
 function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
   if (!(DEV_OPEN || DISABLE_AUTH)) return next();
 
-  const email = (req.header("x-user-email") || process.env.SUPERADMIN_EMAIL || "dev@local")
+  const email = (
+    req.header("x-user-email") ||
+    process.env.SUPERADMIN_EMAIL ||
+    "dev@local"
+  )
     .toLowerCase()
     .trim();
 
@@ -176,7 +184,6 @@ function devIdentity(req, _res, next) {
 
   const applied = applyRootAdmin(email, roles, permissions);
 
-  // Importante: deja IAM_NS y permissions como el resto del backend espera
   req.user = {
     sub: "dev|local",
     email,
@@ -252,24 +259,19 @@ if (!mongoUri) {
   process.exit(1);
 }
 
-await mongoose
-  .connect(mongoUri, { autoIndex: true })
-  .catch((e) => {
-    console.error("[db] Error conectando a MongoDB:", e?.message || e);
-    process.exit(1);
-  });
+await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
+  console.error("[db] Error conectando a MongoDB:", e?.message || e);
+  process.exit(1);
+});
 
 console.log("[db] MongoDB conectado");
 
 /* ─────────────────── Auth opcional (GLOBAL) ────────────────────
-   ✅ Si en PROD hay Authorization y DISABLE_AUTH != 1 -> valida token.
+   ✅ Si hay Authorization y DISABLE_AUTH != 1 -> valida token.
    En DEV con DISABLE_AUTH=1 -> no valida (y devIdentity ya inyectó req.user).
 */
 function optionalAuth(req, res, next) {
-  if (DISABLE_AUTH) return next(); // DEV abierto por flag
-
-  // Si quieres forzar auth solo en PROD, deja esto:
-  // if (!IS_PROD) return next();
+  if (DISABLE_AUTH) return next();
 
   if (req.headers.authorization) {
     return requireAuth(req, res, next);
@@ -320,12 +322,8 @@ function authBridgeToReqUser(req, _res, next) {
 
 app.use(authBridgeToReqUser);
 
-/* ───────────────────── ✅ IAM MODULE REGISTER ✅ ─────────────────────
-   Esto crea:
-     /api/iam/v1/...
-     /api/iam/...
-     /iam/v1/...    (alias para DO path trimmed)
-*/
+/* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
+
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
@@ -342,7 +340,9 @@ startDailyAssignmentCron(app);
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(req.query.title || "Nueva ronda asignada (prueba)");
-  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
+  const body = String(
+    req.query.body || "Debes comenzar la ronda de prueba en el punto A."
+  );
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
     body,
@@ -356,17 +356,21 @@ app.get("/api/_debug/ping-assign", (req, res) => {
   res.json({ ok: true, sentTo: [`user-${userId}`, `guard-${userId}`] });
 });
 
-/* ──────────────── CHAT DUMMY PARA EVITAR 404 ─────────────── */
-
-function chatMessagesHandler(_req, res) {
-  res.json({ ok: true, items: [] });
-}
-app.get("/api/chat/messages", chatMessagesHandler);
-app.get("/chat/messages", chatMessagesHandler);
+/* ───────────────────── ✅ CHAT REAL (API) ✅ ─────────────────────
+   Reemplaza el "CHAT DUMMY" por rutas reales con Mongo + broadcast socket.
+   Crea:
+     GET  /api/chat/messages
+     POST /api/chat/messages
+   Alias:
+     /chat/messages
+*/
+app.use("/api/chat", chatRoutes);
+app.use("/chat", chatRoutes);
 
 /* ────────────────────── Rondas QR (v1) ─────────────────────── */
 
-const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
@@ -428,7 +432,9 @@ app.use((err, _req, res, _next) => {
 
 /* ─────────────────────────── 404 final ────────────────────────── */
 
-app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
+app.use((_req, res) =>
+  res.status(404).json({ ok: false, error: "Not implemented" })
+);
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 
@@ -451,8 +457,20 @@ io.on("connection", (s) => {
     console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
   };
 
+  // Rooms existentes (rondas/notificaciones)
   s.on("join-room", ({ userId }) => joinRooms(userId));
   s.on("join", ({ userId }) => joinRooms(userId));
+
+  // ✅ CHAT rooms (DEV y PROD)
+  s.on("chat:join", ({ room = "global" } = {}) => {
+    s.join(`chat:${room}`);
+    s.emit("chat:joined", { room });
+  });
+
+  s.on("chat:leave", ({ room = "global" } = {}) => {
+    s.leave(`chat:${room}`);
+    s.emit("chat:left", { room });
+  });
 
   s.on("disconnect", () => console.log("[io] bye:", s.id));
 });
@@ -469,5 +487,9 @@ function shutdown(sig) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));
+process.on("unhandledRejection", (err) =>
+  console.error("[api] UnhandledRejection:", err)
+);
+process.on("uncaughtException", (err) =>
+  console.error("[api] UncaughtException:", err)
+);

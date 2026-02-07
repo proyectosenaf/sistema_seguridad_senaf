@@ -357,11 +357,37 @@ export const iamApi = {
     }),
 
   /* ---------- PERMISOS ---------- */
-  listPerms: (t) => rawFetch(PATHS.perms.list(), { token: t }),
+
+  /**
+   * ✅ FIX: soporta paginación y filtros para que NO se quede en 5.
+   * Backend típico: /permissions?limit=...&page=...
+   * También soporta: q (search), group, role (si tu API lo acepta)
+   */
+  listPerms: (arg = {}, t) => {
+    // Compat: si lo llaman como listPerms(token)
+    if (typeof arg === "string" || arg === null || arg === undefined) {
+      return rawFetch(PATHS.perms.list(), { token: arg });
+    }
+
+    const params = arg && typeof arg === "object" ? { ...arg } : {};
+
+    // Defaults razonables para UI catálogo
+    const limit = Number.isFinite(Number(params.limit)) ? Number(params.limit) : 1000;
+    const page = Number.isFinite(Number(params.page)) ? Number(params.page) : 1;
+
+    const q = params.q || params.search || "";
+    const group = params.group || "";
+    const role = params.role || "";
+
+    const query = buildQuery({ limit, page, q, group, role });
+
+    return rawFetch(`${PATHS.perms.list()}${query}`, { token: t });
+  },
 
   listPermsForRole: async (roleId, t) => {
     const [allPerms, rolePerms] = await Promise.all([
-      rawFetch(PATHS.perms.list(), { token: t }),
+      // ✅ trae muchos, no 5
+      iamApi.listPerms({ limit: 5000, page: 1 }, t),
       rawFetch(PATHS.roles.permissions(roleId), { token: t }),
     ]);
 

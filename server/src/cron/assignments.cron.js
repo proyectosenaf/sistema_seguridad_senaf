@@ -8,9 +8,18 @@ import IamUser from "../../modules/iam/models/IamUser.model.js";
 
 /* ───────────────── helpers ───────────────── */
 
+function todayStrHN(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Tegucigalpa",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 function inferTimesByRoundName(name = "") {
   const n = String(name).toLowerCase();
-  if (n.includes("diurn"))   return { startTime: "06:00", endTime: "18:00" };
+  if (n.includes("diurn")) return { startTime: "06:00", endTime: "18:00" };
   if (n.includes("nocturn")) return { startTime: "18:00", endTime: "06:00" };
   if (n.includes("mediod") || n.includes("meridian")) return { startTime: "12:00", endTime: "18:00" };
   return { startTime: undefined, endTime: undefined };
@@ -35,12 +44,8 @@ async function getPlanSnapshot(siteId, roundId) {
 }
 
 function pickGuardId(user) {
-  // Ajusta esto si tu IamUser tiene otro campo para el identificador operativo
-  return (
-    user?.sub ||
-    user?.legacyId ||
-    (user?._id ? String(user._id) : null)
-  );
+  // Mantengo tu lógica: en tu sistema guardId se está usando como string.
+  return user?.sub || user?.legacyId || (user?._id ? String(user._id) : null);
 }
 
 function hasGuardRole(user) {
@@ -58,19 +63,16 @@ function hasGuardRole(user) {
 /* ───────────────── core ───────────────── */
 
 export async function generateAssignmentsForDate(date, { notifier } = {}) {
-  // 1) rondas activas
   const rounds = await RqRound.find({ active: true }).lean();
   if (!rounds.length) return { created: 0, skipped: 0 };
 
-  // 2) guardias candidatos (usuarios activos con rol de guardia)
   const users = await IamUser.find({ active: true }).lean();
   const guards = users.filter(hasGuardRole);
 
   let created = 0;
   let skipped = 0;
 
-  // Cache de sitios para no hacer N consultas
-  const siteIds = Array.from(new Set(rounds.map(r => String(r.siteId || "")).filter(Boolean)));
+  const siteIds = Array.from(new Set(rounds.map((r) => String(r.siteId || "")).filter(Boolean)));
   const sites = siteIds.length
     ? await RqSite.find({ _id: { $in: siteIds } }).select({ name: 1 }).lean()
     : [];
@@ -84,15 +86,24 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 
     for (const g of guards) {
       const guardId = pickGuardId(g);
-      if (!guardId) { skipped++; continue; }
+      if (!guardId) {
+        skipped++;
+        continue;
+      }
 
-      // Evitar duplicados por (date, guardId, roundId)
+      // ✅ exists estable (usa mismo tipo que guardId, aquí string)
       const exists = await RqAssignment.exists({ date, guardId, roundId: r._id });
-      if (exists) { skipped++; continue; }
+      if (exists) {
+        skipped++;
+        continue;
+      }
 
       const doc = await RqAssignment.create({
         date,
         guardId,
+        // compat (por si hay código viejo leyendo guardUserId)
+        guardUserId: guardId,
+
         roundId: r._id,
         siteId: r.siteId || undefined,
         status: "assigned",
@@ -107,7 +118,6 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 
       created++;
 
-      // Notificar si hay infraestructura (usa tu notifier del core)
       try {
         if (notifier && typeof notifier.assignment === "function") {
           await notifier.assignment({
@@ -137,15 +147,16 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 /* ───────────────── scheduler ───────────────── */
 
 export function startDailyAssignmentCron(app) {
-  const tz = process.env.TZ || "UTC";
-  // Por defecto a medianoche; sobreescribe con CRON_ASSIGN si quieres (p.ej. "*/5 * * * *" cada 5 minutos)
+  // ✅ Por defecto Honduras
+  const tz = process.env.TZ || "America/Tegucigalpa";
   const spec = process.env.CRON_ASSIGN || "0 0 * * *";
 
   cron.schedule(
     spec,
     async () => {
       try {
-        const today = new Date().toISOString().slice(0, 10);
+        // ✅ HOY Honduras (no UTC)
+        const today = todayStrHN();
         const notifier = app?.get?.("notifier") || null;
         const { created, skipped } = await generateAssignmentsForDate(today, { notifier });
         console.log(`[cron] assignments ${today} -> created=${created} skipped=${skipped}`);

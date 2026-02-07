@@ -12,10 +12,16 @@ const r = Router();
 
 /** Normaliza un permiso recibido desde el front */
 function normalizePerm(p = {}) {
-  const key = String(p.key ?? "").trim();
+  let key = String(p.key ?? "").trim().toLowerCase();
   const label = String(p.label ?? "").trim();
-  const group = String(p.group ?? "").trim();
+  const group = String(p.group ?? "").trim().toLowerCase();
   const order = Number.isFinite(p.order) ? Number(p.order) : 0;
+
+  // ✅ Auto-namespace: si viene "create" y group="rondas" => "rondas.create"
+  if (group && key && !key.includes(".")) {
+    key = `${group}.${key}`;
+  }
+
   return { key, label, group, order };
 }
 
@@ -24,22 +30,35 @@ function validatePerm(p) {
   if (!p.key) errors.push("key es requerido");
   if (!p.label) errors.push("label es requerido");
   if (!p.group) errors.push("group es requerido");
+
   if (p.key && !/^[a-z0-9_.-]+$/i.test(p.key)) {
     errors.push("key solo puede contener letras, números, . _ -");
   }
   if (p.order != null && !Number.isInteger(p.order)) {
     errors.push("order debe ser entero");
   }
+
+  // ✅ Política recomendada: obligar namespace (descomenta si quieres forzarlo estrictamente)
+  // if (p.key && !p.key.includes(".")) {
+  //   errors.push("key debe incluir namespace: modulo.accion (ej: rondas.create)");
+  // }
+
   return errors;
 }
 
 /** Sanitiza objetos para updates (whitelist) */
 function pickUpdatable(body = {}) {
   const out = {};
-  if (body.key != null) out.key = String(body.key).trim();
+  if (body.key != null) out.key = String(body.key).trim().toLowerCase();
   if (body.label != null) out.label = String(body.label).trim();
-  if (body.group != null) out.group = String(body.group).trim();
+  if (body.group != null) out.group = String(body.group).trim().toLowerCase();
   if (body.order != null) out.order = Number(body.order) || 0;
+
+  // ✅ si cambian group + key sin namespace, prefijar
+  if (out.group && out.key && !out.key.includes(".")) {
+    out.key = `${out.group}.${out.key}`;
+  }
+
   return out;
 }
 
@@ -57,7 +76,10 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const { group, q, role: roleId } = req.query;
 
     const filter = {};
-    if (group) filter.group = String(group);
+
+    // ✅ normaliza group del query
+    if (group) filter.group = String(group).trim().toLowerCase();
+
     if (q) {
       const rx = new RegExp(
         String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
@@ -82,7 +104,7 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       ? docs.map((d) => ({ ...d, selected: selectedSet.has(d.key) }))
       : docs;
 
-    // Estructura por grupo: [{ group: 'bitacora', items: [...] }, ...]
+    // Estructura por grupo: [{ group: 'rondas', items: [...] }, ...]
     const groupMap = new Map();
     for (const d of annotated) {
       if (!groupMap.has(d.group)) groupMap.set(d.group, []);
@@ -128,7 +150,6 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 
     const doc = await IamPermission.create(input);
 
-    // 🔎 AUDIT: creación de permiso
     await writeAudit(req, {
       action: "create",
       entity: "permission",
@@ -159,14 +180,12 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const { id } = req.params;
     const update = pickUpdatable(req.body);
 
-    // Si cambia key, valida formato
     if (update.key && !/^[a-z0-9_.-]+$/i.test(update.key)) {
       return res.status(400).json({
         message: "key solo puede contener letras, números, . _ -",
       });
     }
 
-    // Obtener doc previo para saber si cambia la key
     const prev = await IamPermission.findById(id).lean();
     if (!prev) return res.status(404).json({ message: "No encontrado" });
 
@@ -176,7 +195,6 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // Si la key cambió, actualizarla en los roles (permissions: [String])
     if (update.key && update.key !== prev.key) {
       await IamRole.updateMany(
         { permissions: prev.key },
@@ -185,7 +203,6 @@ r.patch("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       );
     }
 
-    // 🔎 AUDIT: actualización de permiso
     await writeAudit(req, {
       action: "update",
       entity: "permission",
@@ -221,7 +238,6 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Obtener key para limpiar roles
     const perm = await IamPermission.findById(id).lean();
     if (!perm) return res.status(404).json({ message: "No encontrado" });
 
@@ -229,13 +245,11 @@ r.delete("/:id", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     if (del.deletedCount === 0)
       return res.status(404).json({ message: "No encontrado" });
 
-    // Remover la key de todos los roles que la tengan
     await IamRole.updateMany(
       { permissions: perm.key },
       { $pull: { permissions: perm.key } }
     );
 
-    // 🔎 AUDIT: eliminación de permiso
     await writeAudit(req, {
       action: "delete",
       entity: "permission",
@@ -273,9 +287,9 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       });
     }
 
-    // Normaliza, valida y deduplica por key (último gana)
     const map = new Map();
     const allErrors = [];
+
     for (const raw of permissions) {
       const p = normalizePerm(raw);
       const errs = validatePerm(p);
@@ -285,6 +299,7 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       }
       map.set(p.key, p);
     }
+
     if (allErrors.length) {
       return res.status(400).json({
         message: "Validación fallida en uno o más items",
@@ -295,7 +310,6 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const list = [...map.values()];
 
     if (dryRun) {
-      // Reporta qué se crearía/actualizaría
       const existing = await IamPermission.find(
         { key: { $in: list.map((p) => p.key) } },
         { key: 1 }
@@ -319,7 +333,6 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       });
     }
 
-    // Para el resumen de auditoría
     const existing = await IamPermission.find(
       { key: { $in: list.map((p) => p.key) } },
       { key: 1 }
@@ -332,7 +345,6 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       .filter((p) => existSet.has(p.key))
       .map((p) => p.key);
 
-    // bulkWrite idempotente
     const ops = list.map((p) => ({
       updateOne: {
         filter: { key: p.key },
@@ -352,7 +364,6 @@ r.post("/sync", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     const matched = result.matchedCount ?? result.nMatched ?? 0;
     const modified = result.modifiedCount ?? result.nModified ?? 0;
 
-    // 🔎 AUDIT: resumen de sincronización (bulk)
     await writeAudit(req, {
       action: "update",
       entity: "permission",

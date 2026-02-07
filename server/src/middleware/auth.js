@@ -55,14 +55,12 @@ export { requireAuth as checkJwt };
 /**
  * RBAC: verifica uno o varios scopes.
  * Acepta string o array de strings.
- * Ej: requireScope("read:rondas") o requireScope(["read:rondas","write:rondas"])
  */
 export const requireScope = (scopes) =>
   requiredScopes(Array.isArray(scopes) ? scopes : [scopes]);
 
 /**
  * Helper: obtiene un objeto de usuario amigable desde req.auth.payload
- * Útil en controllers si quieres registrar quién hizo la acción.
  */
 export function getUserFromReq(req) {
   const p = req?.auth?.payload || {};
@@ -80,9 +78,7 @@ export function getUserFromReq(req) {
     p.roles ||
     [];
 
-  if (!Array.isArray(roles)) {
-    roles = [roles].filter(Boolean);
-  }
+  if (!Array.isArray(roles)) roles = [roles].filter(Boolean);
 
   const permissions = Array.isArray(p.permissions) ? p.permissions : [];
 
@@ -96,23 +92,69 @@ export function getUserFromReq(req) {
 }
 
 /**
+ * Helper: obtiene roles/perms desde req.user si existe (modo DEV u otros módulos)
+ */
+function getUserFromReqUser(req) {
+  const NS =
+    process.env.AUTH0_NAMESPACE ||
+    process.env.IAM_ROLES_NAMESPACE ||
+    "https://senaf.local/roles";
+
+  const u = req?.user || {};
+
+  let roles =
+    (Array.isArray(u.roles) && u.roles) ||
+    (Array.isArray(u[NS]) && u[NS]) ||
+    [];
+
+  if (!Array.isArray(roles)) roles = [roles].filter(Boolean);
+
+  const permissions = Array.isArray(u.permissions) ? u.permissions : [];
+
+  return {
+    sub: u.sub ?? null,
+    name: u.name ?? null,
+    email: u.email ?? null,
+    roles,
+    permissions,
+  };
+}
+
+/**
  * Middleware: exige que el usuario sea Admin (o tenga permiso "*").
- * Si no, responde 403.
+ * En DEV:
+ *   - si DISABLE_AUTH=1 o DEV_OPEN=1 (y no es production), se permite.
+ * Además soporta identidad desde req.user (no solo req.auth.payload).
  */
 export function requireAdmin(req, res, next) {
-  const user = getUserFromReq(req);
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const DISABLE_AUTH = process.env.DISABLE_AUTH === "1";
+  const DEV_OPEN = process.env.DEV_OPEN === "1";
 
-  const normalizedRoles = (user.roles || []).map((r) =>
-    String(r).toLowerCase()
-  );
+  if (!IS_PROD && (DISABLE_AUTH || DEV_OPEN)) {
+    return next();
+  }
 
-  const isAdmin =
-    normalizedRoles.includes("admin") || user.permissions.includes("*");
+  const fromAuth = getUserFromReq(req);
+  const fromReqUser = getUserFromReqUser(req);
+
+  // Merge: si auth trae algo, úsalo; si no, usa req.user
+  const roles = (fromAuth.roles?.length ? fromAuth.roles : fromReqUser.roles) || [];
+  const permissions =
+    (fromAuth.permissions?.length ? fromAuth.permissions : fromReqUser.permissions) || [];
+
+  const normalizedRoles = roles.map((r) => String(r).toLowerCase());
+
+  const isAdmin = normalizedRoles.includes("admin") || permissions.includes("*");
 
   if (!isAdmin) {
-    return res
-      .status(403)
-      .json({ message: "Acceso restringido a administradores." });
+    return res.status(403).json({
+      message: "Acceso restringido a administradores.",
+      debug: {
+        roles: normalizedRoles,
+        permissions,
+      },
+    });
   }
 
   return next();
@@ -120,9 +162,8 @@ export function requireAdmin(req, res, next) {
 
 /**
  * Middleware opcional: inyecta user amigable en req.user (solo si ya pasó requireAuth).
- * Si tienes rutas que ya usan `req.user`, puedes usarlo.
  */
-// export function attachUser(req, _res, next) {
-//   req.user = getUserFromReq(req);
-//   next();
-// }
+export function attachUser(req, _res, next) {
+  req.user = getUserFromReq(req);
+  next();
+}

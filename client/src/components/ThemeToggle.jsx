@@ -15,24 +15,34 @@ const Moon = (props) => (
 );
 
 export default function ThemeToggle() {
-  const prefersDark = React.useMemo(() => window.matchMedia("(prefers-color-scheme: dark)").matches, []);
-  const [theme, setTheme] = React.useState(() => localStorage.getItem("theme") || (prefersDark ? "dark" : "light"));
+  const prefersDark = React.useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+  }, []);
+
+  const [theme, setTheme] = React.useState(() => {
+    if (typeof localStorage === "undefined") return prefersDark ? "dark" : "light";
+    return localStorage.getItem("theme") || (prefersDark ? "dark" : "light");
+  });
 
   React.useEffect(() => {
+    if (typeof document === "undefined") return;
     const root = document.documentElement;
     const isDark = theme === "dark";
     root.classList.toggle("dark", isDark);
-    localStorage.setItem("theme", theme);
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {}
   }, [theme]);
-
-  const next = theme === "dark" ? "light" : "dark";
 
   return (
     <motion.button
-      onClick={() => setTheme(next)}
+      onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
       aria-label="Cambiar tema"
       title={theme === "dark" ? "Cambiar a claro" : "Cambiar a oscuro"}
-      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg
+                 border border-neutral-300 dark:border-neutral-700
+                 hover:bg-neutral-100 dark:hover:bg-neutral-800"
       whileTap={{ scale: 0.96 }}
       whileHover={{ scale: 1.02 }}
       transition={{ type: "spring", stiffness: 260, damping: 22 }}
