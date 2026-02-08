@@ -1,11 +1,10 @@
+// src/App.jsx
 import React, { Suspense, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
-import { attachAuth0 } from "./lib/api.js";
 
-// ✅ también inyectamos el token al módulo Rondas QR
+import { attachAuth0 } from "./lib/api.js";
 import { attachRondasAuth } from "./modules/rondasqr/api/rondasqrApi.js";
-// ✅ también IAM
 import { attachIamAuth } from "./iam/api/iamApi.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
@@ -21,12 +20,20 @@ const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
-const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+const IncidentesList = React.lazy(() =>
+  import("./pages/Incidentes/IncidentesList.jsx")
+);
+const IncidenteForm = React.lazy(() =>
+  import("./pages/Incidentes/IncidenteForm.jsx")
+);
 
 // ✅ Rondas QR
-const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
-const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
+const RondasDashboard = React.lazy(() =>
+  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
+);
+const RondasScan = React.lazy(() =>
+  import("./modules/rondasqr/guard/ScanPage.jsx")
+);
 const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
 // Otros módulos
@@ -42,7 +49,11 @@ const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPa
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 
-const ROOT_ADMINS = (import.meta.env.VITE_ROOT_ADMINS || import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+const ROOT_ADMINS = (
+  import.meta.env.VITE_ROOT_ADMINS ||
+  import.meta.env.VITE_SUPERADMIN_EMAIL ||
+  ""
+)
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
@@ -82,13 +93,20 @@ function RoleRedirectInline() {
     let alive = true;
 
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-    const ROOT = RAW.replace(/\/api\/?$/, "").replace(/\/$/, "");
+    const ROOT = String(RAW).replace(/\/api\/?$/, "").replace(/\/$/, "");
     const V1 = `${ROOT}/api/iam/v1`;
     const LEGACY = `${ROOT}/api/iam`;
     const DEV = import.meta.env.DEV;
+
+    // ✅ FIX: Auth0 SDK v2 usa "authorizationParams"
     const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
 
-    const candidates = [`${V1}/me`, `${V1}/auth/me`, `${LEGACY}/me`, `${LEGACY}/auth/me`];
+    const candidates = [
+      `${V1}/me`,
+      `${V1}/auth/me`,
+      `${LEGACY}/me`,
+      `${LEGACY}/auth/me`,
+    ];
 
     async function tryFetch(headers = {}) {
       for (const url of candidates) {
@@ -107,16 +125,19 @@ function RoleRedirectInline() {
     (async () => {
       let headers = {};
 
+      // ✅ FIX: pedir token SIEMPRE con authorizationParams (no mezclar)
       if (isAuthenticated && audience) {
         try {
-          const token = await getAccessTokenSilently({ authorizationParams: { audience } });
+          const token = await getAccessTokenSilently({
+            authorizationParams: { audience },
+          });
           if (token) headers.Authorization = `Bearer ${token}`;
         } catch {}
       }
 
       let me = await tryFetch(headers);
 
-      // DEV fallback
+      // DEV fallback (solo en dev)
       if (!me && DEV) {
         const devEmail =
           user?.email ||
@@ -144,34 +165,37 @@ function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
-    const setProvider = async () => {
-      if (!isAuthenticated) {
-        attachAuth0(null);
-        attachRondasAuth(null);
-        attachIamAuth(null);
-        return;
+    // ✅ IMPORTANTE:
+    // - Setear provider aunque el user cambie
+    // - No hacer "setProvider async" innecesario, solo setear funciones
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+
+    if (!isAuthenticated) {
+      attachAuth0(null);
+      attachRondasAuth(null);
+      attachIamAuth(null);
+      return;
+    }
+
+    const provider = async () => {
+      try {
+        // ✅ FIX: Auth0 v2 -> authorizationParams
+        // ✅ NO meter offline_access aquí si no lo necesitas (puede requerir refresh token config)
+        const token = await getAccessTokenSilently({
+          authorizationParams: {
+            audience,
+            scope: "openid profile email",
+          },
+        });
+        return token || null;
+      } catch {
+        return null;
       }
-
-      const provider = async () => {
-        try {
-          const token = await getAccessTokenSilently({
-            authorizationParams: {
-              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              scope: "openid profile email offline_access",
-            },
-          });
-          return token || null;
-        } catch {
-          return null;
-        }
-      };
-
-      attachAuth0(provider);
-      attachRondasAuth(provider);
-      attachIamAuth(provider);
     };
 
-    setProvider();
+    attachAuth0(provider);
+    attachRondasAuth(provider);
+    attachIamAuth(provider);
   }, [isAuthenticated, getAccessTokenSilently]);
 
   return children;
@@ -219,7 +243,13 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
+                      anyOf={[
+                        "incidentes.read",
+                        "incidentes.create",
+                        "incidentes.edit",
+                        "incidentes.reports",
+                        "*",
+                      ]}
                     >
                       <IncidentesList />
                     </IamGuardSuper>
@@ -233,7 +263,13 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
+                      anyOf={[
+                        "incidentes.read",
+                        "incidentes.create",
+                        "incidentes.edit",
+                        "incidentes.reports",
+                        "*",
+                      ]}
                     >
                       <IncidentesList />
                     </IamGuardSuper>
@@ -305,7 +341,14 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.users.manage", "*"]}
+                      anyOf={[
+                        "rondasqr.reports",
+                        "rondasqr.view",
+                        "rondasqr.admin",
+                        "admin",
+                        "iam.users.manage",
+                        "*",
+                      ]}
                     >
                       <RondasDashboard />
                     </IamGuardSuper>
@@ -402,7 +445,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "supervision.read",
+                        "supervision.create",
+                        "supervision.edit",
+                        "supervision.reports",
+                        "*",
+                      ]}
+                    >
                       <Supervision />
                     </IamGuardSuper>
                   </Layout>
@@ -416,7 +467,14 @@ export default function App() {
                 <ProtectedRoute>
                   <Layout>
                     <IamGuardSuper
-                      anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}
+                      anyOf={[
+                        "evaluacion.list",
+                        "evaluacion.create",
+                        "evaluacion.edit",
+                        "evaluacion.reports",
+                        "evaluacion.kpi",
+                        "*",
+                      ]}
                     >
                       <Evaluacion />
                     </IamGuardSuper>
