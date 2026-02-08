@@ -184,6 +184,37 @@ function AuthTokenBridge({ children }) {
   return children;
 }
 
+function AuthDebug() {
+  const { isAuthenticated, user, error, isLoading, getAccessTokenSilently } = useAuth0();
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+        console.log("[AUTH0] env domain:", import.meta.env.VITE_AUTH0_DOMAIN);
+        console.log("[AUTH0] env clientId:", import.meta.env.VITE_AUTH0_CLIENT_ID);
+        console.log("[AUTH0] env audience:", audience);
+        console.log("[AUTH0] isLoading:", isLoading);
+        console.log("[AUTH0] isAuthenticated:", isAuthenticated);
+        console.log("[AUTH0] user.email:", user?.email || null);
+        console.log("[AUTH0] error:", error || null);
+
+        if (isAuthenticated) {
+          const token = await getAccessTokenSilently({
+            authorizationParams: { audience },
+          });
+          console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
+        }
+      } catch (e) {
+        console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
+      }
+    })();
+  }, [isAuthenticated, isLoading, user, error, getAccessTokenSilently]);
+
+  return null;
+}
+
+
 export default function App() {
   return (
     <AuthTokenBridge>
