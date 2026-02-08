@@ -1,6 +1,8 @@
 // src/modules/rondasqr/supervisor/LiveAlerts.jsx
 import React from "react";
-import { io } from "socket.io-client";
+
+// ✅ Reusar el socket global (una sola conexión para toda la app)
+import { socket } from "../../../lib/socket.js";
 
 function classNames(...xs) {
   return xs.filter(Boolean).join(" ");
@@ -30,75 +32,60 @@ export default function LiveAlerts() {
   const [status, setStatus] = React.useState("connecting"); // connecting | connected | disconnected
   const [autoScroll, setAutoScroll] = React.useState(true);
   const bottomRef = React.useRef(null);
-  const socketRef = React.useRef(null);
 
   // Auto-scroll al tope cuando llegan eventos (si está activo)
   React.useEffect(() => {
     if (autoScroll && bottomRef.current) {
-      bottomRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "end",
-      });
+      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [events, autoScroll]);
 
   React.useEffect(() => {
-    const ROOT = (
-      import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"
-    ).replace(/\/$/, "");
-
-    const socket = io(ROOT, {
-      transports: ["websocket"], // fuerza WS
-      withCredentials: true,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-    });
-
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      setStatus("connected");
-    });
-
-    socket.on("disconnect", () => {
+    // ✅ Si por alguna razón el socket global no existe, salimos sin romper
+    if (!socket) {
       setStatus("disconnected");
-    });
+      return;
+    }
 
-    socket.on("connect_error", () => {
-      setStatus("disconnected");
-    });
+    // Estado inicial según conexión real
+    setStatus(socket.connected ? "connected" : "connecting");
+
+    const onConnect = () => setStatus("connected");
+    const onDisconnect = () => setStatus("disconnected");
+    const onConnectError = () => setStatus("disconnected");
+    const onReconnecting = () => setStatus("connecting");
 
     // Incidentes y alertas (panic, fall, immobility, etc.)
-    socket.on("rondasqr:incident", (evt) => {
+    const onIncident = (evt) => {
       setEvents((prev) => {
-        const key = `${evt?._id || ""}-${evt?.at || ""}-${
-          evt?.type || ""
-        }-${evt?.text || evt?.message || ""}`;
+        const key = `${evt?._id || ""}-${evt?.at || ""}-${evt?.type || ""}-${evt?.text || evt?.message || ""}`;
         if (prev.length && prev[0]?.__k === key) return prev;
-        const enriched = {
-          ...evt,
-          __k: key,
-        };
+
+        const enriched = { ...evt, __k: key };
         return [enriched, ...prev].slice(0, 200);
       });
-    });
+    };
 
-    // Si quieres mostrar marcas en vivo también, puedes descomentar:
-    // socket.on("rondasqr:mark", (evt) => { ... });
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+
+    // ✅ socket.io-client usa "reconnect_attempt" / "reconnect" dependiendo versión
+    socket.io?.on?.("reconnect_attempt", onReconnecting);
+    socket.io?.on?.("reconnect", onConnect);
+
+    socket.on("rondasqr:incident", onIncident);
 
     return () => {
       try {
-        socket.off("rondasqr:incident");
-        socket.off("rondasqr:mark");
-        socket.off("connect");
-        socket.off("disconnect");
-        socket.off("connect_error");
-        socket.close();
+        socket.off("connect", onConnect);
+        socket.off("disconnect", onDisconnect);
+        socket.off("connect_error", onConnectError);
+        socket.off("rondasqr:incident", onIncident);
+
+        socket.io?.off?.("reconnect_attempt", onReconnecting);
+        socket.io?.off?.("reconnect", onConnect);
       } catch {}
-      socketRef.current = null;
     };
   }, []);
 
@@ -106,8 +93,10 @@ export default function LiveAlerts() {
     const when = e?.at ? new Date(e.at) : new Date();
     const who =
       e?.officerName || e?.officerEmail || e?.guardName || e?.guardId || "-";
+
     const gpsOk =
       typeof e?.gps?.lat === "number" && typeof e?.gps?.lon === "number";
+
     const mapsUrl = gpsOk
       ? `https://www.google.com/maps?q=${e.gps.lat},${e.gps.lon}`
       : null;
@@ -134,13 +123,10 @@ export default function LiveAlerts() {
               {when.toLocaleString()}
             </span>
           </div>
+
           <div className="text-xs text-white/70">
-            {e?.siteName ? (
-              <span className="mr-2">🏢 {e.siteName}</span>
-            ) : null}
-            {e?.roundName ? (
-              <span className="mr-2">🔁 {e.roundName}</span>
-            ) : null}
+            {e?.siteName ? <span className="mr-2">🏢 {e.siteName}</span> : null}
+            {e?.roundName ? <span className="mr-2">🔁 {e.roundName}</span> : null}
             {who ? <span>👤 {who}</span> : null}
           </div>
         </div>
@@ -165,9 +151,11 @@ export default function LiveAlerts() {
           ) : (
             <span>📍 sin GPS</span>
           )}
+
           {typeof e?.stepsAtAlert === "number" ? (
             <span>👟 pasos: {e.stepsAtAlert}</span>
           ) : null}
+
           {typeof e?.durationMin === "number" ? (
             <span>⏱️ inactividad: {e.durationMin} min</span>
           ) : null}
@@ -180,6 +168,7 @@ export default function LiveAlerts() {
     <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg">
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold text-lg">Alertas en vivo</h3>
+
         <div className="flex items-center gap-3">
           <span
             className={classNames(

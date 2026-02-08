@@ -1,11 +1,17 @@
 // client/src/modules/incidentes/IncidentesList.jsx
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
+
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
+import AudioRecorder from "../../components/AudioRecorder.jsx";
+
 import api, { API } from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
+
+// ✅ Dictado por voz
+import useSpeechToText from "../../hooks/useSpeechToText.js";
 
 // 👉 librerías para exportar
 import jsPDF from "jspdf";
@@ -14,8 +20,8 @@ import * as XLSX from "xlsx";
 
 // helper para mostrar bonito el nombre del guardia
 function guardLabel(g) {
-  const name = g.name || "(Sin nombre)";
-  return g.email ? `${name} — ${g.email}` : name;
+  const name = g?.name || "(Sin nombre)";
+  return g?.email ? `${name} — ${g.email}` : name;
 }
 
 export default function IncidentesList() {
@@ -28,6 +34,7 @@ export default function IncidentesList() {
     resueltos: 0,
     alta: 0,
   });
+
   const [showForm, setShowForm] = useState(false);
 
   // form inline (crear / editar)
@@ -41,18 +48,75 @@ export default function IncidentesList() {
     status: "abierto",
   });
 
-  // media = [{ type: "image" | "video", src }]
+  // media = [{ type: "image" | "video" | "audio", src }]
   const [media, setMedia] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
+
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
 
-  // ========= BASE para imágenes (solo host, sin /api) =========
-  const API_HOST = (API || "").replace(/\/api$/, "");
+  // ========= BASE para assets (solo host, sin /api) =========
+  const API_HOST = useMemo(() => String(API || "").replace(/\/api$/, ""), []);
 
   // 👇 catálogo de guardias (IAM)
   const [guards, setGuards] = useState([]);
+
+  /* ================== Dictado por voz (INLINE) ================== */
+  const {
+    supported: sttSupported,
+    listening: sttListening,
+    transcript: sttTranscript,
+    error: sttError,
+    start: sttStart,
+    stop: sttStop,
+    reset: sttReset,
+  } = useSpeechToText({
+    lang: "es-ES",
+    continuous: false, // ✅ evita repetición
+    interimResults: false,
+  });
+
+  const lastInsertedRef = useRef("");
+
+  function normalizeSpeechText(t) {
+    return String(t || "").replace(/\s+/g, " ").trim();
+  }
+
+  function appendTranscriptToDescription(forceText) {
+    const raw = forceText != null ? forceText : sttTranscript;
+    const t = normalizeSpeechText(raw);
+    if (!t) return;
+
+    // ✅ no insertar duplicado
+    if (t === lastInsertedRef.current) {
+      sttReset();
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      description: prev.description ? `${prev.description}\n${t}` : t,
+    }));
+
+    lastInsertedRef.current = t;
+    sttReset();
+  }
+
+  async function stopAndInsert() {
+    try {
+      await sttStop();
+    } finally {
+      setTimeout(() => appendTranscriptToDescription(), 50);
+    }
+  }
+
+  function clearDictation() {
+    sttReset();
+    lastInsertedRef.current = "";
+  }
+  /* ============================================================ */
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -66,15 +130,14 @@ export default function IncidentesList() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get("/incidentes", {
-          params: { limit: 500 },
-        });
+        const res = await api.get("/incidentes", { params: { limit: 500 } });
 
         const data = Array.isArray(res.data)
           ? res.data
           : Array.isArray(res.data?.items)
           ? res.data.items
           : [];
+
         setIncidentes(data);
         recomputeStats(data);
       } catch (err) {
@@ -83,7 +146,7 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── cargar guardias desde IAM (con token) ─────────
+  // ───────── cargar guardias desde IAM (con token si aplica) ─────────
   useEffect(() => {
     let mounted = true;
 
@@ -93,6 +156,7 @@ export default function IncidentesList() {
 
         if (typeof iamApi.listGuards === "function") {
           let token;
+
           try {
             if (isAuthenticated) {
               token = await getAccessTokenSilently({
@@ -169,9 +233,20 @@ export default function IncidentesList() {
     }
   };
 
+  // ----- extractores -----
   function extractPhotos(inc) {
     if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
     if (Array.isArray(inc.photos)) return inc.photos;
+    return [];
+  }
+  function extractVideos(inc) {
+    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
+    if (Array.isArray(inc.videos)) return inc.videos;
+    return [];
+  }
+  function extractAudios(inc) {
+    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
+    if (Array.isArray(inc.audios)) return inc.audios;
     return [];
   }
 
@@ -191,12 +266,16 @@ export default function IncidentesList() {
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const b64 = await fileToBase64(file);
     const isVideo = file.type?.startsWith("video/");
+    const isAudio = file.type?.startsWith("audio/");
+
     setMedia((prev) => [
       ...prev,
-      { type: isVideo ? "video" : "image", src: b64 },
+      { type: isVideo ? "video" : isAudio ? "audio" : "image", src: b64 },
     ]);
+
     e.target.value = "";
   };
 
@@ -208,6 +287,11 @@ export default function IncidentesList() {
   const handleVideoCapture = (dataUrl) => {
     setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
     setShowVideoRecorder(false);
+  };
+
+  const handleAudioCapture = ({ base64 }) => {
+    setMedia((prev) => [...prev, { type: "audio", src: base64 }]);
+    setShowAudioRecorder(false);
   };
 
   const removeMedia = (idx) =>
@@ -225,6 +309,7 @@ export default function IncidentesList() {
     });
     setMedia([]);
     setEditingId(null);
+    clearDictation();
   };
 
   const handleSubmit = async (e) => {
@@ -251,6 +336,9 @@ export default function IncidentesList() {
       const videosBase64 = media
         .filter((m) => m.type === "video")
         .map((m) => m.src);
+      const audiosBase64 = media
+        .filter((m) => m.type === "audio")
+        .map((m) => m.src);
 
       const payload = {
         type: form.type,
@@ -264,6 +352,7 @@ export default function IncidentesList() {
         guardEmail: guard?.email || undefined,
         photosBase64,
         videosBase64,
+        audiosBase64,
       };
 
       if (editingId) {
@@ -299,9 +388,15 @@ export default function IncidentesList() {
     setShowForm(true);
   };
 
+  const closeForm = () => {
+    setShowForm(false);
+    resetForm();
+  };
+
   const startEdit = (incidente) => {
     setShowForm(true);
     setEditingId(incidente._id);
+    clearDictation(); // ✅ para que no se mezcle con dictado anterior
 
     let guardId =
       incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
@@ -326,7 +421,14 @@ export default function IncidentesList() {
     });
 
     const oldPhotos = extractPhotos(incidente);
-    setMedia(oldPhotos.map((src) => ({ type: "image", src })));
+    const oldVideos = extractVideos(incidente);
+    const oldAudios = extractAudios(incidente);
+
+    setMedia([
+      ...oldPhotos.map((src) => ({ type: "image", src })),
+      ...oldVideos.map((src) => ({ type: "video", src })),
+      ...oldAudios.map((src) => ({ type: "audio", src })),
+    ]);
   };
 
   const handleDelete = async (id) => {
@@ -432,7 +534,6 @@ export default function IncidentesList() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Incidentes");
-
     XLSX.writeFile(wb, "incidentes.xlsx");
   };
 
@@ -449,14 +550,14 @@ export default function IncidentesList() {
         </div>
 
         <button
-          onClick={startCreate}
+          onClick={showForm ? closeForm : startCreate}
           className="self-start bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
                      border border-red-400/40 
                      shadow-[0_0_20px_rgba(255,0,0,0.4)] 
                      hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
                      transition-all duration-300"
         >
-          {showForm && !editingId
+          {showForm
             ? "Cerrar formulario"
             : editingId
             ? "Editar incidente"
@@ -488,10 +589,62 @@ export default function IncidentesList() {
               </select>
             </div>
 
+            {/* ✅ Descripción + dictado (INLINE) */}
             <div>
-              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
-                Descripción del Incidente
-              </label>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <label className="block text-gray-700 dark:text-white/80 font-medium">
+                  Descripción del Incidente
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {!sttSupported ? (
+                    <span className="text-xs text-gray-500 dark:text-white/45">
+                      🎙️ Dictado no disponible en este navegador
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={sttListening ? stopAndInsert : sttStart}
+                        className={
+                          "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
+                          (sttListening
+                            ? "bg-rose-600 text-white border-rose-500/40 hover:bg-rose-500"
+                            : "bg-white/60 dark:bg-white/10 text-gray-800 dark:text-white border-gray-300 dark:border-white/10 hover:bg-white/80 dark:hover:bg-white/15")
+                        }
+                        title="Iniciar / detener dictado"
+                      >
+                        {sttListening ? "⏹ Detener" : "🎙 Grabar"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => appendTranscriptToDescription()}
+                        disabled={!String(sttTranscript || "").trim()}
+                        className={
+                          "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
+                          (!String(sttTranscript || "").trim()
+                            ? "opacity-50 cursor-not-allowed bg-white/40 dark:bg-white/5 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/10"
+                            : "bg-emerald-600 text-white border-emerald-500/40 hover:bg-emerald-500")
+                        }
+                        title="Insertar lo dictado"
+                      >
+                        ➕ Insertar
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={clearDictation}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-300 dark:border-white/10 bg-transparent text-gray-600 dark:text-white/70 hover:text-black dark:hover:text-white hover:border-cyan-400/80 transition-all"
+                        title="Limpiar dictado"
+                      >
+                        🧹 Limpiar dictado
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               <textarea
                 name="description"
                 value={form.description}
@@ -500,6 +653,21 @@ export default function IncidentesList() {
                 placeholder="Describa detalladamente lo ocurrido..."
                 required
               />
+
+              {sttSupported && (sttError || sttTranscript) ? (
+                <div className="mt-2 rounded-lg border border-white/10 bg-black/10 dark:bg-white/5 p-3">
+                  {sttError ? (
+                    <div className="text-xs text-rose-600 dark:text-rose-300">
+                      ⚠️ {sttError}
+                    </div>
+                  ) : null}
+                  {sttTranscript ? (
+                    <div className="mt-1 text-xs text-gray-700 dark:text-white/80 whitespace-pre-wrap">
+                      <span className="opacity-70">Dictado:</span> {sttTranscript}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -556,7 +724,7 @@ export default function IncidentesList() {
 
             <div className="space-y-2">
               <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
-                Evidencias (fotos / videos)
+                Evidencias (fotos / videos / audio)
               </label>
 
               <div className="flex flex-wrap gap-3">
@@ -573,7 +741,7 @@ export default function IncidentesList() {
                   onClick={() => setShowCamera(true)}
                   className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
-                  📷 Tomar foto (pantalla completa)
+                  📷 Tomar foto
                 </button>
 
                 <button
@@ -581,19 +749,26 @@ export default function IncidentesList() {
                   onClick={() => setShowVideoRecorder(true)}
                   className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
                 >
-                  🎥 Grabar video (pantalla completa)
+                  🎥 Grabar video
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAudioRecorder(true)}
+                  className="bg-gradient-to-r from-amber-600 to-orange-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(245,158,11,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                >
+                  🎙️ Grabar audio
                 </button>
 
                 <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                  Puede adjuntar imágenes o videos desde archivos, o grabarlos
-                  en tiempo real (vertical u horizontal).
+                  Puede adjuntar evidencias desde archivos o grabarlas en tiempo real.
                 </p>
               </div>
 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*,video/*,audio/*"
                 onChange={handleFile}
                 className="hidden"
               />
@@ -603,7 +778,10 @@ export default function IncidentesList() {
                   {media.map((item, idx) => (
                     <div
                       key={idx}
-                      className="relative w-24 h-24 rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40"
+                      className={
+                        "relative rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40 " +
+                        (item.type === "audio" ? "w-64 h-12 p-2 flex items-center" : "w-24 h-24")
+                      }
                     >
                       {item.type === "image" ? (
                         <img
@@ -611,17 +789,21 @@ export default function IncidentesList() {
                           alt={`evidencia-${idx + 1}`}
                           className="w-full h-full object-cover"
                         />
-                      ) : (
+                      ) : item.type === "video" ? (
                         <video
                           src={item.src}
                           className="w-full h-full object-cover"
                           controls
                         />
+                      ) : (
+                        <audio src={item.src} controls className="w-full" />
                       )}
+
                       <button
                         type="button"
                         onClick={() => removeMedia(idx)}
                         className="absolute top-1 right-1 bg-black/70 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                        title="Quitar"
                       >
                         ✕
                       </button>
@@ -634,10 +816,7 @@ export default function IncidentesList() {
             <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:justify-end">
               <button
                 type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  resetForm();
-                }}
+                onClick={closeForm}
                 className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
               >
                 Cancelar
@@ -654,6 +833,7 @@ export default function IncidentesList() {
         </div>
       )}
 
+      {/* ----- stats ----- */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-lg bg-[#0f1b2d] border border-red-400/40 p-4">
           <div className="text-xs uppercase text-red-300 font-medium flex items-center gap-2">
@@ -696,12 +876,11 @@ export default function IncidentesList() {
         </div>
       </div>
 
+      {/* ----- tabla ----- */}
       <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
         <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
           <div>
-            <h2 className="font-semibold text-lg text-white">
-              Lista de Incidentes
-            </h2>
+            <h2 className="font-semibold text-lg text-white">Lista de Incidentes</h2>
             <p className="text-xs text-gray-300">
               Historial de reportes registrados en el sistema
             </p>
@@ -714,6 +893,7 @@ export default function IncidentesList() {
                          focus:outline-none focus:ring-2 focus:ring-purple-400/60 
                          transition-all duration-200"
               placeholder="Buscar por tipo, descripción o zona..."
+              onChange={() => {}}
             />
 
             <div className="flex gap-2 justify-end">
@@ -761,12 +941,10 @@ export default function IncidentesList() {
                 </tr>
               ) : (
                 incidentes.map((i) => {
-                  const photos =
-                    Array.isArray(i.photos) && i.photos.length
-                      ? i.photos
-                      : Array.isArray(i.photosBase64)
-                      ? i.photosBase64
-                      : [];
+                  const photos = extractPhotos(i);
+                  const videos = extractVideos(i);
+                  const audios = extractAudios(i);
+                  const total = photos.length + videos.length + audios.length;
 
                   return (
                     <tr
@@ -823,35 +1001,17 @@ export default function IncidentesList() {
                       </td>
 
                       <td className="px-4 py-3">
-                        {photos.length ? (
-                          <div className="flex gap-2">
-                            {photos.slice(0, 3).map((p, idx) => {
-                              const src =
-                                typeof p === "string" &&
-                                (p.startsWith("http") || p.startsWith("data:"))
-                                  ? p
-                                  : `${API_HOST}${p}`;
-                              return (
-                                <a
-                                  key={idx}
-                                  href={src}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="block w-12 h-12 rounded overflow-hidden border border-purple-400/40 bg-black/40"
-                                >
-                                  <img
-                                    src={src}
-                                    alt="evidencia"
-                                    className="w-full h-full object-cover"
-                                  />
-                                </a>
-                              );
-                            })}
-                            {photos.length > 3 && (
-                              <span className="text-xs text-gray-300">
-                                +{photos.length - 3}
-                              </span>
-                            )}
+                        {total ? (
+                          <div className="flex items-center gap-2">
+                            {photos.length ? (
+                              <span className="text-xs text-gray-200">📷 {photos.length}</span>
+                            ) : null}
+                            {videos.length ? (
+                              <span className="text-xs text-gray-200">🎥 {videos.length}</span>
+                            ) : null}
+                            {audios.length ? (
+                              <span className="text-xs text-gray-200">🎙️ {audios.length}</span>
+                            ) : null}
                           </div>
                         ) : (
                           <span className="text-xs text-gray-500">—</span>
@@ -920,6 +1080,13 @@ export default function IncidentesList() {
         <VideoRecorder
           onCapture={handleVideoCapture}
           onClose={() => setShowVideoRecorder(false)}
+        />
+      )}
+
+      {showAudioRecorder && (
+        <AudioRecorder
+          onCapture={handleAudioCapture}
+          onClose={() => setShowAudioRecorder(false)}
         />
       )}
     </div>

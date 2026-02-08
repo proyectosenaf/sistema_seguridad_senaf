@@ -50,9 +50,7 @@ const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
  * DEV_OPEN = 1 abre todo (bypass de permisos) en DEV.
  * Si no lo defines, DISABLE_AUTH=1 también activa modo "abierto" por compatibilidad.
  */
-const DEV_OPEN = String(
-  process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")
-) === "1";
+const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
 
 console.log("[env] NODE_ENV:", process.env.NODE_ENV);
 console.log("[env] DISABLE_AUTH:", DISABLE_AUTH ? "1" : "0");
@@ -138,10 +136,13 @@ app.use(
 if (!IS_PROD) app.use(morgan("dev"));
 app.use(compression());
 
-/* ─────────────────────── Parsers de body ──────────────────────── */
-
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+/* ─────────────────────── Parsers de body ────────────────────────
+   ✅ CORRECCIÓN FUNDAMENTAL:
+   Para evidencias en base64 (audio/video), 10mb suele fallar (413 / payload too large).
+   Subimos a 30mb.
+*/
+app.use(express.json({ limit: "30mb" }));
+app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
 if (!IS_PROD) {
   app.use((req, res, next) => {
@@ -340,9 +341,7 @@ startDailyAssignmentCron(app);
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(req.query.title || "Nueva ronda asignada (prueba)");
-  const body = String(
-    req.query.body || "Debes comenzar la ronda de prueba en el punto A."
-  );
+  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
     body,
@@ -356,21 +355,13 @@ app.get("/api/_debug/ping-assign", (req, res) => {
   res.json({ ok: true, sentTo: [`user-${userId}`, `guard-${userId}`] });
 });
 
-/* ───────────────────── ✅ CHAT REAL (API) ✅ ─────────────────────
-   Reemplaza el "CHAT DUMMY" por rutas reales con Mongo + broadcast socket.
-   Crea:
-     GET  /api/chat/messages
-     POST /api/chat/messages
-   Alias:
-     /chat/messages
-*/
+/* ───────────────────── ✅ CHAT REAL (API) ✅ ───────────────────── */
 app.use("/api/chat", chatRoutes);
 app.use("/chat", chatRoutes);
 
 /* ────────────────────── Rondas QR (v1) ─────────────────────── */
 
-const pingHandler = (_req, res) =>
-  res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
@@ -432,9 +423,7 @@ app.use((err, _req, res, _next) => {
 
 /* ─────────────────────────── 404 final ────────────────────────── */
 
-app.use((_req, res) =>
-  res.status(404).json({ ok: false, error: "Not implemented" })
-);
+app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 

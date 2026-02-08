@@ -3,19 +3,15 @@ import React from "react";
 import IncidenteForm from "../../incidentes/IncidenteForm.jsx";
 
 /**
- * Este componente NO tiene lógica propia.
- * Solo reutiliza el mismo formulario general de incidentes,
- * pero ajustado para usarse dentro del módulo de Rondas.
+ * Wrapper para reutilizar el formulario general de incidentes
+ * dentro del módulo de RondasQR, sin navegar fuera del flujo.
  */
 export default function IncidentFormGuard({ roundId, siteId }) {
   return (
     <div className="mt-4">
       <IncidenteForm
-        // ✅ No navegar a /incidentes/lista al terminar, solo limpiar
-        stayOnFinish={true}
-        // ✅ Marcamos el origen para que el backend sepa que vino de una ronda
+        stayOnFinish={true} // ✅ al terminar solo limpia
         origin="ronda"
-        // ✅ Aquí puedes mandar info extra de la ronda
         extraData={{
           fromRonda: true,
           roundId: roundId || null,

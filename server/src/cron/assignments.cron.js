@@ -8,20 +8,12 @@ import IamUser from "../../modules/iam/models/IamUser.model.js";
 
 /* ───────────────── helpers ───────────────── */
 
-function todayStrHN(d = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Tegucigalpa",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
 function inferTimesByRoundName(name = "") {
   const n = String(name).toLowerCase();
   if (n.includes("diurn")) return { startTime: "06:00", endTime: "18:00" };
   if (n.includes("nocturn")) return { startTime: "18:00", endTime: "06:00" };
-  if (n.includes("mediod") || n.includes("meridian")) return { startTime: "12:00", endTime: "18:00" };
+  if (n.includes("mediod") || n.includes("meridian"))
+    return { startTime: "12:00", endTime: "18:00" };
   return { startTime: undefined, endTime: undefined };
 }
 
@@ -44,8 +36,8 @@ async function getPlanSnapshot(siteId, roundId) {
 }
 
 function pickGuardId(user) {
-  // Mantengo tu lógica: en tu sistema guardId se está usando como string.
-  return user?.sub || user?.legacyId || (user?._id ? String(user._id) : null);
+  // ✅ Convención: guardId = Auth0 sub
+  return user?.sub ? String(user.sub) : null;
 }
 
 function hasGuardRole(user) {
@@ -62,7 +54,7 @@ function hasGuardRole(user) {
 
 /* ───────────────── core ───────────────── */
 
-export async function generateAssignmentsForDate(date, { notifier } = {}) {
+export async function generateAssignmentsForDate(date, { notifier, io } = {}) {
   const rounds = await RqRound.find({ active: true }).lean();
   if (!rounds.length) return { created: 0, skipped: 0 };
 
@@ -91,7 +83,6 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
         continue;
       }
 
-      // ✅ exists estable (usa mismo tipo que guardId, aquí string)
       const exists = await RqAssignment.exists({ date, guardId, roundId: r._id });
       if (exists) {
         skipped++;
@@ -101,9 +92,6 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
       const doc = await RqAssignment.create({
         date,
         guardId,
-        // compat (por si hay código viejo leyendo guardUserId)
-        guardUserId: guardId,
-
         roundId: r._id,
         siteId: r.siteId || undefined,
         status: "assigned",
@@ -118,6 +106,7 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 
       created++;
 
+      // Notifier
       try {
         if (notifier && typeof notifier.assignment === "function") {
           await notifier.assignment({
@@ -132,11 +121,24 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 
           await RqAssignment.updateOne(
             { _id: doc._id },
-            { $set: { notified: true, notifiedAt: new Date(), notifiedBy: "socket" } }
+            { $set: { notified: true, notifiedAt: new Date(), notifiedBy: "notifier" } }
           );
         }
       } catch (e) {
         console.warn("[cron.assignments.notify] aviso:", e?.message || e);
+      }
+
+      // Socket room guard-<sub>
+      if (io) {
+        try {
+          io.to(`guard-${guardId}`).emit("rondasqr:nueva-asignacion", {
+            title: "Nueva ronda asignada",
+            body: `${roundName} en ${siteName}`,
+            meta: { assignmentId: String(doc._id), date },
+          });
+        } catch (e) {
+          console.warn("[cron.assignments.socket] aviso:", e?.message || e);
+        }
       }
     }
   }
@@ -147,18 +149,17 @@ export async function generateAssignmentsForDate(date, { notifier } = {}) {
 /* ───────────────── scheduler ───────────────── */
 
 export function startDailyAssignmentCron(app) {
-  // ✅ Por defecto Honduras
-  const tz = process.env.TZ || "America/Tegucigalpa";
+  const tz = process.env.TZ || "UTC";
   const spec = process.env.CRON_ASSIGN || "0 0 * * *";
 
   cron.schedule(
     spec,
     async () => {
       try {
-        // ✅ HOY Honduras (no UTC)
-        const today = todayStrHN();
+        const today = new Date().toISOString().slice(0, 10);
         const notifier = app?.get?.("notifier") || null;
-        const { created, skipped } = await generateAssignmentsForDate(today, { notifier });
+        const io = app?.get?.("io") || null;
+        const { created, skipped } = await generateAssignmentsForDate(today, { notifier, io });
         console.log(`[cron] assignments ${today} -> created=${created} skipped=${skipped}`);
       } catch (e) {
         console.error("[cron] error:", e?.message || e);

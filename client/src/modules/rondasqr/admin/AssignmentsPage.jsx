@@ -2,7 +2,6 @@
 import React, { useEffect, useState } from "react";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import iamApi from "../../../iam/api/iamApi.js";
-// import { io } from "socket.io-client"; // 👈 descomenta si usarás actualizaciones en vivo
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -19,14 +18,13 @@ export default function AssignmentsPage() {
   const [roundId, setRoundId] = useState("");
 
   // Guardias (IAM)
-  const [guards, setGuards] = useState([]); // [{_id, name, email, opId, active}]
-  const [guardId, setGuardId] = useState(""); // opId seleccionado
+  const [guards, setGuards] = useState([]); // [{_id, name, email, sub, opId, active}]
+  const [guardId, setGuardId] = useState(""); // ✅ aquí vamos a guardar EL SUB (auth0|...)
 
   // Horarios
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
 
-  /* ─────────────── Validación HH:mm ─────────────── */
   function isHHMM(str) {
     return /^([01]\d|2[0-3]):[0-5]\d$/.test(str);
   }
@@ -35,7 +33,7 @@ export default function AssignmentsPage() {
   useEffect(() => {
     api
       .listSites()
-      .then((d) => setSites(d.items || []))
+      .then((d) => setSites(d?.items || []))
       .catch(console.error);
   }, []);
 
@@ -48,56 +46,68 @@ export default function AssignmentsPage() {
     }
     api
       .listRounds(siteId)
-      .then((d) => setRounds(d.items || []))
+      .then((d) => setRounds(d?.items || []))
       .catch(console.error);
   }, [siteId]);
 
   /* ─────────────── Cargar guardias ─────────────── */
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
-        let items = [];
+        let users = [];
+
+        // Si tienes endpoint directo de guardias úsalo:
         if (typeof iamApi.listGuards === "function") {
           const r = await iamApi.listGuards("", true);
-          items = r.items || [];
+          users = r?.items || [];
         } else {
-          // fallback si no hay listGuards()
           const r = await iamApi.listUsers("");
-          const NS = "https://senaf.local/roles";
-          items = (r.items || [])
-            .filter((u) => {
-              const roles = [
-                ...(Array.isArray(u.roles) ? u.roles : []),
-                ...(Array.isArray(u[NS]) ? u[NS] : []),
-              ].map((x) => String(x).toLowerCase());
-              return (
-                roles.includes("guardia") ||
-                roles.includes("guard") ||
-                roles.includes("rondasqr.guard")
-              );
-            })
-            .map((u) => ({
-              _id: u._id,
-              name: u.name,
-              email: u.email,
-              opId: u.opId || u.sub || u.legacyId || String(u._id),
-              active: u.active !== false,
-            }));
+          users = r?.items || [];
         }
-        const normalized = (items || []).map((u) => ({
-          _id: u._id,
-          name: u.name,
-          email: u.email,
-          opId: u.opId || u.sub || u.legacyId || String(u._id),
-          active: u.active !== false,
-        }));
+
+        // Normaliza y filtra por rol guardia (si listGuards no existe)
+        const NS = "https://senaf.local/roles";
+        const normalized = (users || [])
+          .filter((u) => {
+            // si listGuards existe, probablemente ya vienen filtrados
+            if (typeof iamApi.listGuards === "function") return u?.active !== false;
+
+            const roles = [
+              ...(Array.isArray(u?.roles) ? u.roles : []),
+              ...(Array.isArray(u?.[NS]) ? u[NS] : []),
+            ]
+              .map((x) => String(x).toLowerCase().trim())
+              .filter(Boolean);
+
+            return (
+              (u?.active !== false) &&
+              (roles.includes("guardia") ||
+                roles.includes("guard") ||
+                roles.includes("rondasqr.guard"))
+            );
+          })
+          .map((u) => {
+            const sub = u?.sub ? String(u.sub) : "";
+            return {
+              _id: u?._id ? String(u._id) : "",
+              name: u?.name || u?.fullName || "",
+              email: u?.email || "",
+              sub, // ✅ ESTE es el que debemos usar como guardId
+              // opId: dejamos por compat, pero NO lo usaremos para asignar
+              opId: sub || u?.opId || u?.legacyId || (u?._id ? String(u._id) : ""),
+              active: u?.active !== false,
+            };
+          });
+
         if (mounted) setGuards(normalized);
       } catch (e) {
         console.error("[Assignments] listGuards error:", e);
         if (mounted) setGuards([]);
       }
     })();
+
     return () => {
       mounted = false;
     };
@@ -108,7 +118,7 @@ export default function AssignmentsPage() {
     setLoading(true);
     try {
       const d = await api.listAssignments(date);
-      setItems(d.items || []);
+      setItems(d?.items || []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -118,6 +128,7 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
   /* ─────────────── Crear asignación ─────────────── */
@@ -128,16 +139,31 @@ export default function AssignmentsPage() {
     }
     if (startTime && !isHHMM(startTime)) return alert("Hora de inicio inválida (usa HH:mm)");
     if (endTime && !isHHMM(endTime)) return alert("Hora de fin inválida (usa HH:mm)");
+
     try {
-      await api.createAssignment({ date, roundId, guardId, startTime, endTime });
+      // ✅ guardId = Auth0 sub
+      await api.createAssignment({
+        date,
+        roundId,
+        guardId,
+        startTime: startTime || "",
+        endTime: endTime || "",
+      });
+
+      // limpiar
       setRoundId("");
       setGuardId("");
       setStartTime("");
       setEndTime("");
+
       await refresh();
     } catch (e) {
       console.error(e);
-      const msg = e?.payload?.error || e?.message || "No se pudo crear la asignación";
+      const msg =
+        e?.payload?.message ||
+        e?.payload?.error ||
+        e?.message ||
+        "No se pudo crear la asignación";
       alert(msg);
     }
   }
@@ -155,32 +181,27 @@ export default function AssignmentsPage() {
 
   /* ─────────────── Render guardia ─────────────── */
   function renderGuardCell(a) {
-    const g = guards.find((x) => x.opId === a.guardId);
+    // ✅ Primero intentamos match por sub
+    const g =
+      guards.find((x) => x.sub && x.sub === a.guardId) ||
+      // fallback: match por opId (por si hay datos viejos)
+      guards.find((x) => x.opId && x.opId === a.guardId) ||
+      // fallback: match por _id
+      guards.find((x) => x._id && x._id === a.guardId);
+
     return g
       ? `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`
       : a.guardId || "—";
   }
 
-  // estilo compacto
   const controlClass =
     "w-full px-3 py-1.5 rounded-md border bg-white text-slate-900 border-slate-200 " +
     "dark:bg-[#1f2937] dark:text-white dark:border-[#374151] focus:outline-none focus:ring-2 focus:ring-cyan-500/70";
-
-  /* ─────────────── Socket.IO opcional ─────────────── */
-  // useEffect(() => {
-  //   const socket = io(import.meta.env.VITE_API_BASE_URL);
-  //   socket.on("rondasqr:nueva-asignacion", (msg) => {
-  //     console.log("Nueva asignación recibida:", msg);
-  //     refresh();
-  //   });
-  //   return () => socket.disconnect();
-  // }, []);
 
   return (
     <div className="p-4">
       <h1 className="text-2xl font-semibold mb-4">Asignaciones de Rondas</h1>
 
-      {/* Filtros superiores */}
       <div className="grid gap-3 md:grid-cols-12">
         <div className="md:col-span-2">
           <label className="text-sm mb-1 block">Fecha</label>
@@ -234,11 +255,16 @@ export default function AssignmentsPage() {
           >
             <option value="">-- Selecciona --</option>
             {guards.map((g) => (
-              <option key={g._id} value={g.opId}>
-                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}
+              // ✅ value = sub
+              <option key={g._id || g.sub} value={g.sub || ""} disabled={!g.sub}>
+                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}{" "}
+                {!g.sub ? "— (SIN SUB)" : ""}
               </option>
             ))}
           </select>
+          <div className="text-xs opacity-60 mt-1">
+            * La asignación se guarda por <b>sub</b> (Auth0). Si un usuario sale “SIN SUB”, ese usuario no podrá recibir rondas.
+          </div>
         </div>
 
         <div className="md:col-span-2">
@@ -262,7 +288,6 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
-      {/* Acciones */}
       <div className="mt-6 mb-2 flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Listado ({date})</h2>
         <div className="flex gap-2">
@@ -281,7 +306,6 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
-      {/* Tabla de asignaciones */}
       {loading ? (
         <div className="text-slate-500 dark:text-zinc-400">Cargando…</div>
       ) : (
@@ -303,7 +327,10 @@ export default function AssignmentsPage() {
             </thead>
             <tbody>
               {(items || []).map((a) => (
-                <tr key={a._id} className="border-t border-slate-200 dark:border-[#374151]">
+                <tr
+                  key={a._id}
+                  className="border-t border-slate-200 dark:border-[#374151]"
+                >
                   <td className="p-3">{renderGuardCell(a)}</td>
                   <td className="p-3">{a.siteName || "-"}</td>
                   <td className="p-3">{a.roundName || a.roundId?.name || "-"}</td>
@@ -325,6 +352,7 @@ export default function AssignmentsPage() {
                   </td>
                 </tr>
               ))}
+
               {(!items || items.length === 0) && (
                 <tr>
                   <td

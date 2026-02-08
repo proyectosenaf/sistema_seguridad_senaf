@@ -1,10 +1,14 @@
-// src/modules/incidentes/IncidenteForm.jsx
+// client/src/modules/incidentes/IncidenteForm.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
+import AudioRecorder from "../../components/AudioRecorder.jsx";
 import api from "../../lib/api.js";
-import iamApi from "../../iam/api/iamApi.js"; // 👈 NUEVO: para traer guardias
+import iamApi from "../../iam/api/iamApi.js";
+
+// ✅ Dictado por voz
+import useSpeechToText from "../../hooks/useSpeechToText.js";
 
 export default function IncidenteForm({
   stayOnFinish = false,
@@ -15,38 +19,88 @@ export default function IncidenteForm({
   const nav = useNavigate();
   const location = useLocation();
 
-  // 1) prop
-  // 2) state
-  // 3) query ?from=ronda
   const search = new URLSearchParams(location.search);
   const fromQueryIsRonda = search.get("from") === "ronda";
   const locationStay = location.state?.stayOnFinish ?? false;
   const finalStayOnFinish = stayOnFinish || locationStay || fromQueryIsRonda;
 
-  // soporte opcional para edición si alguien manda location.state.incidente
   const editingIncident = location.state?.incidente || null;
   const editing = !!editingIncident;
 
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
-    reportedBy: "", // nombre / etiqueta que verá el supervisor
-    reportedByGuardId: "", // 👈 opId/guardId seleccionado en el combo
+    reportedBy: "",
+    reportedByGuardId: "",
     zone: "",
     priority: "alta",
     status: "abierto",
   });
 
-  // media = [{ type: "image"|"video", src: dataUrl }]
+  // media = [{ type: "image"|"video"|"audio", src: dataUrl }]
   const [media, setMedia] = useState([]);
   const [sending, setSending] = useState(false);
+
   const [showCamera, setShowCamera] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
+
   const fileInputRef = useRef(null);
 
-  // 🧑‍🏭 Guardias para el select "Reportado por"
+  // Guardias IAM
   const [guards, setGuards] = useState([]);
   const [loadingGuards, setLoadingGuards] = useState(false);
+
+  /* ================== Dictado por voz ================== */
+  const {
+    supported: sttSupported,
+    listening: sttListening,
+    transcript: sttTranscript,
+    error: sttError,
+    start: sttStart,
+    stop: sttStop,
+    reset: sttReset,
+  } = useSpeechToText({
+    lang: "es-ES",
+    continuous: false,
+    interimResults: false,
+  });
+
+  // Evita insertar lo mismo 2+ veces
+  const lastInsertedRef = useRef("");
+
+  function normalizeSpeechText(t) {
+    return String(t || "").replace(/\s+/g, " ").trim();
+  }
+
+  function appendTranscriptToDescription(forceText) {
+    const raw = forceText != null ? forceText : sttTranscript;
+    const t = normalizeSpeechText(raw);
+    if (!t) return;
+
+    // ✅ no insertar duplicado
+    if (t === lastInsertedRef.current) {
+      sttReset();
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      description: prev.description ? `${prev.description}\n${t}` : t,
+    }));
+
+    lastInsertedRef.current = t;
+    sttReset();
+  }
+
+  // ✅ Al detener, insertamos 1 vez automáticamente
+  async function stopAndInsert() {
+    try {
+      await sttStop();
+    } finally {
+      setTimeout(() => appendTranscriptToDescription(), 50);
+    }
+  }
 
   /* ================== helpers guardias ================== */
   function getGuardLabel(g) {
@@ -56,18 +110,36 @@ export default function IncidenteForm({
       : g.name || "(Sin nombre)";
   }
 
-  // carga catálogo de guardias desde IAM
+  // ---- Extractores para editar (ahora incluye video/audio) ----
+  function extractPhotos(inc) {
+    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
+    if (Array.isArray(inc.photos)) return inc.photos;
+    return [];
+  }
+  function extractVideos(inc) {
+    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
+    if (Array.isArray(inc.videos)) return inc.videos;
+    return [];
+  }
+  function extractAudios(inc) {
+    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
+    if (Array.isArray(inc.audios)) return inc.audios;
+    return [];
+  }
+
+  // Cargar guardias
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         setLoadingGuards(true);
+
         let items = [];
         if (typeof iamApi.listGuards === "function") {
           const r = await iamApi.listGuards("", true);
-          items = r.items || [];
-        } else {
-          // fallback por si no existe listGuards
+          items = r.items || r.guards || r.users || [];
+        } else if (typeof iamApi.listUsers === "function") {
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || [])
@@ -113,7 +185,7 @@ export default function IncidenteForm({
     };
   }, []);
 
-  // si viene en modo edición, precargar datos
+  // Modo edición: cargar campos + media
   useEffect(() => {
     if (!editingIncident) return;
 
@@ -122,7 +194,6 @@ export default function IncidenteForm({
       type: editingIncident.type || "Acceso no autorizado",
       description: editingIncident.description || "",
       reportedBy: editingIncident.reportedBy || "",
-      // tratamos de recuperar guardId/opId si existiera
       reportedByGuardId:
         editingIncident.reportedByGuardId ||
         editingIncident.guardId ||
@@ -133,20 +204,20 @@ export default function IncidenteForm({
       status: editingIncident.status || "abierto",
     }));
 
-    // Cargamos fotos antiguas como media de tipo imagen
-    const prevPhotos =
-      (Array.isArray(editingIncident.photosBase64) &&
-        editingIncident.photosBase64) ||
-      (Array.isArray(editingIncident.photos) && editingIncident.photos) ||
-      [];
-    const asMedia = prevPhotos.map((src) => ({ type: "image", src }));
-    setMedia(asMedia);
+    const prevPhotos = extractPhotos(editingIncident);
+    const prevVideos = extractVideos(editingIncident);
+    const prevAudios = extractAudios(editingIncident);
+
+    setMedia([
+      ...prevPhotos.map((src) => ({ type: "image", src })),
+      ...prevVideos.map((src) => ({ type: "video", src })),
+      ...prevAudios.map((src) => ({ type: "audio", src })),
+    ]);
   }, [editingIncident]);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
-  // cambio específico del select de guardia
   const handleReporterChange = (e) => {
     const opId = e.target.value;
     const g = guards.find((x) => String(x.opId) === String(opId));
@@ -163,8 +234,10 @@ export default function IncidenteForm({
 
     const base64 = await fileToBase64(file);
     const isVideo = file.type?.startsWith("video/");
+    const isAudio = file.type?.startsWith("audio/");
+
     const item = {
-      type: isVideo ? "video" : "image",
+      type: isVideo ? "video" : isAudio ? "audio" : "image",
       src: base64,
     };
 
@@ -172,16 +245,19 @@ export default function IncidenteForm({
     e.target.value = "";
   };
 
-  // Captura de foto desde cámara (full screen)
   const handleCameraCapture = (dataUrl) => {
     setMedia((prev) => [...prev, { type: "image", src: dataUrl }]);
     setShowCamera(false);
   };
 
-  // Captura de video desde grabador (full screen)
   const handleVideoCapture = (dataUrl) => {
     setMedia((prev) => [...prev, { type: "video", src: dataUrl }]);
     setShowVideoRecorder(false);
+  };
+
+  const handleAudioCapture = ({ base64 }) => {
+    setMedia((prev) => [...prev, { type: "audio", src: base64 }]);
+    setShowAudioRecorder(false);
   };
 
   const resetForm = () => {
@@ -195,6 +271,8 @@ export default function IncidenteForm({
       status: "abierto",
     });
     setMedia([]);
+    lastInsertedRef.current = "";
+    sttReset();
   };
 
   const handleSubmit = async (e) => {
@@ -212,59 +290,45 @@ export default function IncidenteForm({
     try {
       setSending(true);
 
-      // resolvemos guardia seleccionado para mandar datos ricos al backend
       const guard = guards.find(
         (g) => String(g.opId) === String(form.reportedByGuardId)
       );
-      const guardLabel = guard ? getGuardLabel(guard) : form.reportedBy;
+      const label = guard ? getGuardLabel(guard) : form.reportedBy;
 
-      const photosBase64 = media
-        .filter((m) => m.type === "image")
-        .map((m) => m.src);
-      const videosBase64 = media
-        .filter((m) => m.type === "video")
-        .map((m) => m.src);
+      const photosBase64 = media.filter((m) => m.type === "image").map((m) => m.src);
+      const videosBase64 = media.filter((m) => m.type === "video").map((m) => m.src);
+      const audiosBase64 = media.filter((m) => m.type === "audio").map((m) => m.src);
 
       const payload = {
         ...form,
-        reportedBy: guardLabel, // texto visible
-        guardId: form.reportedByGuardId || undefined, // 👈 ID opId/guardId
+        reportedBy: label,
+        guardId: form.reportedByGuardId || undefined,
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
-        photosBase64, // compatibilidad con backend actual
-        videosBase64, // NUEVO campo para videos
+        photosBase64,
+        videosBase64,
+        audiosBase64,
         ...(origin ? { origin } : {}),
         ...extraData,
       };
 
-      // 🔐 Usamos el cliente axios `api` que ya mete Authorization con Auth0
-      if (editingIncident) {
+      if (editingIncident?._id) {
         await api.put(`/incidentes/${editingIncident._id}`, payload, {
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
         });
       } else {
         await api.post("/incidentes", payload, {
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
         });
       }
 
-      if (finalStayOnFinish) {
-        // usado desde rondas → no navegar
-        resetForm();
-      } else {
-        // usado desde módulo incidentes
-        nav("/incidentes/lista");
-      }
+      if (finalStayOnFinish) resetForm();
+      else nav("/incidentes/lista");
     } catch (err) {
       console.error(err);
       const msg =
         err?.response?.data?.message ||
+        err?.response?.data?.error ||
         err?.message ||
         "Error al guardar el incidente";
       alert(msg);
@@ -274,22 +338,13 @@ export default function IncidenteForm({
   };
 
   const handleCancel = () => {
-    if (onCancel) {
-      onCancel();
-      return;
-    }
-
-    if (finalStayOnFinish) {
-      // viene de rondas → solo limpiar
-      resetForm();
-    } else {
-      nav("/incidentes/lista");
-    }
+    if (onCancel) return onCancel();
+    if (finalStayOnFinish) resetForm();
+    else nav("/incidentes/lista");
   };
 
   return (
     <div className="min-h-screen px-4 py-6 md:p-8 max-w-[1100px] mx-auto space-y-6 transition-colors">
-      {/* migas solo si NO venimos de rondas */}
       {!finalStayOnFinish && (
         <div className="text-xs text-gray-500 dark:text-white/60 flex flex-wrap items-center gap-2">
           <Link
@@ -312,7 +367,6 @@ export default function IncidenteForm({
         </div>
       )}
 
-      {/* tarjeta principal */}
       <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-black/5 border border-gray-200 dark:border-white/10 shadow-lg dark:shadow-sm backdrop-blur-sm transition-all">
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6">
           {editing ? "Editar incidente" : "Reportar Nuevo Incidente"}
@@ -337,11 +391,65 @@ export default function IncidenteForm({
             </select>
           </div>
 
-          {/* Descripción */}
+          {/* Descripción + dictado */}
           <div>
-            <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
-              Descripción del Incidente
-            </label>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <label className="block text-gray-700 dark:text-white/80 font-medium">
+                Descripción del Incidente
+              </label>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {!sttSupported ? (
+                  <span className="text-xs text-gray-500 dark:text-white/45">
+                    🎙️ Dictado no disponible en este navegador
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={sttListening ? stopAndInsert : sttStart}
+                      className={
+                        "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
+                        (sttListening
+                          ? "bg-rose-600 text-white border-rose-500/40 hover:bg-rose-500"
+                          : "bg-white/60 dark:bg-white/10 text-gray-800 dark:text-white border-gray-300 dark:border-white/10 hover:bg-white/80 dark:hover:bg-white/15")
+                      }
+                      title="Iniciar / detener dictado"
+                    >
+                      {sttListening ? "⏹ Detener" : "🎙 Grabar"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => appendTranscriptToDescription()}
+                      disabled={!String(sttTranscript || "").trim()}
+                      className={
+                        "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
+                        (!String(sttTranscript || "").trim()
+                          ? "opacity-50 cursor-not-allowed bg-white/40 dark:bg-white/5 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/10"
+                          : "bg-emerald-600 text-white border-emerald-500/40 hover:bg-emerald-500")
+                      }
+                      title="Insertar lo dictado"
+                    >
+                      ➕ Insertar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sttReset();
+                        lastInsertedRef.current = "";
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-300 dark:border-white/10 bg-transparent text-gray-600 dark:text-white/70 hover:text-black dark:hover:text-white hover:border-cyan-400/80 transition-all"
+                      title="Limpiar dictado"
+                    >
+                      🧹 Limpiar dictado
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
             <textarea
               name="description"
               value={form.description}
@@ -350,11 +458,25 @@ export default function IncidenteForm({
               placeholder="Describa detalladamente lo ocurrido..."
               required
             />
+
+            {sttSupported && (sttError || sttTranscript) ? (
+              <div className="mt-2 rounded-lg border border-white/10 bg-black/10 dark:bg-white/5 p-3">
+                {sttError ? (
+                  <div className="text-xs text-rose-600 dark:text-rose-300">
+                    ⚠️ {sttError}
+                  </div>
+                ) : null}
+                {sttTranscript ? (
+                  <div className="mt-1 text-xs text-gray-700 dark:text-white/80 whitespace-pre-wrap">
+                    <span className="opacity-70">Dictado:</span> {sttTranscript}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {/* Reportado / Zona */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Reportado por: SELECT de guardias */}
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
                 Reportado por
@@ -414,8 +536,9 @@ export default function IncidenteForm({
           {/* Evidencias */}
           <div className="space-y-2">
             <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
-              Evidencias (fotos / videos)
+              Evidencias (fotos / videos / audio)
             </label>
+
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -424,32 +547,44 @@ export default function IncidenteForm({
               >
                 📁 Seleccionar archivo
               </button>
+
               <button
                 type="button"
                 onClick={() => setShowCamera(true)}
                 className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
               >
-                📷 Tomar foto (pantalla completa)
+                📷 Tomar foto
               </button>
+
               <button
                 type="button"
                 onClick={() => setShowVideoRecorder(true)}
                 className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
               >
-                🎥 Grabar video (pantalla completa)
+                🎥 Grabar video
               </button>
+
+              <button
+                type="button"
+                onClick={() => setShowAudioRecorder(true)}
+                className="bg-gradient-to-r from-amber-600 to-orange-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(245,158,11,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+              >
+                🎙️ Grabar audio
+              </button>
+
               <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                Puede adjuntar imágenes o videos desde archivos, o grabarlos en
-                tiempo real (vertical u horizontal).
+                Adjunta evidencias desde archivos o graba en tiempo real.
               </p>
             </div>
+
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,video/*"
+              accept="image/*,video/*,audio/*"
               onChange={handleFile}
               className="hidden"
             />
+
             {media.length > 0 && (
               <div className="flex flex-wrap gap-3 mt-2">
                 {media.map((item, idx) => (
@@ -463,13 +598,16 @@ export default function IncidenteForm({
                         alt={`evidencia-${idx + 1}`}
                         className="w-full h-full object-cover"
                       />
-                    ) : (
+                    ) : item.type === "video" ? (
                       <video
                         src={item.src}
                         className="w-full h-full object-cover"
                         controls
                       />
+                    ) : (
+                      <audio src={item.src} controls className="w-full h-full" />
                     )}
+
                     <button
                       type="button"
                       onClick={() =>
@@ -493,6 +631,7 @@ export default function IncidenteForm({
             >
               Cancelar
             </button>
+
             <button
               type="submit"
               disabled={sending}
@@ -521,6 +660,13 @@ export default function IncidenteForm({
         <VideoRecorder
           onCapture={handleVideoCapture}
           onClose={() => setShowVideoRecorder(false)}
+        />
+      )}
+
+      {showAudioRecorder && (
+        <AudioRecorder
+          onCapture={handleAudioCapture}
+          onClose={() => setShowAudioRecorder(false)}
         />
       )}
     </div>
