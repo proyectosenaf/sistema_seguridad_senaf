@@ -11,7 +11,6 @@ const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
 /* ─────────── provider de token tipo attachAuth0 ─────────── */
 let tokenProvider = null;
-
 export function attachIamAuth(fn) {
   tokenProvider = fn; // fn es async () => token | null
 }
@@ -34,10 +33,16 @@ function getDevIdentity() {
     import.meta.env.VITE_DEV_IAM_PERMS ||
     "*";
   return {
-    email: email.trim(),
-    roles: roles.trim(),
-    perms: (perms || "*").trim(),
+    email: String(email || "").trim(),
+    roles: String(roles || "").trim(),
+    perms: String(perms || "*").trim() || "*",
   };
+}
+
+function isLocalhostRuntime() {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1";
 }
 
 /** slug simple para códigos de rol, etc. */
@@ -60,13 +65,13 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
 
   // DEV headers si:
   // - fuerzas modo dev, o
-  // - no hay token y además la auth real está deshabilitada
-  const shouldSendDev = FORCE_DEV || (!token && DISABLE_AUTH);
+  // - no hay token y además estás en localhost o DISABLE_AUTH=1
+  const shouldSendDev = FORCE_DEV || (!token && (DISABLE_AUTH || isLocalhostRuntime()));
   if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
     if (email) h["x-user-email"] = email;
     if (roles) h["x-roles"] = roles;
-    if (perms) h["x-perms"] = perms || "*";
+    h["x-perms"] = perms || "*";
   }
 
   if (DEBUG) {
@@ -86,10 +91,7 @@ async function toJson(resp) {
 }
 
 /** fetch con errores enriquecidos: err.status y err.payload */
-async function rawFetch(
-  url,
-  { method = "GET", body, token, formData = false } = {}
-) {
+async function rawFetch(url, { method = "GET", body, token, formData = false } = {}) {
   const isFD =
     formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
@@ -100,10 +102,7 @@ async function rawFetch(
       if (autoToken) token = autoToken;
     } catch (err) {
       if (DEBUG) {
-        console.warn(
-          "[iamApi] no se pudo obtener token desde tokenProvider:",
-          err?.message || err
-        );
+        console.warn("[iamApi] no se pudo obtener token desde tokenProvider:", err?.message || err);
       }
     }
   }
@@ -168,7 +167,6 @@ const PATHS = {
               .join("&")}`
           : ""
       }`,
-    // ✅ NUEVO: SAFE picker (no requiere iam.users.manage)
     guardsPicker: (q, active = true) =>
       `${V1}/users/guards/picker${
         q || active
@@ -196,16 +194,10 @@ const PATHS = {
     list: () => `${V1}/permissions`,
     create: () => `${V1}/permissions`,
     byId: (id) => `${V1}/permissions/${id}`,
-    listByRole: (roleId) =>
-      `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
+    listByRole: (roleId) => `${V1}/permissions?role=${encodeURIComponent(roleId)}`,
   },
-  audit: {
-    list: () => `${V1}/audit`,
-  },
-  auth: {
-    me: () => `${V1}/me`,
-    login: () => `${V1}/auth/login`,
-  },
+  audit: { list: () => `${V1}/audit` },
+  auth: { me: () => `${V1}/me`, login: () => `${V1}/auth/login` },
 };
 
 /* ---------- helpers ---------- */
@@ -284,16 +276,13 @@ function fromFormData(fd) {
   return toObj;
 }
 
-/* ✅ helper para construir query limpio */
 function buildQuery(params = {}) {
   const qs = new URLSearchParams();
-
   Object.entries(params || {}).forEach(([k, v]) => {
     if (v === null || v === undefined || v === "") return;
     if (typeof v === "object") return;
     qs.set(k, String(v));
   });
-
   const s = qs.toString();
   return s ? `?${s}` : "";
 }
@@ -318,10 +307,8 @@ export const iamApi = {
   createRole: (p, t) => {
     const body = { ...(p || {}) };
 
-    const rawName =
-      body.name || body.role || body.label || body.displayName || "";
-    if (!rawName)
-      throw new Error("name es requerido para crear rol (faltan datos)");
+    const rawName = body.name || body.role || body.label || body.displayName || "";
+    if (!rawName) throw new Error("name es requerido para crear rol (faltan datos)");
 
     body.name = String(rawName).trim();
 
@@ -337,8 +324,7 @@ export const iamApi = {
         .map((perm) => {
           if (!perm) return null;
           if (typeof perm === "string") return perm.trim();
-          if (typeof perm === "object")
-            return perm.key || perm.code || perm._id || null;
+          if (typeof perm === "object") return perm.key || perm.code || perm._id || null;
           return null;
         })
         .filter(Boolean);
@@ -356,8 +342,7 @@ export const iamApi = {
   updateRole: (id, p, t) =>
     rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
 
-  deleteRole: (id, t) =>
-    rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
+  deleteRole: (id, t) => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
   getRolePerms: (id, t) => rawFetch(PATHS.roles.permissions(id), { token: t }),
 
@@ -369,21 +354,17 @@ export const iamApi = {
     }),
 
   /* ---------- PERMISOS ---------- */
-
   listPerms: (arg = {}, t) => {
     if (typeof arg === "string" || arg === null || arg === undefined) {
       return rawFetch(PATHS.perms.list(), { token: arg });
     }
 
     const params = arg && typeof arg === "object" ? { ...arg } : {};
-
     const limit = Number.isFinite(Number(params.limit)) ? Number(params.limit) : 1000;
     const page = Number.isFinite(Number(params.page)) ? Number(params.page) : 1;
-
     const q = params.q || params.search || "";
     const group = params.group || "";
     const role = params.role || "";
-
     const query = buildQuery({ limit, page, q, group, role });
 
     return rawFetch(`${PATHS.perms.list()}${query}`, { token: t });
@@ -396,11 +377,9 @@ export const iamApi = {
     ]);
 
     const allItems = allPerms?.items || allPerms?.permissions || [];
-    const keysFromRole =
-      rolePerms?.permissionKeys || rolePerms?.keys || rolePerms?.items || [];
+    const keysFromRole = rolePerms?.permissionKeys || rolePerms?.keys || rolePerms?.items || [];
 
     const setKeys = new Set(Array.isArray(keysFromRole) ? keysFromRole : []);
-
     const items = allItems.map((p) => ({
       ...p,
       selected: setKeys.has(p.key) || setKeys.has(p._id),
@@ -409,23 +388,18 @@ export const iamApi = {
     return { items };
   },
 
-  createPerm: (p, t) =>
-    rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
+  createPerm: (p, t) => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
 
   updatePerm: (id, p, t) =>
     rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
 
-  deletePerm: (id, t) =>
-    rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
+  deletePerm: (id, t) => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
   /* ---------- USUARIOS ---------- */
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
-  // (ADMIN) mantiene endpoint admin por compat
-  listGuards: (q = "", active = true, t) =>
-    rawFetch(PATHS.users.guards(q, active), { token: t }),
+  listGuards: (q = "", active = true, t) => rawFetch(PATHS.users.guards(q, active), { token: t }),
 
-  // ✅ SAFE: usar esto para pickers en módulos operativos
   listGuardsPicker: (q = "", active = true, t) =>
     rawFetch(PATHS.users.guardsPicker(q, active), { token: t }),
 
@@ -446,17 +420,12 @@ export const iamApi = {
           ? obj.roles
           : String(obj.roles).split(",").map((s) => s.trim()).filter(Boolean)
         : [];
-      active =
-        obj.active !== undefined
-          ? obj.active === true || obj.active === "true"
-          : true;
+      active = obj.active !== undefined ? obj.active === true || obj.active === "true" : true;
+
       if (obj.perms) {
         perms = Array.isArray(obj.perms)
           ? obj.perms
-          : String(obj.perms)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
+          : String(obj.perms).split(",").map((s) => s.trim()).filter(Boolean);
       }
       password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     } else {
@@ -480,20 +449,17 @@ export const iamApi = {
         ? obj.roles.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
       active = obj.active === undefined ? true : !!obj.active;
+
       if (obj.perms) {
         perms = Array.isArray(obj.perms)
           ? obj.perms
-          : String(obj.perms)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
+          : String(obj.perms).split(",").map((s) => s.trim()).filter(Boolean);
       }
       password = obj.password ?? obj.clave ?? obj.contrasena ?? obj.contraseña ?? "";
     }
 
     email = String(email || "").trim().toLowerCase();
     name = String(name || "").trim() || nameFromEmail(email);
-
     if (!email) return Promise.reject(new Error("email requerido"));
 
     const body = {
@@ -511,14 +477,11 @@ export const iamApi = {
   updateUser: (id, p, t) =>
     rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
 
-  enableUser: (id, t) =>
-    rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
+  enableUser: (id, t) => rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
 
-  disableUser: (id, t) =>
-    rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
+  disableUser: (id, t) => rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
-  deleteUser: (id, t) =>
-    rawFetch(PATHS.users.byId(id), { method: "DELETE", token: t }),
+  deleteUser: (id, t) => rawFetch(PATHS.users.byId(id), { method: "DELETE", token: t }),
 
   /* ✅ AUDIT */
   async listAudit(arg = {}, token) {
@@ -581,17 +544,9 @@ export const iamApi = {
         msg.includes("no implementado");
 
       if (notImpl) {
-        if (DEBUG)
-          console.warn("[iamApi] /verify-email no implementado; simulando…", {
-            userId,
-            email,
-          });
+        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
         await new Promise((r) => setTimeout(r, 700));
-        return {
-          ok: true,
-          simulated: true,
-          message: "Simulación de verificación enviada",
-        };
+        return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
       }
       throw e;
     }

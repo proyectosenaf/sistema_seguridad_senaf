@@ -2,12 +2,13 @@
 
 // 👉 Convención: VITE_API_BASE_URL YA incluye /api
 //    ej. https://urchin-app-fuirh.ondigitalocean.app/api
-const ROOT = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
-).replace(/\/$/, "");
+const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api").replace(/\/$/, "");
 
 // Base de RondasQR: /api/rondasqr/v1
 const BASE = `${ROOT}/rondasqr/v1`;
+
+const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
+const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
 
 /** Permite inyectar un proveedor de token (Auth0, etc.) */
 let tokenProvider = null;
@@ -20,6 +21,12 @@ function toQS(o = {}) {
     .filter(([, v]) => v !== "" && v != null)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join("&");
+}
+
+function isLocalhostRuntime() {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1";
 }
 
 /* ───────────── helpers ───────────── */
@@ -60,17 +67,38 @@ function normalizePlanBody(body = {}) {
       roundId,
       points: body.pointIds
         .filter(Boolean)
-        .map((id, i) => ({ pointId: String(id), order: i + 1 })), // orden base 1 solo para crear
+        .map((id, i) => ({ pointId: String(id), order: i + 1 })),
     };
   }
 
   return { siteId, roundId, points };
 }
 
-async function buildHeaders(json = true) {
+function getDevIdentity() {
+  const email =
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+    import.meta.env.VITE_DEV_IAM_EMAIL ||
+    "";
+  const roles =
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
+    import.meta.env.VITE_DEV_IAM_ROLES ||
+    "";
+  const perms =
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
+    import.meta.env.VITE_DEV_IAM_PERMS ||
+    "*";
+  return {
+    email: String(email || "").trim(),
+    roles: String(roles || "").trim(),
+    perms: String(perms || "*").trim() || "*",
+  };
+}
+
+async function buildHeaders({ json = true } = {}) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
 
+  // Token primero
   if (typeof tokenProvider === "function") {
     try {
       const token = await tokenProvider();
@@ -78,40 +106,41 @@ async function buildHeaders(json = true) {
     } catch {}
   }
 
-  if (import.meta.env.DEV) {
-    const devEmail =
-      (typeof localStorage !== "undefined" &&
-        localStorage.getItem("iamDevEmail")) ||
-      import.meta.env.VITE_DEV_IAM_EMAIL ||
-      null;
-    if (devEmail) h["x-user-email"] = devEmail;
-
-    const devRoles =
-      (typeof localStorage !== "undefined" &&
-        localStorage.getItem("iamDevRoles")) || "";
-    if (devRoles) h["x-roles"] = devRoles;
+  // Dev headers solo en local / disable / force
+  const shouldSendDev = DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime() || import.meta.env.DEV;
+  if (shouldSendDev && !h["Authorization"]) {
+    const { email, roles, perms } = getDevIdentity();
+    if (email) h["x-user-email"] = email;
+    if (roles) h["x-roles"] = roles;
+    h["x-perms"] = perms || "*";
   }
 
   return h;
 }
 
 async function fetchJson(url, opts = {}) {
-  const wantsJson = typeof opts?.body === "string";
+  const body = opts?.body;
+
+  // si body es string (JSON.stringify), queremos Content-Type
+  const wantsJson = typeof body === "string";
+
   const r = await fetch(url, {
     credentials: "include",
     ...opts,
-    headers: { ...(await buildHeaders(wantsJson)), ...(opts.headers || {}) },
+    headers: { ...(await buildHeaders({ json: wantsJson })), ...(opts.headers || {}) },
   });
+
   if (!r.ok) {
     let err = {};
     try {
       err = await r.json();
     } catch {}
-    const e = new Error(err?.message || `HTTP ${r.status}`);
+    const e = new Error(err?.message || err?.error || `HTTP ${r.status}`);
     e.status = r.status;
     e.payload = err;
     throw e;
   }
+
   try {
     return await r.json();
   } catch {
@@ -147,7 +176,7 @@ export const rondasqrApi = {
       const r = await fetch(url, {
         method: "GET",
         credentials: "include",
-        headers: await buildHeaders(false),
+        headers: await buildHeaders({ json: false }),
       });
       return r.ok;
     } catch {
@@ -172,9 +201,8 @@ export const rondasqrApi = {
     });
   },
 
-  // Actualizar incidente existente (módulo central)
   async updateIncident(id, payload) {
-    const url = `${ROOT}/incidentes/${encodeURIComponent(id)}`; // /api/incidentes/:id
+    const url = `${ROOT}/incidentes/${encodeURIComponent(id)}`;
     return fetchJson(url, {
       method: "PUT",
       body: JSON.stringify(payload || {}),
@@ -199,10 +227,7 @@ export const rondasqrApi = {
     let lastErr;
     for (const url of urls) {
       try {
-        return await fetchJson(url, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
+        return await fetchJson(url, { method: "POST", body: JSON.stringify(body) });
       } catch (err) {
         lastErr = err;
         if (err.status !== 404 && err.status !== 405) break;
@@ -313,42 +338,48 @@ export const rondasqrApi = {
   },
 
   /* =========================================================
-     QR helpers: imagen PNG, PDF, rotación y repositorio
+     QR helpers
   ========================================================= */
-
-  /** URL directa a la imagen PNG del QR de un punto. */
   pointQrPngUrl(id) {
     if (!id) return "";
     return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.png`;
   },
-
-  /** URL a un PDF con el QR del punto (para imprimir). */
   pointQrPdfUrl(id) {
     if (!id) return "";
     return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.pdf`;
   },
 
-  /** Endpoint para rotar el QR de un punto. */
   async rotatePointQr(id) {
     if (!id) throw new Error("id requerido");
-    return fetchJson(
-      `${BASE}/admin/points/${encodeURIComponent(id)}/rotate-qr`,
-      {
-        method: "POST",
-        body: JSON.stringify({}),
-      }
-    );
+    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}/rotate-qr`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
 
-  /** Llama al backend y devuelve JSON con el repositorio de QRs. */
+  /** JSON repo (si lo implementas) */
   async listQrRepo(params = {}) {
     const qs = toQS(params);
-    return fetchJson(`${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`);
+
+    // 1) donde tu front lo llama hoy
+    const url1 = `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
+    // 2) fallback si el backend lo montó fuera de /admin
+    const url2 = `${BASE}/qr-repo${qs ? `?${qs}` : ""}`;
+
+    try {
+      return await fetchJson(url1);
+    } catch (err) {
+      if (err.status === 404 || err.status === 405) {
+        return await fetchJson(url2);
+      }
+      throw err;
+    }
   },
 
-  /** Solo la URL (para abrir en una pestaña nueva desde el front). */
+  /** URL para abrir en nueva pestaña */
   qrRepoUrl(params = {}) {
     const qs = toQS(params);
+    // preferimos /admin/qr-repo (tu intención original)
     return `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
   },
 
@@ -356,19 +387,16 @@ export const rondasqrApi = {
   async getPlan(q = {}) {
     const qs = toQS(q);
     const mainUrl = `${BASE}/admin/plans${qs ? `?${qs}` : ""}`;
-    // Ruta legacy posible: /api/rondasqr/admin/plans
     const legacyUrl = `${ROOT}/rondasqr/admin/plans${qs ? `?${qs}` : ""}`;
 
     try {
       return await fetchJson(mainUrl);
     } catch (err) {
       if (err.status === 404 || err.status === 405) {
-        // probar ruta antigua
         try {
           return await fetchJson(legacyUrl);
         } catch (err2) {
           if (err2.status === 404 || err2.status === 405) {
-            // no hay endpoint de planes en el backend → devolvemos lista vacía
             return { items: [], count: 0 };
           }
           throw err2;
@@ -461,9 +489,7 @@ export const rondasqrApi = {
   },
   async deletePlan(arg) {
     if (arg && typeof arg === "object") return this.deletePlanByQuery(arg);
-    const e = new Error(
-      "deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})"
-    );
+    const e = new Error("deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})");
     e.status = 400;
     throw e;
   },
