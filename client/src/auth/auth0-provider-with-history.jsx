@@ -9,8 +9,10 @@ export default function Auth0ProviderWithHistory({ children }) {
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
 
+  // API Identifier en Auth0 (tu caso: https://senaf)
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
 
+  // Callback fijo y correcto
   const redirectUri =
     import.meta.env.VITE_AUTH0_REDIRECT_URI ||
     `${window.location.origin}/callback`;
@@ -18,9 +20,8 @@ export default function Auth0ProviderWithHistory({ children }) {
   const onRedirectCallback = (appState) => {
     const returnTo = appState?.returnTo || "/start";
 
-    // ✅ Si quieres bloquear que Auth0 te "regrese" a rondas al reingresar,
-    // agrega aquí una regla de saneamiento.
-    const blockedPrefixes = ["/rondasqr", "/rondas"]; // ajusta si deseas
+    // Si quieres bloquear regresos directos a rondas al reingresar
+    const blockedPrefixes = ["/rondasqr", "/rondas"];
     const isBlocked = blockedPrefixes.some((p) => returnTo.startsWith(p));
 
     navigate(isBlocked ? "/start" : returnTo, { replace: true });
@@ -37,14 +38,19 @@ export default function Auth0ProviderWithHistory({ children }) {
     <Auth0Provider
       domain={domain}
       clientId={clientId}
+      onRedirectCallback={onRedirectCallback}
       authorizationParams={{
         redirect_uri: redirectUri,
-        audience: audience,
-        scope: "openid profile email",
+        audience,
+        // ✅ Importante para refresh tokens en SPA (si usas useRefreshTokens)
+        scope: "openid profile email offline_access",
       }}
-      onRedirectCallback={onRedirectCallback}
+      // ✅ Para que el token persista (y el provider lo pueda sacar siempre)
       cacheLocation="localstorage"
+      // ✅ Refresh token rotation (requiere configuración en Auth0)
       useRefreshTokens={true}
+      // ✅ fallback útil si el browser bloquea cookies en silent auth
+      useRefreshTokensFallback={true}
     >
       {children}
     </Auth0Provider>

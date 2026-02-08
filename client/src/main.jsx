@@ -16,9 +16,8 @@ import Auth0ProviderWithHistory from "./auth/auth0-provider-with-history.jsx";
 (function bootstrapUiTokens() {
   try {
     const el = document.documentElement;
-
-    if (!el.getAttribute("data-fx")) el.setAttribute("data-fx", "neon"); // neon | candy | retro | holo | cyber | sunset | ocean
-    if (!el.getAttribute("data-aurora")) el.setAttribute("data-aurora", "medio"); // sutil | medio | fuerte | extremo
+    if (!el.getAttribute("data-fx")) el.setAttribute("data-fx", "neon");
+    if (!el.getAttribute("data-aurora")) el.setAttribute("data-aurora", "medio");
   } catch {
     // ignore
   }

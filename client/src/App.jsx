@@ -1,5 +1,5 @@
-// src/App.jsx
-import React, { Suspense, useEffect } from "react";
+// client/src/App.jsx
+import React, { Suspense, useEffect, useMemo, useRef } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -20,20 +20,12 @@ const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() =>
-  import("./pages/Incidentes/IncidentesList.jsx")
-);
-const IncidenteForm = React.lazy(() =>
-  import("./pages/Incidentes/IncidenteForm.jsx")
-);
+const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
+const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
 // ✅ Rondas QR
-const RondasDashboard = React.lazy(() =>
-  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
-);
-const RondasScan = React.lazy(() =>
-  import("./modules/rondasqr/guard/ScanPage.jsx")
-);
+const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
+const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
 const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
 // Otros módulos
@@ -84,12 +76,65 @@ function pickHome({ roles = [], perms = [] }) {
   return "/";
 }
 
+/* ───────────────── AuthTokenBridge ─────────────────
+   ✅ CLAVE:
+   - si NO estás mandando Authorization, todo te dará 403.
+   - aquí aseguramos que los 3 módulos reciban SIEMPRE el token provider.
+*/
+function AuthTokenBridge({ children }) {
+  const { isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
+
+  // evita recrear provider por renders; igual si cambia isAuthenticated/isLoading se re-evalúa
+  const audience = useMemo(() => import.meta.env.VITE_AUTH0_AUDIENCE || "", []);
+  const setOnceRef = useRef({ attached: false, mode: "none" });
+
+  useEffect(() => {
+    // mientras carga Auth0, no “rompas” providers
+    if (isLoading) return;
+
+    if (!isAuthenticated) {
+      // clean
+      attachAuth0(null);
+      attachRondasAuth(null);
+      attachIamAuth(null);
+      setOnceRef.current = { attached: true, mode: "no-auth" };
+      return;
+    }
+
+    const provider = async () => {
+      try {
+        const token = await getAccessTokenSilently({
+          authorizationParams: {
+            // ✅ imprescindible para que el token salga con aud = https://senaf
+            audience: audience || undefined,
+            scope: "openid profile email",
+          },
+        });
+        return token || null;
+      } catch (e) {
+        // DEBUG rápido si quieres:
+        // console.warn("[AuthTokenBridge] getAccessTokenSilently failed:", e?.message || e);
+        return null;
+      }
+    };
+
+    attachAuth0(provider);
+    attachRondasAuth(provider);
+    attachIamAuth(provider);
+    setOnceRef.current = { attached: true, mode: "auth" };
+  }, [isAuthenticated, isLoading, getAccessTokenSilently, audience]);
+
+  return children;
+}
+
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { user, isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
+    if (isLoading) return;
+
     let alive = true;
 
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
@@ -98,8 +143,7 @@ function RoleRedirectInline() {
     const LEGACY = `${ROOT}/api/iam`;
     const DEV = import.meta.env.DEV;
 
-    // ✅ FIX: Auth0 SDK v2 usa "authorizationParams"
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
 
     const candidates = [
       `${V1}/me`,
@@ -113,31 +157,39 @@ function RoleRedirectInline() {
         try {
           const res = await fetch(url, { credentials: "include", headers });
           if (!res.ok) continue;
+
           const data = (await res.json().catch(() => ({}))) || {};
           const roles = data?.roles || data?.user?.roles || [];
           const perms = data?.permissions || data?.perms || [];
-          if ((roles?.length || 0) + (perms?.length || 0) > 0) return { roles, perms };
-        } catch {}
+
+          if ((roles?.length || 0) + (perms?.length || 0) > 0) {
+            return { roles, perms };
+          }
+        } catch {
+          // ignore
+        }
       }
       return null;
     }
 
     (async () => {
+      // 1) intenta con token real
       let headers = {};
 
-      // ✅ FIX: pedir token SIEMPRE con authorizationParams (no mezclar)
-      if (isAuthenticated && audience) {
+      if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: { audience },
+            authorizationParams: { audience: audience || undefined },
           });
           if (token) headers.Authorization = `Bearer ${token}`;
-        } catch {}
+        } catch {
+          // si falla, no inventamos nada aquí
+        }
       }
 
       let me = await tryFetch(headers);
 
-      // DEV fallback (solo en dev)
+      // 2) DEV fallback: cabecera dev (solo local/dev)
       if (!me && DEV) {
         const devEmail =
           user?.email ||
@@ -155,50 +207,9 @@ function RoleRedirectInline() {
     return () => {
       alive = false;
     };
-  }, [navigate, user, isAuthenticated, getAccessTokenSilently]);
+  }, [navigate, user, isAuthenticated, isLoading, getAccessTokenSilently]);
 
   return <div className="p-6">Redirigiendo…</div>;
-}
-
-/** Inyecta token de Auth0 a la lib/api, Rondas QR e IAM */
-function AuthTokenBridge({ children }) {
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
-
-  useEffect(() => {
-    // ✅ IMPORTANTE:
-    // - Setear provider aunque el user cambie
-    // - No hacer "setProvider async" innecesario, solo setear funciones
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
-
-    if (!isAuthenticated) {
-      attachAuth0(null);
-      attachRondasAuth(null);
-      attachIamAuth(null);
-      return;
-    }
-
-    const provider = async () => {
-      try {
-        // ✅ FIX: Auth0 v2 -> authorizationParams
-        // ✅ NO meter offline_access aquí si no lo necesitas (puede requerir refresh token config)
-        const token = await getAccessTokenSilently({
-          authorizationParams: {
-            audience,
-            scope: "openid profile email",
-          },
-        });
-        return token || null;
-      } catch {
-        return null;
-      }
-    };
-
-    attachAuth0(provider);
-    attachRondasAuth(provider);
-    attachIamAuth(provider);
-  }, [isAuthenticated, getAccessTokenSilently]);
-
-  return children;
 }
 
 export default function App() {
