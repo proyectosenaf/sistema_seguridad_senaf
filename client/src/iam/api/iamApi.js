@@ -168,6 +168,18 @@ const PATHS = {
               .join("&")}`
           : ""
       }`,
+    // ✅ NUEVO: SAFE picker (no requiere iam.users.manage)
+    guardsPicker: (q, active = true) =>
+      `${V1}/users/guards/picker${
+        q || active
+          ? `?${[
+              q ? `q=${encodeURIComponent(q)}` : "",
+              active ? "active=1" : "",
+            ]
+              .filter(Boolean)
+              .join("&")}`
+          : ""
+      }`,
     create: () => `${V1}/users`,
     byId: (id) => `${V1}/users/${id}`,
     enable: (id) => `${V1}/users/${id}/enable`,
@@ -358,20 +370,13 @@ export const iamApi = {
 
   /* ---------- PERMISOS ---------- */
 
-  /**
-   * ✅ FIX: soporta paginación y filtros para que NO se quede en 5.
-   * Backend típico: /permissions?limit=...&page=...
-   * También soporta: q (search), group, role (si tu API lo acepta)
-   */
   listPerms: (arg = {}, t) => {
-    // Compat: si lo llaman como listPerms(token)
     if (typeof arg === "string" || arg === null || arg === undefined) {
       return rawFetch(PATHS.perms.list(), { token: arg });
     }
 
     const params = arg && typeof arg === "object" ? { ...arg } : {};
 
-    // Defaults razonables para UI catálogo
     const limit = Number.isFinite(Number(params.limit)) ? Number(params.limit) : 1000;
     const page = Number.isFinite(Number(params.page)) ? Number(params.page) : 1;
 
@@ -386,7 +391,6 @@ export const iamApi = {
 
   listPermsForRole: async (roleId, t) => {
     const [allPerms, rolePerms] = await Promise.all([
-      // ✅ trae muchos, no 5
       iamApi.listPerms({ limit: 5000, page: 1 }, t),
       rawFetch(PATHS.roles.permissions(roleId), { token: t }),
     ]);
@@ -417,8 +421,13 @@ export const iamApi = {
   /* ---------- USUARIOS ---------- */
   listUsers: (q = "", t) => rawFetch(PATHS.users.list(q), { token: t }),
 
+  // (ADMIN) mantiene endpoint admin por compat
   listGuards: (q = "", active = true, t) =>
     rawFetch(PATHS.users.guards(q, active), { token: t }),
+
+  // ✅ SAFE: usar esto para pickers en módulos operativos
+  listGuardsPicker: (q = "", active = true, t) =>
+    rawFetch(PATHS.users.guardsPicker(q, active), { token: t }),
 
   createUser: (payload, t) => {
     let email = "";
@@ -508,7 +517,6 @@ export const iamApi = {
   disableUser: (id, t) =>
     rawFetch(PATHS.users.disable(id), { method: "POST", token: t }),
 
-  // ✅ CORRECCIÓN: borrar usuario de verdad
   deleteUser: (id, t) =>
     rawFetch(PATHS.users.byId(id), { method: "DELETE", token: t }),
 

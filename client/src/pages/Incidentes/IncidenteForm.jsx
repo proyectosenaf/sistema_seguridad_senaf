@@ -127,7 +127,7 @@ export default function IncidenteForm({
     return [];
   }
 
-  // Cargar guardias
+  // ✅ Cargar guardias (SAFE)
   useEffect(() => {
     let mounted = true;
 
@@ -136,44 +136,34 @@ export default function IncidenteForm({
         setLoadingGuards(true);
 
         let items = [];
-        if (typeof iamApi.listGuards === "function") {
+
+        // ✅ endpoint safe (PROD)
+        if (typeof iamApi.listGuardsPicker === "function") {
+          const r = await iamApi.listGuardsPicker("", true);
+          items = r?.items || r?.guards || r?.users || r || [];
+        }
+        // fallback: endpoint admin (solo si el usuario lo tiene)
+        else if (typeof iamApi.listGuards === "function") {
           const r = await iamApi.listGuards("", true);
-          items = r.items || r.guards || r.users || [];
-        } else if (typeof iamApi.listUsers === "function") {
-          const r = await iamApi.listUsers("");
-          const NS = "https://senaf.local/roles";
-          items = (r.items || [])
-            .filter((u) => {
-              const roles = [
-                ...(Array.isArray(u.roles) ? u.roles : []),
-                ...(Array.isArray(u[NS]) ? u[NS] : []),
-              ].map((x) => String(x).toLowerCase());
-              return (
-                roles.includes("guardia") ||
-                roles.includes("guard") ||
-                roles.includes("rondasqr.guard")
-              );
-            })
-            .map((u) => ({
-              _id: u._id,
-              name: u.name,
-              email: u.email,
-              opId: u.opId || u.sub || u.legacyId || String(u._id),
-              active: u.active !== false,
-            }));
+          items = r?.items || r?.guards || r?.users || [];
+        } else {
+          items = [];
         }
 
-        const normalized = (items || []).map((u) => ({
-          _id: u._id,
-          name: u.name,
-          email: u.email,
-          opId: u.opId || u.sub || u.legacyId || String(u._id),
-          active: u.active !== false,
-        }));
+        const normalized = (items || [])
+          .filter(Boolean)
+          .map((u) => ({
+            _id: u._id,
+            name: u.name,
+            email: u.email,
+            opId: u.opId || u.sub || u.legacyId || String(u._id),
+            active: u.active !== false,
+          }))
+          .filter((u) => u.active !== false);
 
         if (mounted) setGuards(normalized);
       } catch (e) {
-        console.warn("[IncidenteForm] listGuards error:", e);
+        console.warn("[IncidenteForm] listGuardsPicker error:", e);
         if (mounted) setGuards([]);
       } finally {
         if (mounted) setLoadingGuards(false);

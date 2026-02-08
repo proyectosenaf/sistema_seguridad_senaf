@@ -105,10 +105,10 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   }
 });
 
-/* ===================== GET /guards (lista de guardias) ===================== */
+/* ===================== GET /guards (admin) ===================== */
 /**
  * GET /api/iam/v1/users/guards?q=&active=1
- * Devuelve { ok:true, items:[...] }
+ * (ADMIN) requiere iam.users.manage
  */
 r.get(
   "/guards",
@@ -155,6 +155,63 @@ r.get(
         .filter((u) => u.isGuard);
 
       res.json({ ok: true, items: guards, count: guards.length });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ===================== GET /guards/picker (SAFE) ===================== */
+/**
+ * ✅ SAFE PICKER para formularios (incidentes, etc.)
+ * GET /api/iam/v1/users/guards/picker?q=&active=1
+ * Requiere: incidentes.create (o el permiso mínimo que ya tienen los guardias)
+ * Devuelve datos mínimos (no perms, no roles completos, etc.)
+ */
+r.get(
+  "/guards/picker",
+  devOr(requirePerm("incidentes.create")),
+  async (req, res, next) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const onlyActive = normBool(req.query.active, true);
+
+      const textFilter = q
+        ? {
+            $or: [
+              { name: { $regex: q, $options: "i" } },
+              { email: { $regex: q, $options: "i" } },
+            ],
+          }
+        : {};
+
+      const base = onlyActive ? { ...textFilter, active: true } : textFilter;
+
+      // Traemos roles para filtrar "guardia" sin exponer perms
+      const raw = await IamUser.find(base, {
+        name: 1,
+        email: 1,
+        roles: 1,
+        active: 1,
+        sub: 1,
+        legacyId: 1,
+        [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
+      })
+        .sort({ name: 1, email: 1 })
+        .limit(2000)
+        .lean();
+
+      const items = raw
+        .filter((u) => isGuardRole(u))
+        .map((u) => ({
+          _id: u._id,
+          name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
+          email: u.email || "",
+          active: u.active !== false,
+          opId: u.sub || u.legacyId || String(u._id),
+        }));
+
+      res.json({ ok: true, items, count: items.length });
     } catch (err) {
       next(err);
     }
