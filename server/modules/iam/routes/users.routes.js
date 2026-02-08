@@ -60,7 +60,7 @@ function isGuardRole(u) {
   );
 }
 
-/* ===================== GET / (lista) ===================== */
+/* ===================== GET / (lista admin) ===================== */
 /**
  * GET /api/iam/v1/users?q=&limit=&skip=
  * Devuelve { ok:true, items:[...] }
@@ -105,10 +105,71 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   }
 });
 
+/* ===================== ✅ GET /guards/picker (SAFE) ===================== */
+/**
+ * GET /api/iam/v1/users/guards/picker?q=&active=1
+ * Permiso recomendado: incidents.create (o el que tú uses en incidentes)
+ *
+ * Respuesta mínima:
+ *  - _id
+ *  - name
+ *  - email (si quieres mostrarlo en UI; si NO, bórralo aquí y en frontend)
+ *  - opId (id estable para guardar en incidentes)
+ */
+r.get(
+  "/guards/picker",
+  devOr(requirePerm("incidents.create")),
+  async (req, res, next) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const onlyActive = normBool(req.query.active, true);
+
+      const textFilter = q
+        ? {
+            $or: [
+              { name: { $regex: q, $options: "i" } },
+              { email: { $regex: q, $options: "i" } },
+            ],
+          }
+        : {};
+
+      const base = onlyActive ? { ...textFilter, active: true } : textFilter;
+
+      // Traemos solo campos necesarios
+      const raw = await IamUser.find(base, {
+        name: 1,
+        email: 1,
+        roles: 1,
+        active: 1,
+        sub: 1,
+        legacyId: 1,
+        [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
+      })
+        .sort({ name: 1, email: 1 })
+        .limit(2000)
+        .lean();
+
+      const guards = raw
+        .filter((u) => isGuardRole(u))
+        .map((u) => ({
+          _id: u._id,
+          name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
+          email: u.email || "", // opcional (si no quieres email, quítalo)
+          opId: u.sub || u.legacyId || String(u._id),
+          active: !!u.active,
+        }));
+
+      res.json({ ok: true, items: guards, count: guards.length });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 /* ===================== GET /guards (admin) ===================== */
 /**
  * GET /api/iam/v1/users/guards?q=&active=1
- * (ADMIN) requiere iam.users.manage
+ * Devuelve { ok:true, items:[...] }
  */
 r.get(
   "/guards",
@@ -161,68 +222,7 @@ r.get(
   }
 );
 
-/* ===================== GET /guards/picker (SAFE) ===================== */
-/**
- * ✅ SAFE PICKER para formularios (incidentes, etc.)
- * GET /api/iam/v1/users/guards/picker?q=&active=1
- * Requiere: incidentes.create (o el permiso mínimo que ya tienen los guardias)
- * Devuelve datos mínimos (no perms, no roles completos, etc.)
- */
-r.get(
-  "/guards/picker",
-  devOr(requirePerm("incidentes.create")),
-  async (req, res, next) => {
-    try {
-      const q = String(req.query.q || "").trim();
-      const onlyActive = normBool(req.query.active, true);
-
-      const textFilter = q
-        ? {
-            $or: [
-              { name: { $regex: q, $options: "i" } },
-              { email: { $regex: q, $options: "i" } },
-            ],
-          }
-        : {};
-
-      const base = onlyActive ? { ...textFilter, active: true } : textFilter;
-
-      // Traemos roles para filtrar "guardia" sin exponer perms
-      const raw = await IamUser.find(base, {
-        name: 1,
-        email: 1,
-        roles: 1,
-        active: 1,
-        sub: 1,
-        legacyId: 1,
-        [process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles"]: 1,
-      })
-        .sort({ name: 1, email: 1 })
-        .limit(2000)
-        .lean();
-
-      const items = raw
-        .filter((u) => isGuardRole(u))
-        .map((u) => ({
-          _id: u._id,
-          name: u.name || nameFromEmail(u.email) || "(Sin nombre)",
-          email: u.email || "",
-          active: u.active !== false,
-          opId: u.sub || u.legacyId || String(u._id),
-        }));
-
-      res.json({ ok: true, items, count: items.length });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
 /* ===================== GET /:id ===================== */
-/**
- * GET /api/iam/v1/users/:id
- * Devuelve { ok:true, item }
- */
 r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -235,10 +235,6 @@ r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => 
 });
 
 /* ===================== POST / (crear) ===================== */
-/**
- * POST /api/iam/v1/users
- * Body: { name, email, roles=[], perms=[], active=true, password? }
- */
 r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     let {
@@ -305,10 +301,7 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   }
 });
 
-/* ===================== PATCH /:id (actualizar) ===================== */
-/**
- * PATCH /api/iam/v1/users/:id
- */
+/* ===================== PATCH /:id ===================== */
 r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -413,11 +406,7 @@ r.post("/:id/disable", devOr(requirePerm("iam.users.manage")), async (req, res, 
   }
 });
 
-/* ===================== PASSWORD (crear/cambiar) ===================== */
-/**
- * POST /api/iam/v1/users/:id/password
- * Body: { password }
- */
+/* ===================== PASSWORD ===================== */
 r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -425,7 +414,6 @@ r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res,
     const pwd = String(password || "").trim();
     if (!pwd) return res.status(400).json({ ok: false, error: "password requerido" });
 
-    // ✅ IMPORTANTE: passwordHash es select:false, hay que pedirlo para auditoría
     const before = await IamUser.findById(id).select("+passwordHash").lean();
     if (!before) return res.status(404).json({ ok: false, error: "No encontrado" });
 
@@ -440,7 +428,6 @@ r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res,
       action: "update",
       entity: "user",
       entityId: id,
-      // No guardamos password ni hash:
       before: { hasPassword: !!before?.passwordHash },
       after: { hasPassword: !!item?.passwordHash },
     });
@@ -452,9 +439,6 @@ r.post("/:id/password", devOr(requirePerm("iam.users.manage")), async (req, res,
 });
 
 /* ===================== DELETE /:id ===================== */
-/**
- * DELETE /api/iam/v1/users/:id
- */
 r.delete("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     const { id } = req.params;

@@ -127,7 +127,7 @@ export default function IncidenteForm({
     return [];
   }
 
-  // ✅ Cargar guardias (SAFE)
+  // ✅ Cargar guardias (SOLO SAFE: /users/guards/picker)
   useEffect(() => {
     let mounted = true;
 
@@ -135,27 +135,23 @@ export default function IncidenteForm({
       try {
         setLoadingGuards(true);
 
-        let items = [];
-
-        // ✅ endpoint safe (PROD)
-        if (typeof iamApi.listGuardsPicker === "function") {
-          const r = await iamApi.listGuardsPicker("", true);
-          items = r?.items || r?.guards || r?.users || r || [];
-        }
-        // fallback: endpoint admin (solo si el usuario lo tiene)
-        else if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards("", true);
-          items = r?.items || r?.guards || r?.users || [];
-        } else {
-          items = [];
+        if (typeof iamApi.listGuardsPicker !== "function") {
+          // ✅ Error explícito: evita fallback a endpoints prohibidos
+          throw new Error(
+            "iamApi.listGuardsPicker no existe. Tu build/frontend o iamApi.js están desactualizados."
+          );
         }
 
-        const normalized = (items || [])
+        const r = await iamApi.listGuardsPicker("", true);
+        const items = Array.isArray(r?.items) ? r.items : [];
+
+        const normalized = items
           .filter(Boolean)
           .map((u) => ({
             _id: u._id,
             name: u.name,
             email: u.email,
+            // ✅ opId debe venir del backend; si no, caer a algo estable
             opId: u.opId || u.sub || u.legacyId || String(u._id),
             active: u.active !== false,
           }))
@@ -285,9 +281,15 @@ export default function IncidenteForm({
       );
       const label = guard ? getGuardLabel(guard) : form.reportedBy;
 
-      const photosBase64 = media.filter((m) => m.type === "image").map((m) => m.src);
-      const videosBase64 = media.filter((m) => m.type === "video").map((m) => m.src);
-      const audiosBase64 = media.filter((m) => m.type === "audio").map((m) => m.src);
+      const photosBase64 = media
+        .filter((m) => m.type === "image")
+        .map((m) => m.src);
+      const videosBase64 = media
+        .filter((m) => m.type === "video")
+        .map((m) => m.src);
+      const audiosBase64 = media
+        .filter((m) => m.type === "audio")
+        .map((m) => m.src);
 
       const payload = {
         ...form,
@@ -304,11 +306,17 @@ export default function IncidenteForm({
 
       if (editingIncident?._id) {
         await api.put(`/incidentes/${editingIncident._id}`, payload, {
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
         });
       } else {
         await api.post("/incidentes", payload, {
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
         });
       }
 
