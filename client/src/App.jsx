@@ -1,5 +1,5 @@
 // client/src/App.jsx
-import React, { Suspense, useEffect, useMemo, useRef } from "react";
+import React, { Suspense, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -67,7 +67,6 @@ function pickHome({ roles = [], perms = [] }) {
   const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
   const P = new Set(perms || []);
 
-  // Guardia ya NO se manda a rondas automáticamente
   if (R.has("guardia")) return "/";
 
   if (P.has("rondasqr.admin") || R.has("rondasqr.admin")) return "/rondasqr/admin";
@@ -76,128 +75,64 @@ function pickHome({ roles = [], perms = [] }) {
   return "/";
 }
 
-/* ───────────────── AuthTokenBridge ─────────────────
-   ✅ CLAVE:
-   - si NO estás mandando Authorization, todo te dará 403.
-   - aquí aseguramos que los 3 módulos reciban SIEMPRE el token provider.
-*/
-function AuthTokenBridge({ children }) {
-  const { isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
-
-  // evita recrear provider por renders; igual si cambia isAuthenticated/isLoading se re-evalúa
-  const audience = useMemo(() => import.meta.env.VITE_AUTH0_AUDIENCE || "", []);
-  const setOnceRef = useRef({ attached: false, mode: "none" });
-
-  useEffect(() => {
-    // mientras carga Auth0, no “rompas” providers
-    if (isLoading) return;
-
-    if (!isAuthenticated) {
-      // clean
-      attachAuth0(null);
-      attachRondasAuth(null);
-      attachIamAuth(null);
-      setOnceRef.current = { attached: true, mode: "no-auth" };
-      return;
-    }
-
-    const provider = async () => {
-      try {
-        const token = await getAccessTokenSilently({
-          authorizationParams: {
-            // ✅ imprescindible para que el token salga con aud = https://senaf
-            audience: audience || undefined,
-            scope: "openid profile email",
-          },
-        });
-        return token || null;
-      } catch (e) {
-        // DEBUG rápido si quieres:
-        // console.warn("[AuthTokenBridge] getAccessTokenSilently failed:", e?.message || e);
-        return null;
-      }
-    };
-
-    attachAuth0(provider);
-    attachRondasAuth(provider);
-    attachIamAuth(provider);
-    setOnceRef.current = { attached: true, mode: "auth" };
-  }, [isAuthenticated, isLoading, getAccessTokenSilently, audience]);
-
-  return children;
-}
-
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
+  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
-    if (isLoading) return;
-
     let alive = true;
 
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-    const ROOT = String(RAW).replace(/\/api\/?$/, "").replace(/\/$/, "");
-    const V1 = `${ROOT}/api/iam/v1`;
-    const LEGACY = `${ROOT}/api/iam`;
-    const DEV = import.meta.env.DEV;
+    const API_ROOT = String(RAW).replace(/\/$/, "");
+    const ME_URL = `${API_ROOT}/iam/v1/me`; // ✅ si VITE_API_BASE_URL ya incluye /api
 
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+    const ALLOW_DEV_HEADERS = import.meta.env.VITE_ALLOW_DEV_HEADERS === "1";
+    const IS_DEV = import.meta.env.DEV;
 
-    const candidates = [
-      `${V1}/me`,
-      `${V1}/auth/me`,
-      `${LEGACY}/me`,
-      `${LEGACY}/auth/me`,
-    ];
-
-    async function tryFetch(headers = {}) {
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { credentials: "include", headers });
-          if (!res.ok) continue;
-
-          const data = (await res.json().catch(() => ({}))) || {};
-          const roles = data?.roles || data?.user?.roles || [];
-          const perms = data?.permissions || data?.perms || [];
-
-          if ((roles?.length || 0) + (perms?.length || 0) > 0) {
-            return { roles, perms };
-          }
-        } catch {
-          // ignore
-        }
-      }
-      return null;
+    async function fetchMe(headers = {}) {
+      const res = await fetch(ME_URL, { credentials: "include", headers });
+      if (!res.ok) return null;
+      const data = (await res.json().catch(() => ({}))) || {};
+      const roles = data?.roles || data?.user?.roles || [];
+      const perms = data?.permissions || data?.perms || [];
+      return { roles, perms };
     }
 
     (async () => {
-      // 1) intenta con token real
       let headers = {};
 
+      // ✅ Token SIEMPRE con authorizationParams
       if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: { audience: audience || undefined },
+            authorizationParams: {
+              audience,
+              scope: "openid profile email",
+            },
           });
           if (token) headers.Authorization = `Bearer ${token}`;
-        } catch {
-          // si falla, no inventamos nada aquí
+        } catch (e) {
+          console.warn("[RoleRedirectInline] getAccessTokenSilently falló:", e?.message || e);
         }
       }
 
-      let me = await tryFetch(headers);
+      // 1) intento con token
+      let me = await fetchMe(headers);
 
-      // 2) DEV fallback: cabecera dev (solo local/dev)
-      if (!me && DEV) {
+      // 2) fallback dev headers SOLO si tú lo permites
+      if (
+        (!me || (!me.roles?.length && !me.perms?.length)) &&
+        (IS_DEV || ALLOW_DEV_HEADERS)
+      ) {
         const devEmail =
           user?.email ||
           (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
           import.meta.env.VITE_DEV_IAM_EMAIL ||
           "admin@local";
 
-        me = await tryFetch({ ...headers, "x-user-email": devEmail });
+        me = await fetchMe({ ...headers, "x-user-email": devEmail, "x-perms": "*" });
       }
 
       const dest = me ? pickHome(me) : "/";
@@ -207,9 +142,46 @@ function RoleRedirectInline() {
     return () => {
       alive = false;
     };
-  }, [navigate, user, isAuthenticated, isLoading, getAccessTokenSilently]);
+  }, [navigate, user, isAuthenticated, getAccessTokenSilently]);
 
   return <div className="p-6">Redirigiendo…</div>;
+}
+
+/** Inyecta token de Auth0 a la lib/api, Rondas QR e IAM */
+function AuthTokenBridge({ children }) {
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+
+  useEffect(() => {
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+
+    if (!isAuthenticated) {
+      attachAuth0(null);
+      attachRondasAuth(null);
+      attachIamAuth(null);
+      return;
+    }
+
+    const provider = async () => {
+      try {
+        const token = await getAccessTokenSilently({
+          authorizationParams: {
+            audience,
+            scope: "openid profile email",
+          },
+        });
+        return token || null;
+      } catch (e) {
+        console.warn("[AuthTokenBridge] tokenProvider falló:", e?.message || e);
+        return null;
+      }
+    };
+
+    attachAuth0(provider);
+    attachRondasAuth(provider);
+    attachIamAuth(provider);
+  }, [isAuthenticated, getAccessTokenSilently]);
+
+  return children;
 }
 
 export default function App() {
@@ -253,15 +225,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -273,15 +237,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -351,16 +307,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "rondasqr.reports",
-                        "rondasqr.view",
-                        "rondasqr.admin",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.users.manage", "*"]}>
                       <RondasDashboard />
                     </IamGuardSuper>
                   </Layout>
@@ -381,7 +328,7 @@ export default function App() {
               }
             />
 
-            {/* Aliases legacy rondas */}
+            {/* Aliases legacy */}
             <Route path="/rondas" element={<Navigate to="/rondasqr/scan" replace />} />
             <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
             <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
@@ -456,15 +403,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "supervision.read",
-                        "supervision.create",
-                        "supervision.edit",
-                        "supervision.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
                       <Supervision />
                     </IamGuardSuper>
                   </Layout>
@@ -477,16 +416,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "evaluacion.list",
-                        "evaluacion.create",
-                        "evaluacion.edit",
-                        "evaluacion.reports",
-                        "evaluacion.kpi",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
                       <Evaluacion />
                     </IamGuardSuper>
                   </Layout>

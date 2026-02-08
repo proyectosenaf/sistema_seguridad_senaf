@@ -9,10 +9,10 @@ export default function Auth0ProviderWithHistory({ children }) {
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
 
-  // API Identifier en Auth0 (tu caso: https://senaf)
+  // ✅ Audience: debe coincidir EXACTO con el "Identifier" del API en Auth0
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
 
-  // Callback fijo y correcto
+  // ✅ Callback fijo (tu app ya usa /callback)
   const redirectUri =
     import.meta.env.VITE_AUTH0_REDIRECT_URI ||
     `${window.location.origin}/callback`;
@@ -20,7 +20,7 @@ export default function Auth0ProviderWithHistory({ children }) {
   const onRedirectCallback = (appState) => {
     const returnTo = appState?.returnTo || "/start";
 
-    // Si quieres bloquear regresos directos a rondas al reingresar
+    // si quieres bloquear retornos a rutas (opcional)
     const blockedPrefixes = ["/rondasqr", "/rondas"];
     const isBlocked = blockedPrefixes.some((p) => returnTo.startsWith(p));
 
@@ -41,15 +41,16 @@ export default function Auth0ProviderWithHistory({ children }) {
       onRedirectCallback={onRedirectCallback}
       authorizationParams={{
         redirect_uri: redirectUri,
-        audience,
-        // ✅ Importante para refresh tokens en SPA (si usas useRefreshTokens)
-        scope: "openid profile email offline_access",
+        audience, // ✅ crítico para que el token salga para TU API
+        scope: "openid profile email",
       }}
-      // ✅ Para que el token persista (y el provider lo pueda sacar siempre)
+      /**
+       * ✅ Recomendado para SPA en producción si usarás refresh tokens.
+       * Ojo: si NO tienes habilitado "Refresh Token Rotation" en Auth0,
+       * getAccessTokenSilently puede fallar.
+       */
       cacheLocation="localstorage"
-      // ✅ Refresh token rotation (requiere configuración en Auth0)
       useRefreshTokens={true}
-      // ✅ fallback útil si el browser bloquea cookies en silent auth
       useRefreshTokensFallback={true}
     >
       {children}
