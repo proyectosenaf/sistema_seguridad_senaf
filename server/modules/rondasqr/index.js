@@ -1,6 +1,7 @@
 // server/modules/rondasqr/index.js
 import express from "express";
 import mongoose from "mongoose";
+import crypto from "node:crypto";
 
 import RqPoint from "./models/RqPoint.model.js";
 import RqRound from "./models/RqRound.model.js";
@@ -30,10 +31,14 @@ const IAM_ALLOW_DEV_HEADERS =
   String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
 function auth(req, _res, next) {
+  // ✅ Si server.js ya inyectó req.user (devIdentity o JWT), no lo pises
+  if (req.user?.email) return next();
+
   if (DISABLE_AUTH) {
     req.user = {
       sub: req.headers["x-user-id"] || "dev|local",
       email: req.headers["x-user-email"] || "dev@local",
+      name: req.headers["x-user-name"] || req.headers["x-user-email"] || "dev",
     };
     return next();
   }
@@ -42,6 +47,7 @@ function auth(req, _res, next) {
     req.user = {
       sub: req.headers["x-user-id"] || "dev|local",
       email: req.headers["x-user-email"],
+      name: req.headers["x-user-name"] || req.headers["x-user-email"],
     };
     return next();
   }
@@ -73,8 +79,11 @@ async function nextOrderForRound(roundId) {
   return max + 1;
 }
 
-const isId = (v) =>
-  typeof v === "string" && mongoose.Types.ObjectId.isValid(v);
+const isId = (v) => typeof v === "string" && mongoose.Types.ObjectId.isValid(v);
+
+function qrToken() {
+  return `qr_${crypto.randomBytes(16).toString("hex")}`;
+}
 
 /* ───────────────── PING/DEBUG ───────────────── */
 router.get("/ping", (_req, res) =>
@@ -135,18 +144,14 @@ admin.post("/sites", auth, async (req, res, next) => {
   try {
     const name = String(req.body?.name || "").trim();
     if (!name) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "name_required" });
+      return res.status(400).json({ ok: false, error: "name_required" });
     }
 
     const exists = await RqSite.findOne({
       name: new RegExp(`^${name}$`, "i"),
     }).lean();
     if (exists) {
-      return res
-        .status(409)
-        .json({ ok: false, error: "site_exists" });
+      return res.status(409).json({ ok: false, error: "site_exists" });
     }
 
     const doc = await RqSite.create({ name, active: true });
@@ -160,9 +165,7 @@ admin.delete("/sites/:id", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!isId(id)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_siteId" });
+      return res.status(400).json({ ok: false, error: "invalid_siteId" });
     }
 
     const r = await RqSite.deleteOne({ _id: id });
@@ -177,15 +180,11 @@ admin.get("/rounds", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
     if (siteId && !isId(siteId)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_siteId" });
+      return res.status(400).json({ ok: false, error: "invalid_siteId" });
     }
 
     const filter = siteId ? { siteId } : {};
-    const items = await RqRound.find(filter)
-      .sort({ createdAt: -1 })
-      .lean();
+    const items = await RqRound.find(filter).sort({ createdAt: -1 }).lean();
     res.json({ ok: true, items });
   } catch (e) {
     next(e);
@@ -210,9 +209,7 @@ admin.post("/rounds", auth, async (req, res) => {
 
     const name = typeof b.name === "string" ? b.name.trim() : "";
     if (!name) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "name_required" });
+      return res.status(400).json({ ok: false, error: "name_required" });
     }
 
     let site = null;
@@ -220,27 +217,21 @@ admin.post("/rounds", auth, async (req, res) => {
     if (rawSiteIdInput && mongoose.Types.ObjectId.isValid(rawSiteIdInput)) {
       site = await RqSite.findById(rawSiteIdInput).lean();
       if (!site) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "site_not_found_by_id" });
+        return res.status(400).json({ ok: false, error: "site_not_found_by_id" });
       }
     }
 
     if (!site) {
       const siteNameCandidate = rawSiteNameInput || rawSiteIdInput;
       if (!siteNameCandidate) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "site_required" });
+        return res.status(400).json({ ok: false, error: "site_required" });
       }
 
       site = await RqSite.findOne({
         name: new RegExp(`^${siteNameCandidate}$`, "i"),
       }).lean();
       if (!site) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "site_not_found_by_name" });
+        return res.status(400).json({ ok: false, error: "site_not_found_by_name" });
       }
     }
 
@@ -249,9 +240,7 @@ admin.post("/rounds", auth, async (req, res) => {
       name: new RegExp(`^${name}$`, "i"),
     }).lean();
     if (exists) {
-      return res
-        .status(409)
-        .json({ ok: false, error: "round_exists" });
+      return res.status(409).json({ ok: false, error: "round_exists" });
     }
 
     const doc = await RqRound.create({
@@ -272,9 +261,7 @@ admin.delete("/rounds/:id", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!isId(id)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_roundId" });
+      return res.status(400).json({ ok: false, error: "invalid_roundId" });
     }
 
     const r = await RqRound.deleteOne({ _id: id });
@@ -292,31 +279,24 @@ admin.get("/points", auth, async (req, res, next) => {
     const siteId = String(req.query.siteId || "").trim();
 
     if (roundId && !isId(roundId)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_roundId" });
+      return res.status(400).json({ ok: false, error: "invalid_roundId" });
     }
     if (siteId && !isId(siteId)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_siteId" });
+      return res.status(400).json({ ok: false, error: "invalid_siteId" });
     }
 
     const filter = {};
     if (roundId) filter.roundId = roundId;
     if (siteId) filter.siteId = siteId;
 
-    const items = await RqPoint.find(filter)
-      .sort({ order: 1, createdAt: 1 })
-      .lean();
-
+    const items = await RqPoint.find(filter).sort({ order: 1, createdAt: 1 }).lean();
     res.json({ ok: true, items });
   } catch (e) {
     next(e);
   }
 });
 
-// create
+// create  ✅ YA NO REQUIERE qr EN FRONTEND (lo genera)
 admin.post("/points", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -324,83 +304,48 @@ admin.post("/points", auth, async (req, res, next) => {
     const roundId = String(b.roundId || "").trim();
     const name = String(b.name || "").trim();
 
-    if (!isId(siteId)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_siteId" });
-    }
-    if (!isId(roundId)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_roundId" });
-    }
-    if (!name) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "name_required" });
-    }
+    if (!isId(siteId)) return res.status(400).json({ ok: false, error: "invalid_siteId" });
+    if (!isId(roundId)) return res.status(400).json({ ok: false, error: "invalid_roundId" });
+    if (!name) return res.status(400).json({ ok: false, error: "name_required" });
 
-    const site = await RqSite.findById(siteId).lean();
-    const round = await RqRound.findById(roundId).lean();
-    if (!site) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "site_not_found" });
-    }
-    if (!round) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "round_not_found" });
-    }
+    const [site, round] = await Promise.all([
+      RqSite.findById(siteId).lean(),
+      RqRound.findById(roundId).lean(),
+    ]);
+    if (!site) return res.status(404).json({ ok: false, error: "site_not_found" });
+    if (!round) return res.status(404).json({ ok: false, error: "round_not_found" });
 
     const idFields = getPointIdFields();
     if (idFields.length === 0) {
       return res.status(500).json({
         ok: false,
-        error:
-          "No id fields in RqPoint schema (expected qr or qrNo)",
+        error: "No id fields in RqPoint schema (expected qr or qrNo)",
       });
     }
 
-    const rawQr = typeof b.qr === "string" ? b.qr.trim() : null;
-    const rawQrNo = typeof b.qrNo === "string" ? b.qrNo.trim() : null;
-
-    const toInsert = { siteId, roundId, name, active: true };
     let order =
       normalizeOrder(b.order) ??
       normalizeOrder(b.ord) ??
       normalizeOrder(b.index);
+
     if (order === null) order = await nextOrderForRound(roundId);
-    toInsert.order = order;
+
+    const toInsert = { siteId, roundId, name, active: true, order };
+
+    // ✅ Genera QR si el schema lo usa y no viene en payload
+    const rawQr = typeof b.qr === "string" ? b.qr.trim() : "";
+    const rawQrNo = typeof b.qrNo === "string" ? b.qrNo.trim() : "";
 
     if (idFields.includes("qr")) {
-      if (!rawQr && !rawQrNo) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "qr_required" });
-      }
-      toInsert.qr = rawQr || rawQrNo;
-      const dup = await RqPoint.findOne({ qr: toInsert.qr }).lean();
-      if (dup) {
-        return res
-          .status(409)
-          .json({ ok: false, error: "point_qr_exists" });
-      }
+      const value = rawQr || rawQrNo || qrToken();
+      const dup = await RqPoint.findOne({ qr: value }).lean();
+      if (dup) return res.status(409).json({ ok: false, error: "point_qr_exists" });
+      toInsert.qr = value;
     } else {
-      if (!rawQr && !rawQrNo) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "qrNo_required" });
-      }
-      toInsert.qrNo = rawQrNo || rawQr;
-      const dup = await RqPoint.findOne({
-        qrNo: toInsert.qrNo,
-      }).lean();
-      if (dup) {
-        return res
-          .status(409)
-          .json({ ok: false, error: "point_qrNo_exists" });
-      }
+      const value = rawQrNo || rawQr || qrToken();
+      const dup = await RqPoint.findOne({ qrNo: value }).lean();
+      if (dup) return res.status(409).json({ ok: false, error: "point_qrNo_exists" });
+      toInsert.qrNo = value;
     }
 
     const doc = await RqPoint.create(toInsert);
@@ -415,46 +360,25 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
   try {
     const id = req.params.id;
     if (!isId(id)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_pointId" });
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
     }
 
     const b = req.body || {};
     const updates = {};
 
-    if (typeof b.name === "string") {
-      updates.name = b.name.trim();
-    }
+    if (typeof b.name === "string") updates.name = b.name.trim();
 
     const idFields = getPointIdFields();
 
     if (idFields.includes("qr") && typeof b.qr === "string") {
       const qr = b.qr.trim();
-      const dup = await RqPoint.findOne({
-        _id: { $ne: id },
-        qr,
-      }).lean();
-      if (dup) {
-        return res
-          .status(409)
-          .json({ ok: false, error: "point_qr_exists" });
-      }
+      const dup = await RqPoint.findOne({ _id: { $ne: id }, qr }).lean();
+      if (dup) return res.status(409).json({ ok: false, error: "point_qr_exists" });
       updates.qr = qr;
-    } else if (
-      idFields.includes("qrNo") &&
-      typeof b.qrNo === "string"
-    ) {
+    } else if (idFields.includes("qrNo") && typeof b.qrNo === "string") {
       const qrNo = b.qrNo.trim();
-      const dup = await RqPoint.findOne({
-        _id: { $ne: id },
-        qrNo,
-      }).lean();
-      if (dup) {
-        return res
-          .status(409)
-          .json({ ok: false, error: "point_qrNo_exists" });
-      }
+      const dup = await RqPoint.findOne({ _id: { $ne: id }, qrNo }).lean();
+      if (dup) return res.status(409).json({ ok: false, error: "point_qrNo_exists" });
       updates.qrNo = qrNo;
     }
 
@@ -462,6 +386,7 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
       normalizeOrder(b.order) ??
       normalizeOrder(b.ord) ??
       normalizeOrder(b.index);
+
     if (order !== null) updates.order = order;
 
     if (Object.keys(updates).length === 0) {
@@ -472,12 +397,7 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
       });
     }
 
-    const doc = await RqPoint.findByIdAndUpdate(
-      id,
-      { $set: updates },
-      { new: true }
-    ).lean();
-
+    const doc = await RqPoint.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -489,13 +409,38 @@ admin.delete("/points/:id", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
     if (!isId(id)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "invalid_pointId" });
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
     }
 
     const doc = await RqPoint.findOneAndDelete({ _id: id });
     res.json({ ok: true, deleted: doc ? 1 : 0 });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// rotate qr ✅ para tu botón “Rotar QR”
+admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) return res.status(400).json({ ok: false, error: "invalid_pointId" });
+
+    const idFields = getPointIdFields();
+    if (!idFields.length) {
+      return res.status(500).json({
+        ok: false,
+        error: "No id fields in RqPoint schema (expected qr or qrNo)",
+      });
+    }
+
+    const patch = {};
+    if (idFields.includes("qr")) patch.qr = qrToken();
+    else patch.qrNo = qrToken();
+
+    const doc = await RqPoint.findByIdAndUpdate(id, { $set: patch }, { new: true }).lean();
+    if (!doc) return res.status(404).json({ ok: false, error: "point_not_found" });
+
+    res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
   }
@@ -526,6 +471,57 @@ admin.put("/points/reorder", auth, async (req, res, next) => {
   }
 });
 
+/** ✅ QR REPO *********************************************************
+ * GET /admin/qr-repo?siteId=...&roundId=...
+ * Devuelve HTML simple para imprimir / ver.
+ */
+admin.get("/qr-repo", auth, async (req, res, next) => {
+  try {
+    const siteId = String(req.query.siteId || "").trim();
+    const roundId = String(req.query.roundId || "").trim();
+
+    if (!isId(siteId) || !isId(roundId)) {
+      return res.status(400).json({ ok: false, error: "siteId_and_roundId_required" });
+    }
+
+    const [site, round, points] = await Promise.all([
+      RqSite.findById(siteId).lean(),
+      RqRound.findById(roundId).lean(),
+      RqPoint.find({ siteId, roundId }).sort({ order: 1, createdAt: 1 }).lean(),
+    ]);
+
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(`
+      <html>
+        <head>
+          <title>Repositorio de QRs</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+        </head>
+        <body style="font-family:system-ui;padding:16px">
+          <h2>Repositorio de QRs</h2>
+          <p><b>Sitio:</b> ${site?.name || siteId}</p>
+          <p><b>Ronda:</b> ${round?.name || roundId}</p>
+          <p><b>Total:</b> ${points.length}</p>
+          <hr/>
+          <ol>
+            ${points
+              .map((p) => {
+                const code = p.qr || p.qrNo || "-";
+                return `<li style="margin:10px 0">
+                  <div><b>${p.order ?? ""}</b> — ${p.name || ""}</div>
+                  <div><code>${code}</code></div>
+                </li>`;
+              })
+              .join("")}
+          </ol>
+        </body>
+      </html>
+    `);
+  } catch (e) {
+    next(e);
+  }
+});
+
 /** PLANS *********************************************************/
 // GET /admin/plans?siteId=&roundId=
 admin.get("/plans", auth, async (req, res, next) => {
@@ -535,19 +531,11 @@ admin.get("/plans", auth, async (req, res, next) => {
 
     const filter = {};
     if (siteId) {
-      if (!isId(siteId)) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "invalid_siteId" });
-      }
+      if (!isId(siteId)) return res.status(400).json({ ok: false, error: "invalid_siteId" });
       filter.siteId = siteId;
     }
     if (roundId) {
-      if (!isId(roundId)) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "invalid_roundId" });
-      }
+      if (!isId(roundId)) return res.status(400).json({ ok: false, error: "invalid_roundId" });
       filter.roundId = roundId;
     }
 
@@ -608,11 +596,7 @@ admin.post("/plans", auth, async (req, res, next) => {
 
     const validSet = new Set(
       dbPoints
-        .filter(
-          (p) =>
-            String(p.siteId) === siteId &&
-            String(p.roundId) === roundId
-        )
+        .filter((p) => String(p.siteId) === siteId && String(p.roundId) === roundId)
         .map((p) => String(p._id))
     );
 
@@ -686,30 +670,22 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
     const b = req.body || {};
     const qr = typeof b.qr === "string" ? b.qr.trim() : "";
     if (!qr) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "qr_required" });
+      return res.status(400).json({ ok: false, error: "qr_required" });
     }
 
     const idFields = getPointIdFields();
     if (idFields.length === 0) {
       return res.status(500).json({
         ok: false,
-        error:
-          "No id fields in RqPoint schema (expected qr or qrNo)",
+        error: "No id fields in RqPoint schema (expected qr or qrNo)",
       });
     }
 
     const or = idFields.map((f) => ({ [f]: qr }));
-    const point = await RqPoint.findOne({
-      active: true,
-      $or: or,
-    }).lean();
+    const point = await RqPoint.findOne({ active: true, $or: or }).lean();
 
     if (!point) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "point_not_found" });
+      return res.status(404).json({ ok: false, error: "point_not_found" });
     }
 
     const [round, site] = await Promise.all([
@@ -718,8 +694,7 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
     ]);
 
     const gps = b.gps || {};
-    const hasGps =
-      typeof gps.lat === "number" && typeof gps.lon === "number";
+    const hasGps = typeof gps.lat === "number" && typeof gps.lon === "number";
 
     const mark = await RqMark.create({
       hardwareId: b.hardwareId || "",
@@ -737,10 +712,7 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
       at: b.ts ? new Date(b.ts) : new Date(),
       gps,
       loc: hasGps
-        ? {
-            type: "Point",
-            coordinates: [Number(gps.lon), Number(gps.lat)],
-          }
+        ? { type: "Point", coordinates: [Number(gps.lon), Number(gps.lat)] }
         : undefined,
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
@@ -768,19 +740,14 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
     if (!b.text) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "text_required" });
+      return res.status(400).json({ ok: false, error: "text_required" });
     }
 
-    const gps =
-      b.gps || (b.lat && b.lon ? { lat: b.lat, lon: b.lon } : {});
+    const gps = b.gps || (b.lat && b.lon ? { lat: b.lat, lon: b.lon } : {});
     const doc = await RqIncident.create({
       type: "message",
       text: b.text,
-      photosBase64: Array.isArray(b.photosBase64)
-        ? b.photosBase64.slice(0, 10)
-        : [],
+      photosBase64: Array.isArray(b.photosBase64) ? b.photosBase64.slice(0, 10) : [],
       gps,
       at: new Date(),
       officerEmail: req?.user?.email || "",
@@ -788,11 +755,7 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
       officerSub: req?.user?.sub || "",
     });
 
-    req.io?.emit?.("rondasqr:incident", {
-      kind: "message",
-      item: doc,
-    });
-
+    req.io?.emit?.("rondasqr:incident", { kind: "message", item: doc });
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -813,12 +776,7 @@ router.post("/checkin/panic", auth, async (req, res, next) => {
       officerSub: req?.user?.sub || "",
     });
 
-    // que todos los conectados lo vean
-    req.io?.emit?.("rondasqr:alert", {
-      kind: "panic",
-      item: doc,
-    });
-
+    req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -835,8 +793,7 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
       gps: b.gps || {},
       at: new Date(),
       durationMin: Number(b.minutes ?? 0) || 0,
-      stepsAtAlert:
-        typeof b.steps === "number" ? b.steps : null,
+      stepsAtAlert: typeof b.steps === "number" ? b.steps : null,
       siteId: b.siteId || null,
       siteName: b.siteName || "",
       roundId: b.roundId || null,
@@ -848,11 +805,7 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
       officerSub: req?.user?.sub || "",
     });
 
-    req.io?.emit?.("rondasqr:alert", {
-      kind: "inactivity",
-      item: doc,
-    });
-
+    req.io?.emit?.("rondasqr:alert", { kind: "inactivity", item: doc });
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -865,26 +818,17 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
     const b = req.body || {};
     const doc = await RqIncident.create({
       type: "fall",
-      text: `Hombre caído${
-        b.afterInactivityMin
-          ? ` tras ${b.afterInactivityMin} min de inmovilidad`
-          : ""
-      }`,
+      text: `Hombre caído${b.afterInactivityMin ? ` tras ${b.afterInactivityMin} min de inmovilidad` : ""}`,
       gps: b.gps || {},
       at: new Date(),
-      stepsAtAlert:
-        typeof b.steps === "number" ? b.steps : null,
+      stepsAtAlert: typeof b.steps === "number" ? b.steps : null,
       fallDetected: true,
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
       officerSub: req?.user?.sub || "",
     });
 
-    req.io?.emit?.("rondasqr:alert", {
-      kind: "fall",
-      item: doc,
-    });
-
+    req.io?.emit?.("rondasqr:alert", { kind: "fall", item: doc });
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -895,18 +839,13 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
 router.post("/_dev/seed/:code", async (req, res, next) => {
   try {
     const code = String(req.params.code || "").trim();
-    if (!code) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "code_required" });
-    }
+    if (!code) return res.status(400).json({ ok: false, error: "code_required" });
 
     const idFields = getPointIdFields();
     if (idFields.length === 0) {
       return res.status(500).json({
         ok: false,
-        error:
-          "No id fields in RqPoint schema (expected qr or qrNo)",
+        error: "No id fields in RqPoint schema (expected qr or qrNo)",
       });
     }
 
