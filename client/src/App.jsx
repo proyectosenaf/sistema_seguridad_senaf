@@ -1,5 +1,5 @@
 // client/src/App.jsx
-import React, { Suspense, useEffect } from "react";
+import React, { Suspense, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 
@@ -20,24 +20,40 @@ const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
-const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+const IncidentesList = React.lazy(() =>
+  import("./pages/Incidentes/IncidentesList.jsx")
+);
+const IncidenteForm = React.lazy(() =>
+  import("./pages/Incidentes/IncidenteForm.jsx")
+);
 
 // ✅ Rondas QR
-const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
-const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
-const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
+const RondasDashboard = React.lazy(() =>
+  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
+);
+const RondasScan = React.lazy(() =>
+  import("./modules/rondasqr/guard/ScanPage.jsx")
+);
+const AdminHub = React.lazy(() =>
+  import("./modules/rondasqr/admin/AdminHub.jsx")
+);
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
+const Supervision = React.lazy(() =>
+  import("./pages/Supervision/Supervision.jsx")
+);
 const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Control de visitas moderno
-const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
-const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+const VisitsPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/VisitsPage.jsx")
+);
+const AgendaPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/AgendaPage.jsx")
+);
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 
@@ -75,64 +91,126 @@ function pickHome({ roles = [], perms = [] }) {
   return "/";
 }
 
-/** Redirección tras login */
-function RoleRedirectInline() {
-  const navigate = useNavigate();
-  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+/* ───────────────── DEBUG Auth0 (IMPRIME EN PRODUCCIÓN) ───────────────── */
+
+function AuthDebug() {
+  const { isAuthenticated, user, error, isLoading, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
     let alive = true;
 
+    (async () => {
+      const domain = import.meta.env.VITE_AUTH0_DOMAIN;
+      const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
+      const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
+
+      console.log("[AUTH0] env domain:", domain || "(missing)");
+      console.log("[AUTH0] env clientId:", clientId ? "(set)" : "(missing)");
+      console.log("[AUTH0] env audience:", audience || "(empty)");
+      console.log("[AUTH0] isLoading:", isLoading);
+      console.log("[AUTH0] isAuthenticated:", isAuthenticated);
+      console.log("[AUTH0] user.email:", user?.email || null);
+      console.log("[AUTH0] error:", error || null);
+
+      if (!alive) return;
+
+      if (isAuthenticated) {
+        try {
+          const token = await getAccessTokenSilently({
+            authorizationParams: audience ? { audience } : {},
+          });
+          console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
+        } catch (e) {
+          console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated, isLoading, user, error, getAccessTokenSilently]);
+
+  return null;
+}
+
+/** Redirección tras login */
+function RoleRedirectInline() {
+  const navigate = useNavigate();
+  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const ranRef = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (ranRef.current) return; // evita loops por re-renders
+    ranRef.current = true;
+
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
     const API_ROOT = String(RAW).replace(/\/$/, "");
-    const ME_URL = `${API_ROOT}/iam/v1/me`; // ✅ si VITE_API_BASE_URL ya incluye /api
+    const ME_URL = `${API_ROOT}/iam/v1/me`; // VITE_API_BASE_URL ya incluye /api
 
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
     const ALLOW_DEV_HEADERS = import.meta.env.VITE_ALLOW_DEV_HEADERS === "1";
     const IS_DEV = import.meta.env.DEV;
 
     async function fetchMe(headers = {}) {
-      const res = await fetch(ME_URL, { credentials: "include", headers });
-      if (!res.ok) return null;
-      const data = (await res.json().catch(() => ({}))) || {};
-      const roles = data?.roles || data?.user?.roles || [];
-      const perms = data?.permissions || data?.perms || [];
-      return { roles, perms };
+      try {
+        const res = await fetch(ME_URL, {
+          method: "GET",
+          // En prod tu auth real es Bearer; no dependas de cookies
+          credentials: "omit",
+          headers,
+        });
+
+        if (!res.ok) return null;
+
+        const data = (await res.json().catch(() => ({}))) || {};
+        const roles = data?.roles || data?.user?.roles || [];
+        const perms = data?.permissions || data?.perms || [];
+        return { roles, perms };
+      } catch (e) {
+        console.warn("[RoleRedirectInline] fetch /me error:", e?.message || e);
+        return null;
+      }
     }
 
     (async () => {
       let headers = {};
 
-      // ✅ Token SIEMPRE con authorizationParams
+      // 1) token
       if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: {
-              audience,
-              scope: "openid profile email",
-            },
+            authorizationParams: audience ? { audience } : {},
           });
           if (token) headers.Authorization = `Bearer ${token}`;
         } catch (e) {
-          console.warn("[RoleRedirectInline] getAccessTokenSilently falló:", e?.message || e);
+          console.warn(
+            "[RoleRedirectInline] getAccessTokenSilently falló:",
+            e?.message || e
+          );
         }
       }
 
-      // 1) intento con token
       let me = await fetchMe(headers);
 
-      // 2) fallback dev headers SOLO si tú lo permites
-      if (
-        (!me || (!me.roles?.length && !me.perms?.length)) &&
-        (IS_DEV || ALLOW_DEV_HEADERS)
-      ) {
+      // 2) fallback dev headers (SOLO si tú lo permites)
+      const lacksIdentity =
+        !me || (!me.roles?.length && !me.perms?.length);
+
+      if (lacksIdentity && (IS_DEV || ALLOW_DEV_HEADERS)) {
         const devEmail =
           user?.email ||
-          (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
+          (typeof localStorage !== "undefined" &&
+            localStorage.getItem("iamDevEmail")) ||
           import.meta.env.VITE_DEV_IAM_EMAIL ||
           "admin@local";
 
-        me = await fetchMe({ ...headers, "x-user-email": devEmail, "x-perms": "*" });
+        me = await fetchMe({
+          ...headers,
+          "x-user-email": devEmail,
+          "x-perms": "*",
+        });
       }
 
       const dest = me ? pickHome(me) : "/";
@@ -152,7 +230,7 @@ function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
 
   useEffect(() => {
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
 
     if (!isAuthenticated) {
       attachAuth0(null);
@@ -164,10 +242,7 @@ function AuthTokenBridge({ children }) {
     const provider = async () => {
       try {
         const token = await getAccessTokenSilently({
-          authorizationParams: {
-            audience,
-            scope: "openid profile email",
-          },
+          authorizationParams: audience ? { audience } : {},
         });
         return token || null;
       } catch (e) {
@@ -184,40 +259,12 @@ function AuthTokenBridge({ children }) {
   return children;
 }
 
-function AuthDebug() {
-  const { isAuthenticated, user, error, isLoading, getAccessTokenSilently } = useAuth0();
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
-        console.log("[AUTH0] env domain:", import.meta.env.VITE_AUTH0_DOMAIN);
-        console.log("[AUTH0] env clientId:", import.meta.env.VITE_AUTH0_CLIENT_ID);
-        console.log("[AUTH0] env audience:", audience);
-        console.log("[AUTH0] isLoading:", isLoading);
-        console.log("[AUTH0] isAuthenticated:", isAuthenticated);
-        console.log("[AUTH0] user.email:", user?.email || null);
-        console.log("[AUTH0] error:", error || null);
-
-        if (isAuthenticated) {
-          const token = await getAccessTokenSilently({
-            authorizationParams: { audience },
-          });
-          console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
-        }
-      } catch (e) {
-        console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
-      }
-    })();
-  }, [isAuthenticated, isLoading, user, error, getAccessTokenSilently]);
-
-  return null;
-}
-
-
 export default function App() {
   return (
     <AuthTokenBridge>
+      {/* ✅ IMPORTANTE: sí se renderiza para que imprima */}
+      <AuthDebug />
+
       <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
@@ -238,7 +285,7 @@ export default function App() {
               }
             />
 
-            {/* Start (decide por roles/perms) */}
+            {/* Start */}
             <Route
               path="/start"
               element={
@@ -256,7 +303,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "incidentes.read",
+                        "incidentes.create",
+                        "incidentes.edit",
+                        "incidentes.reports",
+                        "*",
+                      ]}
+                    >
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -268,7 +323,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "incidentes.read",
+                        "incidentes.create",
+                        "incidentes.edit",
+                        "incidentes.reports",
+                        "*",
+                      ]}
+                    >
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -302,7 +365,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["iam.users.manage", "iam.roles.manage", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["iam.users.manage", "iam.roles.manage", "*"]}
+                    >
                       <IamAdminPage />
                     </IamGuardSuper>
                   </Layout>
@@ -325,7 +390,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "admin", "iam.users.manage", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "guardia",
+                        "rondasqr.view",
+                        "admin",
+                        "iam.users.manage",
+                        "*",
+                      ]}
+                    >
                       <RondasScan />
                     </IamGuardSuper>
                   </Layout>
@@ -338,7 +411,16 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.users.manage", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "rondasqr.reports",
+                        "rondasqr.view",
+                        "rondasqr.admin",
+                        "admin",
+                        "iam.users.manage",
+                        "*",
+                      ]}
+                    >
                       <RondasDashboard />
                     </IamGuardSuper>
                   </Layout>
@@ -351,7 +433,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]}
+                    >
                       <AdminHub />
                     </IamGuardSuper>
                   </Layout>
@@ -371,7 +455,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}
+                    >
                       <Accesos />
                     </IamGuardSuper>
                   </Layout>
@@ -384,7 +470,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
+                    >
                       <VisitsPageCore />
                     </IamGuardSuper>
                   </Layout>
@@ -396,7 +484,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
+                    >
                       <VisitsPageCore />
                     </IamGuardSuper>
                   </Layout>
@@ -408,7 +498,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
+                    >
                       <AgendaPageCore />
                     </IamGuardSuper>
                   </Layout>
@@ -421,7 +513,9 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
+                    <IamGuardSuper
+                      anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}
+                    >
                       <Bitacora />
                     </IamGuardSuper>
                   </Layout>
@@ -434,7 +528,15 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "supervision.read",
+                        "supervision.create",
+                        "supervision.edit",
+                        "supervision.reports",
+                        "*",
+                      ]}
+                    >
                       <Supervision />
                     </IamGuardSuper>
                   </Layout>
@@ -447,7 +549,16 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        "evaluacion.list",
+                        "evaluacion.create",
+                        "evaluacion.edit",
+                        "evaluacion.reports",
+                        "evaluacion.kpi",
+                        "*",
+                      ]}
+                    >
                       <Evaluacion />
                     </IamGuardSuper>
                   </Layout>
