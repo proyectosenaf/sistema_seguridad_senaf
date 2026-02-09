@@ -1,93 +1,117 @@
 // server/modules/rondasqr/routes/incident.routes.js
+
 import express from "express";
 import multer from "multer";
 import fs from "node:fs";
 import path from "node:path";
+
 import {
   getAllIncidents,
   createIncident,
   updateIncident,
 } from "../controllers/incident.controller.js";
+
 import {
   requireAuth,
-  requireAdmin,
+  attachUser,
 } from "../../../src/middleware/auth.js";
+
+import {
+  requirePermission,
+} from "../../../src/middleware/permissions.js";
 
 const router = express.Router();
 
+/* ───────────────── Upload config ───────────────── */
+
 const uploadDir = path.resolve(process.cwd(), "uploads", "incidentes");
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const upload = multer({
-  dest: uploadDir,
-});
+const upload = multer({ dest: uploadDir });
+
+/* ───────────────── Middlewares base ───────────────── */
+
+router.use(requireAuth, attachUser);
 
 /**
- * Queremos que esto funcione en distintos montajes:
- *
- * - app.use(incidentRoutes);                      -> necesitamos rutas con prefijo /api/...
- * - app.use("/api", incidentRoutes);             -> necesitamos rutas SIN /api al principio
- * - app.use("/api/rondasqr/v1", incidentRoutes); -> necesitamos rutas relativas a /incidentes
- *
- * Por eso registramos varias rutas alias que apuntan a los mismos handlers.
+ * Permisos usados:
+ *  - incidentes.read
+ *  - incidentes.create
+ *  - incidentes.edit
  */
 
-// Todas las rutas de este router exigen estar autenticado
-router.use(requireAuth);
-
-/* ===== LISTAR INCIDENTES ===== */
-
-// Versión absoluta (por si el router se monta en "/")
-router.get("/api/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
-// Versión relativa a "/api"
-router.get("/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
-// Versión genérica para el módulo central: "/api/incidentes"
-router.get("/incidentes", requireAdmin, getAllIncidents);
-
-/* ===== CREAR INCIDENTE (con fotos) ===== */
+/* =========================================================
+   LISTAR INCIDENTES
+   ========================================================= */
 
 // Absoluta
+router.get(
+  "/api/rondasqr/v1/incidentes",
+  requirePermission("incidentes.read", "incidentes.reports", "*"),
+  getAllIncidents
+);
+
+// Relativa a "/api"
+router.get(
+  "/rondasqr/v1/incidentes",
+  requirePermission("incidentes.read", "incidentes.reports", "*"),
+  getAllIncidents
+);
+
+// Módulo central
+router.get(
+  "/incidentes",
+  requirePermission("incidentes.read", "incidentes.reports", "*"),
+  getAllIncidents
+);
+
+/* =========================================================
+   CREAR INCIDENTE
+   ========================================================= */
+
 router.post(
   "/api/rondasqr/v1/incidentes",
-  requireAdmin,
+  requirePermission("incidentes.create", "*"),
   upload.array("photos", 10),
   createIncident
 );
-// Relativa a "/api"
+
 router.post(
   "/rondasqr/v1/incidentes",
-  requireAdmin,
+  requirePermission("incidentes.create", "*"),
   upload.array("photos", 10),
   createIncident
 );
-// Módulo central "/api/incidentes"
+
 router.post(
   "/incidentes",
-  requireAdmin,
+  requirePermission("incidentes.create", "*"),
   upload.array("photos", 10),
   createIncident
 );
 
-/* ===== ACTUALIZAR INCIDENTE ===== */
+/* =========================================================
+   ACTUALIZAR INCIDENTE
+   ========================================================= */
 
-// Absoluta
 router.put(
   "/api/rondasqr/v1/incidentes/:id",
-  requireAdmin,
+  requirePermission("incidentes.edit", "*"),
   updateIncident
 );
-// Relativa a "/api"
+
 router.put(
   "/rondasqr/v1/incidentes/:id",
-  requireAdmin,
+  requirePermission("incidentes.edit", "*"),
   updateIncident
 );
-// Módulo central "/api/incidentes/:id"
+
 router.put(
   "/incidentes/:id",
-  requireAdmin,
+  requirePermission("incidentes.edit", "*"),
   updateIncident
 );
 

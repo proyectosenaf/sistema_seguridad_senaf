@@ -1,7 +1,5 @@
 // server/modules/incidentes/routes/incident.routes.js
-
 import express from "express";
-
 import {
   getAllIncidents,
   createIncident,
@@ -9,28 +7,30 @@ import {
   deleteIncident,
 } from "../controllers/incident.controller.js";
 
-import {
-  requireAuth,
-  attachUser,
-  requireAdmin
-} from "../../../src/middleware/auth.js";
+import { requireAuth, attachUser } from "../../../src/middleware/auth.js";
+import { requirePermission } from "../../../src/middleware/permissions.js";
 
 const router = express.Router();
 
 /**
- * Todas las rutas:
- * 1) JWT válido
- * 2) Usuario inyectado en req.user
+ * ✅ Importante:
+ * - requireAuth valida JWT (o bypass si DISABLE_AUTH=1)
+ * - attachUser copia payload -> req.user
  */
-router.use(requireAuth);
-router.use(attachUser);
+router.use(requireAuth, attachUser);
 
 /**
- * SOLO ADMIN
+ * ✅ Permisos granulares (NO admin-only)
+ * Ajusta los nombres para que coincidan con los que tú ya creaste:
+ * - incidentes.read / incidentes.create / incidentes.edit / incidentes.delete
+ * (si no tienes delete, usa "*" o crea el permiso)
  */
-router.get("/", requireAdmin, getAllIncidents);
-router.post("/", requireAdmin, createIncident);
-router.put("/:id", requireAdmin, updateIncident);
-router.delete("/:id", requireAdmin, deleteIncident);
+router.get("/", requirePermission("incidentes.read", "incidentes.reports", "*"), getAllIncidents);
+
+router.post("/", requirePermission("incidentes.create", "*"), createIncident);
+
+router.put("/:id", requirePermission("incidentes.edit", "*"), updateIncident);
+
+router.delete("/:id", requirePermission("incidentes.delete", "*"), deleteIncident);
 
 export default router;
