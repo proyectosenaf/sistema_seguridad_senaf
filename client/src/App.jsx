@@ -36,9 +36,11 @@ const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx
 const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
-// Control de visitas moderno
+// Visitas
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+
+const DEBUG_IAM = String(import.meta.env.VITE_IAM_DEBUG || "") === "1";
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 const ROOT_ADMINS = (
@@ -64,14 +66,25 @@ function IamGuardSuper(props) {
 /* ───────────────── HOME PICKER ───────────────── */
 function pickHome({ roles = [], perms = [], visitor = false }) {
   const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
-  const P = new Set(perms || []);
+  const Praw = Array.isArray(perms) ? perms : [];
+  const P = new Set(Praw.map((p) => String(p)));
+  const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
 
-  // Visitante sin roles/perms
-  if (visitor || (R.size === 0 && P.size === 0)) return "/visitas/agenda";
+  const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
-  if (R.has("guardia")) return "/";
+  // Visitante sin roles/perms -> agenda
+  if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
 
-  if (P.has("rondasqr.admin") || R.has("rondasqr.admin")) return "/rondasqr/admin";
+  // Admin -> IAM admin (o donde prefieras)
+  if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
+
+  // Guardia operación
+  if (R.has("guardia")) return "/rondasqr/scan";
+
+  // Supervisor -> reportes
+  if (R.has("supervisor")) return "/rondasqr/reports";
+
+  // Recepción -> visitas control
   if (R.has("recepcion")) return "/visitas/control";
 
   return "/";
@@ -102,16 +115,15 @@ function AuthDebug() {
       if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: {
-              ...(audience ? { audience } : {}),
-              scope: "openid profile email",
-            },
+            authorizationParams: audience ? { audience } : {},
           });
-
-          // ✅ Guardar token para inspección en consola
-          window.__SENAF_TOKEN = token;
           console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
-          console.log("[AUTH0] token =>", token);
+
+          // ✅ Para depurar 401 en producción, guarda token en window si DEBUG
+          if (DEBUG_IAM && token) {
+            window.__SENAF_TOKEN = token;
+            console.log("[AUTH0] window.__SENAF_TOKEN set");
+          }
         } catch (e) {
           console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
         }
@@ -142,13 +154,12 @@ function RoleRedirectInline() {
     const ME_URL = `${API_ROOT}/iam/v1/me`;
 
     const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
-    const ALLOW_DEV_HEADERS = import.meta.env.VITE_ALLOW_DEV_HEADERS === "1";
-    const IS_DEV = import.meta.env.DEV;
 
     async function fetchMe(headers = {}) {
       try {
         const res = await fetch(ME_URL, {
           method: "GET",
+          // ✅ en producción no uses dev headers; solo bearer
           credentials: "omit",
           headers,
         });
@@ -158,7 +169,7 @@ function RoleRedirectInline() {
         const data = (await res.json().catch(() => ({}))) || {};
         const roles = data?.roles || data?.user?.roles || [];
         const perms = data?.permissions || data?.perms || [];
-        const visitor = !!data?.visitor || (!!data?.email && !data?.user);
+        const visitor = !!data?.visitor;
         return { roles, perms, visitor };
       } catch (e) {
         console.warn("[RoleRedirectInline] fetch /me error:", e?.message || e);
@@ -180,24 +191,7 @@ function RoleRedirectInline() {
         }
       }
 
-      let me = await fetchMe(headers);
-
-      const lacksIdentity = !me || (!me.roles?.length && !me.perms?.length && !me.visitor);
-
-      if (lacksIdentity && (IS_DEV || ALLOW_DEV_HEADERS)) {
-        const devEmail =
-          user?.email ||
-          (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
-          import.meta.env.VITE_DEV_IAM_EMAIL ||
-          "admin@local";
-
-        me = await fetchMe({
-          ...headers,
-          "x-user-email": devEmail,
-          "x-perms": "*",
-        });
-      }
-
+      const me = await fetchMe(headers);
       const dest = me ? pickHome(me) : "/visitas/agenda";
       if (alive) navigate(dest, { replace: true });
     })();
@@ -333,7 +327,8 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
+                    {/* ✅ acepta nuevos + legacy */}
+                    <IamGuardSuper anyOf={["iam.users.manage", "iam.roles.manage", "iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
                       <IamAdminPage />
                     </IamGuardSuper>
                   </Layout>
@@ -356,7 +351,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "admin", "iam.usuarios.gestionar", "*"]}>
+                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}>
                       <RondasScan />
                     </IamGuardSuper>
                   </Layout>
@@ -369,7 +364,19 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.usuarios.gestionar", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        // normalizados
+                        "rondasqr.reports.view",
+                        "rondasqr.reports.query",
+                        "rondasqr.reports.export_pdf",
+                        "rondasqr.reports.map",
+                        // legacy
+                        "rondasqr.reports",
+                        "rondasqr.view",
+                        "*",
+                      ]}
+                    >
                       <RondasDashboard />
                     </IamGuardSuper>
                   </Layout>
@@ -382,7 +389,20 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper anyOf={["rondasqr.admin", "admin", "iam.usuarios.gestionar", "*"]}>
+                    <IamGuardSuper
+                      anyOf={[
+                        // admin real por acciones
+                        "rondasqr.assignments.write",
+                        "rondasqr.sites.write",
+                        "rondasqr.checkpoints.write",
+                        "rondasqr.qr.generate",
+                        // legacy (si existe)
+                        "rondasqr.create",
+                        "rondasqr.edit",
+                        "rondasqr.delete",
+                        "*",
+                      ]}
+                    >
                       <AdminHub />
                     </IamGuardSuper>
                   </Layout>
@@ -436,7 +456,6 @@ export default function App() {
               }
             />
 
-            {/* Agenda accesible para VISITANTES autenticados */}
             <Route
               path="/visitas/agenda"
               element={
