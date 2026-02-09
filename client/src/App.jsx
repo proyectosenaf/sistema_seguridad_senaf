@@ -77,16 +77,22 @@ function IamGuardSuper(props) {
   return <IamGuard {...props} />;
 }
 
-/* ───────────────── LÓGICA HOME ───────────────── */
+/* ───────────────── LÓGICA HOME ─────────────────
+   ✅ Si el usuario está autenticado pero NO existe en IAM:
+      roles=[], perms=[] y/o visitor:true → manda a /visitas/agenda
+*/
 
-function pickHome({ roles = [], perms = [] }) {
+function pickHome({ roles = [], perms = [], visitor = false }) {
   const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
   const P = new Set(perms || []);
+
+  // ✅ VISITANTE: autenticado pero sin registro/roles/perms en IAM
+  if (visitor || (R.size === 0 && P.size === 0)) return "/visitas/agenda";
 
   if (R.has("guardia")) return "/";
 
   if (P.has("rondasqr.admin") || R.has("rondasqr.admin")) return "/rondasqr/admin";
-  if (R.has("recepcion")) return "/accesos";
+  if (R.has("recepcion")) return "/visitas/control";
 
   return "/";
 }
@@ -167,7 +173,8 @@ function RoleRedirectInline() {
         const data = (await res.json().catch(() => ({}))) || {};
         const roles = data?.roles || data?.user?.roles || [];
         const perms = data?.permissions || data?.perms || [];
-        return { roles, perms };
+        const visitor = !!data?.visitor || (!!data?.email && !data?.user); // fallback robusto
+        return { roles, perms, visitor };
       } catch (e) {
         console.warn("[RoleRedirectInline] fetch /me error:", e?.message || e);
         return null;
@@ -196,7 +203,7 @@ function RoleRedirectInline() {
 
       // 2) fallback dev headers (SOLO si tú lo permites)
       const lacksIdentity =
-        !me || (!me.roles?.length && !me.perms?.length);
+        !me || (!me.roles?.length && !me.perms?.length && !me.visitor);
 
       if (lacksIdentity && (IS_DEV || ALLOW_DEV_HEADERS)) {
         const devEmail =
@@ -213,7 +220,8 @@ function RoleRedirectInline() {
         });
       }
 
-      const dest = me ? pickHome(me) : "/";
+      // ✅ si no hay me, cae a agenda (usuario autenticado pero backend no respondió)
+      const dest = me ? pickHome(me) : "/visitas/agenda";
       if (alive) navigate(dest, { replace: true });
     })();
 
@@ -479,6 +487,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
             <Route
               path="/visitas/control"
               element={
@@ -493,16 +502,15 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* ✅ CRÍTICO: agenda debe ser accesible para VISITANTES autenticados
+               (sin permisos/roles en IAM todavía) */}
             <Route
               path="/visitas/agenda"
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
-                    >
-                      <AgendaPageCore />
-                    </IamGuardSuper>
+                    <AgendaPageCore />
                   </Layout>
                 </ProtectedRoute>
               }

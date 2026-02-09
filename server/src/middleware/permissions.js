@@ -1,127 +1,120 @@
 // server/src/middleware/permissions.js
+import { buildContextFrom } from "../../modules/iam/utils/rbac.util.js";
 
-function toArr(v) {
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
-}
-
-function uniqLower(arr) {
-  return Array.from(
-    new Set(toArr(arr).map((x) => String(x).trim().toLowerCase()).filter(Boolean))
-  );
-}
-
-function parsePermissions(req) {
-  const jwt = req?.auth?.payload || {};
-  const u = req?.user || {};
-
-  // Preferir permissions array, si no, scope string
-  let perms =
-    (Array.isArray(jwt.permissions) && jwt.permissions) ||
-    (Array.isArray(u.permissions) && u.permissions) ||
-    [];
-
-  if ((!perms || perms.length === 0) && typeof jwt.scope === "string") {
-    perms = jwt.scope.split(" ").map((s) => s.trim()).filter(Boolean);
-  }
-
-  return Array.from(new Set(perms));
+/**
+ * Asegura que exista req.iam (contexto IAM)
+ * - Si ya existe, no recalcula
+ * - Si no, lo construye desde IAM (email -> IamUser -> roles -> permisos)
+ */
+async function ensureIam(req) {
+  if (req.iam) return req.iam;
+  const ctx = await buildContextFrom(req);
+  req.iam = ctx;
+  return ctx;
 }
 
 /**
- * Extrae roles y permisos desde:
- * - req.auth.payload (JWT)
- * - req.user         (si attachUser corrió)
+ * requirePerm("incidentes.read")
+ * Permite acceso si el usuario posee el permiso exacto o "*"
  */
-function extractIdentity(req) {
-  const NS =
-    process.env.IAM_ROLES_NAMESPACE ||
-    process.env.AUTH0_NAMESPACE ||
-    "https://senaf/roles";
+export function requirePerm(perm) {
+  return async (req, res, next) => {
+    try {
+      const ctx = await ensureIam(req);
 
-  const jwt = req?.auth?.payload || {};
-  const u = req?.user || {};
+      // si no hay auth (sin email) => 401
+      if (!ctx?.email) {
+        return res.status(401).json({ ok: false, message: "No autenticado" });
+      }
 
-  const rolesRaw =
-    jwt[NS] ||
-    jwt["https://senaf/roles"] ||
-    jwt["https://senaf.local/roles"] ||
-    jwt.roles ||
-    u.roles ||
-    u[NS] ||
-    [];
+      const ok = ctx.has ? ctx.has(perm) : false;
+      if (!ok) {
+        return res.status(403).json({
+          ok: false,
+          message: "forbidden",
+          need: perm,
+          roles: ctx.roles || [],
+          permissions: ctx.permissions || [],
+        });
+      }
 
-  const roles = uniqLower(rolesRaw);
-  const permissions = parsePermissions(req);
-
-  return { roles, permissions };
-}
-
-/**
- * Permite acceso si el usuario posee al menos UNO de los permisos indicados
- */
-export function requirePermission(...allowed) {
-  return (req, res, next) => {
-    const { permissions } = extractIdentity(req);
-
-    const ok =
-      permissions.includes("*") ||
-      allowed.some((p) => permissions.includes(p));
-
-    if (!ok) {
-      return res.status(403).json({
-        ok: false,
-        message: "Permiso insuficiente",
-        need: allowed,
-        have: permissions,
-      });
+      return next();
+    } catch (e) {
+      return next(e);
     }
-
-    next();
   };
 }
 
 /**
- * Permite acceso si el usuario tiene alguno de los roles indicados
+ * requireAnyPerm("a", "b", "c")
+ * Permite acceso si el usuario tiene al menos uno
  */
-export function requireRole(...allowed) {
-  return (req, res, next) => {
-    const { roles, permissions } = extractIdentity(req);
+export function requireAnyPerm(...perms) {
+  return async (req, res, next) => {
+    try {
+      const ctx = await ensureIam(req);
 
-    const ok =
-      roles.includes("admin") ||
-      permissions.includes("*") ||
-      allowed.some((r) => roles.includes(String(r).toLowerCase()));
+      if (!ctx?.email) {
+        return res.status(401).json({ ok: false, message: "No autenticado" });
+      }
 
-    if (!ok) {
-      return res.status(403).json({
-        ok: false,
-        message: "Rol insuficiente",
-        need: allowed,
-        have: roles,
-      });
+      const ok =
+        (ctx.permissions || []).includes("*") ||
+        perms.some((p) => (ctx.permissions || []).includes(p));
+
+      if (!ok) {
+        return res.status(403).json({
+          ok: false,
+          message: "forbidden",
+          need: perms,
+          roles: ctx.roles || [],
+          permissions: ctx.permissions || [],
+        });
+      }
+
+      return next();
+    } catch (e) {
+      return next(e);
     }
-
-    next();
   };
 }
 
 /**
- * Atajo admin (solo si realmente quieres admin/*)
+ * requireRole("admin")
+ * OJO: rol viene de IAM (IamUser.roles)
+ */
+export function requireRole(...rolesAllowed) {
+  return async (req, res, next) => {
+    try {
+      const ctx = await ensureIam(req);
+
+      if (!ctx?.email) {
+        return res.status(401).json({ ok: false, message: "No autenticado" });
+      }
+
+      const roles = (ctx.roles || []).map((r) => String(r).toLowerCase());
+      const ok = rolesAllowed.some((r) => roles.includes(String(r).toLowerCase()));
+
+      if (!ok) {
+        return res.status(403).json({
+          ok: false,
+          message: "forbidden",
+          need: rolesAllowed,
+          roles,
+        });
+      }
+
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  };
+}
+
+/**
+ * requireAdmin
+ * Admin real = rol "admin" en IAM o permiso "*"
  */
 export function requireAdmin(req, res, next) {
-  const { roles, permissions } = extractIdentity(req);
-
-  const ok = roles.includes("admin") || permissions.includes("*");
-
-  if (!ok) {
-    return res.status(403).json({
-      ok: false,
-      message: "Solo administradores",
-      roles,
-      permissions,
-    });
-  }
-
-  next();
+  return requireAnyPerm("*")(req, res, () => requireRole("admin")(req, res, next));
 }

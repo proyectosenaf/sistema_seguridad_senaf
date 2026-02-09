@@ -11,8 +11,11 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
-// Auth opcional
-import { requireAuth, attachUser } from "./middleware/auth.js"; // ✅ FIX: incluir attachUser
+// Auth opcional (Auth0 = auth)
+import { requireAuth, attachAuthUser } from "./middleware/auth.js";
+
+// IAM context builder
+import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -46,6 +49,7 @@ app.set("trust proxy", 1);
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
+
 /**
  * DEV_OPEN = 1 abre todo (bypass de permisos) en DEV.
  * Si no lo defines, DISABLE_AUTH=1 también activa modo "abierto" por compatibilidad.
@@ -55,53 +59,6 @@ const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === 
 console.log("[env] NODE_ENV:", process.env.NODE_ENV);
 console.log("[env] DISABLE_AUTH:", DISABLE_AUTH ? "1" : "0");
 console.log("[env] DEV_OPEN:", DEV_OPEN ? "1" : "0");
-
-/* ───────────────────── SUPER ADMIN BACKEND ───────────────────── */
-
-const IAM_NS = process.env.IAM_ROLES_NAMESPACE || "https://senaf.local/roles";
-
-// Correos super admin
-const ROOT_ADMINS = Array.from(
-  new Set(
-    [
-      ...(process.env.ROOT_ADMINS || "").split(","),
-      process.env.SUPERADMIN_EMAIL || "",
-    ]
-      .map((s) => String(s).trim().toLowerCase())
-      .filter(Boolean)
-  )
-);
-
-console.log("[iam] ROOT_ADMINS:", ROOT_ADMINS);
-
-function applyRootAdmin(email, rolesArr = [], permsArr = []) {
-  const emailNorm = (email || "").toLowerCase();
-  const roles = new Set(
-    Array.isArray(rolesArr) ? rolesArr.map((r) => String(r).trim()) : []
-  );
-  const perms = new Set(
-    Array.isArray(permsArr) ? permsArr.map((p) => String(p).trim()) : []
-  );
-
-  if (emailNorm && ROOT_ADMINS.includes(emailNorm)) {
-    roles.add("admin");
-    perms.add("*");
-    perms.add("iam.users.manage");
-    perms.add("iam.roles.manage");
-    perms.add("rondasqr.admin");
-    perms.add("rondasqr.view");
-    perms.add("rondasqr.reports");
-    perms.add("incidentes.read");
-    perms.add("incidentes.create");
-    perms.add("incidentes.edit");
-    perms.add("incidentes.reports");
-  }
-
-  return {
-    roles: Array.from(roles),
-    permissions: Array.from(perms),
-  };
-}
 
 /* ───────────────────────────── CORS ───────────────────────────── */
 
@@ -136,11 +93,7 @@ app.use(
 if (!IS_PROD) app.use(morgan("dev"));
 app.use(compression());
 
-/* ─────────────────────── Parsers de body ────────────────────────
-   ✅ CORRECCIÓN FUNDAMENTAL:
-   Para evidencias en base64 (audio/video), 10mb suele fallar (413 / payload too large).
-   Subimos a 30mb.
-*/
+/* ─────────────────────── Parsers de body ──────────────────────── */
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
@@ -152,8 +105,8 @@ if (!IS_PROD) {
 }
 
 /* ─────────────────────── DEV IDENTITY GLOBAL ─────────────────────
-   ✅ En DEV abierto (DEV_OPEN=1 o DISABLE_AUTH=1), inyecta req.user
-   para que TODOS los módulos tengan identidad.
+   En dev abierto, permite inyectar email para simular sesión.
+   OJO: en producción NO se acepta esto como autoridad.
 */
 function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
@@ -167,41 +120,19 @@ function devIdentity(req, _res, next) {
     .toLowerCase()
     .trim();
 
-  const rolesHeader = req.header("x-roles") || "admin,guardia,recepcion,ti";
-  const permsHeader = req.header("x-perms") || "*";
-
-  const roles = String(rolesHeader)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  const permissions =
-    String(permsHeader).trim() === "*"
-      ? ["*"]
-      : String(permsHeader)
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-
-  const applied = applyRootAdmin(email, roles, permissions);
-
-  req.user = {
+  // Solo identidad (como si viniera del JWT)
+  req.authUser = {
     sub: "dev|local",
     email,
-    [IAM_NS]: applied.roles,
-    roles: applied.roles,
-    permissions: applied.permissions,
-    isDev: true,
+    name: "DEV USER",
   };
 
-  // Útil para debugs rápidos
+  // También simula payload por compatibilidad con herramientas
   req.auth = req.auth || {};
   req.auth.payload = {
-    sub: req.user.sub,
-    email: req.user.email,
-    [IAM_NS]: req.user.roles,
-    roles: req.user.roles,
-    permissions: req.user.permissions,
+    sub: req.authUser.sub,
+    email: req.authUser.email,
+    name: req.authUser.name,
   };
 
   return next();
@@ -268,8 +199,7 @@ await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
 console.log("[db] MongoDB conectado");
 
 /* ─────────────────── Auth opcional (GLOBAL) ────────────────────
-   ✅ Si hay Authorization y DISABLE_AUTH != 1 -> valida token.
-   En DEV con DISABLE_AUTH=1 -> no valida (y devIdentity ya inyectó req.user).
+   - Si llega Authorization y DISABLE_AUTH != 1 -> valida JWT
 */
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
@@ -282,50 +212,34 @@ function optionalAuth(req, res, next) {
 
 app.use(optionalAuth);
 
-// ✅ FIX CRÍTICO: después de que requireAuth llena req.auth.payload,
-// esto copia roles/perms/email a req.user, para que TODOS los middlewares funcionen.
-app.use(attachUser);
+/**
+ * 1) Copia identidad de JWT -> req.authUser
+ * (No roles/perms)
+ */
+app.use(attachAuthUser);
 
-/* ─────────── Bridge Auth payload → req.user (cuando hay JWT) ─────────── */
+/**
+ * 2) Construye contexto IAM en req.iam
+ * - Si el usuario NO existe en IAM => visitor
+ * - Si no hay email => no crea contexto
+ */
+app.use(async (req, _res, next) => {
+  try {
+    const email =
+      req?.auth?.payload?.email ||
+      req?.authUser?.email ||
+      req?.user?.email ||
+      req.headers["x-user-email"] ||
+      null;
 
-function authBridgeToReqUser(req, _res, next) {
-  // Si devIdentity ya seteo req.user, no lo rompas
-  if (req.user?.email) return next();
+    if (!email) return next();
 
-  if (!req?.auth?.payload) return next();
-
-  const p = req.auth.payload;
-  const email =
-    p.email || p["https://hasura.io/jwt/claims"]?.["x-hasura-user-email"] || null;
-
-  let roles = Array.isArray(p[IAM_NS])
-    ? p[IAM_NS]
-    : Array.isArray(p.roles)
-    ? p.roles
-    : [];
-
-  let permissions = Array.isArray(p.permissions) ? p.permissions : [];
-
-  const applied = applyRootAdmin(email, roles, permissions);
-  roles = applied.roles;
-  permissions = applied.permissions;
-
-  p[IAM_NS] = roles;
-  p.roles = roles;
-  p.permissions = permissions;
-
-  req.user = {
-    sub: p.sub || "auth|user",
-    email,
-    [IAM_NS]: roles,
-    roles,
-    permissions,
-  };
-
-  next();
-}
-
-app.use(authBridgeToReqUser);
+    req.iam = await buildContextFrom(req);
+    return next();
+  } catch (e) {
+    return next(e);
+  }
+});
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
 
@@ -450,11 +364,9 @@ io.on("connection", (s) => {
     console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
   };
 
-  // Rooms existentes (rondas/notificaciones)
   s.on("join-room", ({ userId }) => joinRooms(userId));
   s.on("join", ({ userId }) => joinRooms(userId));
 
-  // ✅ CHAT rooms (DEV y PROD)
   s.on("chat:join", ({ room = "global" } = {}) => {
     s.join(`chat:${room}`);
     s.emit("chat:joined", { room });

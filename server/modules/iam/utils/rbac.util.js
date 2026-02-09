@@ -2,14 +2,13 @@
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 
-// Pequeño log para ver cómo arranca IAM en producción
+// Log simple (ok)
 console.log("[iam] boot", {
   NODE_ENV: process.env.NODE_ENV,
   IAM_DEV_ALLOW_ALL: process.env.IAM_DEV_ALLOW_ALL,
   SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
 });
 
-/** Convierte header/lista en array limpio */
 export function parseList(v) {
   if (!v) return [];
   return String(v)
@@ -19,23 +18,16 @@ export function parseList(v) {
 }
 
 /**
- * 🧠 buildContextFrom(req)
- * - Fusiona:
- *    - usuario de BD (IamUser por email)
- *    - roles/permisos de cabeceras DEV (x-roles, x-perms)
- * - Resuelve roles → permisos usando IamRole (por code y por name)
- * - Expone:
- *    - user, roles[], permissions[]
- *    - has(p)
+ * buildContextFrom(req)
+ * - Auth0: solo identidad (email)
+ * - IAM: roles/perms desde MongoDB
+ * - Si NO existe usuario en IAM => visitor (user=null, roles=[], permissions=[])
  */
 export async function buildContextFrom(req) {
   // Email desde JWT (auth0) o desde headers dev
-  const jwtEmail =
-    req?.auth?.payload?.email ||
-    req?.user?.email ||
-    null;
-
+  const jwtEmail = req?.auth?.payload?.email || req?.authUser?.email || req?.user?.email || null;
   const headerEmail = req.headers["x-user-email"] || null;
+
   const email = (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
 
   const headerRoles = parseList(req.headers["x-roles"]);
@@ -47,16 +39,24 @@ export async function buildContextFrom(req) {
     user = await IamUser.findOne({ email }).lean();
   }
 
-  // Set de roles y perms base
+  // roles base:
+  // - si hay user: roles vienen de BD + (en dev) headers
+  // - si NO hay user: roles solo headers (dev)
   const roleNames = new Set([...(user?.roles || []), ...headerRoles]);
+
+  // perms base:
+  // - si hay user: perms vienen de BD (user.perms)
+  // - si NO hay user: NO damos perms (visitor), excepto en DEV si mandas headers explícitos
   const permSet = new Set([...(user?.perms || [])]);
 
-  // Solo si NO hay usuario en BD, aceptamos permisos desde headers (dev)
-  if (!user) {
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const allowDevHeaders = !IS_PROD; // en prod jamás aceptes x-perms/x-roles como autoridad
+
+  if (!user && allowDevHeaders) {
     headerPerms.forEach((p) => permSet.add(p));
   }
 
-  // 🔎 Resolver permisos por rol usando code **y** name
+  // Resolver permisos por roles (IamRole.permissions)
   if (roleNames.size) {
     const roleList = [...roleNames].map((r) => String(r).trim());
     const roleDocs = await IamRole.find({
@@ -68,62 +68,48 @@ export async function buildContextFrom(req) {
     }
   }
 
-  // SUPERADMIN / ADMIN FULL
-  const superEmail = String(
-    process.env.SUPERADMIN_EMAIL || ""
-  )
-    .trim()
-    .toLowerCase();
-
-  const rolesLower = new Set(
-    [...roleNames].map((r) => String(r).toLowerCase().trim())
-  );
-
+  // SUPERADMIN (único bypass válido)
+  const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
   const isSuperAdmin = !!email && !!superEmail && email === superEmail;
-  const isAdminRole =
-    rolesLower.has("admin") || rolesLower.has("ti");
 
   function has(perm) {
-    // Superadmin y admin/ti → todo permitido
     if (isSuperAdmin) return true;
-    if (isAdminRole) return true;
 
-    // Permiso global
+    // Permiso global en IAM
     if (permSet.has("*")) return true;
 
-    // Si no se pide perm concreto, deja pasar
+    // Si no se pide permiso, no bloquees
     if (!perm) return true;
 
     return permSet.has(perm);
   }
 
   return {
-    user,
-    email,
+    user, // puede ser null (visitor)
+    email, // puede ser null si no autenticado
     roles: [...roleNames],
     permissions: [...permSet],
     has,
+    isSuperAdmin,
+    isVisitor: !!email && !user, // autenticado pero no existe en IAM
   };
 }
 
 /**
  * devOr(mw)
- * - En producción:
- *    - si IAM_DEV_ALLOW_ALL=1 → **salta** el middleware de permisos
- *    - si no → ejecuta mw normalmente
- * - En dev (NODE_ENV !== 'production') → siempre salta permisos
+ * - En dev: salta permisos
+ * - En prod: solo salta si IAM_DEV_ALLOW_ALL=1 (NO recomendado)
  */
 export function devOr(mw) {
   const isProd = process.env.NODE_ENV === "production";
-  const allowDev =
+  const allow =
     process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
 
-  return (req, res, next) =>
-    allowDev ? next() : mw(req, res, next);
+  return (req, res, next) => (allow ? next() : mw(req, res, next));
 }
 
 /**
- * requirePerm("iam.users.manage")
+ * requirePerm("iam.users.manage") (deprecated si ya usas middleware/permissions.js)
  */
 export function requirePerm(perm) {
   return async (req, res, next) => {
@@ -131,16 +117,19 @@ export function requirePerm(perm) {
       const ctx = await buildContextFrom(req);
       req.iam = ctx;
 
+      if (!ctx.email) {
+        return res.status(401).json({ message: "No autenticado" });
+      }
+
       if (!ctx.has(perm)) {
-        console.warn("[iam] forbidden", {
+        return res.status(403).json({
+          message: "forbidden",
           need: perm,
           email: ctx.email,
           roles: ctx.roles,
           perms: ctx.permissions,
+          visitor: ctx.isVisitor,
         });
-        return res
-          .status(403)
-          .json({ message: "forbidden", need: perm });
       }
 
       next();
