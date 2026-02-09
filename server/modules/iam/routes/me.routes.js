@@ -1,26 +1,43 @@
 // server/modules/iam/routes/me.routes.js
 import { Router } from "express";
-import { optionalAuth, attachAuthUser } from "../../../src/middleware/auth.js";
 import { buildContextFrom } from "../utils/rbac.util.js";
 
 const r = Router();
 
 /**
  * GET /api/iam/v1/me
- * Devuelve contexto del usuario actual (user/roles/permissions)
- * - Si NO viene token => visitor:true (no 401)
- * - Si viene token => valida JWT y construye contexto real
+ *
+ * - Si NO hay token válido -> visitor:true
+ * - Si hay token válido -> usa req.auth.payload (Auth0)
  */
-r.get("/", optionalAuth, attachAuthUser, async (req, res, next) => {
+r.get("/", async (req, res, next) => {
   try {
-    const ctx = await buildContextFrom(req);
+    const payload = req.auth?.payload || null;
 
-    res.json({
+    // Si no hay JWT => visitante
+    if (!payload) {
+      return res.json({
+        ok: true,
+        user: null,
+        roles: [],
+        permissions: [],
+        visitor: true,
+        email: null,
+        isSuperAdmin: false,
+      });
+    }
+
+    // Construye contexto desde el JWT
+    const ctx = await buildContextFrom({
+      auth: { payload },
+    });
+
+    return res.json({
       ok: true,
       user: ctx.user || null,
       roles: ctx.roles || [],
       permissions: ctx.permissions || [],
-      visitor: !!ctx.isVisitor,
+      visitor: false,
       email: ctx.email || null,
       isSuperAdmin: !!ctx.isSuperAdmin,
     });

@@ -17,25 +17,71 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
+function getJwtPayload(req) {
+  return req?.auth?.payload || null; // express-oauth2-jwt-bearer
+}
+
+function getAuth0Sub(payload) {
+  const sub = payload?.sub;
+  return sub ? String(sub).trim() : null;
+}
+
+function getEmailFromPayload(payload) {
+  if (!payload) return null;
+
+  // estándar (muchas veces NO viene en access token)
+  const direct = payload.email;
+  if (direct) return String(direct).toLowerCase().trim();
+
+  // custom claim recomendado (Action)
+  const ns = process.env.IAM_EMAIL_CLAIM || "https://senaf/email";
+  const claimed = payload[ns];
+  if (claimed) return String(claimed).toLowerCase().trim();
+
+  return null;
+}
+
 /**
  * buildContextFrom(req)
- * - Auth0: solo identidad (email)
+ * - Auth0: identidad por sub (recomendado) y email (si existe)
  * - IAM: roles/perms desde MongoDB
- * - Si NO existe usuario en IAM => visitor (user=null, roles=[], permissions=[])
+ * - Si NO existe usuario en IAM => visitor
  */
 export async function buildContextFrom(req) {
-  // Email desde JWT (auth0) o desde headers dev
-  const jwtEmail = req?.auth?.payload?.email || req?.authUser?.email || req?.user?.email || null;
-  const headerEmail = req.headers["x-user-email"] || null;
+  const payload = getJwtPayload(req);
 
-  const email = (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
+  // Identidad desde JWT (Auth0)
+  const auth0Sub = getAuth0Sub(payload);
+  const jwtEmail = getEmailFromPayload(payload);
 
-  const headerRoles = parseList(req.headers["x-roles"]);
-  const headerPerms = parseList(req.headers["x-perms"]);
+  // Identidad desde headers dev (solo si permites, y solo en no-prod)
+  const headerEmail = req?.headers?.["x-user-email"] || null;
 
-  // Usuario en BD (si hay email)
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const allowDevHeaders = !IS_PROD; // en prod jamás aceptes x-perms/x-roles como autoridad
+
+  const email = (jwtEmail || (allowDevHeaders ? headerEmail : null) || "")
+    .toLowerCase()
+    .trim() || null;
+
+  const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
+  const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
+
+  // Usuario en BD:
+  // 1) Primero por auth0Sub (si lo tienes en tu modelo)
+  // 2) Si no existe, fallback por email
   let user = null;
-  if (email) {
+
+  if (auth0Sub) {
+    try {
+      user = await IamUser.findOne({ auth0Sub }).lean();
+    } catch {
+      // si el campo no existe aún, no rompas
+      user = null;
+    }
+  }
+
+  if (!user && email) {
     user = await IamUser.findOne({ email }).lean();
   }
 
@@ -45,13 +91,9 @@ export async function buildContextFrom(req) {
   const roleNames = new Set([...(user?.roles || []), ...headerRoles]);
 
   // perms base:
-  // - si hay user: perms vienen de BD (user.perms)
-  // - si NO hay user: NO damos perms (visitor), excepto en DEV si mandas headers explícitos
   const permSet = new Set([...(user?.perms || [])]);
 
-  const IS_PROD = process.env.NODE_ENV === "production";
-  const allowDevHeaders = !IS_PROD; // en prod jamás aceptes x-perms/x-roles como autoridad
-
+  // En dev (no-prod) si NO hay user, se permite headerPerms explícito
   if (!user && allowDevHeaders) {
     headerPerms.forEach((p) => permSet.add(p));
   }
@@ -69,29 +111,32 @@ export async function buildContextFrom(req) {
   }
 
   // SUPERADMIN (único bypass válido)
-  const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+  const superEmail = String(process.env.SUPERADMIN_EMAIL || "")
+    .trim()
+    .toLowerCase();
+
   const isSuperAdmin = !!email && !!superEmail && email === superEmail;
 
   function has(perm) {
     if (isSuperAdmin) return true;
-
-    // Permiso global en IAM
     if (permSet.has("*")) return true;
-
-    // Si no se pide permiso, no bloquees
     if (!perm) return true;
-
     return permSet.has(perm);
   }
 
+  // visitor:
+  // - Si hay JWT (payload) pero no existe user en BD => visitor=true
+  const isVisitor = !!payload && !user;
+
   return {
-    user, // puede ser null (visitor)
-    email, // puede ser null si no autenticado
+    user, // puede ser null
+    email, // puede ser null si token no trae email
+    auth0Sub, // ✅ clave real de Auth0
     roles: [...roleNames],
     permissions: [...permSet],
     has,
     isSuperAdmin,
-    isVisitor: !!email && !user, // autenticado pero no existe en IAM
+    isVisitor,
   };
 }
 
@@ -102,14 +147,12 @@ export async function buildContextFrom(req) {
  */
 export function devOr(mw) {
   const isProd = process.env.NODE_ENV === "production";
-  const allow =
-    process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
-
+  const allow = process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
   return (req, res, next) => (allow ? next() : mw(req, res, next));
 }
 
 /**
- * requirePerm("iam.users.manage") (deprecated si ya usas middleware/permissions.js)
+ * requirePerm("iam.users.manage")
  */
 export function requirePerm(perm) {
   return async (req, res, next) => {
@@ -117,7 +160,8 @@ export function requirePerm(perm) {
       const ctx = await buildContextFrom(req);
       req.iam = ctx;
 
-      if (!ctx.email) {
+      // Si no hay JWT válido => 401
+      if (!req?.auth?.payload) {
         return res.status(401).json({ message: "No autenticado" });
       }
 
@@ -126,6 +170,7 @@ export function requirePerm(perm) {
           message: "forbidden",
           need: perm,
           email: ctx.email,
+          auth0Sub: ctx.auth0Sub,
           roles: ctx.roles,
           perms: ctx.permissions,
           visitor: ctx.isVisitor,
