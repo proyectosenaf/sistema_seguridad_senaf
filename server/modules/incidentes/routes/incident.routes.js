@@ -1,36 +1,54 @@
 // server/modules/incidentes/routes/incident.routes.js
 import express from "express";
+import multer from "multer";
+import fs from "node:fs";
+import path from "node:path";
 import {
   getAllIncidents,
   createIncident,
   updateIncident,
-  deleteIncident,
 } from "../controllers/incident.controller.js";
 
-import { requireAuth, attachUser } from "../../../src/middleware/auth.js";
-import { requirePermission } from "../../../src/middleware/permissions.js";
+import { requireAuth, requireAdmin } from "../../../src/middleware/auth.js";
 
 const router = express.Router();
 
-/**
- * ✅ Importante:
- * - requireAuth valida JWT (o bypass si DISABLE_AUTH=1)
- * - attachUser copia payload -> req.user
- */
-router.use(requireAuth, attachUser);
+const uploadDir = path.resolve(process.cwd(), "uploads", "incidentes");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-/**
- * ✅ Permisos granulares (NO admin-only)
- * Ajusta los nombres para que coincidan con los que tú ya creaste:
- * - incidentes.read / incidentes.create / incidentes.edit / incidentes.delete
- * (si no tienes delete, usa "*" o crea el permiso)
- */
-router.get("/", requirePermission("incidentes.read", "incidentes.reports", "*"), getAllIncidents);
+const upload = multer({ dest: uploadDir });
 
-router.post("/", requirePermission("incidentes.create", "*"), createIncident);
+// Todas las rutas exigen estar autenticado
+router.use(requireAuth);
 
-router.put("/:id", requirePermission("incidentes.edit", "*"), updateIncident);
+/* LISTAR */
+router.get("/api/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
+router.get("/rondasqr/v1/incidentes", requireAdmin, getAllIncidents);
+router.get("/incidentes", requireAdmin, getAllIncidents);
 
-router.delete("/:id", requirePermission("incidentes.delete", "*"), deleteIncident);
+/* CREAR */
+router.post(
+  "/api/rondasqr/v1/incidentes",
+  requireAdmin,
+  upload.array("photos", 10),
+  createIncident
+);
+router.post(
+  "/rondasqr/v1/incidentes",
+  requireAdmin,
+  upload.array("photos", 10),
+  createIncident
+);
+router.post(
+  "/incidentes",
+  requireAdmin,
+  upload.array("photos", 10),
+  createIncident
+);
+
+/* ACTUALIZAR */
+router.put("/api/rondasqr/v1/incidentes/:id", requireAdmin, updateIncident);
+router.put("/rondasqr/v1/incidentes/:id", requireAdmin, updateIncident);
+router.put("/incidentes/:id", requireAdmin, updateIncident);
 
 export default router;

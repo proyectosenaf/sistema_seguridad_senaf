@@ -1,5 +1,6 @@
 // server/modules/iam/routes/me.routes.js
 import { Router } from "express";
+import { requireAuth, attachAuthUser } from "../../../src/middleware/auth.js";
 import { buildContextFrom } from "../utils/rbac.util.js";
 
 const r = Router();
@@ -9,7 +10,7 @@ const r = Router();
  * Devuelve contexto del usuario actual (user/roles/permissions)
  * - Si no existe en IAM => ok:true, user:null, roles:[], permissions:[], visitor:true
  */
-r.get("/", async (req, res, next) => {
+r.get("/", requireAuth, attachAuthUser, async (req, res, next) => {
   try {
     const ctx = await buildContextFrom(req);
 
