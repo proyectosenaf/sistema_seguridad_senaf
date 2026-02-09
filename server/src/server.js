@@ -11,7 +11,7 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
-// Auth opcional (Auth0 = auth)
+// Auth
 import { requireAuth, attachAuthUser } from "./middleware/auth.js";
 
 // IAM context builder
@@ -33,7 +33,7 @@ import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
-// ✅ Chat (nuevo)
+// ✅ Chat
 import chatRoutes from "./routes/chat.routes.js";
 
 // Cron
@@ -127,7 +127,7 @@ function devIdentity(req, _res, next) {
     name: "DEV USER",
   };
 
-  // También simula payload por compatibilidad con herramientas
+  // Simula payload para compatibilidad con tooling
   req.auth = req.auth || {};
   req.auth.payload = {
     sub: req.authUser.sub,
@@ -199,12 +199,14 @@ await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
 console.log("[db] MongoDB conectado");
 
 /* ─────────────────── Auth opcional (GLOBAL) ────────────────────
-   - Si llega Authorization y DISABLE_AUTH != 1 -> valida JWT
+   - Si llega Authorization Bearer y DISABLE_AUTH != 1 -> valida JWT
+   - Si no hay Authorization -> sigue como visitante
 */
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
 
-  if (req.headers.authorization) {
+  const h = String(req.headers.authorization || "");
+  if (h.toLowerCase().startsWith("bearer ")) {
     return requireAuth(req, res, next);
   }
   return next();
@@ -213,8 +215,7 @@ function optionalAuth(req, res, next) {
 app.use(optionalAuth);
 
 /**
- * 1) Copia identidad de JWT -> req.authUser
- * (No roles/perms)
+ * 1) Normaliza usuario desde JWT -> req.user (y/o req.authUser si tu attach lo hace)
  */
 app.use(attachAuthUser);
 
@@ -242,7 +243,6 @@ app.use(async (req, _res, next) => {
 });
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
-
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
@@ -259,17 +259,22 @@ startDailyAssignmentCron(app);
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(req.query.title || "Nueva ronda asignada (prueba)");
-  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
+  const body = String(
+    req.query.body || "Debes comenzar la ronda de prueba en el punto A."
+  );
+
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
     body,
     meta: { debug: true, ts: Date.now() },
   });
+
   io.to(`guard-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
     body,
     meta: { debug: true, ts: Date.now() },
   });
+
   res.json({ ok: true, sentTo: [`user-${userId}`, `guard-${userId}`] });
 });
 
@@ -279,7 +284,8 @@ app.use("/chat", chatRoutes);
 
 /* ────────────────────── Rondas QR (v1) ─────────────────────── */
 
-const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) =>
   res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
@@ -310,10 +316,23 @@ app.use("/acceso/uploads", uploadRoutes);
 app.use("/api", visitasRoutes);
 app.use("/", visitasRoutes);
 
-/* ───────────────── INCIDENTES ───────────────── */
+/* ───────────────── INCIDENTES ─────────────────
+   ✅ Endpoint principal:
+      GET  /api/incidentes?limit=500
+      POST /api/incidentes
+      PUT  /api/incidentes/:id
 
+   ✅ Aliases por compatibilidad (si tu app vieja los usa):
+      /incidentes
+      /api/rondasqr/v1/incidentes
+      /rondasqr/v1/incidentes
+*/
 app.use("/api/incidentes", incidentesRoutes);
 app.use("/incidentes", incidentesRoutes);
+
+// Alias compatibles con rutas históricas (evita meter paths absolutos dentro del router)
+app.use("/api/rondasqr/v1/incidentes", incidentesRoutes);
+app.use("/rondasqr/v1/incidentes", incidentesRoutes);
 
 /* ───────────────── Evaluaciones ───────────────── */
 
@@ -340,8 +359,9 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ─────────────────────────── 404 final ────────────────────────── */
-
-app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
+app.use((_req, res) =>
+  res.status(404).json({ ok: false, error: "Not implemented" })
+);
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 

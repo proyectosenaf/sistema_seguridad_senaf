@@ -35,18 +35,50 @@ const issuerBaseURL =
   process.env.AUTH0_ISSUER_BASE_URL ||
   (domain ? `https://${domain}` : undefined);
 
-/* JWT Validator */
-export const requireAuth =
-  process.env.DISABLE_AUTH === "1"
-    ? (_req, _res, next) => next()
+const IS_PROD = process.env.NODE_ENV === "production";
+const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
+
+/**
+ * Middleware "real" de JWT.
+ * - DISABLE_AUTH=1 => passthrough
+ * - Si falta issuer/audience:
+ *    - PROD => 500 (config incorrecta)
+ *    - DEV  => passthrough (para no romper desarrollo)
+ */
+const realJwt =
+  !issuerBaseURL || !audience
+    ? (req, res, next) => {
+        if (DISABLE_AUTH) return next();
+
+        const msg =
+          "[AUTH] Config incompleta: falta AUTH0_AUDIENCE o AUTH0_ISSUER_BASE_URL (o env.auth0.*).";
+        if (IS_PROD) return res.status(500).json({ ok: false, error: msg });
+        console.warn(msg, { issuerBaseURL, audience });
+        return next();
+      }
     : auth({
         issuerBaseURL,
         audience,
         tokenSigningAlg: "RS256",
       });
 
+/* JWT Validator */
+export const requireAuth = DISABLE_AUTH ? (_req, _res, next) => next() : realJwt;
+
 // alias útil (si en algún lado usas checkJwt)
 export { requireAuth as checkJwt };
+
+/**
+ * ✅ Optional auth:
+ * - Si NO hay Authorization Bearer => deja pasar (visitor)
+ * - Si hay Bearer => valida (o bypass si DISABLE_AUTH=1)
+ */
+export function optionalAuth(req, res, next) {
+  if (DISABLE_AUTH) return next();
+  const h = String(req.headers.authorization || "");
+  if (!h.toLowerCase().startsWith("bearer ")) return next();
+  return requireAuth(req, res, next);
+}
 
 /* Normalizador desde payload */
 export function getUserFromPayload(p = {}) {
@@ -93,9 +125,7 @@ export const attachAuthUser = attachUser;
 
 /* Admin Guard (solo para cosas ADMIN reales) */
 export function requireAdmin(req, res, next) {
-  const IS_PROD = process.env.NODE_ENV === "production";
-  const DISABLE_AUTH = process.env.DISABLE_AUTH === "1";
-  const DEV_OPEN = process.env.DEV_OPEN === "1";
+  const DEV_OPEN = String(process.env.DEV_OPEN || "0") === "1";
 
   if (!IS_PROD && (DISABLE_AUTH || DEV_OPEN)) return next();
 

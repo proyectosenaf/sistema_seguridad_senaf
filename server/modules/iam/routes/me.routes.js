@@ -1,6 +1,6 @@
 // server/modules/iam/routes/me.routes.js
 import { Router } from "express";
-import { requireAuth, attachAuthUser } from "../../../src/middleware/auth.js";
+import { optionalAuth, attachAuthUser } from "../../../src/middleware/auth.js";
 import { buildContextFrom } from "../utils/rbac.util.js";
 
 const r = Router();
@@ -8,9 +8,10 @@ const r = Router();
 /**
  * GET /api/iam/v1/me
  * Devuelve contexto del usuario actual (user/roles/permissions)
- * - Si no existe en IAM => ok:true, user:null, roles:[], permissions:[], visitor:true
+ * - Si NO viene token => visitor:true (no 401)
+ * - Si viene token => valida JWT y construye contexto real
  */
-r.get("/", requireAuth, attachAuthUser, async (req, res, next) => {
+r.get("/", optionalAuth, attachAuthUser, async (req, res, next) => {
   try {
     const ctx = await buildContextFrom(req);
 

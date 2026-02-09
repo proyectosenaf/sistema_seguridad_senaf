@@ -102,7 +102,10 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
       if (autoToken) token = autoToken;
     } catch (err) {
       if (DEBUG) {
-        console.warn("[iamApi] no se pudo obtener token desde tokenProvider:", err?.message || err);
+        console.warn(
+          "[iamApi] no se pudo obtener token desde tokenProvider:",
+          err?.message || err
+        );
       }
     }
   }
@@ -544,7 +547,8 @@ export const iamApi = {
         msg.includes("no implementado");
 
       if (notImpl) {
-        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
+        if (DEBUG)
+          console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
         await new Promise((r) => setTimeout(r, 700));
         return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
       }
