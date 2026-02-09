@@ -4,44 +4,31 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   Home,
   DoorOpen,
-  KeyRound,
   Footprints,
-  Route,
   AlertTriangle,
   UsersRound,
-  Users,
   NotebookPen,
   ClipboardList,
   ClipboardCheck,
-  Award,
-  LogOut,
   ShieldCheck,
+  LogOut,
 } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 
-/* Íconos alineados con “Secciones” (+ fallbacks) */
-const IconDoor = DoorOpen || KeyRound;
-const IconFootprints = Footprints || Route;
-const IconVisitors = UsersRound || Users;
-const IconEval = ClipboardCheck || Award;
-const IconIAM = ShieldCheck || Users;
-
 const NAV_ITEMS = [
   { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },
-  { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
 
-  // ✅ Ir directo al módulo
-  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: IconFootprints },
-
+  // Módulos
+  { to: "/accesos", label: "Control de Acceso", Icon: DoorOpen },
+  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: Footprints },
   { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
-  { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
+  { to: "/visitas", label: "Control de Visitas", Icon: UsersRound },
   { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
-  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
+  { to: "/evaluacion", label: "Evaluación", Icon: ClipboardCheck },
+  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: ShieldCheck },
 ];
 
-// ✅ Helper para marcar activo si estás dentro de subrutas
 function isPathActive(currentPath, to) {
   if (to === "/") return currentPath === "/";
   return currentPath === to || currentPath.startsWith(to + "/");
@@ -51,29 +38,25 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
   const { pathname } = useLocation();
   const active = isPathActive(pathname, to);
 
+  const base =
+    "group relative block rounded-2xl transition-colors " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--ring]";
+
+  const inactive = "hover:bg-white/40 dark:hover:bg-white/10";
+  const activeCls =
+    "bg-white/55 dark:bg-white/12 ring-1 ring-neutral-200/70 dark:ring-white/10";
+
+  const emphasizeCls = emphasizeDark ? "dark:bg-white/10 dark:ring-white/12" : "";
+
   return (
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={() =>
-        [
-          "group relative block rounded-2xl transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--ring]",
-          !active
-            ? "hover:bg-white/40 dark:hover:bg-white/10"
-            : "bg-white/55 dark:bg-white/12 ring-1 ring-neutral-200/70 dark:ring-white/10",
-          emphasizeDark && "dark:bg-white/10 dark:ring-1 dark:ring-white/12",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      }
+      className={[base, active ? activeCls : inactive, emphasizeCls].filter(Boolean).join(" ")}
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <Icon
-          className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white"
-          strokeWidth={2}
-        />
+        <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
         <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
           {label}
         </span>
@@ -89,15 +72,12 @@ export default function Sidebar({ onNavigate }) {
     onNavigate?.();
     try {
       const returnTo = `${window.location.origin}/login`;
-      logout({
-        logoutParams: { returnTo, federated: true },
-      });
+      logout({ logoutParams: { returnTo, federated: true } });
     } catch (err) {
       console.error("Error al cerrar sesión:", err);
     }
   };
 
-  // ✅ SIEMPRE sidebar global → UI uniforme en toda la app
   return (
     <div
       className={[
@@ -137,10 +117,7 @@ export default function Sidebar({ onNavigate }) {
               "hover:bg-white/70 dark:hover:bg-neutral-900/45",
             ].join(" ")}
           >
-            <LogOut
-              className="w-5 h-5 text-neutral-900 dark:text-white"
-              strokeWidth={2.5}
-            />
+            <LogOut className="w-5 h-5 text-neutral-900 dark:text-white" strokeWidth={2.5} />
             <span className="font-medium">Salir</span>
           </button>
         )}

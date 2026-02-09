@@ -13,16 +13,12 @@ import {
   X,
   ArrowLeft,
   DoorOpen,
-  KeyRound,
   Footprints,
-  Route,
   AlertTriangle,
   UsersRound,
-  Users,
   NotebookPen,
   ClipboardList,
   ClipboardCheck,
-  Award,
   ShieldCheck,
 } from "lucide-react";
 
@@ -32,38 +28,46 @@ import { socket } from "../lib/socket.js";
 // === API de notificaciones (stub seguro) ===
 import NotificationsAPI from "../lib/notificationsApi.js";
 
-const PATH_LABELS = {
-  "/": "Panel principal",
-  "/accesos": "Control de Acceso",
-  "/rondas": "Rondas de Vigilancia",
-  "/rondasqr": "Rondas de Vigilancia",
-  "/rondasqr/scan": "Rondas de Vigilancia",
-  "/incidentes": "Gestión de Incidentes",
-  "/visitas": "Control de Visitas",
-  "/bitacora": "Bitácora Digital",
-  "/supervision": "Supervisión",
-  "/evaluacion": "Evaluación",
-  "/iam": "Usuarios y Permisos",
-  "/iam/admin": "Usuarios y Permisos",
-};
+/* -------------------------
+   Helpers
+------------------------- */
+function clampMenuX(left, menuWidth, gap = 8) {
+  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+  const min = gap;
+  const max = vw - menuWidth - gap;
+  return Math.min(max, Math.max(min, left));
+}
 
-// Íconos alineados con “Secciones”
-const IconDoor = DoorOpen || KeyRound;
-const IconFootprints = Footprints || Route;
-const IconVisitors = UsersRound || Users;
-const IconEval = ClipboardCheck || Award;
-const IconIAM = ShieldCheck || Users;
+function useDismissOnOutside(open, refs, onClose) {
+  React.useEffect(() => {
+    if (!open) return;
+    function handler(e) {
+      const inside = refs.some((r) => r.current && r.current.contains(e.target));
+      if (!inside) onClose();
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, refs, onClose]);
+}
 
-const MODULES = [
-  { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
-  { to: "/rondas", label: "Rondas de Vigilancia", Icon: IconFootprints },
-  { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
-  { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
-  { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
-  { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
-  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
-];
+/* -------------------------
+   PATH labels (robusto)
+------------------------- */
+function getPathLabel(pathname) {
+  const P = String(pathname || "/");
+
+  if (P === "/") return "Panel principal";
+  if (P.startsWith("/accesos")) return "Control de Acceso";
+  if (P.startsWith("/rondasqr") || P.startsWith("/rondas")) return "Rondas de Vigilancia";
+  if (P.startsWith("/incidentes")) return "Gestión de Incidentes";
+  if (P.startsWith("/visitas")) return "Control de Visitas";
+  if (P.startsWith("/bitacora")) return "Bitácora Digital";
+  if (P.startsWith("/supervision")) return "Supervisión";
+  if (P.startsWith("/evaluacion")) return "Evaluación";
+  if (P.startsWith("/iam")) return "Usuarios y Permisos";
+
+  return P.replaceAll("/", "");
+}
 
 // ---------- Breadcrumbs ----------
 function Breadcrumbs() {
@@ -74,7 +78,7 @@ function Breadcrumbs() {
   return (
     <nav aria-label="Breadcrumb" className="hidden lg:flex items-center gap-2 text-sm">
       {crumbs.map((p, i) => {
-        const label = PATH_LABELS[p] ?? p.replaceAll("/", "");
+        const label = getPathLabel(p);
         const last = i === crumbs.length - 1;
         return (
           <span key={p} className="flex items-center gap-2">
@@ -91,25 +95,6 @@ function Breadcrumbs() {
       })}
     </nav>
   );
-}
-
-// --- utilidades popover fixed (para móvil sin cortes) ---
-function clampMenuX(left, menuWidth, gap = 8) {
-  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-  const min = gap;
-  const max = vw - menuWidth - gap;
-  return Math.min(max, Math.max(min, left));
-}
-function useDismissOnOutside(open, refs, onClose) {
-  React.useEffect(() => {
-    if (!open) return;
-    function handler(e) {
-      const inside = refs.some((r) => r.current && r.current.contains(e.target));
-      if (!inside) onClose();
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open, refs, onClose]);
 }
 
 /* =========
@@ -143,6 +128,29 @@ const fxModal =
   "bg-white/70 dark:bg-neutral-950/50 " +
   "backdrop-blur-2xl shadow-2xl p-4";
 
+/* -------------------------
+   Íconos de módulos
+------------------------- */
+const IconDoor = DoorOpen;
+const IconFootprints = Footprints;
+const IconVisitors = UsersRound;
+const IconEval = ClipboardCheck;
+const IconIAM = ShieldCheck;
+
+const MODULES = [
+  { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
+
+  // ✅ canónico: abrir directo scan
+  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: IconFootprints },
+
+  { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
+  { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
+  { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
+  { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
+  { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
+  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
+];
+
 export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
   const { user, logout } = useAuth0();
   const nav = useNavigate();
@@ -171,8 +179,10 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       : pathname.startsWith("/bitacora")
       ? "/bitacora"
       : "/incidentes";
+
     if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`);
     else nav(base);
+
     setSearchOpen(false);
   }
 
@@ -182,7 +192,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     nav("/");
   }
 
-  // -------- menú + (fixed responsive) --------
+  // -------- menú + --------
   const quickBtnRef = React.useRef(null);
   const quickMenuRef = React.useRef(null);
   const [quickOpen, setQuickOpen] = React.useState(false);
@@ -233,17 +243,20 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     try {
       const n = await NotificationsAPI.getCount();
       setCounts({ unread: Number(n || 0), alerts: 0, total: Number(n || 0) });
-    } catch {}
+    } catch {
+      // silent
+    }
   }, []);
 
   const clearCounts = React.useCallback(async () => {
     try {
       await NotificationsAPI.markAllRead();
       await fetchCounts();
-    } catch {}
+    } catch {
+      // silent
+    }
   }, [fetchCounts]);
 
-  // ✅ escuchar eventos con socket global
   React.useEffect(() => {
     fetchCounts();
     if (!socket) return;
@@ -266,23 +279,13 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   return (
     <div className="flex items-center gap-3 px-4 md:px-6 h-14">
       {/* Hamburguesa móvil */}
-      <button
-        type="button"
-        onClick={onToggleMenu}
-        className={"md:hidden " + fxBtn}
-        aria-label="Abrir menú"
-      >
+      <button type="button" onClick={onToggleMenu} className={"md:hidden " + fxBtn} aria-label="Abrir menú">
         <Menu className="w-5 h-5" />
       </button>
 
       {/* Regresar (opcional) */}
       {showBack && (
-        <button
-          type="button"
-          onClick={goBack}
-          className={fxBtnText}
-          title={back?.label || "Regresar"}
-        >
+        <button type="button" onClick={goBack} className={fxBtnText} title={back?.label || "Regresar"}>
           <ArrowLeft className="w-4 h-4" />
           <span className="hidden sm:inline">{back?.label || "Regresar"}</span>
         </button>
@@ -291,7 +294,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       <Breadcrumbs />
       <div className="flex-1" />
 
-      {/* Búsqueda rápida */}
+      {/* Búsqueda rápida (desktop) */}
       <div className="hidden md:flex items-center gap-2">
         <div className="relative">
           <input
@@ -382,10 +385,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         <button
           onClick={() =>
             logout({
-              logoutParams: {
-                returnTo: `${window.location.origin}/login`,
-                federated: true,
-              },
+              logoutParams: { returnTo: `${window.location.origin}/login`, federated: true },
             })
           }
           className="btn-outline-neon inline-flex items-center gap-1"
@@ -398,10 +398,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
 
       {/* Modal búsqueda */}
       {searchOpen && (
-        <div
-          className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35"
-          onClick={() => setSearchOpen(false)}
-        >
+        <div className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35" onClick={() => setSearchOpen(false)}>
           <div className={fxModal} onClick={(e) => e.stopPropagation()}>
             <div className="text-sm mb-2 opacity-70">Búsqueda global</div>
             <div className="relative">
@@ -427,9 +424,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 </button>
               )}
             </div>
-            <div className="text-xs opacity-60 mt-2">
-              Enter para buscar en el módulo actual · Esc para cerrar
-            </div>
+            <div className="text-xs opacity-60 mt-2">Enter para buscar en el módulo actual · Esc para cerrar</div>
           </div>
         </div>
       )}
@@ -445,13 +440,7 @@ function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPop
   return (
     <>
       <div ref={btnRef}>
-        <button
-          onClick={toggle}
-          className={fxBtn}
-          title="Abrir módulo"
-          aria-haspopup="menu"
-          aria-expanded={open}
-        >
+        <button onClick={toggle} className={fxBtn} title="Abrir módulo" aria-haspopup="menu" aria-expanded={open}>
           <Plus className="w-5 h-5" />
         </button>
       </div>
@@ -468,9 +457,7 @@ function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPop
             <button
               key={to}
               onClick={() => {
-                // 🔁 legacy /rondas → /rondasqr/scan directo
-                if (to === "/rondas") nav("/rondasqr/scan");
-                else nav(to);
+                nav(to);
                 toggle();
               }}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/40 dark:hover:bg-white/10 text-left"
@@ -496,39 +483,26 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos, fxPopove
   }, [anchorRef, setPosFn]);
 
   return (
-    <div
-      className={fxPopover + " p-2"}
-      style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
-      role="menu"
-    >
+    <div className={fxPopover + " p-2"} style={{ left: `${pos.left}px`, top: `${pos.top}px` }} role="menu">
       <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
 
       <div className="p-2 text-sm space-y-1">
         <div className="flex items-center justify-between">
           <span className="opacity-80">Sin leer</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
-            {counts.unread || 0}
-          </span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.unread || 0}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Alertas</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
-            {counts.alerts || 0}
-          </span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.alerts || 0}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Total</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
-            {counts.total || 0}
-          </span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.total || 0}</span>
         </div>
       </div>
 
       <div className="p-2 pt-1 flex gap-2">
-        <button
-          onClick={onClear}
-          className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
-        >
+        <button onClick={onClear} className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition">
           Marcar todo como leído
         </button>
         <button

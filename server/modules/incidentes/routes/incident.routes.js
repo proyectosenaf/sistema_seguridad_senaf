@@ -7,6 +7,7 @@ import {
   getAllIncidents,
   createIncident,
   updateIncident,
+  deleteIncident, // ✅ IMPORTAR
 } from "../controllers/incident.controller.js";
 
 import { requirePermission } from "../../../src/middleware/permissions.js";
@@ -45,6 +46,13 @@ router.put(
   "/:id",
   requirePermission("incidentes.edit", "*"),
   updateIncident
+);
+
+/* ✅ ELIMINAR: DELETE /api/incidentes/:id */
+router.delete(
+  "/:id",
+  requirePermission("incidentes.delete", "incidentes.edit", "*"),
+  deleteIncident
 );
 
 export default router;

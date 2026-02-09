@@ -16,6 +16,7 @@ import {
   Users,
   NotebookPen,
   ClipboardList,
+  ClipboardCheck,
   ShieldCheck,
   Home as HomeIcon,
 } from "lucide-react";
@@ -31,7 +32,7 @@ const ICONS = {
   incidentes: AlertTriangle,
   visitas: Users,
   bitacora: NotebookPen,
-  evaluacion: ClipboardList,
+  evaluacion: ClipboardCheck,
   supervision: ClipboardList,
   iam: ShieldCheck,
 };
@@ -41,15 +42,41 @@ const ICONS = {
    ========================================== */
 const PERMS_BY_SECTION = {
   accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
+
+  // ✅ rondas: permisos + rol guardia
   rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
   rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
+
   incidentes: ["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"],
   visitas: ["visitas.read", "visitas.write", "visitas.close", "*"],
   bitacora: ["bitacora.read", "bitacora.write", "bitacora.export", "*"],
   supervision: ["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"],
   evaluacion: ["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"],
-  iam: ["iam.users.manage", "iam.roles.manage", "*"],
+
+  // ✅ CORREGIDO: mismos permisos que usa tu IamAdmin/index.jsx
+  iam: ["iam.usuarios.gestionar", "iam.roles.gestionar", "*"],
 };
+
+/* ===============
+   Badge pill UI
+   =============== */
+function Badge({ value }) {
+  const v = Number(value || 0);
+  return (
+    <span
+      className={[
+        "ml-auto inline-flex items-center justify-center",
+        "min-w-[34px] h-7 px-2",
+        "rounded-xl text-sm font-extrabold",
+        "bg-slate-500/20 text-slate-200",
+        "ring-1 ring-white/10",
+      ].join(" ")}
+      aria-label={`Conteo ${v}`}
+    >
+      {v}
+    </span>
+  );
+}
 
 export default function Home() {
   const nav = useNavigate();
@@ -70,7 +97,8 @@ export default function Home() {
     if (!socket) return;
 
     const onCheck = () => {
-      // aquí puedes refrescar KPIs si quieres
+      // si quieres, aquí puedes refrescar KPIs
+      // (ej: volver a cargar incidentes, rondas, etc.)
     };
 
     socket.on("rondasqr:check", onCheck);
@@ -95,7 +123,6 @@ export default function Home() {
           },
         });
       } catch {
-        // en producción, si falla token, api igual puede servir por cookies
         return null;
       }
     });
@@ -126,7 +153,7 @@ export default function Home() {
         if (!alive) return;
         setIncStats({ total, abiertos, enProceso, resueltos, alta });
       } catch (err) {
-        console.warn("Error cargando incidentes:", err);
+        console.warn("[Home] Error cargando incidentes:", err?.message || err);
       }
     })();
 
@@ -136,26 +163,52 @@ export default function Home() {
   }, []);
 
   /* ---------------------------------------------
-     Secciones: alias rondas -> rondasqr
+     Secciones (normalización + rutas canónicas)
      --------------------------------------------- */
   const SECTIONS = React.useMemo(() => {
     const base = (NAV_SECTIONS || []).map((s) => {
-      if (s.key === "rondas") return { ...s, key: "rondasqr", path: "/rondasqr" };
-      if (s.key === "rondasqr") return { ...s, path: "/rondasqr" };
+      // Normaliza rondas a rondasqr
+      if (s.key === "rondas") {
+        return {
+          ...s,
+          key: "rondasqr",
+          // ✅ entrar directo al módulo (scan es lo más común)
+          path: "/rondasqr/scan",
+        };
+      }
+      if (s.key === "rondasqr") {
+        return { ...s, path: "/rondasqr/scan" };
+      }
       return s;
     });
 
-    // Asegura IAM
+    // Asegura IAM (por si algún menú lo omitió)
     if (!base.some((s) => s.key === "iam")) {
-      base.push({
-        key: "iam",
-        label: "Usuarios y Permisos",
-        path: "/iam/admin",
-      });
+      base.push({ key: "iam", label: "Usuarios y Permisos", path: "/iam/admin" });
     }
+
+    // Orden estable (opcional, pero ayuda consistencia visual)
+    const order = ["accesos", "evaluacion", "iam", "rondasqr", "incidentes", "visitas", "bitacora", "supervision"];
+    base.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
 
     return base;
   }, []);
+
+  /* -------------------------
+     Badges por módulo
+     ------------------------- */
+  const BADGES = React.useMemo(() => {
+    return {
+      accesos: 0,
+      evaluacion: 0,
+      iam: 0,
+      rondasqr: 0,
+      supervision: 0,
+      incidentes: incStats.total || 0,
+      visitas: 0,
+      bitacora: 0,
+    };
+  }, [incStats.total]);
 
   return (
     <div className="space-y-6 layer-content">
@@ -186,18 +239,25 @@ export default function Home() {
       {/* Secciones */}
       <div className="fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
+
+        {/* ✅ grid con tiles + badge (estilo consistente) */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SECTIONS.map((s) => {
             const key = s.key;
             const Icon = ICONS[key] || null;
             const anyOf = PERMS_BY_SECTION[key] || ["*"];
+            const badgeValue = BADGES[key] ?? 0;
 
             return (
               <IamGuard key={key} anyOf={anyOf} fallback={null}>
-                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
+                <button
+                  onClick={() => nav(s.path)}
+                  className="fx-tile text-left p-4"
+                >
                   <div className="flex items-center gap-3">
                     {Icon && <Icon className="w-5 h-5 opacity-80" />}
                     <div className="font-medium">{s.label}</div>
+                    <Badge value={badgeValue} />
                   </div>
                   <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
                 </button>

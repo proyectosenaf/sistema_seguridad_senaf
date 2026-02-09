@@ -51,32 +51,28 @@ export default function SidebarGuard({
   onCloseMobile,
   onSendAlert,
   onDumpDb,
-
-  // ✅ cuando lo usa el Sidebar global
-  asGlobal = false,
+  asGlobal = false, // se mantiene por compatibilidad
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { user, logout, isAuthenticated } = useAuth0();
 
-  // ✅ Claims Auth0 (prod)
+  // Claims Auth0
   const ROLES_CLAIM = "https://senaf.local/roles";
   const PERMS_CLAIM = "https://senaf.local/permissions";
 
   const rolesAuth0 = uniqLower(user?.roles);
   const rolesClaim = uniqLower(user?.[ROLES_CLAIM]);
-  const permsClaim = uniq(
-    (user?.[PERMS_CLAIM] || []).map((x) => String(x).trim())
-  );
+  const permsClaim = uniq((user?.[PERMS_CLAIM] || []).map((x) => String(x).trim()));
 
-  // ✅ DEV override
+  // DEV override
   const devRoles = import.meta.env.DEV ? uniqLower(readCsvLS("iamDevRoles")) : [];
   const devPerms = import.meta.env.DEV ? uniq(readCsvLS("iamDevPerms")) : [];
 
   const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...devRoles]);
   const perms = uniq([...permsClaim, ...devPerms]);
 
-  // ✅ Reglas de acceso
+  // Reglas de acceso
   const canReports =
     perms.includes("*") ||
     perms.includes("rondasqr.reports") ||
@@ -100,47 +96,19 @@ export default function SidebarGuard({
     roles.includes("admin") ||
     roles.includes("rondasqr.admin");
 
-  // ===== UI classes =====
-  // Integramos tu paleta: --accent (la pone ThemeFxPicker)
+  // UI classes
   const itemBase =
     "group relative block rounded-xl transition-colors focus-visible:outline-none " +
     "focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
-
   const itemHover = "hover:bg-black/5 dark:hover:bg-white/10";
   const itemActive =
     "bg-black/5 dark:bg-white/15 ring-1 ring-black/10 dark:ring-white/20";
 
-  // ✅ Menú del módulo
   const navItemsAll = [
-    {
-      key: "home",
-      label: "Hogar",
-      icon: Home,
-      to: "/rondasqr/scan",
-      end: true,
-      show: true,
-    },
-    {
-      key: "scan",
-      label: "Registrador Punto Control",
-      icon: QrCode,
-      to: "/rondasqr/scan/qr",
-      show: canScan,
-    },
-    {
-      key: "reports",
-      label: "Informes",
-      icon: FileBarChart,
-      to: "/rondasqr/reports",
-      show: canReports,
-    },
-    {
-      key: "admin",
-      label: "Administración de Rondas",
-      icon: Settings,
-      to: "/rondasqr/admin",
-      show: canAdmin,
-    },
+    { key: "home", label: "Hogar", icon: Home, to: "/rondasqr/scan", end: true, show: true },
+    { key: "scan", label: "Registrador Punto Control", icon: QrCode, to: "/rondasqr/scan/qr", show: canScan },
+    { key: "reports", label: "Informes", icon: FileBarChart, to: "/rondasqr/reports", show: canReports },
+    { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin", show: canAdmin },
   ];
 
   const navItems = navItemsAll.filter((x) => x.show);
@@ -174,10 +142,7 @@ export default function SidebarGuard({
           }
 
           await rondasqrApi.panic(gps || null);
-          emitLocalPanic({
-            source: "sidebar",
-            user: user?.email || user?.name || "",
-          });
+          emitLocalPanic({ source: "sidebar", user: user?.email || user?.name || "" });
 
           window.alert("🚨 Alerta de pánico enviada.");
           navigate("/rondasqr/scan");
@@ -194,8 +159,7 @@ export default function SidebarGuard({
             break;
           }
 
-          const apiBase =
-            import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+          const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
           const payload = {
             at: new Date().toISOString(),
             device: {
@@ -204,35 +168,20 @@ export default function SidebarGuard({
             },
           };
 
-          let resp;
-          try {
-            resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify(payload),
-            });
-          } catch (errFetch) {
-            window.alert(
-              "No se pudo enviar la base de datos (fetch): " + errFetch.message
-            );
-            break;
-          }
+          const resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(payload),
+          });
 
-          let data = null;
-          try {
-            data = await resp.json();
-          } catch {}
+          const data = await resp.json().catch(() => null);
 
-          if (resp.ok && data && data.ok) {
+          if (resp.ok && data?.ok) {
             window.alert(
               "📤 Base enviada.\n" +
-                `marks: ${data.saved?.marks ?? 0}, incidents: ${
-                  data.saved?.incidents ?? 0
-                }, device: ${data.saved?.device ?? 0}` +
-                (Array.isArray(data.errors) && data.errors.length
-                  ? `\ncon errores: ${data.errors.length}`
-                  : "")
+                `marks: ${data.saved?.marks ?? 0}, incidents: ${data.saved?.incidents ?? 0}, device: ${data.saved?.device ?? 0}` +
+                (Array.isArray(data.errors) && data.errors.length ? `\ncon errores: ${data.errors.length}` : "")
             );
           } else {
             window.alert(
@@ -267,7 +216,6 @@ export default function SidebarGuard({
 
   const widthClass = variant === "mobile" ? "w-72" : collapsed ? "w-16" : "w-64";
 
-  // ✅ Hacemos el panel más consistente con tu UI (y con fx ambient)
   const containerBase =
     variant === "mobile"
       ? "fixed inset-y-0 left-0 z-50 p-4 border-r overflow-y-auto overscroll-contain md:hidden " +
@@ -279,21 +227,10 @@ export default function SidebarGuard({
   const itemPadding = collapsed ? "px-3 py-3" : "px-4 py-3";
 
   return (
-    <aside
-      className={`${containerBase} ${widthClass} flex-col`}
-      aria-label="Navegación del módulo de rondas"
-    >
+    <aside className={`${containerBase} ${widthClass} flex-col`} aria-label="Navegación del módulo de rondas">
       <div className={`${collapsed ? "text-center" : ""} mb-5`}>
-        <div
-          className={`font-extrabold tracking-tight ${
-            collapsed ? "text-base" : "text-2xl"
-          }`}
-        >
-          SENAF
-        </div>
-        {!collapsed && (
-          <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>
-        )}
+        <div className={`font-extrabold tracking-tight ${collapsed ? "text-base" : "text-2xl"}`}>SENAF</div>
+        {!collapsed && <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>}
       </div>
 
       <nav className="flex-1 flex flex-col gap-1">
@@ -305,15 +242,11 @@ export default function SidebarGuard({
               to={it.to}
               end={it.end}
               onClick={variant === "mobile" ? onCloseMobile : undefined}
-              className={({ isActive }) =>
-                [itemBase, isActive ? itemActive : itemHover].join(" ")
-              }
+              className={({ isActive }) => [itemBase, isActive ? itemActive : itemHover].join(" ")}
             >
               <div className={`flex items-center gap-3 ${itemPadding}`}>
                 <Icon size={18} aria-hidden />
-                <span className={`text-[15px] leading-none ${labelClass}`}>
-                  {it.label}
-                </span>
+                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
               </div>
             </NavLink>
           );
@@ -330,9 +263,7 @@ export default function SidebarGuard({
             >
               <div className={`flex items-center gap-3 ${itemPadding}`}>
                 <Icon size={18} aria-hidden />
-                <span className={`text-[15px] leading-none ${labelClass}`}>
-                  {it.label}
-                </span>
+                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
               </div>
             </button>
           );
@@ -347,9 +278,7 @@ export default function SidebarGuard({
                        transition-colors duration-150"
           >
             <LogOut size={18} aria-hidden />
-            <span className={`text-[15px] leading-none ${labelClass}`}>
-              Aplicación Salir
-            </span>
+            <span className={`text-[15px] leading-none ${labelClass}`}>Aplicación Salir</span>
           </button>
 
           {import.meta.env.DEV && !collapsed && (

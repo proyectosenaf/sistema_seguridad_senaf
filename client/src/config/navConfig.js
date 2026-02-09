@@ -6,23 +6,29 @@ import {
   Users,
   NotebookPen,
   ClipboardList,
+  ClipboardCheck,
   ShieldCheck,
 } from "lucide-react";
 
 /**
  * Secciones visibles en Home/Sidebar y menú rápido del Topbar.
- * Si alguna vista usa solo {key,label,path} también funciona;
- * el icon es opcional y se ignora si no se usa.
+ * Importante:
+ * - key debe ser estable porque a menudo se usa para mapear badges/contadores.
+ * - path debe ser canónico (evitar aliases legacy).
  */
 export const NAV_SECTIONS = [
-  { key: "accesos",     label: "Control de Acceso",  path: "/accesos",     icon: DoorOpen },
-  { key: "rondas",      label: "Rondas de Vigilancia", path: "/rondas/admin", icon: Footprints },
-  { key: "incidentes",  label: "Gestión de Incidentes", path: "/incidentes",  icon: AlertTriangle },
-  { key: "visitas",     label: "Control de Visitas", path: "/visitas",     icon: Users },
-  { key: "bitacora",    label: "Bitácora Digital",   path: "/bitacora",    icon: NotebookPen },
-  { key: "supervision", label: "Supervisión",        path: "/supervision", icon: ClipboardList },
-  { key: "evaluacion",  label: "Evaluación",         path: "/evaluacion",  icon: ClipboardList },
+  { key: "accesos", label: "Control de Acceso", path: "/accesos", icon: DoorOpen },
 
-  // 👇 NUEVO: módulo IAM en todos los menús
-  { key: "iam",         label: "Usuarios y Permisos", path: "/iam/admin",   icon: ShieldCheck },
+  // ✅ usar path canónico de rondas
+  { key: "rondas", label: "Rondas de Vigilancia", path: "/rondasqr/admin", icon: Footprints },
+
+  { key: "incidentes", label: "Gestión de Incidentes", path: "/incidentes", icon: AlertTriangle },
+  { key: "visitas", label: "Control de Visitas", path: "/visitas", icon: Users },
+  { key: "bitacora", label: "Bitácora Digital", path: "/bitacora", icon: NotebookPen },
+
+  { key: "supervision", label: "Supervisión", path: "/supervision", icon: ClipboardList },
+  { key: "evaluacion", label: "Evaluación", path: "/evaluacion", icon: ClipboardCheck },
+
+  // ✅ IAM visible en todos los menús
+  { key: "iam", label: "Usuarios y Permisos", path: "/iam/admin", icon: ShieldCheck },
 ];

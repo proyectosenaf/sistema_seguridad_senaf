@@ -18,10 +18,129 @@ import jsPDF from "jspdf";
 import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
-// helper para mostrar bonito el nombre del guardia
+/* =========================
+   Helpers
+========================= */
 function guardLabel(g) {
   const name = g?.name || "(Sin nombre)";
   return g?.email ? `${name} — ${g.email}` : name;
+}
+
+// arma una URL absoluta para evidencias:
+// - si viene dataURL (base64) -> devuelve igual
+// - si viene "/uploads/..." -> lo pega al host
+// - si ya viene "http..." -> devuelve igual
+function toAbsoluteMediaUrl(src, apiHost) {
+  const s = String(src || "");
+  if (!s) return "";
+  if (s.startsWith("data:")) return s;
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  if (s.startsWith("/")) return `${apiHost}${s}`;
+  return `${apiHost}/${s}`;
+}
+
+// intenta deducir extensión por mime o por url
+function guessExtFromSrc(src, fallback = "bin") {
+  const s = String(src || "");
+  const m = s.match(/^data:([^;]+);base64,/);
+  if (m?.[1]) {
+    const mime = m[1];
+    const map = {
+      "image/jpeg": "jpg",
+      "image/jpg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/gif": "gif",
+      "video/webm": "webm",
+      "video/mp4": "mp4",
+      "audio/webm": "webm",
+      "audio/mpeg": "mp3",
+      "audio/mp3": "mp3",
+      "audio/wav": "wav",
+      "audio/ogg": "ogg",
+    };
+    return map[mime] || mime.split("/")[1] || fallback;
+  }
+
+  try {
+    const clean = s.split("?")[0].split("#")[0];
+    const ext = clean.split(".").pop();
+    if (ext && ext.length <= 6 && ext !== clean) return ext;
+  } catch (_) {}
+  return fallback;
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = String(dataUrl).split(",");
+  const mime =
+    meta?.match(/^data:([^;]+);base64$/)?.[1] || "application/octet-stream";
+  const bin = atob(b64 || "");
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// descarga:
+// - si es dataURL -> convierte a Blob y baja
+// - si es URL http/https -> usa <a download> y abre en nueva pestaña si el server no manda headers
+async function downloadMedia({ url, rawSrc, filename }) {
+  try {
+    const src = String(rawSrc || url || "");
+    const name = filename || `evidencia_${Date.now()}`;
+
+    if (src.startsWith("data:")) {
+      const blob = dataUrlToBlob(src);
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      return;
+    }
+
+    const a = document.createElement("a");
+    a.href = url || src;
+    a.download = name;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    console.warn("downloadMedia error:", e);
+    alert(
+      "No se pudo descargar. Intenta 'Abrir' y luego descargar desde el navegador."
+    );
+  }
+}
+
+function safeLower(v) {
+  return String(v || "").toLowerCase().trim();
+}
+
+function normalizeStatus(s) {
+  const v = safeLower(s);
+  if (v === "en proceso") return "en_proceso";
+  return v;
+}
+
+function formatStatus(s) {
+  if (s === "en_proceso") return "En proceso";
+  if (s === "resuelto") return "Resuelto";
+  return "Abierto";
+}
+
+function getIncidentDate(inc) {
+  return inc?.date || inc?.createdAt || null;
+}
+
+function parseDateValue(d) {
+  const t = new Date(d).getTime();
+  return Number.isNaN(t) ? null : t;
 }
 
 export default function IncidentesList() {
@@ -57,11 +176,100 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
 
-  // ========= BASE para assets (solo host, sin /api) =========
-  const API_HOST = useMemo(() => String(API || "").replace(/\/api$/, ""), []);
+  // ========= API_HOST (solo host, sin /api/...) =========
+  const API_HOST = useMemo(() => {
+    const raw = String(API || "").trim();
+    if (!raw) return "";
+    const idx = raw.indexOf("/api");
+    return idx >= 0 ? raw.slice(0, idx) : raw.replace(/\/$/, "");
+  }, []);
 
   // 👇 catálogo de guardias (IAM)
   const [guards, setGuards] = useState([]);
+
+  // ======= filtros (UI) =======
+  const [q, setQ] = useState("");
+  const [fStatus, setFStatus] = useState("all"); // abierto | en_proceso | resuelto | all
+  const [fPriority, setFPriority] = useState("all"); // alta | media | baja | all
+  const [dateFrom, setDateFrom] = useState(""); // YYYY-MM-DD
+  const [dateTo, setDateTo] = useState(""); // YYYY-MM-DD
+
+  function clearFilters() {
+    setQ("");
+    setFStatus("all");
+    setFPriority("all");
+    setDateFrom("");
+    setDateTo("");
+  }
+
+  // ======= modal evidencias (galería + viewer grande) =======
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceItems, setEvidenceItems] = useState([]); // [{type, src, url}]
+  const [evidenceTitle, setEvidenceTitle] = useState("");
+  const [activeEvidenceIdx, setActiveEvidenceIdx] = useState(0);
+
+  function extractPhotos(inc) {
+    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
+    if (Array.isArray(inc.photos)) return inc.photos;
+    return [];
+  }
+  function extractVideos(inc) {
+    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
+    if (Array.isArray(inc.videos)) return inc.videos;
+    return [];
+  }
+  function extractAudios(inc) {
+    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
+    if (Array.isArray(inc.audios)) return inc.audios;
+    return [];
+  }
+
+  function openEvidence(inc) {
+    const photos = extractPhotos(inc);
+    const videos = extractVideos(inc);
+    const audios = extractAudios(inc);
+
+    const items = [
+      ...photos.map((src) => ({
+        type: "image",
+        src,
+        url: toAbsoluteMediaUrl(src, API_HOST),
+      })),
+      ...videos.map((src) => ({
+        type: "video",
+        src,
+        url: toAbsoluteMediaUrl(src, API_HOST),
+      })),
+      ...audios.map((src) => ({
+        type: "audio",
+        src,
+        url: toAbsoluteMediaUrl(src, API_HOST),
+      })),
+    ];
+
+    setEvidenceItems(items);
+    setEvidenceTitle(`${inc?.type || "Incidente"} — ${inc?._id || ""}`);
+    setActiveEvidenceIdx(0);
+    setEvidenceOpen(true);
+  }
+
+  function closeEvidence() {
+    setEvidenceOpen(false);
+    setEvidenceItems([]);
+    setEvidenceTitle("");
+    setActiveEvidenceIdx(0);
+  }
+
+  function nextEvidence() {
+    setActiveEvidenceIdx((prev) =>
+      Math.min(prev + 1, evidenceItems.length - 1)
+    );
+  }
+  function prevEvidence() {
+    setActiveEvidenceIdx((prev) => Math.max(prev - 1, 0));
+  }
+
+  const activeEvidence = evidenceItems[activeEvidenceIdx];
 
   /* ================== Dictado por voz (INLINE) ================== */
   const {
@@ -74,7 +282,7 @@ export default function IncidentesList() {
     reset: sttReset,
   } = useSpeechToText({
     lang: "es-ES",
-    continuous: false, // ✅ evita repetición
+    continuous: false,
     interimResults: false,
   });
 
@@ -89,7 +297,6 @@ export default function IncidentesList() {
     const t = normalizeSpeechText(raw);
     if (!t) return;
 
-    // ✅ no insertar duplicado
     if (t === lastInsertedRef.current) {
       sttReset();
       return;
@@ -146,7 +353,7 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── cargar guardias desde IAM (con token si aplica) ─────────
+  // ───────── cargar guardias desde IAM ─────────
   useEffect(() => {
     let mounted = true;
 
@@ -166,10 +373,7 @@ export default function IncidentesList() {
               });
             }
           } catch (e) {
-            console.warn(
-              "[IncidentesList] no se pudo obtener access token para IAM:",
-              e?.message || e
-            );
+            console.warn("[IncidentesList] no token IAM:", e?.message || e);
           }
 
           const r = await iamApi.listGuards("", true, token);
@@ -190,13 +394,16 @@ export default function IncidentesList() {
           });
         }
 
-        const normalized = (items || []).map((u) => ({
-          _id: u._id,
-          name: u.name,
-          email: u.email,
-          opId: u.opId || u.sub || u.legacyId || String(u._id),
-          active: u.active !== false,
-        }));
+        const normalized = (items || [])
+          .filter(Boolean)
+          .map((u) => ({
+            _id: u._id,
+            name: u.name,
+            email: u.email,
+            opId: u.opId || u.sub || u.legacyId || String(u._id),
+            active: u.active !== false,
+          }))
+          .filter((u) => u.active !== false);
 
         if (mounted) setGuards(normalized);
       } catch (e) {
@@ -229,26 +436,14 @@ export default function IncidentesList() {
       });
     } catch (err) {
       console.error("Error actualizando incidente", err);
-      alert("No se pudo actualizar el estado");
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "No se pudo actualizar el estado";
+      alert(msg);
     }
   };
-
-  // ----- extractores -----
-  function extractPhotos(inc) {
-    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
-    if (Array.isArray(inc.photos)) return inc.photos;
-    return [];
-  }
-  function extractVideos(inc) {
-    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
-    if (Array.isArray(inc.videos)) return inc.videos;
-    return [];
-  }
-  function extractAudios(inc) {
-    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
-    if (Array.isArray(inc.audios)) return inc.audios;
-    return [];
-  }
 
   const handleFormChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -275,7 +470,6 @@ export default function IncidentesList() {
       ...prev,
       { type: isVideo ? "video" : isAudio ? "audio" : "image", src: b64 },
     ]);
-
     e.target.value = "";
   };
 
@@ -315,14 +509,9 @@ export default function IncidentesList() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.description.trim()) {
-      alert("Describa el incidente.");
-      return;
-    }
-    if (!form.reportedByGuardId) {
-      alert("Seleccione el guardia que reporta el incidente.");
-      return;
-    }
+    if (!form.description.trim()) return alert("Describa el incidente.");
+    if (!form.reportedByGuardId)
+      return alert("Seleccione el guardia que reporta el incidente.");
 
     try {
       const guard = guards.find(
@@ -345,7 +534,7 @@ export default function IncidentesList() {
         description: form.description,
         zone: form.zone,
         priority: form.priority,
-        status: form.status,
+        status: normalizeStatus(form.status),
         reportedBy: label,
         guardId: form.reportedByGuardId || undefined,
         guardName: guard?.name || undefined,
@@ -379,7 +568,12 @@ export default function IncidentesList() {
       setShowForm(false);
     } catch (err) {
       console.error("Error guardando incidente", err);
-      alert("No se pudo guardar el incidente");
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "No se pudo guardar el incidente";
+      alert(msg);
     }
   };
 
@@ -394,21 +588,15 @@ export default function IncidentesList() {
   };
 
   const startEdit = (incidente) => {
+    if (!incidente?._id) return;
+
     setShowForm(true);
     setEditingId(incidente._id);
-    clearDictation(); // ✅ para que no se mezcle con dictado anterior
+    clearDictation();
 
-    let guardId =
+    const guardId =
       incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
-    let reportedByLabel = incidente.reportedBy || "";
-
-    if (!guardId && incidente.reportedBy && guards.length) {
-      const match = guards.find((g) => guardLabel(g) === incidente.reportedBy);
-      if (match) {
-        guardId = match.opId;
-        reportedByLabel = guardLabel(match);
-      }
-    }
+    const reportedByLabel = incidente.reportedBy || "";
 
     setForm({
       type: incidente.type || "Acceso no autorizado",
@@ -417,7 +605,7 @@ export default function IncidentesList() {
       reportedByGuardId: guardId,
       zone: incidente.zone || "",
       priority: incidente.priority || "alta",
-      status: incidente.status || "abierto",
+      status: normalizeStatus(incidente.status || "abierto"),
     });
 
     const oldPhotos = extractPhotos(incidente);
@@ -446,15 +634,63 @@ export default function IncidentesList() {
       });
     } catch (err) {
       console.error("Error eliminando incidente", err);
-      alert("No se pudo eliminar el incidente");
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "No se pudo eliminar el incidente";
+      alert(msg);
     }
   };
 
+  /* =========================
+     Filtro completo + fecha
+  ========================== */
+  const filtered = useMemo(() => {
+    const text = safeLower(q);
+
+    const fromTs = dateFrom ? parseDateValue(dateFrom + "T00:00:00") : null;
+    const toTs = dateTo ? parseDateValue(dateTo + "T23:59:59") : null;
+
+    return (incidentes || []).filter((i) => {
+      // status
+      if (fStatus !== "all" && normalizeStatus(i.status) !== fStatus) return false;
+
+      // priority
+      if (fPriority !== "all" && safeLower(i.priority) !== fPriority) return false;
+
+      // date range
+      const d = getIncidentDate(i);
+      const t = d ? parseDateValue(d) : null;
+      if (fromTs != null && t != null && t < fromTs) return false;
+      if (toTs != null && t != null && t > toTs) return false;
+      // si no tiene fecha, lo dejamos pasar (o cámbialo a false si quieres excluirlos)
+
+      // text search
+      if (!text) return true;
+
+      const haystack = [
+        i.type,
+        i.description,
+        i.zone,
+        i.reportedBy,
+        i.guardName,
+        i.guardEmail,
+        i.status,
+        i.priority,
+      ]
+        .map(safeLower)
+        .join(" | ");
+
+      return haystack.includes(text);
+    });
+  }, [incidentes, q, fStatus, fPriority, dateFrom, dateTo]);
+
+  /* =========================
+     Exportadores (lo filtrado)
+  ========================== */
   const handleExportPDF = () => {
-    if (!incidentes.length) {
-      alert("No hay incidentes para exportar.");
-      return;
-    }
+    if (!filtered.length) return alert("No hay incidentes (filtrados) para exportar.");
 
     const doc = new jsPDF("l", "pt", "a4");
 
@@ -469,15 +705,10 @@ export default function IncidentesList() {
       "Estado",
     ];
 
-    const rows = incidentes.map((i, idx) => {
-      const fecha =
-        i.date || i.createdAt
-          ? new Date(i.date || i.createdAt).toLocaleString()
-          : "";
-      let estadoLegible = "Abierto";
-      if (i.status === "en_proceso") estadoLegible = "En proceso";
-      else if (i.status === "resuelto") estadoLegible = "Resuelto";
-
+    const rows = filtered.map((i, idx) => {
+      const fecha = getIncidentDate(i)
+        ? new Date(getIncidentDate(i)).toLocaleString()
+        : "";
       return [
         idx + 1,
         i.type || "",
@@ -486,12 +717,18 @@ export default function IncidentesList() {
         i.zone || "",
         fecha,
         i.priority || "",
-        estadoLegible,
+        formatStatus(normalizeStatus(i.status)),
       ];
     });
 
     doc.setFontSize(14);
     doc.text("Reporte de Incidentes", 40, 30);
+
+    // autotable seguro
+    if (typeof doc.autoTable !== "function") {
+      alert("autoTable no está disponible. Revisa la importación de jspdf-autotable.");
+      return;
+    }
 
     doc.autoTable({
       head: [columns],
@@ -501,23 +738,16 @@ export default function IncidentesList() {
       headStyles: { fillColor: [15, 27, 45] },
     });
 
-    doc.save("incidentes.pdf");
+    doc.save("incidentes_filtrados.pdf");
   };
 
   const handleExportExcel = () => {
-    if (!incidentes.length) {
-      alert("No hay incidentes para exportar.");
-      return;
-    }
+    if (!filtered.length) return alert("No hay incidentes (filtrados) para exportar.");
 
-    const data = incidentes.map((i, idx) => {
-      const fecha =
-        i.date || i.createdAt
-          ? new Date(i.date || i.createdAt).toLocaleString()
-          : "";
-      let estadoLegible = "Abierto";
-      if (i.status === "en_proceso") estadoLegible = "En proceso";
-      else if (i.status === "resuelto") estadoLegible = "Resuelto";
+    const data = filtered.map((i, idx) => {
+      const fecha = getIncidentDate(i)
+        ? new Date(getIncidentDate(i)).toLocaleString()
+        : "";
 
       return {
         "#": idx + 1,
@@ -527,23 +757,21 @@ export default function IncidentesList() {
         Zona: i.zone || "",
         Fecha: fecha,
         Prioridad: i.priority || "",
-        Estado: estadoLegible,
+        Estado: formatStatus(normalizeStatus(i.status)),
       };
     });
 
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Incidentes");
-    XLSX.writeFile(wb, "incidentes.xlsx");
+    XLSX.writeFile(wb, "incidentes_filtrados.xlsx");
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white">
-            Gestión de Incidentes
-          </h1>
+          <h1 className="text-2xl font-semibold text-white">Gestión de Incidentes</h1>
           <p className="text-sm text-gray-400">
             Registra y da seguimiento a incidentes de seguridad
           </p>
@@ -557,11 +785,7 @@ export default function IncidentesList() {
                      hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
                      transition-all duration-300"
         >
-          {showForm
-            ? "Cerrar formulario"
-            : editingId
-            ? "Editar incidente"
-            : "+ Reportar Incidente"}
+          {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
         </button>
       </div>
 
@@ -706,20 +930,38 @@ export default function IncidentesList() {
               </div>
             </div>
 
-            <div>
-              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
-                Prioridad
-              </label>
-              <select
-                name="priority"
-                value={form.priority}
-                onChange={handleFormChange}
-                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
-              >
-                <option value="alta">Alta</option>
-                <option value="media">Media</option>
-                <option value="baja">Baja</option>
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                  Prioridad
+                </label>
+                <select
+                  name="priority"
+                  value={form.priority}
+                  onChange={handleFormChange}
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                >
+                  <option value="alta">Alta</option>
+                  <option value="media">Media</option>
+                  <option value="baja">Baja</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                  Estado
+                </label>
+                <select
+                  name="status"
+                  value={form.status}
+                  onChange={handleFormChange}
+                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                >
+                  <option value="abierto">Abierto</option>
+                  <option value="en_proceso">En proceso</option>
+                  <option value="resuelto">Resuelto</option>
+                </select>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -759,10 +1001,6 @@ export default function IncidentesList() {
                 >
                   🎙️ Grabar audio
                 </button>
-
-                <p className="text-xs text-gray-500 dark:text-white/40 self-center">
-                  Puede adjuntar evidencias desde archivos o grabarlas en tiempo real.
-                </p>
               </div>
 
               <input
@@ -780,7 +1018,9 @@ export default function IncidentesList() {
                       key={idx}
                       className={
                         "relative rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40 " +
-                        (item.type === "audio" ? "w-64 h-12 p-2 flex items-center" : "w-24 h-24")
+                        (item.type === "audio"
+                          ? "w-72 h-12 p-2 flex items-center"
+                          : "w-28 h-28")
                       }
                     >
                       {item.type === "image" ? (
@@ -840,9 +1080,7 @@ export default function IncidentesList() {
             <span className="w-2 h-2 rounded-full bg-red-500" />
             Incidentes Abiertos
           </div>
-          <div className="text-3xl font-semibold text-red-400">
-            {stats.abiertos}
-          </div>
+          <div className="text-3xl font-semibold text-red-400">{stats.abiertos}</div>
         </div>
 
         <div className="rounded-lg bg-[#0f1b2d] border border-blue-400/40 p-4">
@@ -850,9 +1088,7 @@ export default function IncidentesList() {
             <span className="w-2 h-2 rounded-full bg-blue-500" />
             En Proceso
           </div>
-          <div className="text-3xl font-semibold text-blue-400">
-            {stats.enProceso}
-          </div>
+          <div className="text-3xl font-semibold text-blue-400">{stats.enProceso}</div>
         </div>
 
         <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
@@ -860,9 +1096,7 @@ export default function IncidentesList() {
             <span className="w-2 h-2 rounded-full bg-green-500" />
             Resueltos
           </div>
-          <div className="text-3xl font-semibold text-green-400">
-            {stats.resueltos}
-          </div>
+          <div className="text-3xl font-semibold text-green-400">{stats.resueltos}</div>
         </div>
 
         <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
@@ -870,15 +1104,13 @@ export default function IncidentesList() {
             <span className="w-2 h-2 rounded-full bg-yellow-400" />
             Alta prioridad
           </div>
-          <div className="text-3xl font-semibold text-yellow-300">
-            {stats.alta}
-          </div>
+          <div className="text-3xl font-semibold text-yellow-300">{stats.alta}</div>
         </div>
       </div>
 
       {/* ----- tabla ----- */}
       <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
-        <div className="flex flex-col md:flex-row justify-between items-center p-4 border-b border-white/10 gap-3 bg-black/10">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center p-4 border-b border-white/10 gap-3 bg-black/10">
           <div>
             <h2 className="font-semibold text-lg text-white">Lista de Incidentes</h2>
             <p className="text-xs text-gray-300">
@@ -886,17 +1118,66 @@ export default function IncidentesList() {
             </p>
           </div>
 
-          <div className="w-full md:w-1/3 flex flex-col gap-2">
+          <div className="w-full lg:w-[620px] flex flex-col gap-2">
             <input
               className="w-full bg-black/30 text-white text-sm rounded-md px-3 py-2 
                          border border-purple-400/40 placeholder-gray-500 
                          focus:outline-none focus:ring-2 focus:ring-purple-400/60 
                          transition-all duration-200"
-              placeholder="Buscar por tipo, descripción o zona..."
-              onChange={() => {}}
+              placeholder="Buscar (tipo, descripción, zona, reportado por, estado, prioridad...)"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
             />
 
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-wrap gap-2 items-center justify-end">
+              <select
+                value={fStatus}
+                onChange={(e) => setFStatus(e.target.value)}
+                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                title="Estado"
+              >
+                <option value="all">Estado: Todos</option>
+                <option value="abierto">Abierto</option>
+                <option value="en_proceso">En proceso</option>
+                <option value="resuelto">Resuelto</option>
+              </select>
+
+              <select
+                value={fPriority}
+                onChange={(e) => setFPriority(e.target.value)}
+                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                title="Prioridad"
+              >
+                <option value="all">Prioridad: Todas</option>
+                <option value="alta">Alta</option>
+                <option value="media">Media</option>
+                <option value="baja">Baja</option>
+              </select>
+
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                title="Desde"
+              />
+
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                title="Hasta"
+              />
+
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-xs bg-white/10 hover:bg-white/15 text-white font-medium rounded px-3 py-2 transition-all duration-200 border border-white/10"
+              >
+                Limpiar
+              </button>
+
               <button
                 type="button"
                 onClick={handleExportPDF}
@@ -912,6 +1193,11 @@ export default function IncidentesList() {
               >
                 Exportar Excel
               </button>
+            </div>
+
+            <div className="text-[11px] text-white/50 text-right">
+              Mostrando <span className="text-white/80 font-semibold">{filtered.length}</span> de{" "}
+              <span className="text-white/80 font-semibold">{incidentes.length}</span>
             </div>
           </div>
         </div>
@@ -933,18 +1219,21 @@ export default function IncidentesList() {
             </thead>
 
             <tbody>
-              {incidentes.length === 0 ? (
+              {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center text-gray-400 py-10 text-sm">
-                    No hay incidentes registrados.
+                    No hay incidentes con los filtros actuales.
                   </td>
                 </tr>
               ) : (
-                incidentes.map((i) => {
+                filtered.map((i) => {
                   const photos = extractPhotos(i);
                   const videos = extractVideos(i);
                   const audios = extractAudios(i);
                   const total = photos.length + videos.length + audios.length;
+
+                  const d = getIncidentDate(i);
+                  const fecha = d ? new Date(d).toLocaleString() : "—";
 
                   return (
                     <tr
@@ -952,18 +1241,14 @@ export default function IncidentesList() {
                       className="border-b border-white/5 hover:bg-white/5 transition-colors"
                     >
                       <td className="px-4 py-3 text-white font-medium">{i.type}</td>
-
                       <td className="px-4 py-3 text-gray-200 max-w-[320px] truncate">
                         {i.description}
                       </td>
-
                       <td className="px-4 py-3 text-gray-200">{i.reportedBy}</td>
                       <td className="px-4 py-3 text-gray-200">{i.zone}</td>
 
                       <td className="px-4 py-3 whitespace-nowrap text-gray-300 text-xs">
-                        {i.date || i.createdAt
-                          ? new Date(i.date || i.createdAt).toLocaleString()
-                          : "—"}
+                        {fecha}
                       </td>
 
                       <td className="px-4 py-3">
@@ -985,41 +1270,36 @@ export default function IncidentesList() {
                         <span
                           className={
                             "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
-                            (i.status === "resuelto"
+                            (normalizeStatus(i.status) === "resuelto"
                               ? "bg-green-600/20 text-green-300 border border-green-400/60"
-                              : i.status === "en_proceso"
+                              : normalizeStatus(i.status) === "en_proceso"
                               ? "bg-blue-600/20 text-blue-300 border border-blue-400/60"
                               : "bg-red-600/20 text-red-300 border border-red-400/60")
                           }
                         >
-                          {i.status === "en_proceso"
-                            ? "En proceso"
-                            : i.status === "resuelto"
-                            ? "Resuelto"
-                            : "Abierto"}
+                          {formatStatus(normalizeStatus(i.status))}
                         </span>
                       </td>
 
                       <td className="px-4 py-3">
                         {total ? (
-                          <div className="flex items-center gap-2">
-                            {photos.length ? (
-                              <span className="text-xs text-gray-200">📷 {photos.length}</span>
-                            ) : null}
-                            {videos.length ? (
-                              <span className="text-xs text-gray-200">🎥 {videos.length}</span>
-                            ) : null}
-                            {audios.length ? (
-                              <span className="text-xs text-gray-200">🎙️ {audios.length}</span>
-                            ) : null}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openEvidence(i)}
+                            className="inline-flex items-center gap-2 text-xs text-cyan-200 hover:text-cyan-100 underline underline-offset-4"
+                            title="Ver evidencias"
+                          >
+                            {photos.length ? <span>📷 {photos.length}</span> : null}
+                            {videos.length ? <span>🎥 {videos.length}</span> : null}
+                            {audios.length ? <span>🎙️ {audios.length}</span> : null}
+                          </button>
                         ) : (
                           <span className="text-xs text-gray-500">—</span>
                         )}
                       </td>
 
                       <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                        {i.status === "abierto" && (
+                        {normalizeStatus(i.status) === "abierto" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "en_proceso")}
                             className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
@@ -1028,7 +1308,7 @@ export default function IncidentesList() {
                           </button>
                         )}
 
-                        {i.status === "en_proceso" && (
+                        {normalizeStatus(i.status) === "en_proceso" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "resuelto")}
                             className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
@@ -1038,6 +1318,7 @@ export default function IncidentesList() {
                         )}
 
                         <button
+                          type="button"
                           onClick={() => startEdit(i)}
                           className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
@@ -1045,6 +1326,7 @@ export default function IncidentesList() {
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleDelete(i._id)}
                           className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
                         >
@@ -1069,20 +1351,199 @@ export default function IncidentesList() {
         </Link>
       </div>
 
+      {/* ===== Modal evidencias: Viewer grande + miniaturas + descargar ===== */}
+      {evidenceOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={closeEvidence}
+        >
+          <div
+            className="w-full max-w-6xl rounded-2xl border border-white/10 bg-[#07111f]/95 shadow-[0_0_80px_rgba(0,0,0,0.7)] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* header */}
+            <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">Evidencias</div>
+                <div className="text-xs text-white/60">{evidenceTitle}</div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!activeEvidence || activeEvidenceIdx === 0}
+                  onClick={prevEvidence}
+                  className={
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border " +
+                    (activeEvidenceIdx === 0
+                      ? "opacity-50 bg-white/5 border-white/10 text-white/60"
+                      : "bg-white/10 hover:bg-white/15 border-white/10 text-white")
+                  }
+                >
+                  ◀ Anterior
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    !activeEvidence || activeEvidenceIdx === evidenceItems.length - 1
+                  }
+                  onClick={nextEvidence}
+                  className={
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border " +
+                    (activeEvidenceIdx === evidenceItems.length - 1
+                      ? "opacity-50 bg-white/5 border-white/10 text-white/60"
+                      : "bg-white/10 hover:bg-white/15 border-white/10 text-white")
+                  }
+                >
+                  Siguiente ▶
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closeEvidence}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600/80 hover:bg-rose-600 border border-rose-400/30 text-white"
+                >
+                  Cerrar ✕
+                </button>
+              </div>
+            </div>
+
+            {/* content */}
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-0">
+              {/* viewer grande */}
+              <div className="p-4">
+                {!activeEvidence ? (
+                  <div className="text-white/60 text-sm">No hay evidencias.</div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-white/60">
+                        {activeEvidence.type.toUpperCase()} #{activeEvidenceIdx + 1} de{" "}
+                        {evidenceItems.length}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.open(activeEvidence.url, "_blank", "noreferrer")
+                          }
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/15 border border-white/10 text-white"
+                        >
+                          Abrir ↗
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const ext = guessExtFromSrc(
+                              activeEvidence.src,
+                              activeEvidence.type === "image"
+                                ? "png"
+                                : activeEvidence.type === "video"
+                                ? "webm"
+                                : "webm"
+                            );
+                            const filename = `evidencia_${activeEvidence.type}_${
+                              activeEvidenceIdx + 1
+                            }.${ext}`;
+                            downloadMedia({
+                              url: activeEvidence.url,
+                              rawSrc: activeEvidence.src,
+                              filename,
+                            });
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/80 hover:bg-emerald-600 border border-emerald-400/30 text-white"
+                        >
+                          Descargar ⬇
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-black/40 overflow-hidden">
+                      {activeEvidence.type === "image" ? (
+                        <img
+                          src={activeEvidence.url}
+                          alt="evidencia"
+                          className="w-full h-[70vh] object-contain bg-black/60"
+                        />
+                      ) : activeEvidence.type === "video" ? (
+                        <video
+                          src={activeEvidence.url}
+                          controls
+                          className="w-full h-[70vh] object-contain bg-black/60"
+                        />
+                      ) : (
+                        <div className="p-4">
+                          <audio src={activeEvidence.url} controls className="w-full" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* sidebar miniaturas */}
+              <div className="border-l border-white/10 bg-black/20 p-3">
+                <div className="text-xs text-white/70 mb-2">Miniaturas</div>
+                <div className="space-y-2 max-h-[78vh] overflow-auto pr-1">
+                  {evidenceItems.map((m, idx) => {
+                    const active = idx === activeEvidenceIdx;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setActiveEvidenceIdx(idx)}
+                        className={
+                          "w-full text-left rounded-xl border p-2 transition " +
+                          (active
+                            ? "border-cyan-400/60 bg-cyan-400/10"
+                            : "border-white/10 bg-white/5 hover:bg-white/10")
+                        }
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-16 h-12 rounded-lg overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center">
+                            {m.type === "image" ? (
+                              <img src={m.url} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="text-lg">{m.type === "video" ? "🎥" : "🎙️"}</div>
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-white">
+                              {m.type.toUpperCase()} #{idx + 1}
+                            </div>
+                            <div className="text-[11px] text-white/60 truncate">
+                              {String(m.src || "").startsWith("data:")
+                                ? "Capturado (base64)"
+                                : m.url}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCamera && (
         <CameraCapture
           onCapture={handleCameraCapture}
           onClose={() => setShowCamera(false)}
         />
       )}
-
       {showVideoRecorder && (
         <VideoRecorder
           onCapture={handleVideoCapture}
           onClose={() => setShowVideoRecorder(false)}
         />
       )}
-
       {showAudioRecorder && (
         <AudioRecorder
           onCapture={handleAudioCapture}
@@ -1101,4 +1562,3 @@ function fileToBase64(file) {
     r.readAsDataURL(file);
   });
 }
-

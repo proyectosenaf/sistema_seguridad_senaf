@@ -20,43 +20,27 @@ const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
-const IncidentesList = React.lazy(() =>
-  import("./pages/Incidentes/IncidentesList.jsx")
-);
-const IncidenteForm = React.lazy(() =>
-  import("./pages/Incidentes/IncidenteForm.jsx")
-);
 
-// ✅ Rondas QR
-const RondasDashboard = React.lazy(() =>
-  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
-);
-const RondasScan = React.lazy(() =>
-  import("./modules/rondasqr/guard/ScanPage.jsx")
-);
-const AdminHub = React.lazy(() =>
-  import("./modules/rondasqr/admin/AdminHub.jsx")
-);
+const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
+const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+
+// Rondas QR
+const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
+const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
+const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() =>
-  import("./pages/Supervision/Supervision.jsx")
-);
+const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
 const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Control de visitas moderno
-const VisitsPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/VisitsPage.jsx")
-);
-const AgendaPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/AgendaPage.jsx")
-);
+const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
+const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
-
 const ROOT_ADMINS = (
   import.meta.env.VITE_ROOT_ADMINS ||
   import.meta.env.VITE_SUPERADMIN_EMAIL ||
@@ -77,16 +61,12 @@ function IamGuardSuper(props) {
   return <IamGuard {...props} />;
 }
 
-/* ───────────────── LÓGICA HOME ─────────────────
-   ✅ Si el usuario está autenticado pero NO existe en IAM:
-      roles=[], perms=[] y/o visitor:true → manda a /visitas/agenda
-*/
-
+/* ───────────────── HOME PICKER ───────────────── */
 function pickHome({ roles = [], perms = [], visitor = false }) {
   const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
   const P = new Set(perms || []);
 
-  // ✅ VISITANTE: autenticado pero sin registro/roles/perms en IAM
+  // Visitante sin roles/perms
   if (visitor || (R.size === 0 && P.size === 0)) return "/visitas/agenda";
 
   if (R.has("guardia")) return "/";
@@ -97,8 +77,7 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   return "/";
 }
 
-/* ───────────────── DEBUG Auth0 (IMPRIME EN PRODUCCIÓN) ───────────────── */
-
+/* ───────────────── DEBUG Auth0 ───────────────── */
 function AuthDebug() {
   const { isAuthenticated, user, error, isLoading, getAccessTokenSilently } = useAuth0();
 
@@ -148,12 +127,12 @@ function RoleRedirectInline() {
 
   useEffect(() => {
     let alive = true;
-    if (ranRef.current) return; // evita loops por re-renders
+    if (ranRef.current) return;
     ranRef.current = true;
 
     const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
     const API_ROOT = String(RAW).replace(/\/$/, "");
-    const ME_URL = `${API_ROOT}/iam/v1/me`; // VITE_API_BASE_URL ya incluye /api
+    const ME_URL = `${API_ROOT}/iam/v1/me`;
 
     const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
     const ALLOW_DEV_HEADERS = import.meta.env.VITE_ALLOW_DEV_HEADERS === "1";
@@ -163,7 +142,6 @@ function RoleRedirectInline() {
       try {
         const res = await fetch(ME_URL, {
           method: "GET",
-          // En prod tu auth real es Bearer; no dependas de cookies
           credentials: "omit",
           headers,
         });
@@ -173,7 +151,7 @@ function RoleRedirectInline() {
         const data = (await res.json().catch(() => ({}))) || {};
         const roles = data?.roles || data?.user?.roles || [];
         const perms = data?.permissions || data?.perms || [];
-        const visitor = !!data?.visitor || (!!data?.email && !data?.user); // fallback robusto
+        const visitor = !!data?.visitor || (!!data?.email && !data?.user);
         return { roles, perms, visitor };
       } catch (e) {
         console.warn("[RoleRedirectInline] fetch /me error:", e?.message || e);
@@ -184,7 +162,6 @@ function RoleRedirectInline() {
     (async () => {
       let headers = {};
 
-      // 1) token
       if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
@@ -192,24 +169,18 @@ function RoleRedirectInline() {
           });
           if (token) headers.Authorization = `Bearer ${token}`;
         } catch (e) {
-          console.warn(
-            "[RoleRedirectInline] getAccessTokenSilently falló:",
-            e?.message || e
-          );
+          console.warn("[RoleRedirectInline] getAccessTokenSilently falló:", e?.message || e);
         }
       }
 
       let me = await fetchMe(headers);
 
-      // 2) fallback dev headers (SOLO si tú lo permites)
-      const lacksIdentity =
-        !me || (!me.roles?.length && !me.perms?.length && !me.visitor);
+      const lacksIdentity = !me || (!me.roles?.length && !me.perms?.length && !me.visitor);
 
       if (lacksIdentity && (IS_DEV || ALLOW_DEV_HEADERS)) {
         const devEmail =
           user?.email ||
-          (typeof localStorage !== "undefined" &&
-            localStorage.getItem("iamDevEmail")) ||
+          (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
           import.meta.env.VITE_DEV_IAM_EMAIL ||
           "admin@local";
 
@@ -220,7 +191,6 @@ function RoleRedirectInline() {
         });
       }
 
-      // ✅ si no hay me, cae a agenda (usuario autenticado pero backend no respondió)
       const dest = me ? pickHome(me) : "/visitas/agenda";
       if (alive) navigate(dest, { replace: true });
     })();
@@ -270,7 +240,6 @@ function AuthTokenBridge({ children }) {
 export default function App() {
   return (
     <AuthTokenBridge>
-      {/* ✅ IMPORTANTE: sí se renderiza para que imprima */}
       <AuthDebug />
 
       <LayoutUIProvider>
@@ -311,15 +280,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -331,15 +292,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "incidentes.read",
-                        "incidentes.create",
-                        "incidentes.edit",
-                        "incidentes.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
                       <IncidentesList />
                     </IamGuardSuper>
                   </Layout>
@@ -373,9 +326,8 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["iam.users.manage", "iam.roles.manage", "*"]}
-                    >
+                    {/* ✅ CORREGIDO: mismos permisos que usa IamAdmin/index.jsx */}
+                    <IamGuardSuper anyOf={["iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
                       <IamAdminPage />
                     </IamGuardSuper>
                   </Layout>
@@ -398,15 +350,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "guardia",
-                        "rondasqr.view",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "admin", "iam.usuarios.gestionar", "*"]}>
                       <RondasScan />
                     </IamGuardSuper>
                   </Layout>
@@ -419,16 +363,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "rondasqr.reports",
-                        "rondasqr.view",
-                        "rondasqr.admin",
-                        "admin",
-                        "iam.users.manage",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["rondasqr.reports", "rondasqr.view", "rondasqr.admin", "admin", "iam.usuarios.gestionar", "*"]}>
                       <RondasDashboard />
                     </IamGuardSuper>
                   </Layout>
@@ -441,9 +376,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["rondasqr.admin", "admin", "iam.users.manage", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["rondasqr.admin", "admin", "iam.usuarios.gestionar", "*"]}>
                       <AdminHub />
                     </IamGuardSuper>
                   </Layout>
@@ -463,9 +396,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
                       <Accesos />
                     </IamGuardSuper>
                   </Layout>
@@ -478,9 +409,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
                       <VisitsPageCore />
                     </IamGuardSuper>
                   </Layout>
@@ -493,9 +422,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
                       <VisitsPageCore />
                     </IamGuardSuper>
                   </Layout>
@@ -503,8 +430,7 @@ export default function App() {
               }
             />
 
-            {/* ✅ CRÍTICO: agenda debe ser accesible para VISITANTES autenticados
-               (sin permisos/roles en IAM todavía) */}
+            {/* Agenda accesible para VISITANTES autenticados */}
             <Route
               path="/visitas/agenda"
               element={
@@ -521,9 +447,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}
-                    >
+                    <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
                       <Bitacora />
                     </IamGuardSuper>
                   </Layout>
@@ -536,15 +460,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "supervision.read",
-                        "supervision.create",
-                        "supervision.edit",
-                        "supervision.reports",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
                       <Supervision />
                     </IamGuardSuper>
                   </Layout>
@@ -557,16 +473,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        "evaluacion.list",
-                        "evaluacion.create",
-                        "evaluacion.edit",
-                        "evaluacion.reports",
-                        "evaluacion.kpi",
-                        "*",
-                      ]}
-                    >
+                    <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
                       <Evaluacion />
                     </IamGuardSuper>
                   </Layout>

@@ -6,6 +6,7 @@
     "csv-stringify": "^6.6.0",
     "jspdf": "^3.0.3",
     "jspdf-autotable": "^5.0.2",
+    "mongodb": "^7.1.0",
     "nodemailer": "^7.0.10",
     "xlsx": "^0.18.5"
   }

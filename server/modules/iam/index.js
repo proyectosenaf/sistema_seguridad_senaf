@@ -25,15 +25,33 @@ const ah =
  * - basePath por defecto: "/api/iam/v1"
  * - Alias legacy: "/api/iam"
  * - Alias DO path-trim: "/iam/v1"
+ *
+ * Cambios clave:
+ * - NO usar router.options("*", ...) (rompe Express 5 / path-to-regexp). En su lugar:
+ *   - respondemos OPTIONS con router.use y método.
+ * - Orden claro de middlewares/rutas.
+ * - Import Excel: authMw + devOr + fileUpload (solo ruta).
+ * - jsonLimit parametrizable.
  */
 export async function registerIAMModule({
   app,
   basePath = "/api/iam/v1",
   enableDoAlias = true,
+  jsonLimit = "5mb",
 } = {}) {
+  if (!app) throw new Error("[IAM] registerIAMModule requiere { app }");
+
   const router = express.Router();
 
-  router.use(express.json({ limit: "5mb" }));
+  // Body JSON
+  router.use(express.json({ limit: jsonLimit }));
+
+  // Preflight defensivo (si tu app global no maneja CORS)
+  // Evita el patrón "*" que en Express 5 da error.
+  router.use((req, res, next) => {
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
 
   const authMw = makeAuthMw();
 
@@ -42,45 +60,47 @@ export async function registerIAMModule({
     res.json({ ok: true, module: "iam", version: "v1" })
   );
 
-  // ME protegido
-  router.use("/me", authMw, meRoutes);
-
-  // AUTH público para /login (lo proteges por ruta si quieres)
+  // AUTH público (si tu login requiere token, protégelo en auth.routes)
   router.use("/auth", authRoutes);
 
-  // resto protegido
+  // Rutas protegidas
+  router.use("/me", authMw, meRoutes);
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);
   router.use("/audit", authMw, auditRoutes);
 
-  // Import excel (solo dev)
+  // Import Excel (solo dev) + recomendado: dev autenticado
   router.post(
     "/import/excel",
+    authMw,
+    devOr((_req, _res, next) => next()),
     fileUpload({
       limits: { fileSize: 5 * 1024 * 1024 },
       abortOnLimit: true,
       useTempFiles: false,
     }),
-    devOr((_req, _res, next) => next()),
     ah(async (req, res) => {
-      if (!req.files || !req.files.file) {
+      const up = req?.files?.file;
+
+      if (!up) {
         return res.status(400).json({
           ok: false,
           message: "Sube un archivo Excel en el campo 'file'.",
         });
       }
 
-      const up = req.files.file;
-      const isBuffer = Buffer.isBuffer(up?.data);
-      if (!isBuffer) {
+      // express-fileupload puede dar array si vienen múltiples
+      const file = Array.isArray(up) ? up[0] : up;
+
+      if (!Buffer.isBuffer(file?.data)) {
         return res.status(400).json({
           ok: false,
           message: "No se pudo leer el archivo subido.",
         });
       }
 
-      const parsed = parseExcelRolesPermissions(up.data);
+      const parsed = parseExcelRolesPermissions(file.data);
       await seedFromParsed(parsed);
 
       return res.json({
@@ -93,7 +113,7 @@ export async function registerIAMModule({
     })
   );
 
-  // Error handler dentro del router
+  // Error handler dentro del router (al final)
   router.use((err, _req, res, _next) => {
     const status = Number(err?.status || err?.statusCode || 500);
     const code = status >= 400 && status < 600 ? status : 500;
@@ -106,12 +126,11 @@ export async function registerIAMModule({
     });
   });
 
-  // Montaje
+  // ----- Montaje -----
   app.use(basePath, router);
   app.use("/api/iam", router); // legacy alias
 
-  // ✅ Alias para DigitalOcean Path trimmed (/api -> backend)
-  // Si DO te recorta "/api", entonces /api/iam/v1/... llega como /iam/v1/...
+  // Alias para DigitalOcean path-trim (/api -> backend)
   if (enableDoAlias) {
     app.use("/iam/v1", router);
   }
@@ -121,4 +140,6 @@ export async function registerIAMModule({
       enableDoAlias ? " + alias /iam/v1" : ""
     })`
   );
+
+  return router;
 }
