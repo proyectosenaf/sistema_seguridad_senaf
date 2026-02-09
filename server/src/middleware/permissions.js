@@ -22,7 +22,6 @@ export function requirePerm(perm) {
     try {
       const ctx = await ensureIam(req);
 
-      // si no hay auth (sin email) => 401
       if (!ctx?.email) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
@@ -77,6 +76,14 @@ export function requireAnyPerm(...perms) {
       return next(e);
     }
   };
+}
+
+/**
+ * ✅ ALIAS compatible con tus routers:
+ * requirePermission("a","b","*")  -> requireAnyPerm("a","b","*")
+ */
+export function requirePermission(...perms) {
+  return requireAnyPerm(...perms);
 }
 
 /**
