@@ -1,40 +1,105 @@
-// server/modules/incidentes/routes/incident.routes.js
-import express from "express";
-import {
-  getAllIncidents,
-  createIncident,
-  updateIncident,
-  deleteIncident,
-} from "../controllers/incident.controller.js";
-import { requireAuth, requireAdmin } from "../../../src/middleware/auth.js";
-
-const router = express.Router();
+// server/src/middleware/permissions.js
 
 /**
- * IMPORTANTE:
- * En dev con DISABLE_AUTH=1, requireAuth no valida JWT (pasa),
- * pero requireAdmin debe poder leer identidad desde req.user.
- * Esa corrección se hace en server/src/middleware/auth.js (abajo).
+ * Extrae roles y permisos desde:
+ * - req.auth.payload   (Auth0 JWT)
+ * - req.user           (cuando attachUser ya corrió)
  */
+function extractIdentity(req) {
+  const NS =
+    process.env.AUTH0_NAMESPACE ||
+    process.env.IAM_ROLES_NAMESPACE ||
+    "https://senaf.local/roles";
 
-// Todas las rutas de este módulo exigen estar autenticado (o bypass si DISABLE_AUTH=1)
-router.use(requireAuth);
+  // Desde JWT Auth0
+  const jwt = req?.auth?.payload || {};
 
-// Listar incidentes (solo admin)
-router.get("/", requireAdmin, getAllIncidents);
+  let roles =
+    jwt[NS] ||
+    jwt.roles ||
+    req?.user?.roles ||
+    [];
 
-// Crear incidente (solo admin)
-router.post("/", requireAdmin, createIncident);
+  if (!Array.isArray(roles)) roles = [roles];
 
-// Actualizar incidente (solo admin)
-router.put("/:id", requireAdmin, updateIncident);
+  let permissions =
+    jwt.permissions ||
+    req?.user?.permissions ||
+    [];
 
-// Eliminar incidente (solo admin)
-router.delete("/:id", requireAdmin, deleteIncident);
+  if (!Array.isArray(permissions)) permissions = [permissions];
 
-export default router;
-// Si necesitas permisos más específicos, puedes crear middlewares adicionales similares a requireAdmin.
-// Si quieres más control, puedes hacer un middleware por rol, o por propiedad del recurso, etc.
-// Ejemplo: requireRole("admin"), o requireOwnership(model, "createdBy.sub"), etc.
-// También puedes usar algo como casl o accesscontrol para RBAC/ABAC más avanzado.
-// Más info: https://auth0.com/docs/authorization/rbac/implementation/nodejs-express   
+  return {
+    roles: roles.map(r => String(r).toLowerCase()),
+    permissions
+  };
+}
+
+/**
+ * Permite acceso si el usuario posee
+ * al menos UNO de los permisos indicados
+ */
+export function requirePermission(...allowed) {
+  return (req, res, next) => {
+    const { permissions } = extractIdentity(req);
+
+    const ok =
+      permissions.includes("*") ||
+      allowed.some(p => permissions.includes(p));
+
+    if (!ok) {
+      return res.status(403).json({
+        message: "Permiso insuficiente",
+        need: allowed,
+        have: permissions
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Permite acceso si el usuario tiene
+ * alguno de los roles indicados
+ */
+export function requireRole(...allowed) {
+  return (req, res, next) => {
+    const { roles } = extractIdentity(req);
+
+    const ok =
+      roles.includes("admin") ||
+      allowed.some(r => roles.includes(r.toLowerCase()));
+
+    if (!ok) {
+      return res.status(403).json({
+        message: "Rol insuficiente",
+        need: allowed,
+        have: roles
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Atajo para administrador
+ */
+export function requireAdmin(req, res, next) {
+  const { roles, permissions } = extractIdentity(req);
+
+  const ok =
+    roles.includes("admin") ||
+    permissions.includes("*");
+
+  if (!ok) {
+    return res.status(403).json({
+      message: "Solo administradores",
+      roles,
+      permissions
+    });
+  }
+
+  next();
+}
