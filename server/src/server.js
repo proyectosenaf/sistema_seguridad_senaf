@@ -12,7 +12,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 // Auth opcional
-import { requireAuth } from "./middleware/auth.js";
+import { requireAuth, attachUser } from "./middleware/auth.js"; // ✅ FIX: incluir attachUser
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -281,6 +281,10 @@ function optionalAuth(req, res, next) {
 }
 
 app.use(optionalAuth);
+
+// ✅ FIX CRÍTICO: después de que requireAuth llena req.auth.payload,
+// esto copia roles/perms/email a req.user, para que TODOS los middlewares funcionen.
+app.use(attachUser);
 
 /* ─────────── Bridge Auth payload → req.user (cuando hay JWT) ─────────── */
 

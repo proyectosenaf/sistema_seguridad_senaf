@@ -36,21 +36,17 @@ export const requireAuth =
 export { requireAuth as checkJwt };
 
 /* ----------------------------------------------------- */
-/* Normalizador de usuario */
+/* Normalizador desde payload */
 /* ----------------------------------------------------- */
 
-export function getUserFromReq(req) {
-  const p = req?.auth?.payload || {};
-
+export function getUserFromPayload(p = {}) {
   const roles =
     p["https://senaf/roles"] ||
     p["https://senaf.local/roles"] ||
     p.roles ||
     [];
 
-  const permissions = Array.isArray(p.permissions)
-    ? p.permissions
-    : [];
+  const permissions = Array.isArray(p.permissions) ? p.permissions : [];
 
   return {
     sub: p.sub || null,
@@ -62,11 +58,13 @@ export function getUserFromReq(req) {
 }
 
 /* ----------------------------------------------------- */
-/* Adjunta user SIEMPRE */
+/* Adjuntar usuario SIEMPRE */
 /* ----------------------------------------------------- */
 
 export function attachUser(req, _res, next) {
-  req.user = getUserFromReq(req);
+  if (req.auth?.payload) {
+    req.user = getUserFromPayload(req.auth.payload);
+  }
   next();
 }
 
@@ -78,11 +76,16 @@ export function requireAdmin(req, res, next) {
   const IS_PROD = process.env.NODE_ENV === "production";
   const DISABLE_AUTH = process.env.DISABLE_AUTH === "1";
 
-  if (!IS_PROD && DISABLE_AUTH) {
-    return next();
-  }
+  if (!IS_PROD && DISABLE_AUTH) return next();
 
-  const user = getUserFromReq(req);
+  const user = req.user;
+
+  if (!user) {
+    return res.status(401).json({
+      ok: false,
+      message: "No autenticado",
+    });
+  }
 
   const roles = user.roles.map(r => String(r).toLowerCase());
   const perms = user.permissions;
@@ -95,6 +98,6 @@ export function requireAdmin(req, res, next) {
     ok: false,
     message: "Acceso solo para administradores",
     roles,
-    perms
+    perms,
   });
 }
