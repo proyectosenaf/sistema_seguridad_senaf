@@ -10,8 +10,10 @@ export default function IncidentFormGuard({ roundId, siteId }) {
   return (
     <div className="mt-4">
       <IncidenteForm
-        stayOnFinish={true} // ✅ al terminar solo limpia
+        stayOnFinish={true}
         origin="ronda"
+        prefillZone="gps"        // ✅ autollenado de zona (GPS)
+        prefillReporter="auth0"  // ✅ autoselección del guardia por email Auth0
         extraData={{
           fromRonda: true,
           roundId: roundId || null,
