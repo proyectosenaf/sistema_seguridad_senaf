@@ -12,22 +12,42 @@ const IS_LOCALHOST =
 // 📧 Super-admin por correo (configurable por env)
 const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "").toLowerCase();
 
-// 🔓 Modo “sin restricciones” en localhost SIEMPRE.
-// Además puedes seguir usando las envs si quieres forzar bypass en otros entornos.
+// 🌐 Entorno (por convención tuya: VITE_ENV=production)
+const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production";
+
+// 🔓 Skip IAM SOLO en localhost o flags explícitos
 const SKIP_IAM =
   IS_LOCALHOST ||
   String(import.meta.env.VITE_SKIP_VERIFY || "") === "1" ||
   String(import.meta.env.VITE_DISABLE_AUTH || "") === "1" ||
   String(import.meta.env.VITE_FORCE_DEV_IAM || "") === "1";
 
+function asArr(v) {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+function normalizeRoles(v) {
+  return asArr(v)
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+}
+
+function normalizePerms(v) {
+  return asArr(v)
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+}
+
 /**
  * IamGuard
  * Props:
  * - requirePerm: string (p.ej. "iam.users.manage")
- * - anyOf: string | string[]   ✅ ahora acepta roles O permisos
- * - allOf: string | string[]   ✅ ahora acepta roles O permisos
+ * - anyOf: string | string[]   ✅ acepta roles o permisos
+ * - allOf: string | string[]   ✅ acepta roles o permisos
  * - requireRole: string | string[]
- * - fallback: ReactNode (opcional) -> contenido si NO autorizado
+ * - fallback: ReactNode
  */
 export default function IamGuard({
   requirePerm,
@@ -39,7 +59,7 @@ export default function IamGuard({
 }) {
   const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
 
-  // 👇 Estado base: si estamos en modo "skip", arrancamos como admin con wildcard
+  // En modo skip => admin + wildcard
   const [state, setState] = useState(
     SKIP_IAM
       ? { loading: false, roles: ["admin"], perms: ["*"] }
@@ -47,33 +67,40 @@ export default function IamGuard({
   );
 
   useEffect(() => {
-    // En localhost con bypass → no llamamos al backend
     if (SKIP_IAM) return;
 
     let cancel = false;
 
     (async () => {
       try {
-        let token = null;
-
-        try {
-          if (isAuthenticated) {
-            token = await getAccessTokenSilently({
-              authorizationParams: {
-                audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-              },
-            });
-          }
-        } catch (e) {
-          console.warn(
-            "[IamGuard] no se pudo obtener access token para /iam/v1/me:",
-            e?.message || e
-          );
+        // Si NO está autenticado, no intentamos /me (evita estado raro sin token)
+        if (!isAuthenticated) {
+          if (!cancel) setState({ loading: false, roles: [], perms: [] });
+          return;
         }
 
+        // Token Auth0 (obligatorio para prod)
+        let token = null;
+        try {
+          token = await getAccessTokenSilently({
+            authorizationParams: {
+              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
+            },
+          });
+        } catch (e) {
+          console.warn("[IamGuard] no se pudo obtener access token:", e?.message || e);
+        }
+
+        if (!token) {
+          // En producción: sin token = sin permisos
+          if (!cancel) setState({ loading: false, roles: [], perms: [] });
+          return;
+        }
+
+        // Consulta al backend
         const me = await iamApi.me(token);
 
-        // ----- email que viene del microservicio IAM -----
+        // email desde IAM
         const emailFromMe = String(
           me?.email ||
             me?.user?.email ||
@@ -82,10 +109,10 @@ export default function IamGuard({
             ""
         ).toLowerCase();
 
-        // ----- email desde Auth0 (fallback) -----
+        // email desde Auth0
         const emailFromAuth0 = String(user?.email || "").toLowerCase();
 
-        // ----- roles / permisos básicos que vengan del backend -----
+        // roles/perms desde backend
         let roles =
           me?.roles || me?.user?.roles || me?.data?.roles || [];
         let perms =
@@ -95,22 +122,23 @@ export default function IamGuard({
           me?.data?.permissions ||
           [];
 
-        // ⭐ Superadmin por correo → wildcard
+        roles = normalizeRoles(roles);
+        perms = normalizePerms(perms);
+
+        // Superadmin por correo => wildcard
         const isSuperadmin =
           SUPERADMIN_EMAIL &&
           (emailFromMe === SUPERADMIN_EMAIL || emailFromAuth0 === SUPERADMIN_EMAIL);
 
         if (isSuperadmin) {
-          roles = Array.from(new Set([...(roles || []), "admin"]));
-          perms = Array.from(new Set([...(perms || []), "*"]));
+          roles = Array.from(new Set([...roles, "admin"]));
+          perms = Array.from(new Set([...perms, "*"]));
         }
 
         if (!cancel) {
           setState({ loading: false, roles, perms });
         }
       } catch (e) {
-        // Si IAM falla PERO el usuario de Auth0 es el super-admin,
-        // igual le damos admin + wildcard para no dejarlo "No autorizado".
         const emailFromAuth0 = String(user?.email || "").toLowerCase();
         const isSuperadmin = SUPERADMIN_EMAIL && emailFromAuth0 === SUPERADMIN_EMAIL;
 
@@ -120,6 +148,10 @@ export default function IamGuard({
           } else {
             setState({ loading: false, roles: [], perms: [] });
           }
+        }
+
+        if (!IS_PROD) {
+          console.warn("[IamGuard] fallo /me:", e?.message || e);
         }
       }
     })();
@@ -131,18 +163,13 @@ export default function IamGuard({
 
   if (state.loading) return <div className="p-6">Cargando…</div>;
 
-  // Normalizadores
-  const asArr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
-
   // Sets normalizados
   const roleSet = new Set((state.roles || []).map((r) => String(r).toLowerCase()));
-  const permSet = new Set((state.perms || []).map((p) => String(p))); // permisos suelen ser case-sensitive
+  const permSet = new Set((state.perms || []).map((p) => String(p)));
   const permSetLower = new Set((state.perms || []).map((p) => String(p).toLowerCase()));
 
-  // Wildcard si trae "*" o si el usuario es admin
   const hasWildcard = permSet.has("*") || permSetLower.has("*") || roleSet.has("admin");
 
-  // Checks
   const hasPerm = (p) => {
     if (!p) return true;
     if (hasWildcard) return true;
@@ -157,21 +184,12 @@ export default function IamGuard({
     return A.some((x) => roleSet.has(x));
   };
 
-  /**
-   * ✅ FIX CLAVE:
-   * anyOf/allOf ahora aceptan tokens que pueden ser:
-   * - permisos (iam.users.manage, rondasqr.view, etc.)
-   * - roles (guardia, recepcion, ti, admin, etc.)
-   * Se valida contra ambos sets.
-   */
   const tokenMatches = (k) => {
     if (!k) return false;
     if (hasWildcard) return true;
 
     const raw = String(k);
     const low = raw.toLowerCase();
-
-    // match por permiso o por rol
     return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
   };
 

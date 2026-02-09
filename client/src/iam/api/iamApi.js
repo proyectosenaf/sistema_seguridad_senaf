@@ -9,6 +9,9 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
+const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production";
+
 /* ─────────── provider de token tipo attachAuth0 ─────────── */
 let tokenProvider = null;
 export function attachIamAuth(fn) {
@@ -63,10 +66,17 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   // ✅ Token real (Auth0 / JWT)
   if (token) h.Authorization = `Bearer ${token}`;
 
-  // DEV headers si:
-  // - fuerzas modo dev, o
-  // - no hay token y además estás en localhost o DISABLE_AUTH=1
-  const shouldSendDev = FORCE_DEV || (!token && (DISABLE_AUTH || isLocalhostRuntime()));
+  /**
+   * ✅ FIX SEGURIDAD:
+   * Headers DEV SOLO en:
+   * - localhost, o
+   * - entornos NO production
+   * y SOLO si NO hay token.
+   */
+  const canDevHeaders = !IS_PROD || isLocalhostRuntime();
+  const shouldSendDev =
+    canDevHeaders && !token && (FORCE_DEV || DISABLE_AUTH || isLocalhostRuntime());
+
   if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
     if (email) h["x-user-email"] = email;
