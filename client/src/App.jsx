@@ -102,9 +102,16 @@ function AuthDebug() {
       if (isAuthenticated) {
         try {
           const token = await getAccessTokenSilently({
-            authorizationParams: audience ? { audience } : {},
+            authorizationParams: {
+              ...(audience ? { audience } : {}),
+              scope: "openid profile email",
+            },
           });
+
+          // ✅ Guardar token para inspección en consola
+          window.__SENAF_TOKEN = token;
           console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
+          console.log("[AUTH0] token =>", token);
         } catch (e) {
           console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
         }
@@ -326,7 +333,6 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Layout>
-                    {/* ✅ CORREGIDO: mismos permisos que usa IamAdmin/index.jsx */}
                     <IamGuardSuper anyOf={["iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
                       <IamAdminPage />
                     </IamGuardSuper>
