@@ -1,4 +1,3 @@
-// server/modules/rondasqr/models/RqDevice.model.js
 import mongoose from "mongoose";
 
 const { Schema } = mongoose;
@@ -28,9 +27,9 @@ const LocSchema = new Schema(
 const RqDeviceSchema = new Schema(
   {
     // Identificación del guardia / usuario
-    guardId: { type: String, trim: true, index: true },
-    officerEmail: { type: String, trim: true, index: true },
-    officerSub: { type: String, trim: true, index: true },
+    guardId: { type: String, trim: true },
+    officerEmail: { type: String, trim: true },
+    officerSub: { type: String, trim: true },
 
     // Identificación del hardware
     hardwareId: { type: String, trim: true },
@@ -52,6 +51,7 @@ const RqDeviceSchema = new Schema(
       type: String,
       enum: ["online", "offline", "inactive"],
       default: "online",
+      index: true, // ok, no lo duplicamos con schema.index
     },
   },
   { timestamps: true, collection: "rq_devices" }
