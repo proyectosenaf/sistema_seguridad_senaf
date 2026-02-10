@@ -1,4 +1,3 @@
-// server/modules/rondasqr/models/RqAssignment.model.js
 import mongoose from "mongoose";
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/; // formato "HH:mm"
@@ -6,17 +5,17 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/; // formato "HH:mm"
 const RqAssignmentSchema = new mongoose.Schema(
   {
     // Fecha operativa (YYYY-MM-DD)
-    date: { type: String, required: true, index: true },
+    date: { type: String, required: true }, // <- sin index:true
 
     // Guardia asignado (Auth0 sub o identificador legado)
-    guardId: { type: String, required: true, index: true },
+    guardId: { type: String, required: true }, // <- sin index:true
 
     // Ronda y sitio
     roundId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "RqRound",
       required: true,
-      index: true,
+      index: true, // útil para queries por round
     },
     siteId: {
       type: mongoose.Schema.Types.ObjectId,
