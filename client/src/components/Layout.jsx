@@ -1,3 +1,4 @@
+// src/components/Layout.jsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
@@ -6,22 +7,27 @@ import ChatDock from "./ChatDock.jsx";
 import Footer from "./Footer.jsx";
 import { useLayoutUI } from "./layout-ui.jsx";
 
-export default function Layout({ children }) {
+// 👇 escucha global de alertas
+import GlobalPanicListener from "./GlobalPanicListener.jsx";
+
+export default function Layout({ children, hideSidebar: hideSidebarProp = false }) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
-  // Estado global opcional del layout (si no hay provider, devuelve dummies)
-  const { hideSidebar, back } = useLayoutUI();
+  // Contexto global (si existe provider)
+  const { hideSidebar: hideSidebarCtx, back } = useLayoutUI();
 
-  // Sidebar sólo en el home, a menos que algún módulo lo oculte
-  const showSidebar = pathname === "/" && !hideSidebar;
+  // ✅ merge: prop (App.jsx) + ctx (ModuleFullPage)
+  const hideSidebar = Boolean(hideSidebarProp || hideSidebarCtx);
+
+  // ✅ Sidebar en TODA la app (solo se oculta si hideSidebar=true)
+  const showSidebar = !hideSidebar;
 
   // Mostrar botón "Regresar" en cualquier ruta que no sea "/"
-  // o si un módulo definió un back custom.
   const showBack = pathname !== "/" || !!back;
 
-  // Back inteligente: usa el custom si existe; si no, evita el bucle /login
+  // Back inteligente: usa custom si existe; si no, evita bucle /login
   const smartBack = React.useCallback(() => {
     if (back?.onClick) {
       back.onClick();
@@ -37,7 +43,7 @@ export default function Layout({ children }) {
     }
   }, [back, navigate]);
 
-  // Objeto back que pasamos al Topbar (con label y handler)
+  // (Opcional) Objeto back, por si tu Topbar lo soporta
   const backProp = React.useMemo(
     () => ({
       label: back?.label || "Regresar",
@@ -47,18 +53,38 @@ export default function Layout({ children }) {
   );
 
   React.useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && setMobileOpen(false);
+    const onKey = (e) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   return (
-    <div className="min-h-[100svh] bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
+    <div className="min-h-[100svh] text-neutral-900 dark:text-neutral-100">
+      {/* Esto vive en todo el layout */}
+      <GlobalPanicListener />
+
       {/* Fondo global */}
       <div className="app-bg pointer-events-none" aria-hidden />
 
-      {/* Topbar fijo */}
-      <header className="sticky top-0 z-40 h-14 bg-white/80 dark:bg-neutral-950/80 backdrop-blur border-b border-neutral-200 dark:border-neutral-800">
+      {/* Overlay suave (da profundidad al blur y uniformiza) */}
+      <div
+        className="pointer-events-none fixed inset-0 z-0
+                   bg-white/55 dark:bg-neutral-950/55"
+        aria-hidden
+      />
+
+      {/* Topbar fijo (glass) */}
+      <header
+        className="
+          sticky top-0 z-40 h-14
+          bg-white/70 dark:bg-neutral-950/55
+          backdrop-blur-xl
+          border-b border-neutral-200/60 dark:border-white/10
+        "
+      >
+        {/* ✅ si tu Topbar no soporta `back`, no rompe. */}
         <Topbar
           onToggleMenu={() => setMobileOpen(true)}
           showBack={showBack}
@@ -66,14 +92,16 @@ export default function Layout({ children }) {
         />
       </header>
 
-      {/* Carril fijo del sidebar (md+) solo en home */}
+      {/* Sidebar fijo (md+) */}
       {showSidebar && (
         <aside
           role="complementary"
           aria-label="Barra lateral fija"
           className="
             hidden md:block fixed left-0 top-14 bottom-0 w-64 z-40
-            bg-white dark:bg-neutral-950 border-r border-white/10
+            bg-white/60 dark:bg-neutral-950/50
+            backdrop-blur-xl
+            border-r border-neutral-200/60 dark:border-white/10
             overflow-hidden
           "
         >
@@ -91,7 +119,12 @@ export default function Layout({ children }) {
       >
         <main id="app-main" className="flex-1">
           <div
-            className={`${showSidebar ? "max-w-7xl" : "max-w-[1600px]"} w-full mx-auto px-4 md:px-6 py-6 space-y-6`}
+            className={[
+              showSidebar ? "max-w-7xl" : "max-w-[1600px]",
+              "w-full mx-auto px-4 md:px-6 py-6 space-y-6",
+              // ✅ capa estándar para todo el contenido
+              "layer-content",
+            ].join(" ")}
           >
             {children}
           </div>
@@ -100,7 +133,7 @@ export default function Layout({ children }) {
         <Footer />
       </div>
 
-      {/* Drawer móvil para el sidebar */}
+      {/* Drawer móvil del sidebar */}
       <div
         className={`fixed inset-0 z-50 md:hidden transition-opacity ${
           mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
@@ -108,14 +141,16 @@ export default function Layout({ children }) {
         aria-hidden={!mobileOpen}
       >
         <div
-          className="absolute inset-0 bg-black/40"
+          className="absolute inset-0 bg-black/35"
           onClick={() => setMobileOpen(false)}
         />
         <div
           role="dialog"
           aria-modal="true"
           className={`absolute inset-y-0 left-0 w-72 max-w-[85vw]
-            bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800
+            bg-white/70 dark:bg-neutral-950/55
+            backdrop-blur-xl
+            border-r border-neutral-200/60 dark:border-white/10
             shadow-xl transition-transform duration-300
             ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
         >
@@ -123,8 +158,10 @@ export default function Layout({ children }) {
         </div>
       </div>
 
-      {/* Burbuja de chat flotante */}
-      <ChatDock />
+      {/* ✅ Burbuja de chat flotante (SIEMPRE) */}
+      <div className="fixed bottom-5 right-5 z-[9999]">
+        <ChatDock />
+      </div>
     </div>
   );
 }

@@ -4,34 +4,43 @@ const { Schema } = mongoose;
 
 const IamAuditSchema = new Schema(
   {
-    action:     { type: String, index: true },                 // create | update | delete | activate | deactivate
-    entity:     { type: String, enum: ["user","role","permission"], index: true },
-    entityId:   { type: String, index: true },
-    actorId:    { type: String, index: true, sparse: true },
-    actorEmail: { type: String, index: true },                 // usamos regex/i en GET
-    before:     Schema.Types.Mixed,
-    after:      Schema.Types.Mixed,
+    action: {
+      type: String,
+      enum: ["create", "update", "delete", "activate", "deactivate"],
+      index: true,
+      required: true,
+    },
+    entity: {
+      type: String,
+      enum: ["user", "role", "permission"],
+      index: true,
+      required: true,
+    },
+    entityId: { type: String, index: true },
+
+    actorId: { type: String, index: true, sparse: true },
+    actorEmail: { type: String, index: true, default: "" },
+
+    before: Schema.Types.Mixed,
+    after: Schema.Types.Mixed,
   },
   {
-    timestamps: true,           // createdAt / updatedAt
+    timestamps: true, // createdAt / updatedAt
     versionKey: false,
-    minimize: false,            // guarda objetos vacíos si llegan
+    minimize: false,
   }
 );
 
 /* =========================
- * Índices compuestos (consultas típicas)
+ * Índices compuestos
  * =======================*/
-IamAuditSchema.index({ createdAt: -1 });                         // ordenación por fecha
-IamAuditSchema.index({ entity: 1, action: 1, createdAt: -1 });   // filtro por entidad/acción + rango
-IamAuditSchema.index({ actorEmail: 1, createdAt: -1 });          // filtro por actor + rango
-IamAuditSchema.index({ entity: 1, createdAt: -1 });              // solo entidad + rango
-IamAuditSchema.index({ action: 1, createdAt: -1 });              // solo acción + rango
+IamAuditSchema.index({ createdAt: -1 });
+IamAuditSchema.index({ entity: 1, action: 1, createdAt: -1 });
+IamAuditSchema.index({ actorEmail: 1, createdAt: -1 });
+IamAuditSchema.index({ entity: 1, createdAt: -1 });
+IamAuditSchema.index({ action: 1, createdAt: -1 });
 
-/* =========================
- * (Opcional) TTL para limpieza automática
- * Descomenta si quisieras expirar registros viejos (ej. 180 días)
- * =======================*/
+// TTL opcional
 // IamAuditSchema.index({ createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
 
 export default mongoose.model("IamAudit", IamAuditSchema);

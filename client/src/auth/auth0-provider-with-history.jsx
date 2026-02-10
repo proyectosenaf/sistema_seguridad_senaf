@@ -1,38 +1,59 @@
+// client/src/auth/auth0-provider-with-history.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider } from "@auth0/auth0-react";
 
-const Auth0ProviderWithHistory = ({ children }) => {
+export default function Auth0ProviderWithHistory({ children }) {
   const navigate = useNavigate();
+
   const domain = import.meta.env.VITE_AUTH0_DOMAIN;
   const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
-  const audience = import.meta.env.VITE_AUTH0_AUDIENCE;
+
+  // ✅ Audience: debe coincidir EXACTO con el "Identifier" del API en Auth0
+  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+
+  // ✅ Callback fijo (tu app ya usa /callback)
+  const redirectUri =
+    import.meta.env.VITE_AUTH0_REDIRECT_URI ||
+    `${window.location.origin}/callback`;
 
   const onRedirectCallback = (appState) => {
-    navigate(appState?.returnTo || "/"); // ✅ evita bucle en /login
+    const returnTo = appState?.returnTo || "/start";
+
+    // si quieres bloquear retornos a rutas (opcional)
+    const blockedPrefixes = ["/rondasqr", "/rondas"];
+    const isBlocked = blockedPrefixes.some((p) => returnTo.startsWith(p));
+
+    navigate(isBlocked ? "/start" : returnTo, { replace: true });
   };
 
-  // ⚠️ No bloquees si falta audience
   if (!(domain && clientId)) {
-    return <div>Configurando Auth0...</div>;
+    console.error(
+      "[Auth0ProviderWithHistory] Faltan variables: VITE_AUTH0_DOMAIN o VITE_AUTH0_CLIENT_ID"
+    );
+    return <div>Configurando Auth0…</div>;
   }
 
   return (
     <Auth0Provider
       domain={domain}
       clientId={clientId}
-      authorizationParams={{
-        redirect_uri: window.location.origin, // vuelve al inicio tras login
-        ...(audience ? { audience } : {}),    // solo si existe
-        scope: "openid profile email offline_access",
-      }}
       onRedirectCallback={onRedirectCallback}
+      authorizationParams={{
+        redirect_uri: redirectUri,
+        audience, // ✅ crítico para que el token salga para TU API
+        scope: "openid profile email",
+      }}
+      /**
+       * ✅ Recomendado para SPA en producción si usarás refresh tokens.
+       * Ojo: si NO tienes habilitado "Refresh Token Rotation" en Auth0,
+       * getAccessTokenSilently puede fallar.
+       */
       cacheLocation="localstorage"
       useRefreshTokens={true}
+      useRefreshTokensFallback={true}
     >
       {children}
     </Auth0Provider>
   );
-};
-
-export default Auth0ProviderWithHistory;
+}

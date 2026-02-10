@@ -1,9 +1,10 @@
+// server/modules/rondasqr/models/RqSite.model.js
 import mongoose from "mongoose";
 
 const RqSiteSchema = new mongoose.Schema(
   {
-    name:   { type: String, required: true, trim: true, index: true },
-    code:   { type: String, trim: true, unique: true, sparse: true },
+    name: { type: String, required: true, trim: true, index: true },
+    code: { type: String, trim: true, unique: true, sparse: true },
     active: { type: Boolean, default: true },
 
     // GeoJSON opcional (SOLO si hay coords válidas)

@@ -1,27 +1,41 @@
 // client/src/iam/tools/seedIam.js
-import { permisosKeys, rolesKeys } from "../catalog/perms";
-import { iamApi } from "../api/iamApi";
+import { permisosKeys, rolesKeys } from "../catalog/perms.js";
+import { iamApi } from "../api/iamApi.js";
 
 /**
  * Crea (si faltan) las entradas de /permissions a partir del catálogo local.
  * Luego asegura que los roles existan y tengan asignadas sus permissions.
- * Puedes llamarlo desde UI o desde consola: window.seedIam()
+ * IMPORTANTE: Debes pasarle un access token válido (Auth0) con AUDIENCE correcto.
+ *
+ * Ejemplo desde React:
+ *   const token = await getAccessTokenSilently({
+ *     authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE }
+ *   });
+ *   await seedPermissionsAndRoles(token);
  */
 export async function seedPermissionsAndRoles(token) {
+  if (!token) {
+    console.warn(
+      "[seed] WARNING: seedPermissionsAndRoles llamado SIN token; la API responderá 401."
+    );
+  }
+
   // 1) PERMISOS
   let existingPerms = [];
   try {
     const res = await iamApi.listPerms(token);
     existingPerms = res?.items || res?.permissions || [];
-  } catch {
+  } catch (e) {
+    console.warn("[seed] no se pudo listar permisos:", e?.message || e);
     existingPerms = [];
   }
-  const existingSet = new Set(existingPerms.map(p => p.key || p.name).filter(Boolean));
+  const existingSet = new Set(
+    existingPerms.map((p) => p.key || p.name).filter(Boolean)
+  );
 
   // Crear los que falten
   for (const [key, label] of Object.entries(permisosKeys)) {
     if (!existingSet.has(key)) {
-      // Derivar grupo (lo que está antes del ".") y un order básico
       const group = key.split(".")[0];
       const order = 0;
       try {
@@ -39,50 +53,75 @@ export async function seedPermissionsAndRoles(token) {
   try {
     const res = await iamApi.listPerms(token);
     existingPerms = res?.items || res?.permissions || [];
-  } catch {}
+  } catch (e) {
+    console.warn("[seed] no se pudo volver a listar permisos:", e?.message || e);
+  }
 
   // 2) ROLES
   let existingRoles = [];
   try {
     const r = await iamApi.listRoles(token);
     existingRoles = r?.items || r?.roles || [];
-  } catch {
+  } catch (e) {
+    console.warn("[seed] no se pudo listar roles:", e?.message || e);
     existingRoles = [];
   }
 
-  // Indexar por nombre
   const roleIdx = new Map();
   for (const r of existingRoles) {
-    const name = r?.name || r?._id || "";
-    if (!name) continue;
-    roleIdx.set(name, r);
+    const code = r?.code || r?.key || r?.name || r?._id || "";
+    if (!code) continue;
+    roleIdx.set(code, r);
   }
 
-  // Asegurar cada rol de la plantilla
-  for (const [roleName, permList] of Object.entries(rolesKeys)) {
-    const role = roleIdx.get(roleName);
+  for (const [roleCode, permList] of Object.entries(rolesKeys)) {
+    const role = roleIdx.get(roleCode);
     const desired = Array.isArray(permList) ? permList : [];
 
     if (!role) {
-      // crear
       try {
-        await iamApi.createRole({ name: roleName, description: "", permissions: desired }, token);
-        console.log("[seed] rol creado:", roleName);
+        await iamApi.createRole(
+          {
+            code: roleCode,        // 🔹 el backend espera `code`
+            name: roleCode,
+            description: roleCode,
+            permissions: desired,
+          },
+          token
+        );
+        console.log("[seed] rol creado:", roleCode);
       } catch (e) {
-        console.warn("[seed] no se pudo crear rol", roleName, e?.message || e);
+        console.warn("[seed] no se pudo crear rol", roleCode, e?.message || e);
       }
     } else {
-      // actualizar si difiere
-      const current = Array.isArray(role.permissions || role.perms) ? (role.permissions || role.perms) : [];
+      const current = Array.isArray(
+        role.permissionKeys || role.permissions || role.perms
+      )
+        ? role.permissionKeys || role.permissions || role.perms
+        : [];
       const same =
         current.length === desired.length &&
-        current.every(k => desired.includes(k));
+        current.every((k) => desired.includes(k));
+
       if (!same) {
         try {
-          await iamApi.updateRole(role._id || role.id, { name: roleName, description: role.description || "", permissions: desired }, token);
-          console.log("[seed] rol actualizado:", roleName);
+          await iamApi.updateRole(
+            role._id || role.id,
+            {
+              code: roleCode,
+              name: roleCode,
+              description: role.description || roleCode,
+              permissions: desired,
+            },
+            token
+          );
+          console.log("[seed] rol actualizado:", roleCode);
         } catch (e) {
-          console.warn("[seed] no se pudo actualizar rol", roleName, e?.message || e);
+          console.warn(
+            "[seed] no se pudo actualizar rol",
+            roleCode,
+            e?.message || e
+          );
         }
       }
     }
@@ -94,10 +133,15 @@ export async function seedPermissionsAndRoles(token) {
 // Helper para usar desde consola del navegador si quieres:
 if (typeof window !== "undefined") {
   // eslint-disable-next-line no-console
-  console.log('➡️  Puedes ejecutar "window.seedIam()" para llenar permisos/roles desde la consola.');
-  window.seedIam = async () => {
+  console.log(
+    '➡️  Puedes ejecutar "window.seedIam(ACCESS_TOKEN)" para llenar permisos/roles.\n' +
+      "   Ejemplo: const t = 'eyJ...'; window.seedIam(t);"
+  );
+
+  // Permite pasar el token manualmente desde consola
+  window.seedIam = async (token) => {
     try {
-      await seedPermissionsAndRoles();
+      await seedPermissionsAndRoles(token);
       console.log("✅ Seeding completado");
     } catch (e) {
       console.error("❌ Seeding falló:", e);

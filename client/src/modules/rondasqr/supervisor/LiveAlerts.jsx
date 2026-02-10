@@ -1,18 +1,22 @@
-// client/src/modules/rondasqr/supervisor/LiveAlerts.jsx
+// src/modules/rondasqr/supervisor/LiveAlerts.jsx
 import React from "react";
-import { io } from "socket.io-client";
+
+// ✅ Reusar el socket global (una sola conexión para toda la app)
+import { socket } from "../../../lib/socket.js";
 
 function classNames(...xs) {
   return xs.filter(Boolean).join(" ");
 }
 
 function badgeClasses(type) {
-  switch ((type || "").toLowerCase()) {
+  const t = (type || "").toLowerCase();
+  switch (t) {
     case "panic":
       return "bg-red-600/20 text-red-200 border-red-500/40";
     case "fall":
       return "bg-orange-600/20 text-orange-200 border-orange-500/40";
     case "inactivity":
+    case "immobility":
       return "bg-yellow-600/20 text-yellow-100 border-yellow-500/40";
     case "noncompliance":
       return "bg-fuchsia-600/20 text-fuchsia-200 border-fuchsia-500/40";
@@ -28,7 +32,6 @@ export default function LiveAlerts() {
   const [status, setStatus] = React.useState("connecting"); // connecting | connected | disconnected
   const [autoScroll, setAutoScroll] = React.useState(true);
   const bottomRef = React.useRef(null);
-  const socketRef = React.useRef(null);
 
   // Auto-scroll al tope cuando llegan eventos (si está activo)
   React.useEffect(() => {
@@ -38,82 +41,73 @@ export default function LiveAlerts() {
   }, [events, autoScroll]);
 
   React.useEffect(() => {
-    const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
-
-    // Si más adelante quieres enviar token por socket:
-    // const token = localStorage.getItem("access_token") || null;
-    const socket = io(ROOT, {
-      transports: ["websocket"],       // fuerza WS (evita fallbacks raros)
-      withCredentials: true,           // respeta CORS credenciales
-      // auth: token ? { token } : undefined, // opcional si exiges JWT en sockets
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-    });
-
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      setStatus("connected");
-      // console.log("[live] connected", socket.id);
-    });
-
-    socket.on("disconnect", (reason) => {
+    // ✅ Si por alguna razón el socket global no existe, salimos sin romper
+    if (!socket) {
       setStatus("disconnected");
-      // console.warn("[live] disconnected:", reason);
-    });
+      return;
+    }
 
-    socket.on("connect_error", (err) => {
-      setStatus("disconnected");
-      // console.warn("[live] connect_error:", err?.message || err);
-    });
+    // Estado inicial según conexión real
+    setStatus(socket.connected ? "connected" : "connecting");
 
-    // Incidentes y alertas (panic, fall, inactivity, etc.)
-    socket.on("rondasqr:incident", (evt) => {
+    const onConnect = () => setStatus("connected");
+    const onDisconnect = () => setStatus("disconnected");
+    const onConnectError = () => setStatus("disconnected");
+    const onReconnecting = () => setStatus("connecting");
+
+    // Incidentes y alertas (panic, fall, immobility, etc.)
+    const onIncident = (evt) => {
       setEvents((prev) => {
-        // opcional: deduplicar por id+timestamp
-        const key = `${evt?._id || ""}-${evt?.at || ""}-${evt?.type || ""}-${evt?.text || ""}`;
-        if (prev.length && (prev[0]?.__k === key)) return prev;
-        const enriched = {
-          ...evt,
-          __k: key,
-        };
-        return [enriched, ...prev].slice(0, 200); // limita a 200
-      });
-    });
+        const key = `${evt?._id || ""}-${evt?.at || ""}-${evt?.type || ""}-${evt?.text || evt?.message || ""}`;
+        if (prev.length && prev[0]?.__k === key) return prev;
 
-    // Si quieres mostrar marcas en vivo también
-    socket.on("rondasqr:mark", (evt) => {
-      // Puedes habilitar esto si te interesa ver cada check-in:
-      // setEvents(prev => [{ ...evt, __k:`mark-${evt?.at||Date.now()}` }, ...prev].slice(0, 200));
-    });
+        const enriched = { ...evt, __k: key };
+        return [enriched, ...prev].slice(0, 200);
+      });
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+
+    // ✅ socket.io-client usa "reconnect_attempt" / "reconnect" dependiendo versión
+    socket.io?.on?.("reconnect_attempt", onReconnecting);
+    socket.io?.on?.("reconnect", onConnect);
+
+    socket.on("rondasqr:incident", onIncident);
 
     return () => {
-      // Limpieza ordenada de listeners
       try {
-        socket.off("rondasqr:incident");
-        socket.off("rondasqr:mark");
-        socket.off("connect");
-        socket.off("disconnect");
-        socket.off("connect_error");
-        socket.close();
+        socket.off("connect", onConnect);
+        socket.off("disconnect", onDisconnect);
+        socket.off("connect_error", onConnectError);
+        socket.off("rondasqr:incident", onIncident);
+
+        socket.io?.off?.("reconnect_attempt", onReconnecting);
+        socket.io?.off?.("reconnect", onConnect);
       } catch {}
-      socketRef.current = null;
     };
   }, []);
 
   const renderItem = (e, i) => {
     const when = e?.at ? new Date(e.at) : new Date();
-    const who = e?.officerName || e?.officerEmail || e?.guardName || "-";
-    const gpsOk = typeof e?.gps?.lat === "number" && typeof e?.gps?.lon === "number";
+    const who =
+      e?.officerName || e?.officerEmail || e?.guardName || e?.guardId || "-";
+
+    const gpsOk =
+      typeof e?.gps?.lat === "number" && typeof e?.gps?.lon === "number";
+
     const mapsUrl = gpsOk
       ? `https://www.google.com/maps?q=${e.gps.lat},${e.gps.lon}`
       : null;
 
+    const text = e?.text || e?.message || e?.description || "";
+
     return (
-      <li key={e.__k || i} className="bg-black/30 rounded-lg px-3 py-2 border border-white/10">
+      <li
+        key={e.__k || i}
+        className="bg-black/30 rounded-lg px-3 py-2 border border-white/10"
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span
@@ -125,8 +119,11 @@ export default function LiveAlerts() {
             >
               {(e?.type || "incident").toUpperCase()}
             </span>
-            <span className="text-xs text-white/70">{when.toLocaleString()}</span>
+            <span className="text-xs text-white/70">
+              {when.toLocaleString()}
+            </span>
           </div>
+
           <div className="text-xs text-white/70">
             {e?.siteName ? <span className="mr-2">🏢 {e.siteName}</span> : null}
             {e?.roundName ? <span className="mr-2">🔁 {e.roundName}</span> : null}
@@ -134,8 +131,10 @@ export default function LiveAlerts() {
           </div>
         </div>
 
-        {e?.text ? (
-          <div className="mt-1 text-sm leading-snug whitespace-pre-wrap">{e.text}</div>
+        {text ? (
+          <div className="mt-1 text-sm leading-snug whitespace-pre-wrap">
+            {text}
+          </div>
         ) : null}
 
         <div className="mt-1 text-xs flex flex-wrap gap-3 text-white/70">
@@ -152,9 +151,11 @@ export default function LiveAlerts() {
           ) : (
             <span>📍 sin GPS</span>
           )}
+
           {typeof e?.stepsAtAlert === "number" ? (
             <span>👟 pasos: {e.stepsAtAlert}</span>
           ) : null}
+
           {typeof e?.durationMin === "number" ? (
             <span>⏱️ inactividad: {e.durationMin} min</span>
           ) : null}
@@ -167,6 +168,7 @@ export default function LiveAlerts() {
     <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg">
       <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold text-lg">Alertas en vivo</h3>
+
         <div className="flex items-center gap-3">
           <span
             className={classNames(
@@ -208,9 +210,7 @@ export default function LiveAlerts() {
         <div className="text-sm text-white/70">Sin alertas por ahora.</div>
       ) : (
         <div className="max-h-80 overflow-auto pr-1">
-          <ul className="space-y-2">
-            {events.map(renderItem)}
-          </ul>
+          <ul className="space-y-2">{events.map(renderItem)}</ul>
           <div ref={bottomRef} />
         </div>
       )}

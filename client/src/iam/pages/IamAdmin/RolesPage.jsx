@@ -1,7 +1,6 @@
-// client/src/iam/pages/IamAdmin/RolesPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { iamApi } from "../../api/iamApi";
-import RoleCloneDialog from "./RoleCloneDialog";
+import { iamApi } from "../../api/iamApi.js";
+import RoleCloneDialog from "./RoleCloneDialog.jsx";
 import {
   PlusCircle,
   Edit3,
@@ -12,18 +11,19 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-/* ──────────────────────────────────────────────────────────────
-   Config inicial (tus roles visibles por etiqueta)
-   ────────────────────────────────────────────────────────────── */
+/* Config opcional: etiquetas amigables por código de rol */
 const DISPLAY_ROLES = [
-  { code: "admin", name: "Administrador" },
+  { code: "administrador", name: "Administrador" },
   { code: "supervisor", name: "Supervisor" },
   { code: "guardia", name: "Guardia" },
-  { code: "ti", name: "Administrador IT" },
+  { code: "administrador_it", name: "Administrador IT" },
   { code: "visita_externa", name: "Visita Externa" },
 ];
 
-const CODE_TO_LABEL = Object.fromEntries(DISPLAY_ROLES.map((r) => [r.code, r.name]));
+const CODE_TO_LABEL = Object.fromEntries(
+  DISPLAY_ROLES.map((r) => [r.code, r.name])
+);
+
 function roleLabel(r) {
   const code = String(r.code || "").toLowerCase();
   return CODE_TO_LABEL[code] || r.name || r.code || "(sin nombre)";
@@ -36,19 +36,26 @@ export default function RolesPage() {
   const [msg, setMsg] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
 
-  // Catálogo de permisos ANOTADO para el rol seleccionado (viene del backend)
-  const [permItems, setPermItems] = useState([]); // items: [{_id,key,label,group,order,selected}, ...]
+  // Catálogo de permisos ANOTADO para el rol seleccionado
+  const [permItems, setPermItems] = useState([]); // [{_id,key,label,group,order,selected}, ...]
   const [permLoading, setPermLoading] = useState(false);
 
   async function loadAll() {
     const rRoles = await iamApi.listRoles();
     const items = rRoles?.items || rRoles?.roles || [];
     setRoles(items);
+
+    // rol por defecto: administrador si existe
     const adminId =
-      items.find((x) => String(x.code || "").toLowerCase() === "admin")?._id ||
-      items.find((x) => String(x.name || "").toLowerCase() === "administrador")?._id ||
+      items.find(
+        (x) => String(x.code || "").toLowerCase() === "administrador"
+      )?._id ||
+      items.find(
+        (x) => String(x.name || "").toLowerCase() === "administrador"
+      )?._id ||
       items[0]?._id ||
       null;
+
     setRoleId((v) => v || adminId);
   }
 
@@ -59,7 +66,7 @@ export default function RolesPage() {
     }
     setPermLoading(true);
     try {
-      const r = await iamApi.listPermsForRole(id); // GET /permissions?role=<id> -> { items }
+      const r = await iamApi.listPermsForRole(id);
       const items = Array.isArray(r?.items) ? r.items : [];
       setPermItems(items);
     } catch (e) {
@@ -81,39 +88,40 @@ export default function RolesPage() {
 
   const selected = roles.find((r) => r._id === roleId) || null;
 
-  /* ──────────────────────────────────────────────────────────────
-     Resumen derivado: agrupa SOLO los permisos selected=true
-     ────────────────────────────────────────────────────────────── */
+  /* Resumen derivado: agrupa SOLO los permisos selected=true */
   const rolePermSummary = useMemo(() => {
-    if (!permItems || permItems.length === 0) return { count: 0, byGroup: [] };
+    if (!permItems || permItems.length === 0)
+      return { count: 0, byGroup: [] };
 
     const byGroupMap = new Map();
     let total = 0;
 
     for (const p of permItems) {
-      if (!p?.selected) continue; // solo los asignados al rol
+      if (!p?.selected) continue;
       const g = String(p.group || "General");
       if (!byGroupMap.has(g)) byGroupMap.set(g, []);
-      byGroupMap.get(g).push({ key: p.key, label: p.label, group: g });
+      byGroupMap.get(g).push({
+        key: p.key,
+        label: p.label,
+        group: g,
+      });
       total++;
     }
 
     const groups = [...byGroupMap.entries()]
       .map(([group, items]) => ({
         group,
-        items: items.sort((a, b) => String(a.label).localeCompare(String(b.label))),
+        items: items.sort((a, b) =>
+          String(a.label).localeCompare(String(b.label))
+        ),
       }))
       .sort((a, b) => String(a.group).localeCompare(String(b.group)));
 
     return { count: total, byGroup: groups };
   }, [permItems]);
 
-  /* ──────────────────────────────────────────────────────────────
-     Acciones
-     ────────────────────────────────────────────────────────────── */
+  /* Acciones */
   async function save() {
-    // Actualmente no editas permisos desde esta pantalla (solo ves el resumen).
-    // Dejamos el "Guardar" por si agregas inputs inline de nombre/desc más adelante.
     if (!selected) return;
     setWorking(true);
     setMsg("");
@@ -136,18 +144,21 @@ export default function RolesPage() {
     try {
       const name = window.prompt("Nombre del nuevo rol:");
       if (!name) return;
+
       const code = name
         .toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/\s+/g, "_")
         .replace(/[^a-z0-9_]/g, "");
+
       await iamApi.createRole({
         code: code || undefined,
+        key: code || undefined, // 👈 para backends que piden "key requerida"
         name,
         description: name,
-        permissions: [], // se inicia vacío
       });
+
       await loadAll();
       setMsg("Rol creado.");
       setTimeout(() => setMsg(""), 2000);
@@ -160,10 +171,16 @@ export default function RolesPage() {
   async function editRole() {
     if (!selected) return;
     try {
-      const newName = window.prompt("Nuevo nombre del rol:", selected.name || "");
+      const newName = window.prompt(
+        "Nuevo nombre del rol:",
+        selected.name || ""
+      );
       if (!newName) return;
       const newDesc =
-        window.prompt("Nueva descripción:", selected.description || newName) ?? selected.description;
+        window.prompt(
+          "Nueva descripción:",
+          selected.description || newName
+        ) ?? selected.description;
       await iamApi.updateRole(selected._id, {
         name: newName,
         description: newDesc,
@@ -180,7 +197,12 @@ export default function RolesPage() {
   async function deleteRole() {
     if (!selected) return;
     try {
-      if (!window.confirm(`¿Eliminar el rol "${selected.name || selected.code}"?`)) return;
+      if (
+        !window.confirm(
+          `¿Eliminar el rol "${selected.name || selected.code}"?`
+        )
+      )
+        return;
       await iamApi.deleteRole(selected._id);
       await loadAll();
       setMsg("Rol eliminado.");
@@ -193,22 +215,19 @@ export default function RolesPage() {
 
   const refreshPermCatalog = () => loadPermsForRole(roleId);
 
-  /* ──────────────────────────────────────────────────────────────
-     UI
-     ────────────────────────────────────────────────────────────── */
   return (
     <section className="space-y-6">
-      {/* Header bonito */}
+      {/* Header translúcido */}
       <div
         className="
-        relative overflow-hidden rounded-3xl border border-indigo-200/50 dark:border-indigo-900/40
-        bg-gradient-to-tr from-indigo-50 via-sky-50 to-teal-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900
-        shadow-sm
-      "
+          relative overflow-hidden rounded-3xl border border-indigo-400/40 dark:border-indigo-900/50
+          bg-gradient-to-tr from-indigo-50/80 via-sky-50/80 to-teal-50/80
+          dark:from-slate-950/90 dark:via-slate-950/80 dark:to-slate-900/80
+          shadow-sm backdrop-blur-xl
+        "
       >
-        {/* glow decorativo */}
-        <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-400/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-sky-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-500/25 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-sky-500/25 blur-3xl" />
         <div className="relative p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
             <div className="flex-1">
@@ -219,7 +238,7 @@ export default function RolesPage() {
                 </span>
               </div>
               <div className="mt-2">
-                <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <label className="text-xs uppercase tracking-wide text-slate-600 dark:text-slate-400">
                   Rol
                 </label>
                 <div className="relative">
@@ -228,9 +247,9 @@ export default function RolesPage() {
                     value={roleId || ""}
                     onChange={(e) => setRoleId(e.target.value)}
                     className="
-                      w-full appearance-none rounded-2xl border border-slate-200 bg-white/90 pl-3 pr-9 py-2
+                      w-full appearance-none rounded-2xl border border-slate-200/70 bg-white/80 pl-3 pr-9 py-2
                       shadow-inner outline-none transition focus:ring-2 focus:ring-indigo-400
-                      dark:bg-slate-800/80 dark:border-slate-700 dark:text-slate-100
+                      dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100
                     "
                   >
                     <option value="" disabled>
@@ -246,7 +265,7 @@ export default function RolesPage() {
               </div>
             </div>
 
-            {/* Botonera con estilo pill */}
+            {/* Botonera */}
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={createRole}
@@ -290,7 +309,7 @@ export default function RolesPage() {
           </div>
 
           {msg && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-300/60 bg-emerald-52 px-3 py-2 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-300">
+            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-400/70 bg-emerald-500/10 px-3 py-2 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-200">
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
               <span className="text-sm">{msg}</span>
             </div>
@@ -307,26 +326,32 @@ export default function RolesPage() {
           <button
             onClick={refreshPermCatalog}
             disabled={!roleId || permLoading}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:shadow disabled:opacity-60 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:shadow disabled:opacity-60 dark:bg-slate-900/80 dark:text-slate-100 dark:border-slate-700"
             title="Volver a leer permisos desde el servidor"
           >
-            <RefreshCw className={`h-4 w-4 ${permLoading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${
+                permLoading ? "animate-spin" : ""
+              }`}
+            />
             Refrescar
           </button>
         </div>
 
         <div
           className="
-          overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-sm
-          dark:bg-slate-900/60 dark:border-slate-800
-        "
+            overflow-hidden rounded-3xl border border-slate-200/70 bg-white/80 shadow-sm
+            dark:bg-slate-950/80 dark:border-slate-800 backdrop-blur-xl
+          "
         >
           {!roleId ? (
             <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
               Selecciona un rol para ver sus permisos.
             </div>
           ) : permLoading ? (
-            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">Cargando…</div>
+            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
+              Cargando…
+            </div>
           ) : rolePermSummary.count === 0 ? (
             <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
               Este rol no tiene permisos asignados.
@@ -334,17 +359,17 @@ export default function RolesPage() {
           ) : (
             <>
               {/* Encabezado suave */}
-              <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-50 to-indigo-50 dark:from-slate-900/50 dark:to-slate-900/80 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center justify_between px-5 py-3 bg-gradient-to-r from-slate-50/80 to-indigo-50/80 dark:from-slate-950/70 dark:to-slate-900/80 border-b border-slate-200/70 dark:border-slate-800">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                   Total permisos
                 </div>
-                <div className="rounded-full bg-indigo-600/90 px-3 py-1 text-xs font-bold text-white shadow">
+                <div className="rounded-full bg-indigo-600/95 px-3 py-1 text-xs font-bold text-white shadow">
                   {rolePermSummary.count}
                 </div>
               </div>
 
               {/* Lista de grupos y permisos */}
-              <div className="divide-y divide-slate-200 dark:divide-slate-800">
+              <div className="divide-y divide-slate-200/70 dark:divide-slate-800">
                 {rolePermSummary.byGroup.map((g) => (
                   <div key={g.group} className="p-4 sm:p-5">
                     <div className="mb-2 flex items-center gap-2">
@@ -365,16 +390,18 @@ export default function RolesPage() {
                         <li
                           key={it.key}
                           className="
-                            group flex items-center gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-white to-slate-50/60 px-3 py-2
+                            group flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-gradient-to-r from-white/90 to-slate-50/70 px-3 py-2
                             shadow-sm transition hover:shadow-md
-                            dark:from-slate-900/60 dark:to-slate-900/20 dark:border-slate-800
+                            dark:from-slate-950/80 dark:to-slate-900/60 dark:border-slate-800
                           "
                         >
                           <span className="inline-block h-1.5 w-1.5 flex-none rounded-full bg-indigo-500 group-hover:scale-125 transition" />
                           <span className="font-mono text-[11px] leading-5 text-slate-500 dark:text-slate-400 truncate">
                             {it.key}
                           </span>
-                          <span className="text-sm text-slate-800 dark:text-slate-200">— {it.label}</span>
+                          <span className="text-sm text-slate-800 dark:text-slate-200">
+                            — {it.label}
+                          </span>
                         </li>
                       ))}
                     </ul>

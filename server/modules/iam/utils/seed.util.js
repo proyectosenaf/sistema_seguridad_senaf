@@ -6,11 +6,12 @@ import IamRole from "../models/IamRole.model.js";
 /** Normaliza cadenas a una "clave" de permiso */
 function norm(s) {
   return String(s ?? "")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")   // quita tildes
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // quita tildes
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ".")                       // separa por puntos
-    .replace(/\.+/g, ".")                               // colapsa puntos
-    .replace(/^\.|\.$/g, "");                           // quita punto inicial/final
+    .replace(/[^a-z0-9]+/g, ".") // separa por puntos
+    .replace(/\.+/g, ".") // colapsa puntos
+    .replace(/^\.|\.$/g, ""); // quita punto inicial/final
 }
 
 /** Convierte texto a clave: "Clientes", "Editar Básico" -> "clientes.editar.basico" */
@@ -42,13 +43,13 @@ export function parseExcelRolesPermissions(buffer) {
 
   if (!rows.length) return { permissions: [], roles: {} };
 
-  const firstKey = Object.keys(rows[0])[0];     // primera columna = feature/etiqueta
+  const firstKey = Object.keys(rows[0])[0]; // primera columna = feature/etiqueta
   const roleCols = Object.keys(rows[0]).slice(1);
 
   // Catálogo de permisos y asignación por rol
   let currentModule = null;
-  const permsCatalog = [];                      // [{ key, label, group, order }]
-  const roleToKeys = Object.fromEntries(roleCols.map(r => [String(r).trim(), new Set()]));
+  const permsCatalog = []; // [{ key, label, group, order }]
+  const roleToKeys = Object.fromEntries(roleCols.map((r) => [String(r).trim(), new Set()]));
 
   let order = 0;
 
@@ -73,8 +74,9 @@ export function parseExcelRolesPermissions(buffer) {
       const roleName = String(col).trim();
       const v = String(row[col] ?? "").toLowerCase();
 
-      const checked = ["✓", "✔", "x", "si", "sí", "true", "1", "ok", "check"]
-        .some(t => v.includes(t));
+      const checked = ["✓", "✔", "x", "si", "sí", "true", "1", "ok", "check"].some((t) =>
+        v.includes(t)
+      );
       if (checked) roleToKeys[roleName].add(key);
     }
   }
@@ -94,7 +96,7 @@ export async function seedFromParsed({ permissions = [], roles = {} }) {
   for (const p of permissions) {
     const label = String(p.label ?? "").trim();
     const group = String(p.group ?? "").trim();
-    const key   = String(p.key   ?? "").trim();
+    const key = String(p.key ?? "").trim();
     if (!key || !label || !group) continue;
 
     await IamPermission.updateOne(
@@ -109,8 +111,10 @@ export async function seedFromParsed({ permissions = [], roles = {} }) {
     const roleName = String(roleNameRaw ?? "").trim();
     if (!roleName) continue;
 
-    const code = norm(roleName).replace(/\./g, "_");  // p.ej. "manager_general"
-    const permissions = (Array.isArray(keysRaw) ? keysRaw : []).map(k => String(k).trim()).filter(Boolean);
+    const code = norm(roleName).replace(/\./g, "_"); // p.ej. "manager_general"
+    const permissions = (Array.isArray(keysRaw) ? keysRaw : [])
+      .map((k) => String(k).trim())
+      .filter(Boolean);
 
     await IamRole.updateOne(
       { code },

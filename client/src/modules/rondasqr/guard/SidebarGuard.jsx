@@ -1,25 +1,134 @@
 // client/src/modules/rondasqr/guard/SidebarGuard.jsx
 import React from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
-  Home, AlertTriangle, QrCode, MessageSquare, Layers,
-  Upload, Pencil, FileBarChart, Camera, Send, Database,
-  Settings, LogOut, BookOpen, Info, Languages
+  Home,
+  AlertTriangle,
+  QrCode,
+  MessageSquare,
+  Settings,
+  LogOut,
+  FileBarChart,
 } from "lucide-react";
-import { rondasqrApi } from "../api/rondasqrApi";
+import { useAuth0 } from "@auth0/auth0-react";
+import { rondasqrApi } from "../api/rondasqrApi.js";
+import { emitLocalPanic } from "../utils/panicBus.js";
 
-/** Sidebar tipo Centor con navegación + acciones por defecto */
-export default function SidebarGuard({ onSelect }) {
+/* ==========================
+   Helpers roles/perms
+========================== */
+function toArr(v) {
+  return !v ? [] : Array.isArray(v) ? v : [v];
+}
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      toArr(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+function uniq(arr) {
+  return Array.from(new Set(toArr(arr).map((x) => String(x)).filter(Boolean)));
+}
+function readCsvLS(key) {
+  try {
+    if (typeof localStorage === "undefined") return [];
+    const raw = localStorage.getItem(key) || "";
+    return raw
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export default function SidebarGuard({
+  variant = "desktop",
+  collapsed = false,
+  onCloseMobile,
+  onSendAlert,
+  onDumpDb,
+  asGlobal = false, // se mantiene por compatibilidad
+}) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const { user, logout, isAuthenticated } = useAuth0();
 
-  // Acciones por defecto si el padre no provee onSelect
-  const defaultAction = async (key) => {
+  // Claims Auth0
+  const ROLES_CLAIM = "https://senaf.local/roles";
+  const PERMS_CLAIM = "https://senaf.local/permissions";
+
+  const rolesAuth0 = uniqLower(user?.roles);
+  const rolesClaim = uniqLower(user?.[ROLES_CLAIM]);
+  const permsClaim = uniq((user?.[PERMS_CLAIM] || []).map((x) => String(x).trim()));
+
+  // DEV override
+  const devRoles = import.meta.env.DEV ? uniqLower(readCsvLS("iamDevRoles")) : [];
+  const devPerms = import.meta.env.DEV ? uniq(readCsvLS("iamDevPerms")) : [];
+
+  const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...devRoles]);
+  const perms = uniq([...permsClaim, ...devPerms]);
+
+  // Reglas de acceso
+  const canReports =
+    perms.includes("*") ||
+    perms.includes("rondasqr.reports") ||
+    perms.includes("rondasqr.view") ||
+    roles.includes("supervisor") ||
+    roles.includes("admin") ||
+    roles.includes("rondasqr.admin");
+
+  const canAdmin =
+    perms.includes("*") ||
+    perms.includes("rondasqr.admin") ||
+    roles.includes("admin") ||
+    roles.includes("rondasqr.admin");
+
+  const canScan =
+    perms.includes("*") ||
+    roles.includes("guardia") ||
+    perms.includes("rondasqr.view") ||
+    perms.includes("rondasqr.reports") ||
+    perms.includes("rondasqr.admin") ||
+    roles.includes("admin") ||
+    roles.includes("rondasqr.admin");
+
+  // UI classes
+  const itemBase =
+    "group relative block rounded-xl transition-colors focus-visible:outline-none " +
+    "focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
+  const itemHover = "hover:bg-black/5 dark:hover:bg-white/10";
+  const itemActive =
+    "bg-black/5 dark:bg-white/15 ring-1 ring-black/10 dark:ring-white/20";
+
+  const navItemsAll = [
+    { key: "home", label: "Hogar", icon: Home, to: "/rondasqr/scan", end: true, show: true },
+    { key: "scan", label: "Registrador Punto Control", icon: QrCode, to: "/rondasqr/scan/qr", show: canScan },
+    { key: "reports", label: "Informes", icon: FileBarChart, to: "/rondasqr/reports", show: canReports },
+    { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin", show: canAdmin },
+  ];
+
+  const navItems = navItemsAll.filter((x) => x.show);
+
+  const actionItems = [
+    { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
+    { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
+  ];
+
+  async function handleAction(key) {
     try {
       switch (key) {
         case "alert": {
-          // Geolocalización si está disponible (no bloquea si falla)
+          if (typeof onSendAlert === "function") {
+            await onSendAlert();
+            break;
+          }
+
           let gps;
-          if ("geolocation" in navigator) {
+          if (typeof navigator !== "undefined" && "geolocation" in navigator) {
             await new Promise((resolve) => {
               navigator.geolocation.getCurrentPosition(
                 (pos) => {
@@ -31,117 +140,157 @@ export default function SidebarGuard({ onSelect }) {
               );
             });
           }
-          await rondasqrApi.panic(gps);
+
+          await rondasqrApi.panic(gps || null);
+          emitLocalPanic({ source: "sidebar", user: user?.email || user?.name || "" });
+
           window.alert("🚨 Alerta de pánico enviada.");
+          navigate("/rondasqr/scan");
           break;
         }
+
         case "msg":
-          navigate("/incidentes/nuevo");
+          navigate("/incidentes/nuevo?from=ronda");
           break;
 
-        case "photo":
-          window.alert("📷 Enviar foto: pendiente de implementar en esta vista.");
-          break;
+        case "dumpdb": {
+          if (typeof onDumpDb === "function") {
+            await onDumpDb();
+            break;
+          }
 
-        case "tx":
-          window.alert("⬆️ Transmitir Rondas: pendiente de implementar.");
-          break;
+          const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+          const payload = {
+            at: new Date().toISOString(),
+            device: {
+              ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+              online: typeof navigator !== "undefined" ? navigator.onLine : false,
+            },
+          };
 
-        case "dumpdb":
-          window.alert("💾 Enviar base de datos: pendiente de implementar.");
-          break;
+          const resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(payload),
+          });
 
-        case "config":
-          window.alert("⚙️ Configurar: pendiente de implementar.");
-          break;
+          const data = await resp.json().catch(() => null);
 
-        case "manuals":
-          window.open("https://example.com/manual.pdf", "_blank", "noopener,noreferrer");
+          if (resp.ok && data?.ok) {
+            window.alert(
+              "📤 Base enviada.\n" +
+                `marks: ${data.saved?.marks ?? 0}, incidents: ${data.saved?.incidents ?? 0}, device: ${data.saved?.device ?? 0}` +
+                (Array.isArray(data.errors) && data.errors.length ? `\ncon errores: ${data.errors.length}` : "")
+            );
+          } else {
+            window.alert(
+              "No se pudo enviar la base de datos.\n" +
+                `HTTP ${resp.status} ${resp.statusText}\n` +
+                (data ? "Respuesta: " + JSON.stringify(data) : "")
+            );
+          }
           break;
+        }
 
-        case "about":
-          window.alert("ℹ️ SENAF · Módulo Rondas QR");
+        case "logout": {
+          if (isAuthenticated && typeof logout === "function") {
+            const returnTo = `${window.location.origin}/login`;
+            logout({ logoutParams: { returnTo, federated: true } });
+          } else {
+            navigate("/login");
+          }
           break;
-
-        case "lang":
-          window.alert("🌐 Cambio de idioma: pendiente de implementar.");
-          break;
-
-        case "logout":
-          navigate("/login");
-          break;
+        }
 
         default:
           break;
       }
+
+      if (variant === "mobile" && onCloseMobile) onCloseMobile();
     } catch (err) {
-      console.error("[Sidebar defaultAction]", err);
-      window.alert("Ocurrió un error ejecutando la acción.");
+      console.error("[SidebarGuard] error en acción", err);
+      window.alert("Ocurrió un error: " + (err?.message || String(err)));
     }
-  };
+  }
 
-  // Si el padre no pasa onSelect usamos defaultAction
-  const emit = (key) => (onSelect ? onSelect(key) : defaultAction(key));
+  const widthClass = variant === "mobile" ? "w-72" : collapsed ? "w-16" : "w-64";
 
-  // Ítems de navegación directa (usan <NavLink />)
-  const navItems = [
-    { key: "home",   label: "Hogar",                        icon: <Home size={18} />,       to: "/rondasqr/scan",  end: true },
-    { key: "scan",   label: "Registrador Punto Control",    icon: <QrCode size={18} />,     to: "/rondasqr/scan" },
-    { key: "reports",label: "Informes",                     icon: <FileBarChart size={18} />, to: "/rondasqr/panel" },
-    { key: "create", label: "Crear rondas",                 icon: <Layers size={18} />,     to: "/rondasqr/admin" },
-    { key: "load",   label: "Cargar rondas",                icon: <Upload size={18} />,     to: "/rondasqr/admin" },
-    { key: "edit",   label: "Editar Rondas",                icon: <Pencil size={18} />,     to: "/rondasqr/admin" },
-    { key: "inicio", label: "Inicio",                       icon: <Home size={18} />,       to: "/start" },
-  ];
+  const containerBase =
+    variant === "mobile"
+      ? "fixed inset-y-0 left-0 z-50 p-4 border-r overflow-y-auto overscroll-contain md:hidden " +
+        "backdrop-blur bg-white/80 dark:bg-black/40 border-black/10 dark:border-white/10 text-slate-900 dark:text-white"
+      : "flex p-4 border-r overflow-y-auto overscroll-contain " +
+        "backdrop-blur bg-white/60 dark:bg-black/20 border-black/10 dark:border-white/10 text-slate-900 dark:text-white";
 
-  // Ítems que ejecutan acciones (botones)
-  const actionItems = [
-    { key: "alert",   label: "Enviar Alerta",      icon: <AlertTriangle size={18} /> },
-    { key: "msg",     label: "Mensaje Incidente",  icon: <MessageSquare size={18} /> },
-    { key: "photo",   label: "Enviar foto",        icon: <Camera size={18} /> },
-    { key: "tx",      label: "Transmitir Rondas",  icon: <Send size={18} /> },
-    { key: "dumpdb",  label: "Enviar base de datos", icon: <Database size={18} /> },
-    { key: "config",  label: "Configurar",         icon: <Settings size={18} /> },
-    { key: "manuals", label: "Manuales",           icon: <BookOpen size={18} /> },
-    { key: "about",   label: "Acerca",             icon: <Info size={18} /> },
-    { key: "lang",    label: "Idioma",             icon: <Languages size={18} /> },
-    { key: "logout",  label: "Salir App",          icon: <LogOut size={18} /> },
-  ];
+  const labelClass = collapsed ? "hidden" : "block";
+  const itemPadding = collapsed ? "px-3 py-3" : "px-4 py-3";
 
   return (
-    <aside className="w-64 bg-[#0b4c7c] text-white flex flex-col py-4 rounded-r-2xl shadow-2xl">
-      <div className="px-5 mb-4">
-        <div className="text-2xl font-extrabold tracking-wide">CENTRO</div>
-        <div className="text-xs opacity-80">Visión del Guardia</div>
+    <aside className={`${containerBase} ${widthClass} flex-col`} aria-label="Navegación del módulo de rondas">
+      <div className={`${collapsed ? "text-center" : ""} mb-5`}>
+        <div className={`font-extrabold tracking-tight ${collapsed ? "text-base" : "text-2xl"}`}>SENAF</div>
+        {!collapsed && <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>}
       </div>
 
-      <nav className="flex-1 overflow-auto">
-        {navItems.map((it) => (
-          <NavLink
-            key={it.key}
-            to={it.to}
-            end={it.end}
-            className={({ isActive }) =>
-              `w-full px-5 py-2.5 flex items-center gap-3 text-left transition ${
-                isActive ? "bg-white/15" : "hover:bg-white/10"
-              }`
-            }
-          >
-            {it.icon}
-            <span className="text-sm font-medium">{it.label}</span>
-          </NavLink>
-        ))}
+      <nav className="flex-1 flex flex-col gap-1">
+        {navItems.map((it) => {
+          const Icon = it.icon;
+          return (
+            <NavLink
+              key={it.key}
+              to={it.to}
+              end={it.end}
+              onClick={variant === "mobile" ? onCloseMobile : undefined}
+              className={({ isActive }) => [itemBase, isActive ? itemActive : itemHover].join(" ")}
+            >
+              <div className={`flex items-center gap-3 ${itemPadding}`}>
+                <Icon size={18} aria-hidden />
+                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
+              </div>
+            </NavLink>
+          );
+        })}
 
-        {actionItems.map((it) => (
+        {actionItems.map((it) => {
+          const Icon = it.icon;
+          return (
+            <button
+              key={it.key}
+              type="button"
+              onClick={() => handleAction(it.key)}
+              className={[itemBase, itemHover, "text-left"].join(" ")}
+            >
+              <div className={`flex items-center gap-3 ${itemPadding}`}>
+                <Icon size={18} aria-hidden />
+                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
+              </div>
+            </button>
+          );
+        })}
+
+        <div className="mt-auto pt-3 border-t border-white/10">
           <button
-            key={it.key}
-            onClick={() => emit(it.key)}
-            className="w-full px-5 py-2.5 flex items-center gap-3 hover:bg-white/10 text-left transition"
+            type="button"
+            onClick={() => handleAction("logout")}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left
+                       bg-red-600/10 hover:bg-red-600/20 text-red-400 font-medium
+                       transition-colors duration-150"
           >
-            {it.icon}
-            <span className="text-sm font-medium">{it.label}</span>
+            <LogOut size={18} aria-hidden />
+            <span className={`text-[15px] leading-none ${labelClass}`}>Aplicación Salir</span>
           </button>
-        ))}
+
+          {import.meta.env.DEV && !collapsed && (
+            <div className="mt-3 text-[11px] opacity-70 leading-snug">
+              <div className="font-semibold">DEV roles/perms</div>
+              <div>roles: {roles.join(", ") || "-"}</div>
+              <div>perms: {perms.join(", ") || "-"}</div>
+              <div>path: {pathname}</div>
+              <div>asGlobal: {String(asGlobal)}</div>
+            </div>
+          )}
+        </div>
       </nav>
     </aside>
   );
