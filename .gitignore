@@ -8,3 +8,6 @@ build/
 client/node_modules/
 client/dist/
 client/.vite/
+.env
+.env.local
+.env.prod
