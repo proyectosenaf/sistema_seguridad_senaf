@@ -1006,12 +1006,37 @@ export default function UsersPage() {
   );
 
   // 👉 helper centralizado para obtener el token
-  const getToken = async () => {
-    // si desactivas auth en .env, no se pide token y se usan x-user-*
-    if (DISABLE_AUTH) return null;
-    if (!isAuthenticated) return null;
-    if (tokenRef.current) return tokenRef.current;
+  // const getToken = async () => {
+  //   // si desactivas auth en .env, no se pide token y se usan x-user-*
+  //   if (DISABLE_AUTH) return null;
+  //   if (!isAuthenticated) return null;
+  //   if (tokenRef.current) return tokenRef.current;
 
+  //   try {
+  //     const t = await getAccessTokenSilently({
+  //       authorizationParams: {
+  //         audience: AUTH_AUDIENCE,
+  //         scope: "openid profile email offline_access",
+  //       },
+  //     });
+  //     tokenRef.current = t;
+  //     return t || null;
+  //   } catch (e) {
+  //     console.warn("[UsersPage] no se pudo obtener token:", e?.message || e);
+  //     return null;
+  //   }
+  // };
+
+  //Para obtener el token, sin auth0 hecho el 20/02/2026
+const getToken = async () => {
+  if (DISABLE_AUTH) return null;
+
+  // 🔥 Login local
+  const localToken = localStorage.getItem("token");
+  if (localToken) return localToken;
+
+  // 🔐 Si algún día usas Auth0
+  if (isAuthenticated) {
     try {
       const t = await getAccessTokenSilently({
         authorizationParams: {
@@ -1019,13 +1044,16 @@ export default function UsersPage() {
           scope: "openid profile email offline_access",
         },
       });
-      tokenRef.current = t;
       return t || null;
     } catch (e) {
       console.warn("[UsersPage] no se pudo obtener token:", e?.message || e);
       return null;
     }
-  };
+  }
+  return null;
+};
+//Para obtener el token, sin auth0 hecho el 20/02/2026
+
 
   async function load() {
     try {
@@ -1059,12 +1087,17 @@ export default function UsersPage() {
     }
   }
 
+  // useEffect(() => {
+  //   // En modo dev (DISABLE_AUTH=1) siempre cargamos; en prod solo si está autenticado
+  //   if (!DISABLE_AUTH && !isAuthenticated) return;
+  //   load();
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [isAuthenticated]);
+
   useEffect(() => {
-    // En modo dev (DISABLE_AUTH=1) siempre cargamos; en prod solo si está autenticado
-    if (!DISABLE_AUTH && !isAuthenticated) return;
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
+  load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   const filteredAll = useMemo(() => {
     const t = q.trim().toLowerCase();
