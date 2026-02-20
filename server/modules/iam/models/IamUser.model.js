@@ -31,6 +31,12 @@ const IamUserSchema = new mongoose.Schema(
     },
 
     passwordHash: { type: String, select: false },
+
+    // Cambio para cambio de contraseña y vencimiento, hecho el 18/02/2026
+    mustChangePassword: { type: Boolean, default: true },
+    passwordChangedAt:  { type: Date },
+    passwordExpiresAt:  { type: Date },
+    // Cambio para cambio de contraseña y vencimiento, hecho el 18/02/2026
   },
   { timestamps: true, collection: "iamusers" }
 );
