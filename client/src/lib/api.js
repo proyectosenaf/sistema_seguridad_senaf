@@ -65,8 +65,8 @@ function getDevIdentity() {
 /** Axios instance */
 const api = axios.create({
   baseURL: API_ROOT,
-  // en tu backend estás usando cors(credentials:true) y en varios fetch usas credentials: "include"
-  // así que esto lo dejamos en true para no romper flujos con cookies si los usas.
+  // Si NO usas cookies para auth, puedes ponerlo en false.
+  // Lo dejo como lo tenías para no romper flujos.
   withCredentials: true,
   timeout: 30000,
 });
@@ -89,9 +89,27 @@ function setHeader(config, key, value) {
   else config.headers[key] = value;
 }
 
+function looksLikeJwt(t) {
+  // JWT real tiene 3 segmentos: a.b.c
+  return typeof t === "string" && t.split(".").length === 3;
+}
+
 api.interceptors.request.use(
   async (config) => {
-    // 1) intentar token
+    // Si el cliente está en modo sin auth, no intentes Auth0
+    if (DISABLE_AUTH) {
+      const shouldSendDevHeaders =
+        DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
+      if (shouldSendDevHeaders) {
+        const { email, roles, perms } = getDevIdentity();
+        setHeader(config, "x-user-email", email || "dev@local");
+        if (roles) setHeader(config, "x-roles", roles);
+        setHeader(config, "x-perms", perms || "*");
+      }
+      return config;
+    }
+
+    // 1) intentar token (Auth0)
     let token = null;
     if (tokenProvider) {
       try {
@@ -102,14 +120,14 @@ api.interceptors.request.use(
       }
     }
 
-    if (token) {
+    // Solo setear Authorization si parece JWT real (evita "Invalid Compact JWS")
+    if (looksLikeJwt(token)) {
       setHeader(config, "Authorization", `Bearer ${token}`);
       return config;
     }
 
-    // 2) Sin token -> DEV headers solo si corresponde
-    const shouldSendDevHeaders =
-      DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
+    // 2) Sin token -> DEV headers solo si corresponde (local/dev)
+    const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
 
     if (shouldSendDevHeaders) {
       const { email, roles, perms } = getDevIdentity();

@@ -82,10 +82,13 @@ export function optionalAuth(req, res, next) {
 
 /* Normalizador desde payload */
 export function getUserFromPayload(p = {}) {
-  const NS =
+  // ✅ Consistente con tu setup: AUTH0_NAMESPACE / IAM_ROLES_NAMESPACE
+  const BASE_NS =
     process.env.IAM_ROLES_NAMESPACE ||
     process.env.AUTH0_NAMESPACE ||
-    "https://senaf/roles";
+    "https://senaf";
+
+  const NS = String(BASE_NS).replace(/\/+$/g, "") + "/roles";
 
   const rolesRaw =
     p[NS] ||
