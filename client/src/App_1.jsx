@@ -247,6 +247,10 @@ function AuthTokenBridge({ children }) {
 
 export default function App() {
   return (
+    <AuthTokenBridge>
+      <AuthDebug />
+
+      <LayoutUIProvider>
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
             {/* Auth */}
@@ -527,5 +531,7 @@ export default function App() {
             <Route path="*" element={<div className="p-6">No encontrado</div>} />
           </Routes>
         </Suspense>
+      </LayoutUIProvider>
+    </AuthTokenBridge>
   );
 }

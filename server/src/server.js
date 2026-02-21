@@ -11,6 +11,13 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
+//Importando el middleware para forzar cambio de contraseña
+//Creado el 19/02/2026 para implementar cambio de contraseña y vencimiento
+import forcePasswordChange from "./middleware/forcePasswordChange.js";
+//Importando el middleware para forzar cambio de contraseña
+//Creado el 19/02/2026 para implementar cambio de contraseña y vencimiento
+
+
 // Auth
 import { requireAuth, attachAuthUser } from "./middleware/auth.js";
 

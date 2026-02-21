@@ -2,6 +2,11 @@
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 
+// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026 
+import jwt from "jsonwebtoken";
+// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026 
+
+
 // Log simple (ok)
 console.log("[iam] boot", {
   NODE_ENV: process.env.NODE_ENV,
@@ -17,9 +22,31 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
+// function getJwtPayload(req) {
+//   return req?.auth?.payload || null; // express-oauth2-jwt-bearer
+// }
+
+//Usar el JWT para accesos creado el 20/02/2026, para obtener los roles y permisos del usuario autenticado
 function getJwtPayload(req) {
-  return req?.auth?.payload || null; // express-oauth2-jwt-bearer
+  //intenta Auth0
+  if (req?.auth?.payload) {
+    return req.auth.payload;
+  }
+
+  // intenta JWT local si no hay payload de Auth0 (p.ej. en login local)
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return null;
+
+  const token = authHeader.split(" ")[1];
+  if (!token) return null;
+
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+  } catch {
+    return null;
+  }
 }
+//Usar el JWT para accesos creado el 20/02/2026, para obtener los roles y permisos del usuario autenticado
 
 function getAuth0Sub(payload) {
   const sub = payload?.sub;
