@@ -372,10 +372,11 @@ app.use((_req, res) =>
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
+  console.log(`[io] path: ${io?.opts?.path || "/socket.io"}`);
 });
 
 /* ───────────────────────── Socket.IO ──────────────────────────── */
