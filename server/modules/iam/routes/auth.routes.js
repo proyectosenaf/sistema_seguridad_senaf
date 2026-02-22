@@ -13,6 +13,7 @@ function safeEq(a = "", b = "") {
   const aa = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   if (aa.length !== bb.length) return false;
+  if (aa.length === 0) return false;
   return crypto.timingSafeEqual(aa, bb);
 }
 
@@ -20,12 +21,9 @@ function normEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
-function normStrList(arr, { lower = false } = {}) {
-  if (!Array.isArray(arr)) return [];
-  return arr
-    .map((x) => String(x || "").trim())
-    .filter(Boolean)
-    .map((x) => (lower ? x.toLowerCase() : x));
+function isMongoDupKeyError(e) {
+  const msg = String(e?.message || "");
+  return e?.code === 11000 || msg.includes("E11000 duplicate key");
 }
 
 /* ===================== POST-REGISTER (AUTH0 WEBHOOK) ===================== */
@@ -37,63 +35,85 @@ function normStrList(arr, { lower = false } = {}) {
  *  x-senaf-webhook-secret: <secret>
  *
  * Body:
- *  { email, auth0Sub, roles, perms, provider }
+ *  { email, auth0Sub, provider }
  *
  * ✅ Política SENAF:
- * - Auto-registro SIEMPRE crea "visita".
+ * - Auto-registro SIEMPRE crea "visita" si no existe.
  * - Empleados (guardia/admin/etc.) los crea/asigna el admin desde el módulo.
+ * - NO confiar en roles/perms externos para auto-registro (seguridad).
  */
 r.post("/post-register", async (req, res, next) => {
   try {
     const expected = String(process.env.SENAF_WEBHOOK_SECRET || "").trim();
     const got = String(req.headers["x-senaf-webhook-secret"] || "").trim();
 
-    // 🔒 si no hay secret o no coincide -> 401
     if (!expected || !got || !safeEq(got, expected)) {
       return res.status(401).json({ ok: false, error: "unauthorized_webhook" });
     }
 
     const email = normEmail(req.body?.email);
     const auth0Sub = String(req.body?.auth0Sub || "").trim();
+    const provider = String(req.body?.provider || "auth0").trim();
 
     if (!email) {
       return res.status(400).json({ ok: false, error: "email_required" });
     }
 
-    // ✅ NO confiar en roles/perms externos para auto-registro (seguridad)
     const DEFAULT_ROLE = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
       .trim()
       .toLowerCase();
 
-    // 1) Buscar por email
     let u = await IamUser.findOne({ email });
 
-    // 2) Si no existe, crear SIEMPRE como "visita"
     if (!u) {
-      u = await IamUser.create({
-        email,
-        name: email.split("@")[0],
-        roles: [DEFAULT_ROLE],
-        perms: [],
-        active: true,
-        provider: "auth0",
-        auth0Sub: auth0Sub || undefined,
-      });
+      try {
+        u = await IamUser.create({
+          email,
+          name: email.split("@")[0],
+          roles: [DEFAULT_ROLE],
+          perms: [],
+          active: true,
+          provider: provider === "local" ? "auth0" : provider, // harden
+          auth0Sub: auth0Sub || undefined,
+          // ⚠️ NO createdByAdmin aquí, porque esto es auto-registro
+        });
 
-      return res.status(201).json({
-        ok: true,
-        created: true,
-        id: String(u._id),
-        email: u.email,
-        role: DEFAULT_ROLE,
-      });
+        return res.status(201).json({
+          ok: true,
+          created: true,
+          id: String(u._id),
+          email: u.email,
+          role: DEFAULT_ROLE,
+        });
+      } catch (e) {
+        if (isMongoDupKeyError(e)) {
+          u = await IamUser.findOne({ email });
+          if (u) {
+            return res.status(200).json({
+              ok: true,
+              existed: true,
+              updated: false,
+              id: String(u._id),
+              email: u.email,
+              note: "duplicate_race_resolved",
+            });
+          }
+        }
+        throw e;
+      }
     }
 
-    // 3) Si existe, solo sincronizar auth0Sub si faltaba (NO tocar roles/perms)
+    // Si existe, solo sincronizar auth0Sub si faltaba (NO tocar roles/perms)
     let changed = false;
-    if (!u.auth0Sub && auth0Sub) {
-      u.auth0Sub = auth0Sub;
-      changed = true;
+    let warned = null;
+
+    if (auth0Sub) {
+      if (!u.auth0Sub) {
+        u.auth0Sub = auth0Sub;
+        changed = true;
+      } else if (u.auth0Sub !== auth0Sub) {
+        warned = "auth0Sub_mismatch_not_overwritten";
+      }
     }
 
     if (changed) await u.save();
@@ -104,6 +124,7 @@ r.post("/post-register", async (req, res, next) => {
       updated: changed,
       id: String(u._id),
       email: u.email,
+      warn: warned,
     });
   } catch (e) {
     next(e);
@@ -124,7 +145,9 @@ r.post("/login", async (req, res, next) => {
     if (!user) return res.status(401).json({ error: "Credenciales no válidas" });
 
     if (user.provider !== "local") {
-      return res.status(400).json({ error: "Usuario autenticado externamente (Auth0)" });
+      return res
+        .status(400)
+        .json({ error: "Usuario autenticado externamente (Auth0)" });
     }
 
     const valid = await verifyPassword(password, user.passwordHash);
@@ -184,7 +207,9 @@ r.post("/change-password", async (req, res, next) => {
     if (!user) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
 
     if (user.provider !== "local") {
-      return res.status(400).json({ ok: false, error: "Usuario autenticado externamente (Auth0)" });
+      return res
+        .status(400)
+        .json({ ok: false, error: "Usuario autenticado externamente (Auth0)" });
     }
 
     if (!user.active) return res.status(403).json({ ok: false, error: "Usuario inactivo" });

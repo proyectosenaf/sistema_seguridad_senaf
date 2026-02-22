@@ -11,17 +11,18 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
-//Importando el middleware para forzar cambio de contraseña
-//Creado el 19/02/2026 para implementar cambio de contraseña y vencimiento
+// Importando el middleware para forzar cambio de contraseña
 import forcePasswordChange from "./middleware/forcePasswordChange.js";
-//Importando el middleware para forzar cambio de contraseña
-//Creado el 19/02/2026 para implementar cambio de contraseña y vencimiento
+// (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo Auth0/local sin ver su implementación)
 
 // Auth
 import { requireAuth, attachAuthUser } from "./middleware/auth.js";
 
 // IAM context builder
 import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
+
+// ✅ NUEVO: Reset password (Auth0 change_password)
+import passwordResetRoutes from "../modules/iam/routes/password-reset.routes.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -55,11 +56,6 @@ app.set("trust proxy", 1);
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
-
-/**
- * DEV_OPEN = 1 abre todo (bypass de permisos) en DEV.
- * Si no lo defines, DISABLE_AUTH=1 también activa modo "abierto" por compatibilidad.
- */
 const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
 
 console.log("[env] NODE_ENV:", process.env.NODE_ENV);
@@ -81,7 +77,6 @@ const origins =
   parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN) ||
   (!IS_PROD ? devDefaults : null);
 
-// ✅ CORRECCIÓN: si origin no está permitido, responde con error CORS (en vez de allow all)
 app.use(
   cors({
     origin: (origin, cb) => {
@@ -129,11 +124,7 @@ function devIdentity(req, _res, next) {
     .toLowerCase()
     .trim();
 
-  req.authUser = {
-    sub: "dev|local",
-    email,
-    name: "DEV USER",
-  };
+  req.authUser = { sub: "dev|local", email, name: "DEV USER" };
 
   req.auth = req.auth || {};
   req.auth.payload = {
@@ -144,7 +135,6 @@ function devIdentity(req, _res, next) {
 
   return next();
 }
-
 app.use(devIdentity);
 
 /* ─────────────────────── Estáticos / Uploads ──────────────────── */
@@ -203,7 +193,6 @@ if (!mongoUri) {
   process.exit(1);
 }
 
-// ✅ CRÍTICO: evita pending infinito cuando Mongo no conecta
 mongoose.set("bufferCommands", false);
 
 mongoose.connection.on("error", (e) =>
@@ -231,18 +220,14 @@ console.log("[db] MongoDB conectado");
 
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
-
   const h = String(req.headers.authorization || "");
-  if (h.toLowerCase().startsWith("bearer ")) {
-    return requireAuth(req, res, next);
-  }
+  if (h.toLowerCase().startsWith("bearer ")) return requireAuth(req, res, next);
   return next();
 }
-
 app.use(optionalAuth);
 
 /**
- * 1) Normaliza usuario desde JWT -> req.user / req.authUser
+ * 1) Normaliza usuario desde JWT -> req.user
  */
 app.use(attachAuthUser);
 
@@ -266,6 +251,13 @@ app.use(async (req, _res, next) => {
   }
 });
 
+/* ───────────────────── ✅ NUEVO: password reset ✅ ───────────────────── */
+/**
+ * Montado ANTES del IAM module para que no lo opaque un /auth router interno.
+ * Solo maneja /request-password-reset y deja pasar el resto.
+ */
+app.use("/api/iam/v1/auth", passwordResetRoutes);
+
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
 
@@ -283,9 +275,7 @@ startDailyAssignmentCron(app);
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(req.query.title || "Nueva ronda asignada (prueba)");
-  const body = String(
-    req.query.body || "Debes comenzar la ronda de prueba en el punto A."
-  );
+  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
 
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
@@ -308,10 +298,8 @@ app.use("/chat", chatRoutes);
 
 /* ────────────────────── Rondas QR (v1) ─────────────────────── */
 
-const pingHandler = (_req, res) =>
-  res.json({ ok: true, where: "/rondasqr/v1/ping" });
-const pingCheckinHandler = (_req, res) =>
-  res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
+const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingCheckinHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
 // Con /api
 app.get("/api/rondasqr/v1/ping", pingHandler);
@@ -353,9 +341,7 @@ app.use("/rondasqr/v1/incidentes", incidentesRoutes);
 
 if (!IS_PROD) {
   app.use("/api/evaluaciones", (req, _res, next) => {
-    if (req.method === "POST") {
-      console.log("[debug] POST /api/evaluaciones body:", req.body);
-    }
+    if (req.method === "POST") console.log("[debug] POST /api/evaluaciones body:", req.body);
     next();
   });
 }
@@ -374,9 +360,7 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ─────────────────────────── 404 final ────────────────────────── */
-app.use((_req, res) =>
-  res.status(404).json({ ok: false, error: "Not implemented" })
-);
+app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 
@@ -428,9 +412,5 @@ function shutdown(sig) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) =>
-  console.error("[api] UnhandledRejection:", err)
-);
-process.on("uncaughtException", (err) =>
-  console.error("[api] UncaughtException:", err)
-);
+process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
+process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));

@@ -25,28 +25,51 @@ import ChangePassword from "./pages/Auth/ChangePassword";
 const Entry = React.lazy(() => import("./pages/Auth/Entry.jsx"));
 const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 
+// ✅ NUEVO: pantalla para forzar cambio de contraseña
+const ForceChangePassword = React.lazy(() =>
+  import("./pages/ForceChangePassword.jsx")
+);
+
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
 
-const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
-const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
+const IncidentesList = React.lazy(() =>
+  import("./pages/Incidentes/IncidentesList.jsx")
+);
+const IncidenteForm = React.lazy(() =>
+  import("./pages/Incidentes/IncidenteForm.jsx")
+);
 
 // Rondas QR
-const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
-const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
-const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
+const RondasDashboard = React.lazy(() =>
+  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
+);
+const RondasScan = React.lazy(() =>
+  import("./modules/rondasqr/guard/ScanPage.jsx")
+);
+const AdminHub = React.lazy(() =>
+  import("./modules/rondasqr/admin/AdminHub.jsx")
+);
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
-const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
+const Supervision = React.lazy(() =>
+  import("./pages/Supervision/Supervision.jsx")
+);
+const Evaluacion = React.lazy(() =>
+  import("./pages/Evaluacion/Evaluacion.jsx")
+);
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Visitas
-const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
-const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+const VisitsPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/VisitsPage.jsx")
+);
+const AgendaPageCore = React.lazy(() =>
+  import("./modules/visitas/pages/AgendaPage.jsx")
+);
 
 /* ───────────────── ENV helpers ───────────────── */
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
@@ -85,7 +108,8 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
     P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
   if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
-  if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
+  if (hasWildcard || R.has("ti") || R.has("administrador_it"))
+    return "/iam/admin";
   if (R.has("guardia")) return "/rondasqr/scan";
   if (R.has("supervisor")) return "/rondasqr/reports";
   if (R.has("recepcion")) return "/visitas/control";
@@ -128,7 +152,9 @@ function purgeLocalHs256Token() {
     const t = localStorage.getItem("token");
     if (t && looksLikeJwt(t) && isHs256Jwt(t)) {
       localStorage.removeItem("token");
-      console.warn("[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256).");
+      console.warn(
+        "[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256)."
+      );
       return true;
     }
   } catch {}
@@ -205,7 +231,8 @@ function AuthTokenBridge({ children }) {
   const isPublicRoute =
     path === "/entry" ||
     path === "/callback" ||
-    path === "/login" ||          // ✅ importante: /login también público
+    path === "/login" || // ✅ importante: /login también público
+    path === "/force-change-password" || // ✅ NUEVO: pantalla pública
     path.startsWith("/verify");
 
   useEffect(() => {
@@ -243,7 +270,9 @@ function AuthTokenBridge({ children }) {
       <div className="p-6">
         Debes iniciar sesión con Auth0 para acceder al sistema.
         <div className="mt-3">
-          <a className="underline" href="/entry">Ir al inicio de sesión</a>
+          <a className="underline" href="/entry">
+            Ir al inicio de sesión
+          </a>
         </div>
       </div>
     );
@@ -262,10 +291,10 @@ export default function App() {
           <Route path="/callback" element={<AuthCallback />} />
 
           {/* ✅ /login en PROD = alias de /entry (EVITA LOOP) */}
-          <Route
-            path="/login"
-            element={IS_PROD ? <Entry /> : <LoginLocal />}
-          />
+          <Route path="/login" element={IS_PROD ? <Entry /> : <LoginLocal />} />
+
+          {/* ✅ NUEVO: primer login (creados por admin) -> reset password */}
+          <Route path="/force-change-password" element={<ForceChangePassword />} />
 
           {/* Home */}
           <Route
@@ -297,7 +326,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "incidentes.read",
+                      "incidentes.create",
+                      "incidentes.edit",
+                      "incidentes.reports",
+                      "*",
+                    ]}
+                  >
                     <IncidentesList />
                   </IamGuardSuper>
                 </Layout>
@@ -309,7 +346,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["incidentes.read","incidentes.create","incidentes.edit","incidentes.reports","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "incidentes.read",
+                      "incidentes.create",
+                      "incidentes.edit",
+                      "incidentes.reports",
+                      "*",
+                    ]}
+                  >
                     <IncidentesList />
                   </IamGuardSuper>
                 </Layout>
@@ -321,7 +366,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["incidentes.create","*"]}>
+                  <IamGuardSuper anyOf={["incidentes.create", "*"]}>
                     <IncidenteForm />
                   </IamGuardSuper>
                 </Layout>
@@ -330,13 +375,28 @@ export default function App() {
           />
 
           {/* IAM */}
-          <Route path="/iam" element={<ProtectedRoute><Navigate to="/iam/admin" replace /></ProtectedRoute>} />
+          <Route
+            path="/iam"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/iam/admin" replace />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/iam/admin"
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["iam.users.manage","iam.roles.manage","iam.usuarios.gestionar","iam.roles.gestionar","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "iam.users.manage",
+                      "iam.roles.manage",
+                      "iam.usuarios.gestionar",
+                      "iam.roles.gestionar",
+                      "*",
+                    ]}
+                  >
                     <IamAdminPage />
                   </IamGuardSuper>
                 </Layout>
@@ -345,13 +405,28 @@ export default function App() {
           />
 
           {/* RondasQR */}
-          <Route path="/rondasqr" element={<ProtectedRoute><Navigate to="/rondasqr/scan" replace /></ProtectedRoute>} />
+          <Route
+            path="/rondasqr"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/rondasqr/scan" replace />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/rondasqr/scan/*"
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["guardia","rondasqr.view","rondasqr.scan.qr","rondasqr.scan.manual","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "guardia",
+                      "rondasqr.view",
+                      "rondasqr.scan.qr",
+                      "rondasqr.scan.manual",
+                      "*",
+                    ]}
+                  >
                     <RondasScan />
                   </IamGuardSuper>
                 </Layout>
@@ -363,7 +438,17 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["rondasqr.reports.view","rondasqr.reports.query","rondasqr.reports.export_pdf","rondasqr.reports.map","rondasqr.reports","rondasqr.view","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "rondasqr.reports.view",
+                      "rondasqr.reports.query",
+                      "rondasqr.reports.export_pdf",
+                      "rondasqr.reports.map",
+                      "rondasqr.reports",
+                      "rondasqr.view",
+                      "*",
+                    ]}
+                  >
                     <RondasDashboard />
                   </IamGuardSuper>
                 </Layout>
@@ -375,7 +460,18 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["rondasqr.assignments.write","rondasqr.sites.write","rondasqr.checkpoints.write","rondasqr.qr.generate","rondasqr.create","rondasqr.edit","rondasqr.delete","*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "rondasqr.assignments.write",
+                      "rondasqr.sites.write",
+                      "rondasqr.checkpoints.write",
+                      "rondasqr.qr.generate",
+                      "rondasqr.create",
+                      "rondasqr.edit",
+                      "rondasqr.delete",
+                      "*",
+                    ]}
+                  >
                     <AdminHub />
                   </IamGuardSuper>
                 </Layout>
@@ -395,7 +491,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["accesos.read","accesos.write","accesos.export","*"]}>
+                  <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
                     <Accesos />
                   </IamGuardSuper>
                 </Layout>
@@ -407,7 +503,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                  <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
                     <VisitsPageCore />
                   </IamGuardSuper>
                 </Layout>
@@ -419,7 +515,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["visitas.read","visitas.write","visitas.close","*"]}>
+                  <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
                     <VisitsPageCore />
                   </IamGuardSuper>
                 </Layout>
@@ -442,7 +538,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["bitacora.read","bitacora.write","bitacora.export","*"]}>
+                  <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
                     <Bitacora />
                   </IamGuardSuper>
                 </Layout>
@@ -454,7 +550,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["supervision.read","supervision.create","supervision.edit","supervision.reports","*"]}>
+                  <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
                     <Supervision />
                   </IamGuardSuper>
                 </Layout>
@@ -466,7 +562,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["evaluacion.list","evaluacion.create","evaluacion.edit","evaluacion.reports","evaluacion.kpi","*"]}>
+                  <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
                     <Evaluacion />
                   </IamGuardSuper>
                 </Layout>
