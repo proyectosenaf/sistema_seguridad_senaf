@@ -5,6 +5,16 @@ import IamUser from "../models/IamUser.model.js";
 
 const r = Router();
 
+/** Timeout helper (evita pending infinito si DB se cuelga) */
+function withTimeout(promise, ms, label = "op") {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(`[timeout] ${label} > ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 /**
  * GET /api/iam/v1/me
  * - Sin token válido -> visitor:true (sin identidad)
@@ -12,7 +22,7 @@ const r = Router();
  */
 r.get("/", async (req, res, next) => {
   try {
-    const ctx = await buildContextFrom(req);
+    const ctx = await withTimeout(buildContextFrom(req), 7000, "buildContextFrom");
 
     const email = String(ctx.email || "").toLowerCase().trim();
     const auth0Sub = String(ctx.auth0Sub || "").trim();
@@ -33,8 +43,8 @@ r.get("/", async (req, res, next) => {
 
     // 2) Buscar usuario por auth0Sub primero (más estable), luego email
     let u = null;
-    if (auth0Sub) u = await IamUser.findOne({ auth0Sub }).exec();
-    if (!u && email) u = await IamUser.findOne({ email }).exec();
+    if (auth0Sub) u = await withTimeout(IamUser.findOne({ auth0Sub }).exec(), 5000, "IamUser.findOne(auth0Sub)");
+    if (!u && email) u = await withTimeout(IamUser.findOne({ email }).exec(), 5000, "IamUser.findOne(email)");
 
     // 3) Autoprovision (pre-registro) si no existe
     if (!u) {
@@ -48,27 +58,31 @@ r.get("/", async (req, res, next) => {
         });
       }
 
-      u = await IamUser.create({
-        email,
-        name: email.split("@")[0],
-        roles: ["visita"], // ✅ rol default
-        perms: [],
-        active: true,
-        provider: "auth0",
-        auth0Sub: auth0Sub || undefined,
-      });
+      u = await withTimeout(
+        IamUser.create({
+          email,
+          name: email.split("@")[0],
+          roles: ["visita"], // ✅ rol default
+          perms: [],
+          active: true,
+          provider: "auth0",
+          auth0Sub: auth0Sub || undefined,
+        }),
+        5000,
+        "IamUser.create"
+      );
     } else {
       // Si ya existe pero no tiene auth0Sub y ahora sí viene, lo guardamos
       if (!u.auth0Sub && auth0Sub) {
         u.auth0Sub = auth0Sub;
-        await u.save();
+        await withTimeout(u.save(), 5000, "IamUser.save(auth0Sub)");
       }
 
       // Normaliza rol legacy "visitor" -> "visita" (por si ya lo creaste antes)
       if (Array.isArray(u.roles) && u.roles.includes("visitor") && !u.roles.includes("visita")) {
         u.roles = u.roles.filter((x) => x !== "visitor");
         u.roles.push("visita");
-        await u.save();
+        await withTimeout(u.save(), 5000, "IamUser.save(normalize-role)");
       }
     }
 
@@ -86,6 +100,14 @@ r.get("/", async (req, res, next) => {
       auth0Sub: u.auth0Sub || auth0Sub || null,
     });
   } catch (e) {
+    // Si es timeout, responde claro (sin colgar UI)
+    if (String(e?.message || "").startsWith("[timeout]")) {
+      return res.status(503).json({
+        ok: false,
+        error: "iam_timeout",
+        message: e.message,
+      });
+    }
     next(e);
   }
 });

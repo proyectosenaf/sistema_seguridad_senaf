@@ -24,9 +24,19 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
+/** Timeout helper */
+function withTimeout(promise, ms, label = "op") {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(`[timeout] ${label} > ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 /**
  * Extrae payload de 2 fuentes:
- * 1) Auth0 (RS256) -> req.auth.payload (ya verificado por makeAuthMw)
+ * 1) Auth0 (RS256) -> req.auth.payload (ya verificado por makeAuthMw/requireAuth)
  * 2) Local JWT (HS256) -> Authorization Bearer + JWT_SECRET
  *
  * ✅ CLAVE: NO intentes verificar Auth0 RS256 con JWT_SECRET.
@@ -59,21 +69,21 @@ function getAuth0Sub(payload) {
 /**
  * Lee email desde:
  * - payload.email (local JWT a veces)
- * - claim con namespace (Auth0): por defecto "https://senaf/email"
- * - opcional: namespace base + "email" (por si configuras "https://senaf/")
+ * - claim exacto (Auth0): IAM_EMAIL_CLAIM, default "https://senaf/email"
+ * - opcional: namespace base + "email" (IAM_CLAIMS_NAMESPACE, default "https://senaf/")
  */
 function getEmailFromPayload(payload) {
   if (!payload) return null;
 
   if (payload.email) return String(payload.email).toLowerCase().trim();
 
-  // 1) claim exacto configurable o por defecto tuyo
+  // 1) claim exacto
   const exact = String(process.env.IAM_EMAIL_CLAIM || "https://senaf/email").trim();
   if (exact && payload[exact]) {
     return String(payload[exact]).toLowerCase().trim();
   }
 
-  // 2) Soporte por namespace (por si configuras "https://senaf/")
+  // 2) namespace base + email
   const ns = String(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf/").trim();
   const nsNorm = ns.endsWith("/") ? ns : `${ns}/`;
   const byNs = payload[`${nsNorm}email`];
@@ -108,8 +118,7 @@ export async function buildContextFrom(req) {
   const headerEmail = allowDevHeaders ? req?.headers?.["x-user-email"] : null;
 
   // Email final: primero token, luego dev headers si aplica
-  const email =
-    (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
+  const email = (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
 
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
@@ -118,12 +127,12 @@ export async function buildContextFrom(req) {
 
   // 1) buscar por auth0Sub
   if (auth0Sub) {
-    user = await IamUser.findOne({ auth0Sub }).lean();
+    user = await withTimeout(IamUser.findOne({ auth0Sub }).lean(), 4000, "IamUser.findOne(auth0Sub)");
   }
 
   // 2) fallback por email
   if (!user && email) {
-    user = await IamUser.findOne({ email }).lean();
+    user = await withTimeout(IamUser.findOne({ email }).lean(), 4000, "IamUser.findOne(email)");
   }
 
   /**
@@ -162,12 +171,10 @@ export async function buildContextFrom(req) {
 
     if (doc.email) {
       try {
-        const created = await IamUser.create(doc);
+        const created = await withTimeout(IamUser.create(doc), 4000, "IamUser.create");
         user = created.toObject();
         console.log(
-          `[iam] auto-provisioned: ${doc.email} (${
-            isBootstrapAdmin ? "ADMIN" : defaultVisitorRole.toUpperCase()
-          })`
+          `[iam] auto-provisioned: ${doc.email} (${isBootstrapAdmin ? "ADMIN" : defaultVisitorRole.toUpperCase()})`
         );
       } catch (e) {
         console.warn("[iam] auto-provision failed:", e?.message || e);
@@ -175,11 +182,14 @@ export async function buildContextFrom(req) {
     }
   }
 
-  // Si existe usuario pero no tiene auth0Sub y ahora viene, lo guardamos
-  // (ojo: user viene lean -> no tiene save; usamos updateOne)
+  // Si existe usuario pero no tiene auth0Sub y ahora viene, lo guardamos (user viene lean)
   if (user && auth0Sub && !user.auth0Sub) {
     try {
-      await IamUser.updateOne({ _id: user._id }, { $set: { auth0Sub } });
+      await withTimeout(
+        IamUser.updateOne({ _id: user._id }, { $set: { auth0Sub } }),
+        4000,
+        "IamUser.updateOne(attach-auth0Sub)"
+      );
       user.auth0Sub = auth0Sub;
     } catch (e) {
       console.warn("[iam] could not attach auth0Sub:", e?.message || e);
@@ -198,9 +208,13 @@ export async function buildContextFrom(req) {
   // expand roles -> permissions desde IamRole
   if (roleNames.size) {
     const roleList = [...roleNames].map((r) => String(r).trim());
-    const roleDocs = await IamRole.find({
-      $or: [{ code: { $in: roleList } }, { name: { $in: roleList } }],
-    }).lean();
+    const roleDocs = await withTimeout(
+      IamRole.find({
+        $or: [{ code: { $in: roleList } }, { name: { $in: roleList } }],
+      }).lean(),
+      4000,
+      "IamRole.find(expand-perms)"
+    );
 
     for (const r of roleDocs) {
       (r.permissions || []).forEach((p) => permSet.add(p));
@@ -239,7 +253,9 @@ export async function buildContextFrom(req) {
 export function devOr(mw) {
   const isProd = process.env.NODE_ENV === "production";
   const allow = process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
-  return (req, _res, next) => (allow ? next() : mw(req, _res, next));
+
+  // ✅ FIX: firma correcta (req,res,next) y llamada correcta
+  return (req, res, next) => (allow ? next() : mw(req, res, next));
 }
 
 export function requirePerm(perm) {

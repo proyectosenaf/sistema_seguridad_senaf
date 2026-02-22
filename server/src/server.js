@@ -81,21 +81,13 @@ const origins =
   parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN) ||
   (!IS_PROD ? devDefaults : null);
 
-// ✅ CORRECCIÓN: si origin no está permitido, responde con error CORS (en vez de "true" / allow all)
-// Esto evita respuestas sin Access-Control-Allow-Origin en casos de preflight.
+// ✅ CORRECCIÓN: si origin no está permitido, responde con error CORS (en vez de allow all)
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Requests sin Origin (curl, server-to-server) -> permitir
       if (!origin) return cb(null, true);
-
-      // Si no hay lista definida -> permitir (comportamiento original)
       if (!origins || origins.length === 0) return cb(null, true);
-
-      // Permitir si está en whitelist
       if (origins.includes(origin)) return cb(null, true);
-
-      // Bloquear explícitamente
       return cb(new Error(`CORS blocked for origin: ${origin}`), false);
     },
     credentials: true,
@@ -124,10 +116,7 @@ if (!IS_PROD) {
   });
 }
 
-/* ─────────────────────── DEV IDENTITY GLOBAL ─────────────────────
-   En dev abierto, permite inyectar email para simular sesión.
-   OJO: en producción NO se acepta esto como autoridad.
-*/
+/* ─────────────────────── DEV IDENTITY GLOBAL ───────────────────── */
 function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
   if (!(DEV_OPEN || DISABLE_AUTH)) return next();
@@ -140,14 +129,12 @@ function devIdentity(req, _res, next) {
     .toLowerCase()
     .trim();
 
-  // Solo identidad (como si viniera del JWT)
   req.authUser = {
     sub: "dev|local",
     email,
     name: "DEV USER",
   };
 
-  // Simula payload para compatibilidad con tooling
   req.auth = req.auth || {};
   req.auth.payload = {
     sub: req.authUser.sub,
@@ -216,17 +203,32 @@ if (!mongoUri) {
   process.exit(1);
 }
 
-await mongoose.connect(mongoUri, { autoIndex: true }).catch((e) => {
-  console.error("[db] Error conectando a MongoDB:", e?.message || e);
-  process.exit(1);
-});
+// ✅ CRÍTICO: evita pending infinito cuando Mongo no conecta
+mongoose.set("bufferCommands", false);
+
+mongoose.connection.on("error", (e) =>
+  console.error("[db] mongoose error:", e?.message || e)
+);
+mongoose.connection.on("disconnected", () =>
+  console.warn("[db] mongoose disconnected")
+);
+
+await mongoose
+  .connect(mongoUri, {
+    autoIndex: true,
+    serverSelectionTimeoutMS: 8000,
+    connectTimeoutMS: 8000,
+    socketTimeoutMS: 15000,
+  })
+  .catch((e) => {
+    console.error("[db] Error conectando a MongoDB:", e?.message || e);
+    process.exit(1);
+  });
 
 console.log("[db] MongoDB conectado");
 
-/* ─────────────────── Auth opcional (GLOBAL) ────────────────────
-   - Si llega Authorization Bearer y DISABLE_AUTH != 1 -> valida JWT
-   - Si no hay Authorization -> sigue como visitante
-*/
+/* ─────────────────── Auth opcional (GLOBAL) ──────────────────── */
+
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
 
@@ -240,22 +242,15 @@ function optionalAuth(req, res, next) {
 app.use(optionalAuth);
 
 /**
- * 1) Normaliza usuario desde JWT -> req.user (y/o req.authUser si tu attach lo hace)
+ * 1) Normaliza usuario desde JWT -> req.user / req.authUser
  */
 app.use(attachAuthUser);
 
 /**
- * 2) Construye contexto IAM en req.iam
- * - Si el usuario NO existe en IAM => visitor
- * - Si no hay email => no crea contexto
- *
- * ✅ CORRECCIÓN:
- * - No dependas SOLO de email para construir req.iam: buildContextFrom ya maneja auth0Sub y auto-provisioning.
- * - Construimos ctx siempre (si hay token o headers dev permitidos), y lo dejamos en req.iam.
+ * 2) Construye contexto IAM en req.iam si hay señales de identidad
  */
 app.use(async (req, _res, next) => {
   try {
-    // Señales de identidad: Auth0 payload, Authorization Bearer (JWT local), o dev headers (solo en dev)
     const hasAuth0 = !!req?.auth?.payload;
     const hasBearer = String(req.headers.authorization || "")
       .toLowerCase()
@@ -345,21 +340,12 @@ app.use("/acceso/uploads", uploadRoutes);
 app.use("/api", visitasRoutes);
 app.use("/", visitasRoutes);
 
-/* ───────────────── INCIDENTES ─────────────────
-   ✅ Endpoint principal:
-      GET  /api/incidentes?limit=500
-      POST /api/incidentes
-      PUT  /api/incidentes/:id
+/* ───────────────── INCIDENTES ───────────────── */
 
-   ✅ Aliases por compatibilidad (si tu app vieja los usa):
-      /incidentes
-      /api/rondasqr/v1/incidentes
-      /rondasqr/v1/incidentes
-*/
 app.use("/api/incidentes", incidentesRoutes);
 app.use("/incidentes", incidentesRoutes);
 
-// Alias compatibles con rutas históricas (evita meter paths absolutos dentro del router)
+// Alias compatibles
 app.use("/api/rondasqr/v1/incidentes", incidentesRoutes);
 app.use("/rondasqr/v1/incidentes", incidentesRoutes);
 
