@@ -73,12 +73,37 @@ const api = axios.create({
 
 let tokenProvider = null;
 
-/** Inyecta provider async() => token|null */
+/** Inyecta provider async() => token|null (Auth0) */
 export function attachAuth0(provider) {
   tokenProvider = typeof provider === "function" ? provider : null;
 }
 export function setAuthToken(provider) {
   tokenProvider = typeof provider === "function" ? provider : null;
+}
+
+/** Helpers para token local */
+export function setLocalToken(token) {
+  try {
+    if (typeof localStorage !== "undefined") {
+      if (token) localStorage.setItem("token", String(token));
+      else localStorage.removeItem("token");
+    }
+  } catch {
+    // ignore
+  }
+}
+export function clearLocalToken() {
+  return setLocalToken(null);
+}
+
+function getLocalToken() {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const t = localStorage.getItem("token");
+    return t ? String(t).trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** set header compatible con AxiosHeaders y objetos */
@@ -120,13 +145,20 @@ api.interceptors.request.use(
       }
     }
 
-    // Solo setear Authorization si parece JWT real (evita "Invalid Compact JWS")
+    // ✅ Si hay token Auth0, úsalo
     if (looksLikeJwt(token)) {
       setHeader(config, "Authorization", `Bearer ${token}`);
       return config;
     }
 
-    // 2) Sin token -> DEV headers solo si corresponde (local/dev)
+    // ✅ 2) fallback: token local (login email/password)
+    const localToken = getLocalToken();
+    if (looksLikeJwt(localToken)) {
+      setHeader(config, "Authorization", `Bearer ${localToken}`);
+      return config;
+    }
+
+    // 3) Sin token -> DEV headers solo si corresponde (local/dev)
     const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
 
     if (shouldSendDevHeaders) {

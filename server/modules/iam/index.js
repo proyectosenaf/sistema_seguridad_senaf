@@ -63,8 +63,18 @@ export async function registerIAMModule({
   // AUTH público (si tu login requiere token, protégelo en auth.routes)
   router.use("/auth", authRoutes);
 
-  // Rutas protegidas
-  router.use("/me", authMw, meRoutes);
+  /**
+   * ✅ CORRECCIÓN CLAVE (sin romper tu estructura):
+   * /me NO debe ir protegido con authMw porque tu /me está diseñado para:
+   * - visitor:true si NO hay token
+   * - datos si SÍ hay token
+   *
+   * Si lo proteges con authMw, en producción te devuelve 401/403 y "no puedes pasar del login"
+   * cuando todavía no tienes token.
+   */
+  router.use("/me", meRoutes);
+
+  // Rutas protegidas (admin/gestión)
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);

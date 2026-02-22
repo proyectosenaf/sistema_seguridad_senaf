@@ -16,13 +16,19 @@ async function ensureIam(req) {
 /**
  * requirePerm("incidentes.read")
  * Permite acceso si el usuario posee el permiso exacto o "*"
+ *
+ * ✅ CORRECCIÓN:
+ * - No uses solo ctx.email para decidir "autenticado" porque en Auth0 el access token
+ *   puede no traer email (a veces no viene).
+ * - Considera identidad por auth0Sub o email.
  */
 export function requirePerm(perm) {
   return async (req, res, next) => {
     try {
       const ctx = await ensureIam(req);
 
-      if (!ctx?.email) {
+      const isAuthed = !!ctx?.auth0Sub || !!ctx?.email;
+      if (!isAuthed) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
 
@@ -34,6 +40,9 @@ export function requirePerm(perm) {
           need: perm,
           roles: ctx.roles || [],
           permissions: ctx.permissions || [],
+          email: ctx.email || null,
+          auth0Sub: ctx.auth0Sub || null,
+          visitor: !!ctx.isVisitor,
         });
       }
 
@@ -47,19 +56,26 @@ export function requirePerm(perm) {
 /**
  * requireAnyPerm("a", "b", "c")
  * Permite acceso si el usuario tiene al menos uno
+ *
+ * ✅ CORRECCIÓN:
+ * - Igual que arriba: auth por auth0Sub OR email.
+ * - Usa ctx.has si existe (para respetar superadmin y "*").
  */
 export function requireAnyPerm(...perms) {
   return async (req, res, next) => {
     try {
       const ctx = await ensureIam(req);
 
-      if (!ctx?.email) {
+      const isAuthed = !!ctx?.auth0Sub || !!ctx?.email;
+      if (!isAuthed) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
 
       const ok =
-        (ctx.permissions || []).includes("*") ||
-        perms.some((p) => (ctx.permissions || []).includes(p));
+        typeof ctx.has === "function"
+          ? perms.some((p) => ctx.has(p))
+          : (ctx.permissions || []).includes("*") ||
+            perms.some((p) => (ctx.permissions || []).includes(p));
 
       if (!ok) {
         return res.status(403).json({
@@ -68,6 +84,9 @@ export function requireAnyPerm(...perms) {
           need: perms,
           roles: ctx.roles || [],
           permissions: ctx.permissions || [],
+          email: ctx.email || null,
+          auth0Sub: ctx.auth0Sub || null,
+          visitor: !!ctx.isVisitor,
         });
       }
 
@@ -89,13 +108,17 @@ export function requirePermission(...perms) {
 /**
  * requireRole("admin")
  * OJO: rol viene de IAM (IamUser.roles)
+ *
+ * ✅ CORRECCIÓN:
+ * - Auth por auth0Sub OR email.
  */
 export function requireRole(...rolesAllowed) {
   return async (req, res, next) => {
     try {
       const ctx = await ensureIam(req);
 
-      if (!ctx?.email) {
+      const isAuthed = !!ctx?.auth0Sub || !!ctx?.email;
+      if (!isAuthed) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
 
@@ -108,6 +131,9 @@ export function requireRole(...rolesAllowed) {
           message: "forbidden",
           need: rolesAllowed,
           roles,
+          email: ctx.email || null,
+          auth0Sub: ctx.auth0Sub || null,
+          visitor: !!ctx.isVisitor,
         });
       }
 

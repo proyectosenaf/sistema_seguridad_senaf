@@ -17,7 +17,6 @@ import forcePasswordChange from "./middleware/forcePasswordChange.js";
 //Importando el middleware para forzar cambio de contraseña
 //Creado el 19/02/2026 para implementar cambio de contraseña y vencimiento
 
-
 // Auth
 import { requireAuth, attachAuthUser } from "./middleware/auth.js";
 
@@ -82,9 +81,23 @@ const origins =
   parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN) ||
   (!IS_PROD ? devDefaults : null);
 
+// ✅ CORRECCIÓN: si origin no está permitido, responde con error CORS (en vez de "true" / allow all)
+// Esto evita respuestas sin Access-Control-Allow-Origin en casos de preflight.
 app.use(
   cors({
-    origin: origins || true,
+    origin: (origin, cb) => {
+      // Requests sin Origin (curl, server-to-server) -> permitir
+      if (!origin) return cb(null, true);
+
+      // Si no hay lista definida -> permitir (comportamiento original)
+      if (!origins || origins.length === 0) return cb(null, true);
+
+      // Permitir si está en whitelist
+      if (origins.includes(origin)) return cb(null, true);
+
+      // Bloquear explícitamente
+      return cb(new Error(`CORS blocked for origin: ${origin}`), false);
+    },
     credentials: true,
   })
 );
@@ -178,7 +191,12 @@ const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   path: "/socket.io",
   cors: {
-    origin: origins || true,
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (!origins || origins.length === 0) return cb(null, true);
+      if (origins.includes(origin)) return cb(null, true);
+      return cb(new Error(`Socket.IO CORS blocked for origin: ${origin}`), false);
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -230,17 +248,21 @@ app.use(attachAuthUser);
  * 2) Construye contexto IAM en req.iam
  * - Si el usuario NO existe en IAM => visitor
  * - Si no hay email => no crea contexto
+ *
+ * ✅ CORRECCIÓN:
+ * - No dependas SOLO de email para construir req.iam: buildContextFrom ya maneja auth0Sub y auto-provisioning.
+ * - Construimos ctx siempre (si hay token o headers dev permitidos), y lo dejamos en req.iam.
  */
 app.use(async (req, _res, next) => {
   try {
-    const email =
-      req?.auth?.payload?.email ||
-      req?.authUser?.email ||
-      req?.user?.email ||
-      req.headers["x-user-email"] ||
-      null;
+    // Señales de identidad: Auth0 payload, Authorization Bearer (JWT local), o dev headers (solo en dev)
+    const hasAuth0 = !!req?.auth?.payload;
+    const hasBearer = String(req.headers.authorization || "")
+      .toLowerCase()
+      .startsWith("bearer ");
+    const hasDevEmail = !!req.headers["x-user-email"];
 
-    if (!email) return next();
+    if (!(hasAuth0 || hasBearer || hasDevEmail)) return next();
 
     req.iam = await buildContextFrom(req);
     return next();

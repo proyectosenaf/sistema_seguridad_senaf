@@ -2,11 +2,10 @@ import mongoose from "mongoose";
 
 const IamUserSchema = new mongoose.Schema(
   {
-    // ✅ Auth0 "sub" (auth0|xxxxx) — ID primario recomendado
-    externalId: { type: String, trim: true }, // <- sin index:true
-
-    // (Opcional) si quieres guardar otro id, pero normalmente no hace falta
-    auth0Id: { type: String, trim: true }, // <- sin index:true
+    // ✅ Auth0 "sub" (auth0|xxxxx)
+    auth0Sub: { type: String, trim: true },
+    externalId: { type: String, trim: true },
+    auth0Id: { type: String, trim: true },
 
     email: {
       type: String,
@@ -27,15 +26,15 @@ const IamUserSchema = new mongoose.Schema(
       type: String,
       enum: ["local", "auth0"],
       default: "auth0",
-      index: true, // este sí está ok (no lo duplicamos con schema.index)
+      index: true,
     },
 
     passwordHash: { type: String, select: false },
 
     // Cambio para cambio de contraseña y vencimiento, hecho el 18/02/2026
-    mustChangePassword: { type: Boolean, default: true },
-    passwordChangedAt:  { type: Date },
-    passwordExpiresAt:  { type: Date },
+    mustChangePassword: { type: Boolean, default: false },
+    passwordChangedAt: { type: Date },
+    passwordExpiresAt: { type: Date },
     // Cambio para cambio de contraseña y vencimiento, hecho el 18/02/2026
   },
   { timestamps: true, collection: "iamusers" }
@@ -44,10 +43,13 @@ const IamUserSchema = new mongoose.Schema(
 // Email único
 IamUserSchema.index({ email: 1 }, { unique: true });
 
+// auth0Sub único (permite null/undefined)
+IamUserSchema.index({ auth0Sub: 1 }, { unique: true, sparse: true });
+
 // externalId único (permite null/undefined)
 IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
 
-// auth0Id index (opcional; si no existe, no rompe)
+// auth0Id index (opcional)
 IamUserSchema.index({ auth0Id: 1 }, { sparse: true });
 
 export default mongoose.model("IamUser", IamUserSchema);

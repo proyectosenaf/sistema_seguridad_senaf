@@ -1,17 +1,17 @@
-// server/modules/iam/utils/rbac.util.js
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 
-// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026 
+// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026
 import jwt from "jsonwebtoken";
-// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026 
-
+// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026
 
 // Log simple (ok)
 console.log("[iam] boot", {
   NODE_ENV: process.env.NODE_ENV,
   IAM_DEV_ALLOW_ALL: process.env.IAM_DEV_ALLOW_ALL,
   SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
+  IAM_ALLOW_DEV_HEADERS: process.env.IAM_ALLOW_DEV_HEADERS,
+  ROOT_ADMINS: process.env.ROOT_ADMINS,
 });
 
 export function parseList(v) {
@@ -22,18 +22,14 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
-// function getJwtPayload(req) {
-//   return req?.auth?.payload || null; // express-oauth2-jwt-bearer
-// }
-
 //Usar el JWT para accesos creado el 20/02/2026, para obtener los roles y permisos del usuario autenticado
 function getJwtPayload(req) {
-  //intenta Auth0
+  // intenta Auth0 o makeAuthMw (req.auth.payload)
   if (req?.auth?.payload) {
     return req.auth.payload;
   }
 
-  // intenta JWT local si no hay payload de Auth0 (p.ej. en login local)
+  // intenta JWT local si no hay payload (fallback)
   const authHeader = req.headers.authorization;
   if (!authHeader) return null;
 
@@ -56,11 +52,9 @@ function getAuth0Sub(payload) {
 function getEmailFromPayload(payload) {
   if (!payload) return null;
 
-  // estándar (muchas veces NO viene en access token)
   const direct = payload.email;
   if (direct) return String(direct).toLowerCase().trim();
 
-  // custom claim recomendado (Action)
   const ns = process.env.IAM_EMAIL_CLAIM || "https://senaf/email";
   const claimed = payload[ns];
   if (claimed) return String(claimed).toLowerCase().trim();
@@ -70,22 +64,20 @@ function getEmailFromPayload(payload) {
 
 /**
  * buildContextFrom(req)
- * - Auth0: identidad por sub (recomendado) y email (si existe)
+ * - Auth0 / Local JWT: identidad por sub y/o email
  * - IAM: roles/perms desde MongoDB
- * - Si NO existe usuario en IAM => visitor
  */
 export async function buildContextFrom(req) {
   const payload = getJwtPayload(req);
 
-  // Identidad desde JWT (Auth0)
   const auth0Sub = getAuth0Sub(payload);
   const jwtEmail = getEmailFromPayload(payload);
 
-  // Identidad desde headers dev (solo si permites, y solo en no-prod)
   const headerEmail = req?.headers?.["x-user-email"] || null;
 
   const IS_PROD = process.env.NODE_ENV === "production";
-  const allowDevHeaders = !IS_PROD; // en prod jamás aceptes x-perms/x-roles como autoridad
+  const allowDevHeaders =
+    !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
   const email = (jwtEmail || (allowDevHeaders ? headerEmail : null) || "")
     .toLowerCase()
@@ -94,38 +86,65 @@ export async function buildContextFrom(req) {
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
 
-  // Usuario en BD:
-  // 1) Primero por auth0Sub (si lo tienes en tu modelo)
-  // 2) Si no existe, fallback por email
   let user = null;
 
+  // 1) buscar por auth0Sub
   if (auth0Sub) {
-    try {
-      user = await IamUser.findOne({ auth0Sub }).lean();
-    } catch {
-      // si el campo no existe aún, no rompas
-      user = null;
-    }
+    user = await IamUser.findOne({ auth0Sub }).lean();
   }
 
+  // 2) fallback por email
   if (!user && email) {
     user = await IamUser.findOne({ email }).lean();
   }
 
-  // roles base:
-  // - si hay user: roles vienen de BD + (en dev) headers
-  // - si NO hay user: roles solo headers (dev)
+  // ───────────── AUTO-PROVISIONING (solo si hay JWT) ─────────────
+  if (!user && payload) {
+    const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
+      String(x).toLowerCase().trim()
+    );
+
+    const superEmail = String(process.env.SUPERADMIN_EMAIL || "")
+      .trim()
+      .toLowerCase();
+
+    const isBootstrapAdmin =
+      (!!email && email === superEmail) || (!!email && rootAdmins.includes(email));
+
+    const doc = {
+      active: true,
+      provider: "auth0",
+      roles: isBootstrapAdmin ? ["admin"] : ["visitor"],
+      perms: isBootstrapAdmin ? ["*"] : [],
+    };
+
+    if (email) doc.email = email;
+    if (auth0Sub) doc.auth0Sub = auth0Sub;
+
+    if (doc.email || doc.auth0Sub) {
+      try {
+        const created = await IamUser.create(doc);
+        user = created.toObject();
+        console.log(
+          `[iam] auto-provisioned: ${email || auth0Sub} (${
+            isBootstrapAdmin ? "ADMIN" : "VISITOR"
+          })`
+        );
+      } catch (e) {
+        console.warn("[iam] auto-provision failed:", e?.message || e);
+      }
+    }
+  }
+  // ───────────── FIN AUTO-PROVISIONING ─────────────
+
   const roleNames = new Set([...(user?.roles || []), ...headerRoles]);
 
-  // perms base:
   const permSet = new Set([...(user?.perms || [])]);
 
-  // En dev (no-prod) si NO hay user, se permite headerPerms explícito
   if (!user && allowDevHeaders) {
     headerPerms.forEach((p) => permSet.add(p));
   }
 
-  // Resolver permisos por roles (IamRole.permissions)
   if (roleNames.size) {
     const roleList = [...roleNames].map((r) => String(r).trim());
     const roleDocs = await IamRole.find({
@@ -137,7 +156,6 @@ export async function buildContextFrom(req) {
     }
   }
 
-  // SUPERADMIN (único bypass válido)
   const superEmail = String(process.env.SUPERADMIN_EMAIL || "")
     .trim()
     .toLowerCase();
@@ -151,14 +169,12 @@ export async function buildContextFrom(req) {
     return permSet.has(perm);
   }
 
-  // visitor:
-  // - Si hay JWT (payload) pero no existe user en BD => visitor=true
   const isVisitor = !!payload && !user;
 
   return {
-    user, // puede ser null
-    email, // puede ser null si token no trae email
-    auth0Sub, // ✅ clave real de Auth0
+    user,
+    email,
+    auth0Sub,
     roles: [...roleNames],
     permissions: [...permSet],
     has,
@@ -167,28 +183,20 @@ export async function buildContextFrom(req) {
   };
 }
 
-/**
- * devOr(mw)
- * - En dev: salta permisos
- * - En prod: solo salta si IAM_DEV_ALLOW_ALL=1 (NO recomendado)
- */
 export function devOr(mw) {
   const isProd = process.env.NODE_ENV === "production";
   const allow = process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
   return (req, res, next) => (allow ? next() : mw(req, res, next));
 }
 
-/**
- * requirePerm("iam.users.manage")
- */
 export function requirePerm(perm) {
   return async (req, res, next) => {
     try {
       const ctx = await buildContextFrom(req);
       req.iam = ctx;
 
-      // Si no hay JWT válido => 401
-      if (!req?.auth?.payload) {
+      const payload = getJwtPayload(req);
+      if (!payload) {
         return res.status(401).json({ message: "No autenticado" });
       }
 
