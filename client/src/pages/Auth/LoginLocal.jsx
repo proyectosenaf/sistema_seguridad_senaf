@@ -2,6 +2,7 @@
 // Creada el 19/02/2026 para implementar Login, cambio de contraseña y vencimiento
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import api, { API } from "../../lib/api.js"; // ✅ usa tu API_ROOT (VITE_API_BASE_URL)
 
 export default function LoginLocal() {
   const [email, setEmail] = useState("");
@@ -14,16 +15,15 @@ export default function LoginLocal() {
     setError("");
 
     try {
-      const res = await fetch("http://localhost:4000/api/iam/v1/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      // ✅ POST relativo al baseURL (API_ROOT ya incluye /api)
+      // ruta final: `${VITE_API_BASE_URL}/iam/v1/auth/login`
+      const res = await api.post("/iam/v1/auth/login", { email, password });
 
-      const data = await res.json();
+      const data = res?.data || {};
 
-      if (!res.ok) {
-        setError(data.error || "Error en login");
+      // Mantengo tu lógica
+      if (!data?.token) {
+        setError(data?.error || "Error en login");
         return;
       }
 
@@ -34,9 +34,12 @@ export default function LoginLocal() {
       } else {
         navigate("/");
       }
-
     } catch (err) {
-      setError("Error de conexión");
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        `Error de conexión (${API})`;
+      setError(msg);
     }
   };
 
@@ -54,20 +57,13 @@ export default function LoginLocal() {
           autoComplete="username"
         />
 
-        {/* <input
+        <input
           className="border w-full mb-3 p-2"
           type="password"
           placeholder="Password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-        /> */}
-        <input
-            className="border w-full mb-3 p-2"
-            type="password"
-            placeholder="Password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
         />
 
         {error && <div className="text-red-500 mb-2">{error}</div>}
