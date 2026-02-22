@@ -65,8 +65,6 @@ function getDevIdentity() {
 /** Axios instance */
 const api = axios.create({
   baseURL: API_ROOT,
-  // Si NO usas cookies para auth, puedes ponerlo en false.
-  // Lo dejo como lo tenías para no romper flujos.
   withCredentials: true,
   timeout: 30000,
 });
@@ -88,9 +86,7 @@ export function setLocalToken(token) {
       if (token) localStorage.setItem("token", String(token));
       else localStorage.removeItem("token");
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 export function clearLocalToken() {
   return setLocalToken(null);
@@ -109,19 +105,31 @@ function getLocalToken() {
 /** set header compatible con AxiosHeaders y objetos */
 function setHeader(config, key, value) {
   if (!config.headers) config.headers = {};
-  // Axios v1 puede usar AxiosHeaders con .set
   if (typeof config.headers.set === "function") config.headers.set(key, value);
   else config.headers[key] = value;
 }
 
 function looksLikeJwt(t) {
-  // JWT real tiene 3 segmentos: a.b.c
   return typeof t === "string" && t.split(".").length === 3;
+}
+
+// ✅ No mandar Authorization en endpoints públicos de auth
+function isPublicAuthEndpoint(config) {
+  const url = String(config?.url || "");
+  // config.url suele venir relativo: "/iam/v1/auth/login"
+  return (
+    url.includes("/iam/v1/auth/login") ||
+    url.includes("/iam/v1/auth/bootstrap")
+  );
 }
 
 api.interceptors.request.use(
   async (config) => {
-    // Si el cliente está en modo sin auth, no intentes Auth0
+    // ✅ IMPORTANTÍSIMO: login/bootstrap deben ir sin Authorization
+    if (isPublicAuthEndpoint(config)) {
+      return config;
+    }
+
     if (DISABLE_AUTH) {
       const shouldSendDevHeaders =
         DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
@@ -134,7 +142,7 @@ api.interceptors.request.use(
       return config;
     }
 
-    // 1) intentar token (Auth0)
+    // 1) token Auth0
     let token = null;
     if (tokenProvider) {
       try {
@@ -145,22 +153,20 @@ api.interceptors.request.use(
       }
     }
 
-    // ✅ Si hay token Auth0, úsalo
     if (looksLikeJwt(token)) {
       setHeader(config, "Authorization", `Bearer ${token}`);
       return config;
     }
 
-    // ✅ 2) fallback: token local (login email/password)
+    // 2) fallback token local
     const localToken = getLocalToken();
     if (looksLikeJwt(localToken)) {
       setHeader(config, "Authorization", `Bearer ${localToken}`);
       return config;
     }
 
-    // 3) Sin token -> DEV headers solo si corresponde (local/dev)
+    // 3) dev headers
     const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
-
     if (shouldSendDevHeaders) {
       const { email, roles, perms } = getDevIdentity();
       setHeader(config, "x-user-email", email || "dev@local");
