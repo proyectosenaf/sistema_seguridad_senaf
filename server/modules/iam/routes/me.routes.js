@@ -1,29 +1,30 @@
-// server/modules/iam/routes/me.routes.js
 import { Router } from "express";
 import { buildContextFrom } from "../utils/rbac.util.js";
+import IamUser from "../models/IamUser.model.js";
 
 const r = Router();
 
-/**
- * GET /api/iam/v1/me
- *
- * - Si NO hay token válido -> visitor:true
- * - Si hay token válido -> usa Auth0 (req.auth.payload) o JWT local (Authorization Bearer)
- *
- * ✅ Corrección:
- * - No construyas un req "fake". Pasa el req real a buildContextFrom(req)
- *   para que soporte Auth0 + JWT local + (dev headers si están permitidos).
- */
+function nameFromEmail(email = "") {
+  const local = String(email || "").split("@")[0] || "";
+  if (!local) return "";
+  return local
+    .replace(/[._-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 r.get("/", async (req, res, next) => {
   try {
-    const ctx = await buildContextFrom(req);
+    // 1️⃣ Construir contexto desde el request real
+    let ctx = await buildContextFrom(req);
 
-    // Si no hay token válido, buildContextFrom devuelve email=null y user=null,
-    // pero ctx.isVisitor solo se enciende si hubo payload y no hubo user.
-    // Para "visitor:true" de verdad (sin token), determinamos si hay identidad:
-    const hasIdentity = !!ctx.auth0Sub || !!ctx.email;
+    const email = (ctx?.email || "").toLowerCase();
+    const auth0Sub = ctx?.auth0Sub || null;
 
-    if (!hasIdentity) {
+    // 2️⃣ Sin identidad real -> visitante público
+    if (!email && !auth0Sub) {
       return res.json({
         ok: true,
         user: null,
@@ -35,18 +36,38 @@ r.get("/", async (req, res, next) => {
       });
     }
 
+    // 3️⃣ Si no existe usuario en Mongo -> crear automáticamente
+    let user = ctx.user;
+
+    if (!user && email) {
+      user = await IamUser.findOne({ email });
+
+      if (!user) {
+        user = await IamUser.create({
+          email,
+          name: nameFromEmail(email),
+          roles: ["visita"],   // ✅ rol default
+          perms: [],
+          active: true,
+          provider: "auth0",
+          auth0Sub: auth0Sub || undefined,
+        });
+      }
+    }
+
+    // 4️⃣ Respuesta final consistente
     return res.json({
       ok: true,
-      user: ctx.user || null,
-      roles: ctx.roles || [],
-      permissions: ctx.permissions || [],
-      // visitor aquí significa: autenticó pero aún no está en IAM (o no se pudo mapear)
-      visitor: !!ctx.isVisitor,
-      email: ctx.email || null,
-      isSuperAdmin: !!ctx.isSuperAdmin,
-      auth0Sub: ctx.auth0Sub || null,
+      user: user || null,
+      roles: user?.roles || [],
+      permissions: user?.perms || [],
+      visitor: user?.roles?.includes("visita") || false,
+      email: email || null,
+      isSuperAdmin: ctx?.isSuperAdmin || false,
+      auth0Sub: auth0Sub || null,
     });
   } catch (e) {
+    console.error("[IAM /me]", e);
     next(e);
   }
 });
