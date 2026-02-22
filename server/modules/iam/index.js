@@ -3,6 +3,7 @@ import express from "express";
 import fileUpload from "express-fileupload";
 
 import { makeAuthMw } from "./utils/auth.util.js";
+import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js"; // ✅ NUEVO
 import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
@@ -19,20 +20,6 @@ const ah =
   (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
-/**
- * Registra el módulo IAM en la app principal de Express.
- *
- * - basePath por defecto: "/api/iam/v1"
- * - Alias legacy: "/api/iam"
- * - Alias DO path-trim: "/iam/v1"
- *
- * Cambios clave:
- * - NO usar router.options("*", ...) (rompe Express 5 / path-to-regexp). En su lugar:
- *   - respondemos OPTIONS con router.use y método.
- * - Orden claro de middlewares/rutas.
- * - Import Excel: authMw + devOr + fileUpload (solo ruta).
- * - jsonLimit parametrizable.
- */
 export async function registerIAMModule({
   app,
   basePath = "/api/iam/v1",
@@ -47,32 +34,29 @@ export async function registerIAMModule({
   router.use(express.json({ limit: jsonLimit }));
 
   // Preflight defensivo (si tu app global no maneja CORS)
-  // Evita el patrón "*" que en Express 5 da error.
   router.use((req, res, next) => {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
 
+  // Auth middleware
   const authMw = makeAuthMw();
+  const authOptional = makeOptionalAuthMw(); // ✅ NUEVO
 
   // Ping para probar montaje
   router.get("/_ping", (_req, res) =>
     res.json({ ok: true, module: "iam", version: "v1" })
   );
 
-  // AUTH público (si tu login requiere token, protégelo en auth.routes)
+  // AUTH público
   router.use("/auth", authRoutes);
 
   /**
-   * ✅ CORRECCIÓN CLAVE (sin romper tu estructura):
-   * /me NO debe ir protegido con authMw porque tu /me está diseñado para:
-   * - visitor:true si NO hay token
-   * - datos si SÍ hay token
-   *
-   * Si lo proteges con authMw, en producción te devuelve 401/403 y "no puedes pasar del login"
-   * cuando todavía no tienes token.
+   * ✅ /me con auth opcional:
+   * - Si NO hay token -> visitor:true
+   * - Si HAY token -> se valida y queda req.auth.payload listo para buildContextFrom()
    */
-  router.use("/me", meRoutes);
+  router.use("/me", authOptional, meRoutes);
 
   // Rutas protegidas (admin/gestión)
   router.use("/users", authMw, usersRoutes);
@@ -100,7 +84,6 @@ export async function registerIAMModule({
         });
       }
 
-      // express-fileupload puede dar array si vienen múltiples
       const file = Array.isArray(up) ? up[0] : up;
 
       if (!Buffer.isBuffer(file?.data)) {
@@ -140,7 +123,6 @@ export async function registerIAMModule({
   app.use(basePath, router);
   app.use("/api/iam", router); // legacy alias
 
-  // Alias para DigitalOcean path-trim (/api -> backend)
   if (enableDoAlias) {
     app.use("/iam/v1", router);
   }
