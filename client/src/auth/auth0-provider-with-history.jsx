@@ -12,10 +12,13 @@ export default function Auth0ProviderWithHistory({ children }) {
   // ✅ Audience: debe coincidir EXACTO con el "Identifier" del API en Auth0
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
 
+  const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
+  const MODE = String(import.meta.env.MODE || "").toLowerCase();
+  const IS_PROD = VITE_ENV === "production" || MODE === "production";
+
   // ✅ Callback fijo (tu app ya usa /callback)
   const redirectUri =
-    import.meta.env.VITE_AUTH0_REDIRECT_URI ||
-    `${window.location.origin}/callback`;
+    import.meta.env.VITE_AUTH0_REDIRECT_URI || `${window.location.origin}/callback`;
 
   const onRedirectCallback = (appState) => {
     const returnTo = appState?.returnTo || "/start";
@@ -45,11 +48,11 @@ export default function Auth0ProviderWithHistory({ children }) {
         scope: "openid profile email",
       }}
       /**
-       * ✅ Recomendado para SPA en producción si usarás refresh tokens.
-       * Ojo: si NO tienes habilitado "Refresh Token Rotation" en Auth0,
-       * getAccessTokenSilently puede fallar.
+       * cacheLocation:
+       * - "memory" (más seguro, recomendado en PROD)
+       * - "localstorage" (persistente; cuidado si compartes dispositivos)
        */
-      cacheLocation="localstorage"
+      cacheLocation={IS_PROD ? "memory" : "localstorage"}
       useRefreshTokens={true}
       useRefreshTokensFallback={true}
     >

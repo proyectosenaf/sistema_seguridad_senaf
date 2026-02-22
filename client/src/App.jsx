@@ -42,7 +42,10 @@ const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 
-const DEBUG_IAM = String(import.meta.env.VITE_IAM_DEBUG || "") === "1";
+/* ───────────────── ENV helpers ───────────────── */
+const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
+const MODE = String(import.meta.env.MODE || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
 const ROOT_ADMINS = (
@@ -92,6 +95,38 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   return "/";
 }
 
+/* ───────────────── Token utils (limpiar HS256) ───────────────── */
+function looksLikeJwt(t) {
+  return typeof t === "string" && t.split(".").length === 3;
+}
+
+function decodeJwtHeader(token) {
+  try {
+    const h = token.split(".")[0];
+    const json = JSON.parse(atob(h.replace(/-/g, "+").replace(/_/g, "/")));
+    return json || null;
+  } catch {
+    return null;
+  }
+}
+
+function isHs256Jwt(token) {
+  const hdr = decodeJwtHeader(token);
+  return String(hdr?.alg || "").toUpperCase() === "HS256";
+}
+
+function purgeLocalHs256Token() {
+  try {
+    const t = localStorage.getItem("token");
+    if (t && looksLikeJwt(t) && isHs256Jwt(t)) {
+      localStorage.removeItem("token");
+      console.warn("[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256).");
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
@@ -113,7 +148,6 @@ function RoleRedirectInline() {
       try {
         const res = await fetch(ME_URL, {
           method: "GET",
-          // Para /me, basta bearer. No necesitamos cookies aquí.
           credentials: "omit",
           headers,
         });
@@ -160,8 +194,13 @@ function RoleRedirectInline() {
 
 /** Inyecta token de Auth0 a axios, Rondas QR e IAM */
 function AuthTokenBridge({ children }) {
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
-  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
+  const { isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
+  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+
+  // Limpia HS256 al cargar (especialmente en producción)
+  useEffect(() => {
+    purgeLocalHs256Token();
+  }, []);
 
   useEffect(() => {
     // Si no hay sesión Auth0: limpia providers para evitar tokens viejos
@@ -174,7 +213,6 @@ function AuthTokenBridge({ children }) {
 
     const provider = async () => {
       try {
-        // ✅ SIEMPRE pedir token para tu API (audience)
         const token = await getAccessTokenSilently({
           authorizationParams: audience ? { audience } : {},
         });
@@ -190,6 +228,20 @@ function AuthTokenBridge({ children }) {
     attachIamAuth(provider);
   }, [isAuthenticated, getAccessTokenSilently, audience]);
 
+  // ✅ En producción, no permitas IAM sin Auth0 (evita re-generar HS256 con LoginLocal)
+  if (IS_PROD && !isLoading && !isAuthenticated) {
+    return (
+      <div className="p-6">
+        Debes iniciar sesión con Auth0 para acceder al sistema.
+        <div className="mt-3">
+          <a className="underline" href="/entry">
+            Ir al inicio de sesión
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return children;
 }
 
@@ -202,8 +254,11 @@ export default function App() {
           <Route path="/entry" element={<Entry />} />
           <Route path="/callback" element={<AuthCallback />} />
 
-          {/* Login local (si lo sigues usando) */}
-          <Route path="/login" element={<LoginLocal />} />
+          {/* ✅ Login local: SOLO DEV. En PROD manda a Auth0 */}
+          <Route
+            path="/login"
+            element={IS_PROD ? <Navigate to="/entry" replace /> : <LoginLocal />}
+          />
 
           {/* Home */}
           <Route
@@ -328,7 +383,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "guardia",
+                      "rondasqr.view",
+                      "rondasqr.scan.qr",
+                      "rondasqr.scan.manual",
+                      "*",
+                    ]}
+                  >
                     <RondasScan />
                   </IamGuardSuper>
                 </Layout>
@@ -458,7 +521,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "supervision.read",
+                      "supervision.create",
+                      "supervision.edit",
+                      "supervision.reports",
+                      "*",
+                    ]}
+                  >
                     <Supervision />
                   </IamGuardSuper>
                 </Layout>
@@ -471,7 +542,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "evaluacion.list",
+                      "evaluacion.create",
+                      "evaluacion.edit",
+                      "evaluacion.reports",
+                      "evaluacion.kpi",
+                      "*",
+                    ]}
+                  >
                     <Evaluacion />
                   </IamGuardSuper>
                 </Layout>
