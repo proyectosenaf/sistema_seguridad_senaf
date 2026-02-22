@@ -1,17 +1,16 @@
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 
-// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026
+// JWT local (HS256) para LoginLocal
 import jwt from "jsonwebtoken";
-// Importando jwt para accesos y seguridad en los roles, creado el 20/02/2026
 
-// Log simple (ok)
 console.log("[iam] boot", {
   NODE_ENV: process.env.NODE_ENV,
   IAM_DEV_ALLOW_ALL: process.env.IAM_DEV_ALLOW_ALL,
   SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
   IAM_ALLOW_DEV_HEADERS: process.env.IAM_ALLOW_DEV_HEADERS,
   ROOT_ADMINS: process.env.ROOT_ADMINS,
+  IAM_EMAIL_CLAIM: process.env.IAM_EMAIL_CLAIM,
 });
 
 export function parseList(v) {
@@ -22,53 +21,72 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
-//Usar el JWT para accesos creado el 20/02/2026, para obtener los roles y permisos del usuario autenticado
+/**
+ * Extrae payload de 2 fuentes:
+ * 1) Auth0 (RS256) -> req.auth.payload (ya verificado por makeAuthMw)
+ * 2) Local JWT (HS256) -> Authorization Bearer + JWT_SECRET
+ *
+ * ✅ CLAVE: NO intentes verificar Auth0 RS256 con JWT_SECRET.
+ */
 function getJwtPayload(req) {
-  // intenta Auth0 o makeAuthMw (req.auth.payload)
+  // 1) Auth0 / middleware (ya verificado)
   if (req?.auth?.payload) {
-    return req.auth.payload;
+    return { payload: req.auth.payload, source: "auth0" };
   }
 
-  // intenta JWT local si no hay payload (fallback)
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return null;
-
-  const token = authHeader.split(" ")[1];
-  if (!token) return null;
+  // 2) JWT local (HS256) fallback
+  const authHeader = req?.headers?.authorization || "";
+  const parts = String(authHeader).split(" ");
+  const token = parts.length === 2 ? parts[1] : null;
+  if (!token) return { payload: null, source: "none" };
 
   try {
-    return jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+    const p = jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+    return { payload: p, source: "local" };
   } catch {
-    return null;
+    return { payload: null, source: "none" };
   }
 }
-//Usar el JWT para accesos creado el 20/02/2026, para obtener los roles y permisos del usuario autenticado
 
 function getAuth0Sub(payload) {
   const sub = payload?.sub;
   return sub ? String(sub).trim() : null;
 }
 
+/**
+ * Lee email desde:
+ * - payload.email (local JWT a veces)
+ * - claim con namespace (Auth0): por defecto "https://senaf/email"
+ * - opcional: "https://senaf/" + "email" si alguien configura namespace distinto
+ */
 function getEmailFromPayload(payload) {
   if (!payload) return null;
 
-  const direct = payload.email;
-  if (direct) return String(direct).toLowerCase().trim();
+  if (payload.email) return String(payload.email).toLowerCase().trim();
 
-  const ns = process.env.IAM_EMAIL_CLAIM || "https://senaf/email";
-  const claimed = payload[ns];
-  if (claimed) return String(claimed).toLowerCase().trim();
+  // 1) claim exacto configurable o por defecto tuyo
+  const exact = String(process.env.IAM_EMAIL_CLAIM || "https://senaf/email").trim();
+  if (exact && payload[exact]) {
+    return String(payload[exact]).toLowerCase().trim();
+  }
+
+  // 2) Soporte por namespace (por si configuras "https://senaf/")
+  const ns = String(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf/").trim();
+  const nsNorm = ns.endsWith("/") ? ns : `${ns}/`;
+  const byNs = payload[`${nsNorm}email`];
+  if (byNs) return String(byNs).toLowerCase().trim();
 
   return null;
 }
 
 /**
  * buildContextFrom(req)
- * - Auth0 / Local JWT: identidad por sub y/o email
+ * - Identidad: Auth0 (req.auth.payload) o JWT local
  * - IAM: roles/perms desde MongoDB
+ * - Auto-provision: crea usuario si viene identidad y no existe
  */
 export async function buildContextFrom(req) {
-  const payload = getJwtPayload(req);
+  const { payload, source } = getJwtPayload(req);
 
   const auth0Sub = getAuth0Sub(payload);
   const jwtEmail = getEmailFromPayload(payload);
@@ -79,9 +97,11 @@ export async function buildContextFrom(req) {
   const allowDevHeaders =
     !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
-  const email = (jwtEmail || (allowDevHeaders ? headerEmail : null) || "")
-    .toLowerCase()
-    .trim() || null;
+  // Email final: primero token, luego dev headers si aplica
+  const email =
+    (jwtEmail || (allowDevHeaders ? headerEmail : null) || "")
+      .toLowerCase()
+      .trim() || null;
 
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
@@ -98,8 +118,15 @@ export async function buildContextFrom(req) {
     user = await IamUser.findOne({ email }).lean();
   }
 
-  // ───────────── AUTO-PROVISIONING (solo si hay JWT) ─────────────
-  if (!user && payload) {
+  /**
+   * ✅ AUTO-PROVISIONING:
+   * - Solo si hay identidad (payload) y tenemos email/sub
+   * - Rol default: "visita"
+   * - Bootstrap admin si el email coincide con SUPERADMIN o está en ROOT_ADMINS
+   */
+  const hasIdentity = !!payload && (!!email || !!auth0Sub);
+
+  if (!user && hasIdentity) {
     const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
       String(x).toLowerCase().trim()
     );
@@ -109,25 +136,36 @@ export async function buildContextFrom(req) {
       .toLowerCase();
 
     const isBootstrapAdmin =
-      (!!email && email === superEmail) || (!!email && rootAdmins.includes(email));
+      (!!email && !!superEmail && email === superEmail) ||
+      (!!email && rootAdmins.includes(email));
+
+    // ✅ rol default según tu requerimiento
+    const defaultVisitorRole = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
+      .trim()
+      .toLowerCase();
 
     const doc = {
       active: true,
-      provider: "auth0",
-      roles: isBootstrapAdmin ? ["admin"] : ["visitor"],
+      provider: source === "local" ? "local" : "auth0",
+      roles: isBootstrapAdmin ? ["admin"] : [defaultVisitorRole],
       perms: isBootstrapAdmin ? ["*"] : [],
     };
 
-    if (email) doc.email = email;
+    if (email) {
+      doc.email = email;
+      doc.name = email.split("@")[0];
+    }
+
     if (auth0Sub) doc.auth0Sub = auth0Sub;
 
-    if (doc.email || doc.auth0Sub) {
+    // No crear si no hay email (tu schema exige email)
+    if (doc.email) {
       try {
         const created = await IamUser.create(doc);
         user = created.toObject();
         console.log(
           `[iam] auto-provisioned: ${email || auth0Sub} (${
-            isBootstrapAdmin ? "ADMIN" : "VISITOR"
+            isBootstrapAdmin ? "ADMIN" : defaultVisitorRole.toUpperCase()
           })`
         );
       } catch (e) {
@@ -135,16 +173,27 @@ export async function buildContextFrom(req) {
       }
     }
   }
-  // ───────────── FIN AUTO-PROVISIONING ─────────────
 
+  // Si existe usuario pero no tiene auth0Sub y ahora viene, lo guardamos (sin lean)
+  if (user && auth0Sub && !user.auth0Sub) {
+    try {
+      await IamUser.updateOne({ _id: user._id }, { $set: { auth0Sub } });
+      user.auth0Sub = auth0Sub;
+    } catch (e) {
+      console.warn("[iam] could not attach auth0Sub:", e?.message || e);
+    }
+  }
+
+  // Roles/perms combinados
   const roleNames = new Set([...(user?.roles || []), ...headerRoles]);
-
   const permSet = new Set([...(user?.perms || [])]);
 
+  // dev perms solo si no hay usuario y allowDevHeaders
   if (!user && allowDevHeaders) {
     headerPerms.forEach((p) => permSet.add(p));
   }
 
+  // expand roles -> permissions desde IamRole
   if (roleNames.size) {
     const roleList = [...roleNames].map((r) => String(r).trim());
     const roleDocs = await IamRole.find({
@@ -169,7 +218,11 @@ export async function buildContextFrom(req) {
     return permSet.has(perm);
   }
 
-  const isVisitor = !!payload && !user;
+  // ✅ visitor real: si rol incluye "visita" (o default visitor role)
+  const defaultVisitorRole = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
+    .trim()
+    .toLowerCase();
+  const isVisitor = roleNames.has(defaultVisitorRole);
 
   return {
     user,
@@ -195,7 +248,7 @@ export function requirePerm(perm) {
       const ctx = await buildContextFrom(req);
       req.iam = ctx;
 
-      const payload = getJwtPayload(req);
+      const { payload } = getJwtPayload(req);
       if (!payload) {
         return res.status(401).json({ message: "No autenticado" });
       }
