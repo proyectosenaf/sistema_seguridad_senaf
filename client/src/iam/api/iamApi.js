@@ -9,8 +9,10 @@ const DEBUG = import.meta.env.VITE_IAM_DEBUG === "1";
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV = import.meta.env.VITE_FORCE_DEV_IAM === "1";
 
+// Detectar producción de forma robusta en Vite
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
-const IS_PROD = VITE_ENV === "production";
+const MODE = String(import.meta.env.MODE || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
 /* ─────────── provider de token tipo attachAuth0 ─────────── */
 let tokenProvider = null;
@@ -21,18 +23,15 @@ export function attachIamAuth(fn) {
 /** Identidad DEV (para cabeceras x-user-*) */
 function getDevIdentity() {
   const email =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevEmail")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
     import.meta.env.VITE_DEV_IAM_EMAIL ||
     "";
   const roles =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevRoles")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
     import.meta.env.VITE_DEV_IAM_ROLES ||
     "";
   const perms =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevPerms")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
     import.meta.env.VITE_DEV_IAM_PERMS ||
     "*";
   return {
@@ -102,8 +101,7 @@ async function toJson(resp) {
 
 /** fetch con errores enriquecidos: err.status y err.payload */
 async function rawFetch(url, { method = "GET", body, token, formData = false } = {}) {
-  const isFD =
-    formData || (typeof FormData !== "undefined" && body instanceof FormData);
+  const isFD = formData || (typeof FormData !== "undefined" && body instanceof FormData);
 
   // Si no nos pasaron token, intentamos usar el provider global
   if (!token && tokenProvider) {
@@ -135,9 +133,7 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
 
     const contentType = r.headers.get("content-type") || "";
     const parse = async () =>
-      contentType.includes("application/json")
-        ? await toJson(r)
-        : await r.text().catch(() => "");
+      contentType.includes("application/json") ? await toJson(r) : await r.text().catch(() => "");
 
     if (!r.ok) {
       const payload = await parse();
@@ -352,8 +348,7 @@ export const iamApi = {
     return rawFetch(PATHS.roles.create(), { method: "POST", body, token: t });
   },
 
-  updateRole: (id, p, t) =>
-    rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
+  updateRole: (id, p, t) => rawFetch(PATHS.roles.byId(id), { method: "PATCH", body: p, token: t }),
 
   deleteRole: (id, t) => rawFetch(PATHS.roles.byId(id), { method: "DELETE", token: t }),
 
@@ -403,8 +398,7 @@ export const iamApi = {
 
   createPerm: (p, t) => rawFetch(PATHS.perms.create(), { method: "POST", body: p, token: t }),
 
-  updatePerm: (id, p, t) =>
-    rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
+  updatePerm: (id, p, t) => rawFetch(PATHS.perms.byId(id), { method: "PATCH", body: p, token: t }),
 
   deletePerm: (id, t) => rawFetch(PATHS.perms.byId(id), { method: "DELETE", token: t }),
 
@@ -487,8 +481,7 @@ export const iamApi = {
     return rawFetch(PATHS.users.create(), { method: "POST", body, token: t });
   },
 
-  updateUser: (id, p, t) =>
-    rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
+  updateUser: (id, p, t) => rawFetch(PATHS.users.byId(id), { method: "PATCH", body: p, token: t }),
 
   enableUser: (id, t) => rawFetch(PATHS.users.enable(id), { method: "POST", token: t }),
 
@@ -557,8 +550,7 @@ export const iamApi = {
         msg.includes("no implementado");
 
       if (notImpl) {
-        if (DEBUG)
-          console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
+        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
         await new Promise((r) => setTimeout(r, 700));
         return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
       }

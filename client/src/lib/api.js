@@ -30,6 +30,11 @@ export const SOCKET_BASE_URL = SOCKET_HOST;
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
 const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
 
+// Detectar producción de forma robusta en Vite
+const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
+const MODE = String(import.meta.env.MODE || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production" || MODE === "production";
+
 function isLocalhostRuntime() {
   if (typeof window === "undefined") return false;
   const h = window.location.hostname;
@@ -117,10 +122,13 @@ function looksLikeJwt(t) {
 function isPublicAuthEndpoint(config) {
   const url = String(config?.url || "");
   // config.url suele venir relativo: "/iam/v1/auth/login"
-  return (
-    url.includes("/iam/v1/auth/login") ||
-    url.includes("/iam/v1/auth/bootstrap")
-  );
+  return url.includes("/iam/v1/auth/login") || url.includes("/iam/v1/auth/bootstrap");
+}
+
+// ✅ Detectar endpoints de IAM v1 (para no mandar token local HS256 en PROD)
+function isIamV1Endpoint(config) {
+  const url = String(config?.url || "");
+  return url.includes("/iam/v1/");
 }
 
 api.interceptors.request.use(
@@ -130,6 +138,7 @@ api.interceptors.request.use(
       return config;
     }
 
+    // DEV headers cuando auth está deshabilitado
     if (DISABLE_AUTH) {
       const shouldSendDevHeaders =
         DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
@@ -142,7 +151,7 @@ api.interceptors.request.use(
       return config;
     }
 
-    // 1) token Auth0
+    // 1) token Auth0 (RS256) desde provider
     let token = null;
     if (tokenProvider) {
       try {
@@ -158,14 +167,20 @@ api.interceptors.request.use(
       return config;
     }
 
-    // 2) fallback token local
-    const localToken = getLocalToken();
-    if (looksLikeJwt(localToken)) {
-      setHeader(config, "Authorization", `Bearer ${localToken}`);
-      return config;
+    /**
+     * 2) fallback token local (HS256)
+     * ✅ PERO: en PRODUCCIÓN NO se permite para /iam/v1/*
+     * porque el backend IAM está validando RS256 con JWKS (Auth0)
+     */
+    if (!(IS_PROD && isIamV1Endpoint(config))) {
+      const localToken = getLocalToken();
+      if (looksLikeJwt(localToken)) {
+        setHeader(config, "Authorization", `Bearer ${localToken}`);
+        return config;
+      }
     }
 
-    // 3) dev headers
+    // 3) dev headers (solo entornos dev/local)
     const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
     if (shouldSendDevHeaders) {
       const { email, roles, perms } = getDevIdentity();

@@ -80,15 +80,23 @@ export function optionalAuth(req, res, next) {
   return requireAuth(req, res, next);
 }
 
+/** Normaliza namespace para roles */
+function normalizeRolesNamespace(baseNs) {
+  const s = String(baseNs || "").trim().replace(/\/+$/g, "");
+  if (!s) return "";
+  // Si ya termina en /roles, úsalo tal cual; si no, agrega /roles
+  return s.toLowerCase().endsWith("/roles") ? s : `${s}/roles`;
+}
+
 /* Normalizador desde payload */
 export function getUserFromPayload(p = {}) {
-  // ✅ Consistente con tu setup: AUTH0_NAMESPACE / IAM_ROLES_NAMESPACE
+  // ✅ Puede venir "https://senaf" o "https://senaf/roles"
   const BASE_NS =
     process.env.IAM_ROLES_NAMESPACE ||
     process.env.AUTH0_NAMESPACE ||
     "https://senaf";
 
-  const NS = String(BASE_NS).replace(/\/+$/g, "") + "/roles";
+  const NS = normalizeRolesNamespace(BASE_NS);
 
   const rolesRaw =
     p[NS] ||

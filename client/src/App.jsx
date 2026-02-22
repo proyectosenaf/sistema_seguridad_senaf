@@ -9,19 +9,14 @@ import { attachIamAuth } from "./iam/api/iamApi.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
-import { LayoutUIProvider } from "./components/layout-ui.jsx";
 import IamGuard from "./iam/api/IamGuard.jsx";
 
-//Importar la página de LoginLocal
-//Creada el 19/02/2026 para implementar Login, cambio de contraseña y vencimiento
+// Login local
 import LoginLocal from "./pages/Auth/LoginLocal";
 import ChangePassword from "./pages/Auth/ChangePassword";
-//Importar la página de LoginLocal
-//Creada el 19/02/2026 para implementar Login, cambio de contraseña y vencimiento
 
 // Auth pages
 const Entry = React.lazy(() => import("./pages/Auth/Entry.jsx"));
-const LoginRedirect = React.lazy(() => import("./pages/Auth/LoginRedirect.jsx"));
 const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
 
 // ---- Páginas (lazy)
@@ -82,7 +77,7 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   // Visitante sin roles/perms -> agenda
   if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
 
-  // Admin -> IAM admin (o donde prefieras)
+  // Admin -> IAM admin
   if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
 
   // Guardia operación
@@ -97,58 +92,10 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   return "/";
 }
 
-/* ───────────────── DEBUG Auth0 ───────────────── */
-function AuthDebug() {
-  const { isAuthenticated, user, error, isLoading, getAccessTokenSilently } = useAuth0();
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      const domain = import.meta.env.VITE_AUTH0_DOMAIN;
-      const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
-      const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
-
-      console.log("[AUTH0] env domain:", domain || "(missing)");
-      console.log("[AUTH0] env clientId:", clientId ? "(set)" : "(missing)");
-      console.log("[AUTH0] env audience:", audience || "(empty)");
-      console.log("[AUTH0] isLoading:", isLoading);
-      console.log("[AUTH0] isAuthenticated:", isAuthenticated);
-      console.log("[AUTH0] user.email:", user?.email || null);
-      console.log("[AUTH0] error:", error || null);
-
-      if (!alive) return;
-
-      if (isAuthenticated) {
-        try {
-          const token = await getAccessTokenSilently({
-            authorizationParams: audience ? { audience } : {},
-          });
-          console.log("[AUTH0] token ok?", !!token, "len:", token?.length || 0);
-
-          // ✅ Para depurar 401 en producción, guarda token en window si DEBUG
-          if (DEBUG_IAM && token) {
-            window.__SENAF_TOKEN = token;
-            console.log("[AUTH0] window.__SENAF_TOKEN set");
-          }
-        } catch (e) {
-          console.log("[AUTH0] getAccessTokenSilently FAILED:", e?.message || e);
-        }
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [isAuthenticated, isLoading, user, error, getAccessTokenSilently]);
-
-  return null;
-}
-
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const ranRef = useRef(false);
 
   useEffect(() => {
@@ -166,7 +113,7 @@ function RoleRedirectInline() {
       try {
         const res = await fetch(ME_URL, {
           method: "GET",
-          // ✅ en producción no uses dev headers; solo bearer
+          // Para /me, basta bearer. No necesitamos cookies aquí.
           credentials: "omit",
           headers,
         });
@@ -206,18 +153,18 @@ function RoleRedirectInline() {
     return () => {
       alive = false;
     };
-  }, [navigate, user, isAuthenticated, getAccessTokenSilently]);
+  }, [navigate, isAuthenticated, getAccessTokenSilently]);
 
   return <div className="p-6">Redirigiendo…</div>;
 }
 
-/** Inyecta token de Auth0 a la lib/api, Rondas QR e IAM */
+/** Inyecta token de Auth0 a axios, Rondas QR e IAM */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
 
   useEffect(() => {
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "";
-
+    // Si no hay sesión Auth0: limpia providers para evitar tokens viejos
     if (!isAuthenticated) {
       attachAuth0(null);
       attachRondasAuth(null);
@@ -227,6 +174,7 @@ function AuthTokenBridge({ children }) {
 
     const provider = async () => {
       try {
+        // ✅ SIEMPRE pedir token para tu API (audience)
         const token = await getAccessTokenSilently({
           authorizationParams: audience ? { audience } : {},
         });
@@ -240,292 +188,312 @@ function AuthTokenBridge({ children }) {
     attachAuth0(provider);
     attachRondasAuth(provider);
     attachIamAuth(provider);
-  }, [isAuthenticated, getAccessTokenSilently]);
+  }, [isAuthenticated, getAccessTokenSilently, audience]);
 
   return children;
 }
 
 export default function App() {
   return (
-        <Suspense fallback={<div className="p-6">Cargando…</div>}>
-          <Routes>
-            {/* Auth */}
-            <Route path="/entry" element={<Entry />} />
-            <Route path="/callback" element={<AuthCallback />} />
-            {/* <Route path="/login" element={<LoginRedirect />} /> */}
+    <AuthTokenBridge>
+      <Suspense fallback={<div className="p-6">Cargando…</div>}>
+        <Routes>
+          {/* Auth */}
+          <Route path="/entry" element={<Entry />} />
+          <Route path="/callback" element={<AuthCallback />} />
 
-            {/*Aqui se cambia a login local el 19/02/2026 */}
-            <Route path="/login" element={<LoginLocal />} />
-            {/*Aqui se cambia a login local el 19/02/2026 */}
+          {/* Login local (si lo sigues usando) */}
+          <Route path="/login" element={<LoginLocal />} />
 
-            {/* Home */}
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <Home />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          {/* Home */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Home />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            {/* Start */}
-            <Route
-              path="/start"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <RoleRedirectInline />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          {/* Start */}
+          <Route
+            path="/start"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <RoleRedirectInline />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            {/* Incidentes */}
-            <Route
-              path="/incidentes"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
-                      <IncidentesList />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/incidentes/lista"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}>
-                      <IncidentesList />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/incidentes/nuevo"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["incidentes.create", "*"]}>
-                      <IncidenteForm />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          {/* Incidentes */}
+          <Route
+            path="/incidentes"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper
+                    anyOf={[
+                      "incidentes.read",
+                      "incidentes.create",
+                      "incidentes.edit",
+                      "incidentes.reports",
+                      "*",
+                    ]}
+                  >
+                    <IncidentesList />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/incidentes/lista"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper
+                    anyOf={[
+                      "incidentes.read",
+                      "incidentes.create",
+                      "incidentes.edit",
+                      "incidentes.reports",
+                      "*",
+                    ]}
+                  >
+                    <IncidentesList />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/incidentes/nuevo"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["incidentes.create", "*"]}>
+                    <IncidenteForm />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            {/* IAM */}
-            <Route
-              path="/iam"
-              element={
-                <ProtectedRoute>
-                  <Navigate to="/iam/admin" replace />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/iam/admin"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    {/* ✅ acepta nuevos + legacy */}
-                    <IamGuardSuper anyOf={["iam.users.manage", "iam.roles.manage", "iam.usuarios.gestionar", "iam.roles.gestionar", "*"]}>
-                      <IamAdminPage />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          {/* IAM */}
+          <Route
+            path="/iam"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/iam/admin" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/iam/admin"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper
+                    anyOf={[
+                      "iam.users.manage",
+                      "iam.roles.manage",
+                      "iam.usuarios.gestionar",
+                      "iam.roles.gestionar",
+                      "*",
+                    ]}
+                  >
+                    <IamAdminPage />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            {/* RondasQR */}
-            <Route
-              path="/rondasqr"
-              element={
-                <ProtectedRoute>
-                  <Navigate to="/rondasqr/scan" replace />
-                </ProtectedRoute>
-              }
-            />
+          {/* RondasQR */}
+          <Route
+            path="/rondasqr"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/rondasqr/scan" replace />
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/rondasqr/scan/*"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}>
-                      <RondasScan />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/rondasqr/scan/*"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}>
+                    <RondasScan />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/rondasqr/reports"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        // normalizados
-                        "rondasqr.reports.view",
-                        "rondasqr.reports.query",
-                        "rondasqr.reports.export_pdf",
-                        "rondasqr.reports.map",
-                        // legacy
-                        "rondasqr.reports",
-                        "rondasqr.view",
-                        "*",
-                      ]}
-                    >
-                      <RondasDashboard />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/rondasqr/reports"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper
+                    anyOf={[
+                      "rondasqr.reports.view",
+                      "rondasqr.reports.query",
+                      "rondasqr.reports.export_pdf",
+                      "rondasqr.reports.map",
+                      "rondasqr.reports",
+                      "rondasqr.view",
+                      "*",
+                    ]}
+                  >
+                    <RondasDashboard />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/rondasqr/admin"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper
-                      anyOf={[
-                        // admin real por acciones
-                        "rondasqr.assignments.write",
-                        "rondasqr.sites.write",
-                        "rondasqr.checkpoints.write",
-                        "rondasqr.qr.generate",
-                        // legacy (si existe)
-                        "rondasqr.create",
-                        "rondasqr.edit",
-                        "rondasqr.delete",
-                        "*",
-                      ]}
-                    >
-                      <AdminHub />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/rondasqr/admin"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper
+                    anyOf={[
+                      "rondasqr.assignments.write",
+                      "rondasqr.sites.write",
+                      "rondasqr.checkpoints.write",
+                      "rondasqr.qr.generate",
+                      "rondasqr.create",
+                      "rondasqr.edit",
+                      "rondasqr.delete",
+                      "*",
+                    ]}
+                  >
+                    <AdminHub />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            {/* Aliases legacy */}
-            <Route path="/rondas" element={<Navigate to="/rondasqr/scan" replace />} />
-            <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
-            <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
-            <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
+          {/* Aliases legacy */}
+          <Route path="/rondas" element={<Navigate to="/rondasqr/scan" replace />} />
+          <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
+          <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
+          <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
 
-            {/* Otros módulos */}
-            <Route
-              path="/accesos"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
-                      <Accesos />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          {/* Otros módulos */}
+          <Route
+            path="/accesos"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
+                    <Accesos />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/visitas"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
-                      <VisitsPageCore />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/visitas"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                    <VisitsPageCore />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/visitas/control"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
-                      <VisitsPageCore />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/visitas/control"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["visitas.read", "visitas.write", "visitas.close", "*"]}>
+                    <VisitsPageCore />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/visitas/agenda"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <AgendaPageCore />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/visitas/agenda"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <AgendaPageCore />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/bitacora"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
-                      <Bitacora />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/bitacora"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["bitacora.read", "bitacora.write", "bitacora.export", "*"]}>
+                    <Bitacora />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/supervision"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
-                      <Supervision />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/supervision"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                    <Supervision />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/evaluacion"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
-                      <Evaluacion />
-                    </IamGuardSuper>
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
+          <Route
+            path="/evaluacion"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
+                    <Evaluacion />
+                  </IamGuardSuper>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
 
-            <Route
-              path="/chat"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <Chat />
-                  </Layout>
-                </ProtectedRoute>
-              }
-            />
-            <Route path="/change-password" element={<ChangePassword />} />
-            <Route path="*" element={<div className="p-6">No encontrado</div>} />
-          </Routes>
-        </Suspense>
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Chat />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route path="/change-password" element={<ChangePassword />} />
+          <Route path="*" element={<div className="p-6">No encontrado</div>} />
+        </Routes>
+      </Suspense>
+    </AuthTokenBridge>
   );
 }
