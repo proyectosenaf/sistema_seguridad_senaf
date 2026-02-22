@@ -17,7 +17,7 @@ const IS_PROD = VITE_ENV === "production" || MODE === "production";
 /* ─────────── provider de token tipo attachAuth0 ─────────── */
 let tokenProvider = null;
 export function attachIamAuth(fn) {
-  tokenProvider = fn; // fn es async () => token | null
+  tokenProvider = typeof fn === "function" ? fn : null; // fn es async () => token | null
 }
 
 /** Identidad DEV (para cabeceras x-user-*) */
@@ -58,12 +58,20 @@ function slugify(str = "") {
     .replace(/^_+|_+$/g, "");
 }
 
+/** ✅ Solo considera token válido si es string no-vacío */
+function normalizeToken(t) {
+  if (typeof t !== "string") return null;
+  const s = t.trim();
+  return s ? s : null;
+}
+
 function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
   const h = {};
   if (!isFormData) h["Content-Type"] = "application/json";
 
-  // ✅ Token real (Auth0 / JWT)
-  if (token) h.Authorization = `Bearer ${token}`;
+  // ✅ Token real (Auth0 / JWT) - evita "Bearer undefined/null"
+  const tok = normalizeToken(token);
+  if (tok) h.Authorization = `Bearer ${tok}`;
 
   /**
    * ✅ FIX SEGURIDAD:
@@ -74,7 +82,7 @@ function buildHeaders({ token, isFormData, method = "GET", urlForCors } = {}) {
    */
   const canDevHeaders = !IS_PROD || isLocalhostRuntime();
   const shouldSendDev =
-    canDevHeaders && !token && (FORCE_DEV || DISABLE_AUTH || isLocalhostRuntime());
+    canDevHeaders && !tok && (FORCE_DEV || DISABLE_AUTH || isLocalhostRuntime());
 
   if (shouldSendDev) {
     const { email, roles, perms } = getDevIdentity();
@@ -107,7 +115,9 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
   if (!token && tokenProvider) {
     try {
       const autoToken = await tokenProvider();
-      if (autoToken) token = autoToken;
+      const norm = normalizeToken(autoToken);
+      if (norm) token = norm;
+      else token = null;
     } catch (err) {
       if (DEBUG) {
         console.warn(
@@ -115,7 +125,10 @@ async function rawFetch(url, { method = "GET", body, token, formData = false } =
           err?.message || err
         );
       }
+      token = null;
     }
+  } else {
+    token = normalizeToken(token);
   }
 
   try {
@@ -550,7 +563,8 @@ export const iamApi = {
         msg.includes("no implementado");
 
       if (notImpl) {
-        if (DEBUG) console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
+        if (DEBUG)
+          console.warn("[iamApi] /verify-email no implementado; simulando…", { userId, email });
         await new Promise((r) => setTimeout(r, 700));
         return { ok: true, simulated: true, message: "Simulación de verificación enviada" };
       }

@@ -35,6 +35,8 @@ const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
 const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
+const DEBUG_API = String(import.meta.env.VITE_API_DEBUG || "") === "1";
+
 function isLocalhostRuntime() {
   if (typeof window === "undefined") return false;
   const h = window.location.hostname;
@@ -43,20 +45,17 @@ function isLocalhostRuntime() {
 
 function getDevIdentity() {
   const email =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevEmail")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
     import.meta.env.VITE_DEV_IAM_EMAIL ||
     "";
 
   const roles =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevRoles")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
     import.meta.env.VITE_DEV_IAM_ROLES ||
     "";
 
   const perms =
-    (typeof localStorage !== "undefined" &&
-      localStorage.getItem("iamDevPerms")) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
     import.meta.env.VITE_DEV_IAM_PERMS ||
     "*";
 
@@ -118,6 +117,12 @@ function looksLikeJwt(t) {
   return typeof t === "string" && t.split(".").length === 3;
 }
 
+function normalizeToken(t) {
+  if (typeof t !== "string") return null;
+  const s = t.trim();
+  return s ? s : null;
+}
+
 // ✅ No mandar Authorization en endpoints públicos de auth
 function isPublicAuthEndpoint(config) {
   const url = String(config?.url || "");
@@ -135,16 +140,16 @@ api.interceptors.request.use(
   async (config) => {
     // ✅ IMPORTANTÍSIMO: login/bootstrap deben ir sin Authorization
     if (isPublicAuthEndpoint(config)) {
+      if (DEBUG_API) console.log("[api] public auth endpoint:", config.url);
       return config;
     }
 
     // DEV headers cuando auth está deshabilitado
     if (DISABLE_AUTH) {
-      const shouldSendDevHeaders =
-        DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
+      const shouldSendDevHeaders = DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
       if (shouldSendDevHeaders) {
         const { email, roles, perms } = getDevIdentity();
-        setHeader(config, "x-user-email", email || "dev@local");
+        if (email) setHeader(config, "x-user-email", email);
         if (roles) setHeader(config, "x-roles", roles);
         setHeader(config, "x-perms", perms || "*");
       }
@@ -155,14 +160,15 @@ api.interceptors.request.use(
     let token = null;
     if (tokenProvider) {
       try {
-        token = await tokenProvider();
+        token = normalizeToken(await tokenProvider());
       } catch (err) {
-        console.warn("[api] error obteniendo token:", err);
+        if (DEBUG_API) console.warn("[api] tokenProvider failed:", err);
         token = null;
       }
     }
 
-    if (looksLikeJwt(token)) {
+    // ✅ Solo seteamos Authorization si token existe y parece JWT
+    if (token && looksLikeJwt(token)) {
       setHeader(config, "Authorization", `Bearer ${token}`);
       return config;
     }
@@ -170,11 +176,10 @@ api.interceptors.request.use(
     /**
      * 2) fallback token local (HS256)
      * ✅ PERO: en PRODUCCIÓN NO se permite para /iam/v1/*
-     * porque el backend IAM está validando RS256 con JWKS (Auth0)
      */
     if (!(IS_PROD && isIamV1Endpoint(config))) {
-      const localToken = getLocalToken();
-      if (looksLikeJwt(localToken)) {
+      const localToken = normalizeToken(getLocalToken());
+      if (localToken && looksLikeJwt(localToken)) {
         setHeader(config, "Authorization", `Bearer ${localToken}`);
         return config;
       }
@@ -184,7 +189,7 @@ api.interceptors.request.use(
     const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
     if (shouldSendDevHeaders) {
       const { email, roles, perms } = getDevIdentity();
-      setHeader(config, "x-user-email", email || "dev@local");
+      if (email) setHeader(config, "x-user-email", email);
       if (roles) setHeader(config, "x-roles", roles);
       setHeader(config, "x-perms", perms || "*");
     }
