@@ -1,6 +1,6 @@
 // client/src/App.jsx
 import React, { Suspense, useEffect, useRef } from "react";
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 
 import { attachAuth0 } from "./lib/api.js";
@@ -75,7 +75,8 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   const P = new Set(Praw.map((p) => String(p)));
   const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
 
-  const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
+  const hasWildcard =
+    P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
   // Visitante sin roles/perms -> agenda
   if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
@@ -120,7 +121,9 @@ function purgeLocalHs256Token() {
     const t = localStorage.getItem("token");
     if (t && looksLikeJwt(t) && isHs256Jwt(t)) {
       localStorage.removeItem("token");
-      console.warn("[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256).");
+      console.warn(
+        "[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256)."
+      );
       return true;
     }
   } catch {}
@@ -175,7 +178,10 @@ function RoleRedirectInline() {
           });
           if (token) headers.Authorization = `Bearer ${token}`;
         } catch (e) {
-          console.warn("[RoleRedirectInline] getAccessTokenSilently falló:", e?.message || e);
+          console.warn(
+            "[RoleRedirectInline] getAccessTokenSilently falló:",
+            e?.message || e
+          );
         }
       }
 
@@ -195,7 +201,16 @@ function RoleRedirectInline() {
 /** Inyecta token de Auth0 a axios, Rondas QR e IAM */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
+  const location = useLocation();
   const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
+
+  // Rutas públicas: deben renderizar aunque NO haya sesión Auth0
+  const path = location?.pathname || "/";
+  const isPublicRoute =
+    path === "/entry" ||
+    path === "/callback" ||
+    (!IS_PROD && path === "/login") || // login local solo dev
+    path.startsWith("/verify");        // si usas verify links
 
   // Limpia HS256 al cargar (especialmente en producción)
   useEffect(() => {
@@ -214,7 +229,7 @@ function AuthTokenBridge({ children }) {
     const provider = async () => {
       try {
         const token = await getAccessTokenSilently({
-          authorizationParams: audience ? { audience } : {},
+          authorizationParams: { audience },
         });
         return token || null;
       } catch (e) {
@@ -228,8 +243,8 @@ function AuthTokenBridge({ children }) {
     attachIamAuth(provider);
   }, [isAuthenticated, getAccessTokenSilently, audience]);
 
-  // ✅ En producción, no permitas IAM sin Auth0 (evita re-generar HS256 con LoginLocal)
-  if (IS_PROD && !isLoading && !isAuthenticated) {
+  // ✅ En producción, bloquea SOLO rutas privadas (NO /entry ni /callback)
+  if (IS_PROD && !isLoading && !isAuthenticated && !isPublicRoute) {
     return (
       <div className="p-6">
         Debes iniciar sesión con Auth0 para acceder al sistema.
@@ -458,7 +473,9 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}>
+                  <IamGuardSuper
+                    anyOf={["accesos.read", "accesos.write", "accesos.export", "*"]}
+                  >
                     <Accesos />
                   </IamGuardSuper>
                 </Layout>
@@ -522,13 +539,7 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <IamGuardSuper
-                    anyOf={[
-                      "supervision.read",
-                      "supervision.create",
-                      "supervision.edit",
-                      "supervision.reports",
-                      "*",
-                    ]}
+                    anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}
                   >
                     <Supervision />
                   </IamGuardSuper>
