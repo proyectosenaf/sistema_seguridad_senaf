@@ -1,11 +1,32 @@
 // server/modules/iam/routes/auth.routes.js
 import { Router } from "express";
 import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 
 import IamUser from "../models/IamUser.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 
 const r = Router();
+
+/* ===================== helpers ===================== */
+function safeEq(a = "", b = "") {
+  const aa = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
+
+function normEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normStrList(arr, { lower = false } = {}) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .map((x) => (lower ? x.toLowerCase() : x));
+}
 
 /* ===================== POST-REGISTER (AUTH0 WEBHOOK) ===================== */
 /**
@@ -17,65 +38,73 @@ const r = Router();
  *
  * Body:
  *  { email, auth0Sub, roles, perms, provider }
+ *
+ * ✅ Política SENAF:
+ * - Auto-registro SIEMPRE crea "visita".
+ * - Empleados (guardia/admin/etc.) los crea/asigna el admin desde el módulo.
  */
 r.post("/post-register", async (req, res, next) => {
   try {
-    const secret = String(process.env.SENAF_WEBHOOK_SECRET || "");
-    const got = String(req.headers["x-senaf-webhook-secret"] || "");
+    const expected = String(process.env.SENAF_WEBHOOK_SECRET || "").trim();
+    const got = String(req.headers["x-senaf-webhook-secret"] || "").trim();
 
-    // ✅ Bloquear si no hay secret configurado o no coincide
-    if (!secret || got !== secret) {
+    // 🔒 si no hay secret o no coincide -> 401
+    if (!expected || !got || !safeEq(got, expected)) {
       return res.status(401).json({ ok: false, error: "unauthorized_webhook" });
     }
 
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const email = normEmail(req.body?.email);
     const auth0Sub = String(req.body?.auth0Sub || "").trim();
 
     if (!email) {
       return res.status(400).json({ ok: false, error: "email_required" });
     }
 
-    // Normaliza defaults
-    const rolesIn = Array.isArray(req.body?.roles) ? req.body.roles : null;
-    const permsIn = Array.isArray(req.body?.perms) ? req.body.perms : null;
+    // ✅ NO confiar en roles/perms externos para auto-registro (seguridad)
+    const DEFAULT_ROLE = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
+      .trim()
+      .toLowerCase();
 
-    // ✅ Tu rol default según tu app: "visita"
-    const roles = rolesIn && rolesIn.length ? rolesIn : ["visita"];
-    const perms = permsIn && permsIn.length ? permsIn : [];
-
-    // 1) Busca por email
+    // 1) Buscar por email
     let u = await IamUser.findOne({ email });
 
-    // 2) Si no existe, crea
+    // 2) Si no existe, crear SIEMPRE como "visita"
     if (!u) {
       u = await IamUser.create({
         email,
         name: email.split("@")[0],
-        roles,
-        perms,
+        roles: [DEFAULT_ROLE],
+        perms: [],
         active: true,
         provider: "auth0",
         auth0Sub: auth0Sub || undefined,
       });
-      return res.status(201).json({ ok: true, created: true, id: String(u._id), email: u.email });
+
+      return res.status(201).json({
+        ok: true,
+        created: true,
+        id: String(u._id),
+        email: u.email,
+        role: DEFAULT_ROLE,
+      });
     }
 
-    // 3) Si existe, solo sincroniza auth0Sub si faltaba
+    // 3) Si existe, solo sincronizar auth0Sub si faltaba (NO tocar roles/perms)
     let changed = false;
     if (!u.auth0Sub && auth0Sub) {
       u.auth0Sub = auth0Sub;
       changed = true;
     }
 
-    // (Opcional) merge roles/perms si quieres mantenerlo sincronizado:
-    // const mergedRoles = Array.from(new Set([...(u.roles || []), ...roles]));
-    // const mergedPerms = Array.from(new Set([...(u.perms || []), ...perms]));
-    // if (JSON.stringify(mergedRoles) !== JSON.stringify(u.roles || [])) { u.roles = mergedRoles; changed = true; }
-    // if (JSON.stringify(mergedPerms) !== JSON.stringify(u.perms || [])) { u.perms = mergedPerms; changed = true; }
-
     if (changed) await u.save();
 
-    return res.json({ ok: true, updated: changed, id: String(u._id), email: u.email });
+    return res.json({
+      ok: true,
+      existed: true,
+      updated: changed,
+      id: String(u._id),
+      email: u.email,
+    });
   } catch (e) {
     next(e);
   }
@@ -84,7 +113,7 @@ r.post("/post-register", async (req, res, next) => {
 /* ===================== LOGIN (LOCAL) ===================== */
 r.post("/login", async (req, res, next) => {
   try {
-    const email = String(req.body?.email || "").toLowerCase().trim();
+    const email = normEmail(req.body?.email);
     const password = String(req.body?.password || "");
 
     if (!email || !password) {
@@ -111,8 +140,8 @@ r.post("/login", async (req, res, next) => {
       {
         sub: String(user._id),
         email: user.email,
-        roles: user.roles,
-        permissions: user.perms,
+        roles: Array.isArray(user.roles) ? user.roles : [],
+        permissions: Array.isArray(user.perms) ? user.perms : [],
         provider: "local",
       },
       process.env.JWT_SECRET || "dev_secret",
@@ -182,13 +211,9 @@ r.post("/change-password", async (req, res, next) => {
 });
 
 /* ===================== BOOTSTRAP ADMIN (LOCAL) ===================== */
-/**
- * POST /api/iam/v1/auth/bootstrap
- * Solo si la colección está vacía. Crea primer admin local.
- */
 r.post("/bootstrap", async (req, res, next) => {
   try {
-    const email = String(req.body?.email || "").toLowerCase().trim();
+    const email = normEmail(req.body?.email);
     const password = String(req.body?.password || "").trim();
     const name = String(req.body?.name || "").trim();
 
