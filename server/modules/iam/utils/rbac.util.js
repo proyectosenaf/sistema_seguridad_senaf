@@ -1,3 +1,4 @@
+// server/modules/iam/utils/rbac.util.js
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 
@@ -11,6 +12,8 @@ console.log("[iam] boot", {
   IAM_ALLOW_DEV_HEADERS: process.env.IAM_ALLOW_DEV_HEADERS,
   ROOT_ADMINS: process.env.ROOT_ADMINS,
   IAM_EMAIL_CLAIM: process.env.IAM_EMAIL_CLAIM,
+  IAM_CLAIMS_NAMESPACE: process.env.IAM_CLAIMS_NAMESPACE,
+  IAM_DEFAULT_VISITOR_ROLE: process.env.IAM_DEFAULT_VISITOR_ROLE,
 });
 
 export function parseList(v) {
@@ -57,7 +60,7 @@ function getAuth0Sub(payload) {
  * Lee email desde:
  * - payload.email (local JWT a veces)
  * - claim con namespace (Auth0): por defecto "https://senaf/email"
- * - opcional: "https://senaf/" + "email" si alguien configura namespace distinto
+ * - opcional: namespace base + "email" (por si configuras "https://senaf/")
  */
 function getEmailFromPayload(payload) {
   if (!payload) return null;
@@ -79,11 +82,17 @@ function getEmailFromPayload(payload) {
   return null;
 }
 
+function getDefaultVisitorRole() {
+  return String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
+    .trim()
+    .toLowerCase();
+}
+
 /**
  * buildContextFrom(req)
  * - Identidad: Auth0 (req.auth.payload) o JWT local
  * - IAM: roles/perms desde MongoDB
- * - Auto-provision: crea usuario si viene identidad y no existe
+ * - Auto-provision: crea usuario si viene identidad y no existe (rol default: visita)
  */
 export async function buildContextFrom(req) {
   const { payload, source } = getJwtPayload(req);
@@ -91,17 +100,16 @@ export async function buildContextFrom(req) {
   const auth0Sub = getAuth0Sub(payload);
   const jwtEmail = getEmailFromPayload(payload);
 
-  const headerEmail = req?.headers?.["x-user-email"] || null;
-
+  // Dev headers (solo si se permite)
   const IS_PROD = process.env.NODE_ENV === "production";
   const allowDevHeaders =
     !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
+  const headerEmail = allowDevHeaders ? req?.headers?.["x-user-email"] : null;
+
   // Email final: primero token, luego dev headers si aplica
   const email =
-    (jwtEmail || (allowDevHeaders ? headerEmail : null) || "")
-      .toLowerCase()
-      .trim() || null;
+    (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
 
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
@@ -139,32 +147,25 @@ export async function buildContextFrom(req) {
       (!!email && !!superEmail && email === superEmail) ||
       (!!email && rootAdmins.includes(email));
 
-    // ✅ rol default según tu requerimiento
-    const defaultVisitorRole = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
-      .trim()
-      .toLowerCase();
+    const defaultVisitorRole = getDefaultVisitorRole();
 
     const doc = {
+      // tu schema exige email -> NO creamos si no hay email
+      email: email || undefined,
+      name: email ? email.split("@")[0] : undefined,
+      auth0Sub: auth0Sub || undefined,
       active: true,
       provider: source === "local" ? "local" : "auth0",
       roles: isBootstrapAdmin ? ["admin"] : [defaultVisitorRole],
       perms: isBootstrapAdmin ? ["*"] : [],
     };
 
-    if (email) {
-      doc.email = email;
-      doc.name = email.split("@")[0];
-    }
-
-    if (auth0Sub) doc.auth0Sub = auth0Sub;
-
-    // No crear si no hay email (tu schema exige email)
     if (doc.email) {
       try {
         const created = await IamUser.create(doc);
         user = created.toObject();
         console.log(
-          `[iam] auto-provisioned: ${email || auth0Sub} (${
+          `[iam] auto-provisioned: ${doc.email} (${
             isBootstrapAdmin ? "ADMIN" : defaultVisitorRole.toUpperCase()
           })`
         );
@@ -174,7 +175,8 @@ export async function buildContextFrom(req) {
     }
   }
 
-  // Si existe usuario pero no tiene auth0Sub y ahora viene, lo guardamos (sin lean)
+  // Si existe usuario pero no tiene auth0Sub y ahora viene, lo guardamos
+  // (ojo: user viene lean -> no tiene save; usamos updateOne)
   if (user && auth0Sub && !user.auth0Sub) {
     try {
       await IamUser.updateOne({ _id: user._id }, { $set: { auth0Sub } });
@@ -186,10 +188,10 @@ export async function buildContextFrom(req) {
 
   // Roles/perms combinados
   const roleNames = new Set([...(user?.roles || []), ...headerRoles]);
-  const permSet = new Set([...(user?.perms || [])]);
 
-  // dev perms solo si no hay usuario y allowDevHeaders
-  if (!user && allowDevHeaders) {
+  // ✅ perms: usuario + (si permites) x-perms
+  const permSet = new Set([...(user?.perms || [])]);
+  if (allowDevHeaders) {
     headerPerms.forEach((p) => permSet.add(p));
   }
 
@@ -218,10 +220,8 @@ export async function buildContextFrom(req) {
     return permSet.has(perm);
   }
 
-  // ✅ visitor real: si rol incluye "visita" (o default visitor role)
-  const defaultVisitorRole = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
-    .trim()
-    .toLowerCase();
+  // ✅ visitor: basado en rol default visita (no en "user null")
+  const defaultVisitorRole = getDefaultVisitorRole();
   const isVisitor = roleNames.has(defaultVisitorRole);
 
   return {
@@ -239,7 +239,7 @@ export async function buildContextFrom(req) {
 export function devOr(mw) {
   const isProd = process.env.NODE_ENV === "production";
   const allow = process.env.IAM_DEV_ALLOW_ALL === "1" || !isProd;
-  return (req, res, next) => (allow ? next() : mw(req, res, next));
+  return (req, _res, next) => (allow ? next() : mw(req, _res, next));
 }
 
 export function requirePerm(perm) {
