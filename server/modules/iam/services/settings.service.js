@@ -1,30 +1,36 @@
 // server/modules/iam/services/settings.service.js
-// Centraliza settings para IAM/Public Auth (OTP, expiraciones, etc.)
+// Centraliza configuración (parametrizable por .env)
 
 function toInt(v, def) {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
 }
 
-export function getSecuritySettings() {
+function toBool(v, def = false) {
+  if (v === undefined || v === null) return !!def;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(s)) return true;
+  if (["0", "false", "no", "off"].includes(s)) return false;
+  return !!def;
+}
+
+export function getIamSettings() {
   return {
-    // OTP (visitantes / empleados)
     otp: {
-      ttlSeconds: toInt(process.env.OTP_TTL_SECONDS, 300), // 5 min
+      ttlSeconds: toInt(process.env.OTP_TTL_SECONDS, 300),
       maxAttempts: toInt(process.env.OTP_MAX_ATTEMPTS, 5),
       resendCooldownSeconds: toInt(process.env.OTP_RESEND_COOLDOWN_SECONDS, 30),
     },
-
-    // Password policy (empleados creados por admin)
     password: {
-      expiresDays: toInt(process.env.PASSWORD_EXPIRES_DAYS, 0), // 0 = no vence por días (solo mustChangePassword)
+      expiresDays: toInt(process.env.PASSWORD_EXPIRES_DAYS, 0),
       minLength: toInt(process.env.PASSWORD_MIN_LENGTH, 8),
     },
-
-    // Feature flags
     features: {
-      enablePublicOtp: String(process.env.FEATURE_PUBLIC_OTP || "1") === "1",
-      enableEmployeeOtp: String(process.env.FEATURE_EMPLOYEE_OTP || "1") === "1",
+      enableEmployeeOtp: toBool(process.env.FEATURE_EMPLOYEE_OTP, true),
+      enablePublicOtp: toBool(process.env.FEATURE_PUBLIC_OTP, true),
     },
   };
 }
+
+// ✅ Alias compatibilidad (por si en otras partes ya llamabas esto)
+export const getSecuritySettings = getIamSettings;
