@@ -7,6 +7,7 @@ import api, { API } from "../../lib/api.js"; // ✅ usa tu API_ROOT (VITE_API_BA
 export default function LoginLocal() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false); // ✅ NUEVO
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
@@ -57,14 +58,27 @@ export default function LoginLocal() {
           autoComplete="username"
         />
 
-        <input
-          className="border w-full mb-3 p-2"
-          type="password"
-          placeholder="Password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        {/* ✅ Password con "ojito" */}
+        <div className="relative mb-3">
+          <input
+            className="border w-full p-2 pr-10"
+            type={showPass ? "text" : "password"}
+            placeholder="Password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <button
+            type="button"
+            onClick={() => setShowPass((v) => !v)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-900"
+            aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+            title={showPass ? "Ocultar" : "Mostrar"}
+          >
+            {showPass ? "🙈" : "👁️"}
+          </button>
+        </div>
 
         {error && <div className="text-red-500 mb-2">{error}</div>}
 
@@ -75,5 +89,3 @@ export default function LoginLocal() {
     </div>
   );
 }
-// Página de login local (email/password)
-// Creada el 19/02/2026 para implementar Login, cambio de contraseña y vencimiento
