@@ -24,6 +24,9 @@ import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 // ✅ NUEVO: Reset password (Auth0 change_password)
 import passwordResetRoutes from "../modules/iam/routes/password-reset.routes.js";
 
+// ✅ NUEVO: Auth público para visitantes (OTP por email)
+import publicAuthRoutes from "../modules/public/routes/public.auth.routes.js";
+
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
 import notificationsRoutes from "./core/notifications.routes.js";
@@ -160,6 +163,14 @@ app.get("/api/health", (_req, res) =>
   })
 );
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+/* ───────────────────── ✅ PUBLIC AUTH (VISITANTES) ✅ ───────────────────── */
+/**
+ * Visitantes: OTP por email sin estar en IAM.
+ * Montado temprano, no depende de Auth0.
+ */
+app.use("/api/public/v1/auth", publicAuthRoutes);
+app.use("/public/v1/auth", publicAuthRoutes);
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
 

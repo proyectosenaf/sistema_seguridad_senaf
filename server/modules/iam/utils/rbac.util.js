@@ -141,18 +141,36 @@ function getAuth0Sub(payload) {
   return sub ? String(sub).trim() : null;
 }
 
+/** Normaliza namespace base (sin slash final) */
+function normalizeBaseNs(ns) {
+  const s = String(ns || "").trim();
+  if (!s) return "";
+  return s.replace(/\/+$/g, "");
+}
+
+function claim(baseNs, key) {
+  const b = normalizeBaseNs(baseNs);
+  return b ? `${b}/${key}` : "";
+}
+
 function getEmailFromPayload(payload) {
   if (!payload) return null;
 
+  // 1) email estándar
   if (payload.email) return String(payload.email).toLowerCase().trim();
 
-  const exact = String(process.env.IAM_EMAIL_CLAIM || "https://senaf/email").trim();
+  // 2) claim exacto configurable
+  const exact = String(process.env.IAM_EMAIL_CLAIM || "").trim();
   if (exact && payload[exact]) return String(payload[exact]).toLowerCase().trim();
 
-  const ns = String(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf/").trim();
-  const nsNorm = ns.endsWith("/") ? ns : `${ns}/`;
-  const byNs = payload[`${nsNorm}email`];
-  if (byNs) return String(byNs).toLowerCase().trim();
+  // 3) namespace base: https://senaf => https://senaf/email
+  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
+  const nsEmail = payload[claim(baseNs, "email")];
+  if (nsEmail) return String(nsEmail).toLowerCase().trim();
+
+  // 4) fallback compat
+  if (payload["https://senaf/email"]) return String(payload["https://senaf/email"]).toLowerCase().trim();
+  if (payload["https://senaf.local/email"]) return String(payload["https://senaf.local/email"]).toLowerCase().trim();
 
   return null;
 }
@@ -163,6 +181,62 @@ function getDefaultVisitorRole() {
     .toLowerCase();
 }
 
+function parseRolesFromPayload(payload) {
+  if (!payload) return [];
+  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
+
+  const rolesRaw =
+    payload[claim(baseNs, "roles")] ||
+    payload["https://senaf/roles"] ||
+    payload["https://senaf.local/roles"] ||
+    payload.roles ||
+    [];
+
+  const arr = Array.isArray(rolesRaw) ? rolesRaw : [rolesRaw];
+  return Array.from(
+    new Set(
+      arr
+        .map((r) => String(r || "").trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+function parsePermsFromPayload(payload) {
+  if (!payload) return [];
+  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
+
+  // 1) Namespaced permissions (tu Action)
+  const nsPerms = payload[claim(baseNs, "permissions")] || payload["https://senaf/permissions"];
+  let perms = Array.isArray(nsPerms) ? nsPerms : [];
+
+  // 2) Auth0 RBAC permissions (string[])
+  if ((!perms || perms.length === 0) && Array.isArray(payload.permissions)) {
+    perms = payload.permissions;
+  }
+
+  // 3) scope
+  if ((!perms || perms.length === 0) && typeof payload.scope === "string") {
+    perms = payload.scope
+      .split(" ")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  // 4) fallback
+  if ((!perms || perms.length === 0) && Array.isArray(payload.perms)) {
+    perms = payload.perms;
+  }
+
+  return Array.from(
+    new Set(
+      (perms || [])
+        .map((p) => String(p || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 export async function buildContextFrom(req) {
   const { payload, source } = getJwtPayload(req);
 
@@ -170,7 +244,8 @@ export async function buildContextFrom(req) {
   const jwtEmail = getEmailFromPayload(payload);
 
   const IS_PROD = process.env.NODE_ENV === "production";
-  const allowDevHeaders = !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+  const allowDevHeaders =
+    !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
   const headerEmail = allowDevHeaders ? req?.headers?.["x-user-email"] : null;
 
@@ -184,52 +259,74 @@ export async function buildContextFrom(req) {
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
 
+  // ✅ Roles/perms desde token (Auth0 Action) si vienen:
+  const tokenRoles = source === "auth0" ? parseRolesFromPayload(payload) : [];
+  const tokenPerms = source === "auth0" ? parsePermsFromPayload(payload) : [];
+
   let user = null;
 
+  // Buscar por auth0Sub primero
   if (auth0Sub) {
-    user = await withTimeout(IamUser.findOne({ auth0Sub }).lean(), 4000, "IamUser.findOne(auth0Sub)");
+    user = await withTimeout(
+      IamUser.findOne({ auth0Sub }).lean(),
+      4000,
+      "IamUser.findOne(auth0Sub)"
+    );
   }
 
+  // Buscar por email
   if (!user && email) {
-    user = await withTimeout(IamUser.findOne({ email }).lean(), 4000, "IamUser.findOne(email)");
+    user = await withTimeout(
+      IamUser.findOne({ email }).lean(),
+      4000,
+      "IamUser.findOne(email)"
+    );
   }
 
   const hasIdentity = !!payload && (!!email || !!auth0Sub);
 
+  // ✅ Política empresarial:
+  // - NO auto-crear "visitas" en IAM
+  // - SOLO auto-crear bootstrap admin (superadmin/root admins) si no existe
   if (!user && hasIdentity) {
-    const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) => String(x).toLowerCase().trim());
+    const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
+      String(x).toLowerCase().trim()
+    );
 
-    const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+    const superEmail = String(process.env.SUPERADMIN_EMAIL || "")
+      .trim()
+      .toLowerCase();
 
     const isBootstrapAdmin =
       (!!email && !!superEmail && email === superEmail) ||
       (!!email && rootAdmins.includes(email));
 
-    const defaultVisitorRole = getDefaultVisitorRole();
+    if (isBootstrapAdmin && email) {
+      const doc = {
+        email: email || undefined,
+        name: email ? email.split("@")[0] : undefined,
+        auth0Sub: auth0Sub || undefined,
+        active: true,
+        provider: source === "local" ? "local" : "auth0",
+        roles: ["admin"],
+        perms: ["*"],
+      };
 
-    const doc = {
-      email: email || undefined,
-      name: email ? email.split("@")[0] : undefined,
-      auth0Sub: auth0Sub || undefined,
-      active: true,
-      provider: source === "local" ? "local" : "auth0",
-      roles: isBootstrapAdmin ? ["admin"] : [defaultVisitorRole],
-      perms: isBootstrapAdmin ? ["*"] : [],
-    };
-
-    if (doc.email) {
       try {
-        const created = await withTimeout(IamUser.create(doc), 4000, "IamUser.create");
-        user = created.toObject();
-        console.log(
-          `[iam] auto-provisioned: ${doc.email} (${isBootstrapAdmin ? "ADMIN" : defaultVisitorRole.toUpperCase()})`
+        const created = await withTimeout(
+          IamUser.create(doc),
+          4000,
+          "IamUser.create(bootstrap-admin)"
         );
+        user = created.toObject();
+        console.log(`[iam] auto-provisioned: ${doc.email} (ADMIN)`);
       } catch (e) {
         console.warn("[iam] auto-provision failed:", e?.message || e);
       }
     }
   }
 
+  // Si existe user y falta auth0Sub, adjuntarlo
   if (user && auth0Sub && !user.auth0Sub) {
     try {
       await withTimeout(
@@ -246,13 +343,39 @@ export async function buildContextFrom(req) {
   const normRole = (r) => String(r || "").trim().toLowerCase();
   const normPerm = (p) => String(p || "").trim();
 
+  // ✅ Fuente de roles:
+  // - Si existe usuario en IAM => su roles (verdad)
+  // - Si NO existe (visitante) => tokenRoles (si vienen) o defaultVisitorRole
+  // - + headers dev (si aplica)
+  const defaultVisitorRole = getDefaultVisitorRole();
+
+  const baseRoles =
+    user && Array.isArray(user.roles) && user.roles.length
+      ? user.roles
+      : tokenRoles && tokenRoles.length
+      ? tokenRoles
+      : hasIdentity
+      ? [defaultVisitorRole]
+      : [];
+
   const roleNames = new Set(
-    [...(user?.roles || []).map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
+    [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
   );
 
-  const permSet = new Set([...(user?.perms || []).map(normPerm)].filter(Boolean));
+  // ✅ Fuente de permisos:
+  // - IAM user perms (si existe)
+  // - tokenPerms (si vienen)
+  // - headers dev (si aplica)
+  const permSet = new Set(
+    [
+      ...((user?.perms || []).map(normPerm)),
+      ...(tokenPerms || []).map(normPerm),
+    ].filter(Boolean)
+  );
+
   if (allowDevHeaders) headerPerms.map(normPerm).filter(Boolean).forEach((p) => permSet.add(p));
 
+  // Expand perms por roles desde IamRole
   if (roleNames.size) {
     const roleList = [...roleNames].map((r) => String(r).trim());
     const roleDocs = await withTimeout(
@@ -281,7 +404,6 @@ export async function buildContextFrom(req) {
     return permSet.has(String(perm).trim());
   }
 
-  const defaultVisitorRole = getDefaultVisitorRole();
   const isVisitor = roleNames.has(defaultVisitorRole);
 
   return {
@@ -308,15 +430,8 @@ export function requirePerm(perm) {
       const ctx = await buildContextFrom(req);
       req.iam = ctx;
 
-      const { payload } = (function () {
-        // local helper: reuse private getJwtPayload without exporting
-        if (req?.auth?.payload) return { payload: req.auth.payload };
-        const h = String(req?.headers?.authorization || "");
-        if (!h.toLowerCase().startsWith("bearer ")) return { payload: null };
-        return { payload: {} }; // si llega aquí, requireAuth ya debió popular req.auth.payload en tu server.js
-      })();
-
-      if (!payload) {
+      // Si no hay identidad, no autenticado
+      if (!ctx?.email && !ctx?.auth0Sub) {
         return res.status(401).json({ message: "No autenticado" });
       }
 

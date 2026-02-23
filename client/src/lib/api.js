@@ -126,8 +126,21 @@ function normalizeToken(t) {
 // ✅ No mandar Authorization en endpoints públicos de auth
 function isPublicAuthEndpoint(config) {
   const url = String(config?.url || "");
-  // config.url suele venir relativo: "/iam/v1/auth/login"
-  return url.includes("/iam/v1/auth/login") || url.includes("/iam/v1/auth/bootstrap");
+
+  // IAM auth público/local
+  if (url.includes("/iam/v1/auth/login")) return true;
+  if (url.includes("/iam/v1/auth/bootstrap")) return true;
+
+  // ✅ NUEVO: OTP empleado
+  if (url.includes("/iam/v1/auth/login-otp")) return true;
+  if (url.includes("/iam/v1/auth/verify-otp")) return true;
+  if (url.includes("/iam/v1/auth/change-password")) return true;
+
+  // ✅ NUEVO: OTP visitante
+  if (url.includes("/public/v1/auth/start")) return true;
+  if (url.includes("/public/v1/auth/verify")) return true;
+
+  return false;
 }
 
 // ✅ Detectar endpoints de IAM v1 (para no mandar token local HS256 en PROD)
@@ -138,7 +151,7 @@ function isIamV1Endpoint(config) {
 
 api.interceptors.request.use(
   async (config) => {
-    // ✅ IMPORTANTÍSIMO: login/bootstrap deben ir sin Authorization
+    // ✅ IMPORTANTÍSIMO: auth endpoints deben ir sin Authorization
     if (isPublicAuthEndpoint(config)) {
       if (DEBUG_API) console.log("[api] public auth endpoint:", config.url);
       return config;

@@ -7,6 +7,7 @@ import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js"; // ✅ NUEVO
 import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
+import authOtpRoutes from "./routes/auth.otp.routes.js"; // ✅ NUEVO (empleados: login-otp, verify-otp, change-password)
 import meRoutes from "./routes/me.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import rolesRoutes from "./routes/roles.routes.js";
@@ -48,8 +49,11 @@ export async function registerIAMModule({
     res.json({ ok: true, module: "iam", version: "v1" })
   );
 
-  // AUTH público
+  // AUTH público (lo que ya tienes)
   router.use("/auth", authRoutes);
+
+  // ✅ AUTH OTP empleados (NO rompe tus rutas existentes)
+  router.use("/auth", authOtpRoutes);
 
   /**
    * ✅ /me con auth opcional:

@@ -16,20 +16,83 @@ function toArr(v) {
   return Array.isArray(v) ? v : [v];
 }
 
-function parsePermissionsFromPayload(p = {}) {
-  let perms = Array.isArray(p.permissions) ? p.permissions : [];
+function uniq(arr) {
+  return Array.from(new Set((arr || []).filter(Boolean)));
+}
+
+function normStr(v) {
+  return String(v || "").trim();
+}
+
+function normLower(v) {
+  return normStr(v).toLowerCase();
+}
+
+/** Normaliza namespace base (sin slash final) */
+function normalizeBaseNs(baseNs) {
+  return normStr(baseNs).replace(/\/+$/g, "");
+}
+
+/** Construye claim namespaced: `${base}/roles`, `${base}/permissions`, `${base}/email` */
+function claim(base, key) {
+  const b = normalizeBaseNs(base);
+  return b ? `${b}/${key}` : "";
+}
+
+/** Permissions: primero namespaced, luego estándar Auth0 RBAC, luego scope */
+function parsePermissionsFromPayload(p = {}, baseNs) {
+  const nsPerm = baseNs ? p[claim(baseNs, "permissions")] : undefined;
+
+  // 1) Permissions namespaced (tu Action)
+  let perms = Array.isArray(nsPerm) ? nsPerm : [];
+
+  // 2) Auth0 RBAC: `permissions: [{permission_name}]` NO; suele ser string[] o en access token
+  if ((!perms || perms.length === 0) && Array.isArray(p.permissions)) {
+    perms = p.permissions;
+  }
+
+  // 3) scope (string)
   if ((!perms || perms.length === 0) && typeof p.scope === "string") {
     perms = p.scope
       .split(" ")
       .map((s) => s.trim())
       .filter(Boolean);
   }
-  return Array.from(new Set(perms));
+
+  // 4) fallback: `perms` si alguien lo manda así
+  if ((!perms || perms.length === 0) && Array.isArray(p.perms)) {
+    perms = p.perms;
+  }
+
+  return uniq(perms.map((x) => normStr(x)).filter(Boolean));
+}
+
+/** Roles: namespaced primero, luego `roles`, luego `app_metadata.roles` (si viniera) */
+function parseRolesFromPayload(p = {}, baseNs) {
+  const nsRoles = baseNs ? p[claim(baseNs, "roles")] : undefined;
+
+  let roles = toArr(nsRoles);
+
+  if (!roles || roles.length === 0) {
+    roles = toArr(p.roles);
+  }
+
+  // Algunos setups mandan roles en `https://senaf/roles` pero también en `role` etc.
+  if (!roles || roles.length === 0) {
+    roles = toArr(p.role);
+  }
+
+  roles = roles
+    .map((r) => normLower(r))
+    .filter(Boolean);
+
+  return uniq(roles);
 }
 
 /* Env Auth0 */
 const domain = normalizeDomain(env?.auth0?.domain || process.env.AUTH0_DOMAIN);
 const audience = env?.auth0?.audience || process.env.AUTH0_AUDIENCE;
+
 const issuerBaseURL =
   env?.auth0?.issuerBaseURL ||
   process.env.AUTH0_ISSUER_BASE_URL ||
@@ -39,7 +102,7 @@ const IS_PROD = process.env.NODE_ENV === "production";
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
 
 /**
- * Middleware "real" de JWT.
+ * Middleware JWT (Auth0 RS256).
  * - DISABLE_AUTH=1 => passthrough
  * - Si falta issuer/audience:
  *    - PROD => 500 (config incorrecta)
@@ -69,7 +132,7 @@ export const requireAuth = DISABLE_AUTH ? (_req, _res, next) => next() : realJwt
 export { requireAuth as checkJwt };
 
 /**
- * ✅ Optional auth:
+ * Optional auth:
  * - Si NO hay Authorization Bearer => deja pasar (visitor)
  * - Si hay Bearer => valida (o bypass si DISABLE_AUTH=1)
  */
@@ -80,37 +143,33 @@ export function optionalAuth(req, res, next) {
   return requireAuth(req, res, next);
 }
 
-/** Normaliza namespace para roles */
-function normalizeRolesNamespace(baseNs) {
-  const s = String(baseNs || "").trim().replace(/\/+$/g, "");
-  if (!s) return "";
-  // Si ya termina en /roles, úsalo tal cual; si no, agrega /roles
-  return s.toLowerCase().endsWith("/roles") ? s : `${s}/roles`;
-}
-
-/* Normalizador desde payload */
+/**
+ * Normalizador desde payload (Auth0)
+ * - Lee claims namespaced: `${BASE_NS}/roles`, `${BASE_NS}/permissions`, `${BASE_NS}/email`
+ * - Fallbacks: email, roles, permissions, scope
+ */
 export function getUserFromPayload(p = {}) {
-  // ✅ Puede venir "https://senaf" o "https://senaf/roles"
   const BASE_NS =
+    process.env.IAM_CLAIMS_NAMESPACE ||
     process.env.IAM_ROLES_NAMESPACE ||
     process.env.AUTH0_NAMESPACE ||
     "https://senaf";
 
-  const NS = normalizeRolesNamespace(BASE_NS);
+  const baseNs = normalizeBaseNs(BASE_NS);
 
-  const rolesRaw =
-    p[NS] ||
-    p["https://senaf/roles"] ||
-    p["https://senaf.local/roles"] ||
-    p.roles ||
-    [];
+  const email =
+    (baseNs && p[claim(baseNs, "email")]) ||
+    p.email ||
+    p["https://senaf/email"] ||
+    p["https://senaf.local/email"] ||
+    null;
 
-  const roles = toArr(rolesRaw).filter(Boolean);
-  const permissions = parsePermissionsFromPayload(p);
+  const roles = parseRolesFromPayload(p, baseNs);
+  const permissions = parsePermissionsFromPayload(p, baseNs);
 
   return {
     sub: p.sub || null,
-    email: p.email || null,
+    email: email ? normLower(email) : null,
     name: p.name || null,
     roles,
     permissions,
@@ -129,7 +188,7 @@ export function attachUser(req, _res, next) {
 }
 
 /**
- * ✅ EXPORT que tu server.js espera:
+ * EXPORT que tu server.js espera:
  * import { requireAuth, attachAuthUser } from "./middleware/auth.js"
  */
 export const attachAuthUser = attachUser;
