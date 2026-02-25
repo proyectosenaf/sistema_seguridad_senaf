@@ -5,6 +5,7 @@ import { devOr, requirePerm } from "../utils/rbac.util.js";
 import { hashPassword } from "../utils/password.util.js";
 import { writeAudit } from "../utils/audit.util.js";
 import axios from "axios";
+import nodemailer from "nodemailer";
 
 const r = Router();
 
@@ -57,6 +58,37 @@ function isGuardRole(u) {
 }
 
 /* =========================
+   Mail (Password setup)
+   ========================= */
+function mailTransport() {
+  return nodemailer.createTransport({
+    host: process.env.MAIL_HOST,
+    port: Number(process.env.MAIL_PORT || 465),
+    secure: String(process.env.MAIL_SECURE || "1") === "1",
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
+  });
+}
+
+async function sendPasswordSetupEmail({ to, ticketUrl }) {
+  const app = process.env.APP_NAME || "SENAF";
+  const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+
+  const subject = `${app} — Configura tu contraseña`;
+  const html = `
+    <p>Tu cuenta fue creada por un administrador.</p>
+    <p>Para <b>configurar tu contraseña</b>, abre este enlace (válido por 24 horas):</p>
+    <p><a href="${ticketUrl}">Configurar contraseña</a></p>
+    <p>Si tú no solicitaste esto, ignora este correo.</p>
+  `;
+
+  const tx = mailTransport();
+  await tx.sendMail({ from, to, subject, html });
+}
+
+/* =========================
    Auth0 Management helpers
    ========================= */
 function normalizeDomain(d) {
@@ -106,22 +138,23 @@ async function createAuth0DbUser({ email, tempPassword, roles, perms }) {
   const token = await getMgmtToken();
   if (!token) throw new Error("missing_auth0_mgmt_token (revisa AUTH0_MGMT_CLIENT_ID/SECRET)");
 
-  // ✅ Create user in Auth0 DB connection.
-  // ✅ Important: must_reset=true => Action Post-Login debe DENEGAR hasta que cambie password por link.
   const createRes = await axios.post(
     `https://${domain}/api/v2/users`,
     {
       email,
-      password: tempPassword, // cualquier cosa; el usuario NO la usará
+      password: tempPassword, // el usuario NO la usa; solo cumple el requisito de creación
       connection,
       email_verified: false,
-      verify_email: false, // no dependas de verify_email aquí (puedes activarlo después si quieres)
+      verify_email: true, // ✅ envía verificación (si quieres)
       app_metadata: {
         createdByAdmin: true,
-        must_reset: true, // ✅ clave "vencida" conceptualmente (bloquea login)
+        must_reset: true, // ✅ “clave vencida” lógica
         roles,
         permissions: perms,
         email_normalized: email,
+      },
+      user_metadata: {
+        email,
       },
     },
     { headers: { Authorization: `Bearer ${token}` } }
@@ -137,15 +170,16 @@ async function createPasswordChangeTicket({ user_id, ttlSec = 86400 }) {
   const token = await getMgmtToken();
   if (!token) throw new Error("missing_auth0_mgmt_token");
 
-  const result_url = String(process.env.SENAF_FORCE_PW_CHANGE_URL || "").trim();
-  if (!result_url) throw new Error("missing SENAF_FORCE_PW_CHANGE_URL");
+  // a dónde vuelve Auth0 después de cambiar contraseña
+  const result_url = String(process.env.SENAF_AFTER_RESET_URL || "").trim();
+  if (!result_url) throw new Error("missing SENAF_AFTER_RESET_URL");
 
   const r = await axios.post(
     `https://${domain}/api/v2/tickets/password-change`,
     {
       user_id,
       result_url,
-      ttl_sec: Number(ttlSec || 86400), // 24h por defecto
+      ttl_sec: Number(ttlSec || 86400), // 24h
     },
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -293,17 +327,14 @@ r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => 
 /**
  * POST /api/iam/v1/users
  *
- * ✅ Caso local:
- *  - si viene password => crea usuario local (Mongo)
+ * Caso Auth0 (creado por admin):
+ *  1) crea usuario en Auth0 DB Connection
+ *  2) app_metadata.must_reset=true
+ *  3) genera Password Change Ticket (24h)
+ *  4) manda correo con el ticket
+ *  5) crea usuario en Mongo con auth0Sub
  *
- * ✅ Caso Auth0 (creado por admin):
- *  - si provider === "auth0" y NO viene password:
- *      1) crea usuario en Auth0 DB Connection (Management API)
- *      2) app_metadata.must_reset=true (Action Post-Login lo bloquea)
- *      3) genera link de password reset (24h)
- *      4) crea usuario en Mongo con auth0Sub = user_id
- *
- * Nota: tempPassword es solo para cumplir requisito de Auth0 al crear usuario DB.
+ * Nota: tempPassword solo cumple requisito de Auth0 al crear user (nadie la conoce).
  */
 r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
@@ -332,14 +363,14 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       provider: finalProvider,
     };
 
-    // Local: guarda hash (si todavía lo usas)
+    // Local (si todavía lo usas)
     if (wantLocal) {
       doc.passwordHash = await hashPassword(String(password));
       doc.provider = "local";
     }
 
     let auth0User = null;
-    let resetTicketUrl = null;
+    let ticketUrl = null;
 
     // Auth0 creado por admin
     if (!wantLocal && doc.provider === "auth0") {
@@ -354,10 +385,14 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       });
 
       const auth0Sub = String(auth0User?.user_id || "").trim();
-      if (auth0Sub) doc.auth0Sub = auth0Sub;
+      if (!auth0Sub) throw new Error("auth0_user_id_missing");
+      doc.auth0Sub = auth0Sub;
 
-      // ✅ Link 24h para que el usuario establezca su contraseña
-      resetTicketUrl = await createPasswordChangeTicket({ user_id: auth0Sub, ttlSec: 86400 });
+      // Ticket 24h
+      ticketUrl = await createPasswordChangeTicket({ user_id: auth0Sub, ttlSec: 86400 });
+
+      // ✅ enviar por correo
+      await sendPasswordSetupEmail({ to: email, ticketUrl });
     }
 
     const item = await IamUser.create(doc);
@@ -375,7 +410,8 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         provider: item.provider,
         auth0Sub: item.auth0Sub || null,
         auth0MustReset: doc.provider === "auth0" ? true : null,
-        resetTicketTtlSec: resetTicketUrl ? 86400 : null,
+        resetTicketTtlSec: ticketUrl ? 86400 : null,
+        resetEmailSent: ticketUrl ? true : null,
       },
     });
 
@@ -396,7 +432,9 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       auth0: auth0User
         ? { created: true, user_id: auth0User.user_id, email: auth0User.email }
         : { created: false },
-      reset: resetTicketUrl ? { ticketUrl: resetTicketUrl, ttlSec: 86400 } : null,
+
+      // No expongas el ticket al frontend (mejor que solo llegue por correo)
+      reset: ticketUrl ? { sent: true, ttlSec: 86400 } : null,
     });
   } catch (err) {
     next(err);
