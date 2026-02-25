@@ -142,13 +142,13 @@ async function createAuth0DbUser({ email, tempPassword, roles, perms }) {
     `https://${domain}/api/v2/users`,
     {
       email,
-      password: tempPassword, // el usuario NO la usa; solo cumple el requisito de creación
+      password: tempPassword, // requisito Auth0
       connection,
       email_verified: false,
-      verify_email: true, // ✅ envía verificación (si quieres)
+      verify_email: true,
       app_metadata: {
         createdByAdmin: true,
-        must_reset: true, // ✅ “clave vencida” lógica
+        must_reset: true,
         roles,
         permissions: perms,
         email_normalized: email,
@@ -160,7 +160,7 @@ async function createAuth0DbUser({ email, tempPassword, roles, perms }) {
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  return createRes?.data; // contiene user_id
+  return createRes?.data;
 }
 
 async function createPasswordChangeTicket({ user_id, ttlSec = 86400 }) {
@@ -170,7 +170,6 @@ async function createPasswordChangeTicket({ user_id, ttlSec = 86400 }) {
   const token = await getMgmtToken();
   if (!token) throw new Error("missing_auth0_mgmt_token");
 
-  // a dónde vuelve Auth0 después de cambiar contraseña
   const result_url = String(process.env.SENAF_AFTER_RESET_URL || "").trim();
   if (!result_url) throw new Error("missing SENAF_AFTER_RESET_URL");
 
@@ -179,7 +178,7 @@ async function createPasswordChangeTicket({ user_id, ttlSec = 86400 }) {
     {
       user_id,
       result_url,
-      ttl_sec: Number(ttlSec || 86400), // 24h
+      ttl_sec: Number(ttlSec || 86400),
     },
     { headers: { Authorization: `Bearer ${token}` } }
   );
@@ -216,7 +215,8 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         provider: 1,
       }
     )
-      .sort({ name: 1, email: 1 })
+      // ✅ MÁS NUEVO ARRIBA
+      .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
@@ -324,18 +324,6 @@ r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => 
 });
 
 /* ===================== POST / (crear) ===================== */
-/**
- * POST /api/iam/v1/users
- *
- * Caso Auth0 (creado por admin):
- *  1) crea usuario en Auth0 DB Connection
- *  2) app_metadata.must_reset=true
- *  3) genera Password Change Ticket (24h)
- *  4) manda correo con el ticket
- *  5) crea usuario en Mongo con auth0Sub
- *
- * Nota: tempPassword solo cumple requisito de Auth0 al crear user (nadie la conoce).
- */
 r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
     let { name, email, roles = [], perms = [], active = true, password, provider } = req.body || {};
@@ -349,11 +337,9 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
     const rolesNorm = toStringArray(roles, { lower: true });
     const permsNorm = toStringArray(perms, { lower: false });
 
-    // Decide provider
     const wantLocal = !!(password && String(password).trim());
     const finalProvider = provider || (wantLocal ? "local" : "auth0");
 
-    // Base doc Mongo
     const doc = {
       email,
       name: String(name || "").trim() || nameFromEmail(email),
@@ -363,7 +349,6 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       provider: finalProvider,
     };
 
-    // Local (si todavía lo usas)
     if (wantLocal) {
       doc.passwordHash = await hashPassword(String(password));
       doc.provider = "local";
@@ -372,7 +357,6 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
     let auth0User = null;
     let ticketUrl = null;
 
-    // Auth0 creado por admin
     if (!wantLocal && doc.provider === "auth0") {
       const tempPassword =
         "Tmp!" + Math.random().toString(36).slice(2) + "A9*" + Math.random().toString(36).slice(2);
@@ -388,10 +372,8 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       if (!auth0Sub) throw new Error("auth0_user_id_missing");
       doc.auth0Sub = auth0Sub;
 
-      // Ticket 24h
       ticketUrl = await createPasswordChangeTicket({ user_id: auth0Sub, ttlSec: 86400 });
 
-      // ✅ enviar por correo
       await sendPasswordSetupEmail({ to: email, ticketUrl });
     }
 
@@ -429,11 +411,7 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       },
-      auth0: auth0User
-        ? { created: true, user_id: auth0User.user_id, email: auth0User.email }
-        : { created: false },
-
-      // No expongas el ticket al frontend (mejor que solo llegue por correo)
+      auth0: auth0User ? { created: true, user_id: auth0User.user_id, email: auth0User.email } : { created: false },
       reset: ticketUrl ? { sent: true, ttlSec: 86400 } : null,
     });
   } catch (err) {
@@ -462,9 +440,7 @@ r.patch("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) =
       action: "update",
       entity: "user",
       entityId: id,
-      before: before
-        ? { email: before.email, roles: before.roles, perms: before.perms, active: before.active }
-        : null,
+      before: before ? { email: before.email, roles: before.roles, perms: before.perms, active: before.active } : null,
       after: { email: item.email, roles: item.roles, perms: item.perms, active: item.active },
     });
 
