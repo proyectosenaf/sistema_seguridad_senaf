@@ -195,9 +195,19 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
     const skip = Math.max(0, Number(req.query.skip || 0));
 
-    const filter = q
+    // ✅ Soporte opcional para ?active=1/0 (checkbox "mostrar solo activos")
+    const activeParam = req.query.active;
+    const hasActive = activeParam !== undefined && activeParam !== null && String(activeParam).trim() !== "";
+    const activeFilter = hasActive ? { active: normBool(activeParam, true) } : {};
+
+    const textFilter = q
       ? { $or: [{ name: { $regex: q, $options: "i" } }, { email: { $regex: q, $options: "i" } }] }
       : {};
+
+    const filter = { ...textFilter, ...activeFilter };
+
+    // ✅ TOTAL REAL (sin paginación)
+    const total = await IamUser.countDocuments(filter);
 
     const items = await IamUser.find(
       filter,
@@ -215,13 +225,19 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         provider: 1,
       }
     )
-      // ✅ MÁS NUEVO ARRIBA
-      .sort({ createdAt: -1, _id: -1 })
+      .sort({ createdAt: -1, _id: -1 }) // ✅ más nuevo arriba
       .skip(skip)
       .limit(limit)
       .lean();
 
-    res.json({ ok: true, items, count: items.length, limit, skip });
+    res.json({
+      ok: true,
+      items,
+      count: items.length, // cantidad en esta página
+      total,               // ✅ cantidad total (registrados) con el filtro aplicado
+      limit,
+      skip,
+    });
   } catch (err) {
     next(err);
   }
@@ -411,7 +427,9 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
       },
-      auth0: auth0User ? { created: true, user_id: auth0User.user_id, email: auth0User.email } : { created: false },
+      auth0: auth0User
+        ? { created: true, user_id: auth0User.user_id, email: auth0User.email }
+        : { created: false },
       reset: ticketUrl ? { sent: true, ttlSec: 86400 } : null,
     });
   } catch (err) {
