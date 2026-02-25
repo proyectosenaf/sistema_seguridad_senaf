@@ -7,7 +7,9 @@ import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js"; // ✅ NUEVO
 import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
-import authOtpRoutes from "./routes/auth.otp.routes.js"; // ✅ NUEVO (empleados: login-otp, verify-otp, change-password)
+import authOtpRoutes from "./routes/auth.otp.routes.js"; // ✅ NUEVO
+import preloginRoutes from "./routes/prelogin.routes.js"; // ✅ NUEVO
+
 import meRoutes from "./routes/me.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import rolesRoutes from "./routes/roles.routes.js";
@@ -34,7 +36,7 @@ export async function registerIAMModule({
   // Body JSON
   router.use(express.json({ limit: jsonLimit }));
 
-  // Preflight defensivo (si tu app global no maneja CORS)
+  // Preflight defensivo
   router.use((req, res, next) => {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -42,24 +44,26 @@ export async function registerIAMModule({
 
   // Auth middleware
   const authMw = makeAuthMw();
-  const authOptional = makeOptionalAuthMw(); // ✅ NUEVO
+  const authOptional = makeOptionalAuthMw();
 
-  // Ping para probar montaje
+  // Ping
   router.get("/_ping", (_req, res) =>
     res.json({ ok: true, module: "iam", version: "v1" })
   );
 
-  // AUTH público (lo que ya tienes)
+  // AUTH público
   router.use("/auth", authRoutes);
 
-  // ✅ AUTH OTP empleados (NO rompe tus rutas existentes)
+  // AUTH OTP empleados
   router.use("/auth", authOtpRoutes);
 
-  /**
-   * ✅ /me con auth opcional:
-   * - Si NO hay token -> visitor:true
-   * - Si HAY token -> se valida y queda req.auth.payload listo para buildContextFrom()
-   */
+  // ✅ PRELOGIN (PROTEGIDO con Auth0 token)
+  // endpoints:
+  // POST /api/iam/v1/auth/temp/verify
+  // POST /api/iam/v1/auth/password/change
+  router.use("/auth", authMw, preloginRoutes);
+
+  // /me con auth opcional
   router.use("/me", authOptional, meRoutes);
 
   // Rutas protegidas (admin/gestión)
@@ -68,7 +72,7 @@ export async function registerIAMModule({
   router.use("/permissions", authMw, permissionsRoutes);
   router.use("/audit", authMw, auditRoutes);
 
-  // Import Excel (solo dev) + recomendado: dev autenticado
+  // Import Excel
   router.post(
     "/import/excel",
     authMw,
@@ -110,7 +114,7 @@ export async function registerIAMModule({
     })
   );
 
-  // Error handler dentro del router (al final)
+  // Error handler
   router.use((err, _req, res, _next) => {
     const status = Number(err?.status || err?.statusCode || 500);
     const code = status >= 400 && status < 600 ? status : 500;
@@ -123,7 +127,7 @@ export async function registerIAMModule({
     });
   });
 
-  // ----- Montaje -----
+  // Montaje
   app.use(basePath, router);
   app.use("/api/iam", router); // legacy alias
 

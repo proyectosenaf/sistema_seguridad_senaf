@@ -35,7 +35,12 @@ const IamUserSchema = new mongoose.Schema(
     mustChangePassword: { type: Boolean, default: false },
     passwordChangedAt: { type: Date },
     passwordExpiresAt: { type: Date },
-    // Cambio para cambio de contraseña y vencimiento, hecho el 18/02/2026
+
+    // ✅ Clave temporal SENAF (para prelogin)
+    tempPassHash: { type: String, select: false, default: "" },
+    tempPassExpiresAt: { type: Date, default: null },
+    tempPassUsedAt: { type: Date, default: null },
+    tempPassAttempts: { type: Number, default: 0 },
   },
   { timestamps: true, collection: "iamusers" }
 );

@@ -106,17 +106,19 @@ async function createAuth0DbUser({ email, tempPassword, roles, perms }) {
   const token = await getMgmtToken();
   if (!token) throw new Error("missing_auth0_mgmt_token (revisa AUTH0_MGMT_CLIENT_ID/SECRET)");
 
-  // Create user
+  // ✅ Create user in Auth0 DB connection.
+  // ✅ Important: must_reset=true => Action Post-Login debe DENEGAR hasta que cambie password por link.
   const createRes = await axios.post(
     `https://${domain}/api/v2/users`,
     {
       email,
-      password: tempPassword,
+      password: tempPassword, // cualquier cosa; el usuario NO la usará
       connection,
       email_verified: false,
-      verify_email: true,
+      verify_email: false, // no dependas de verify_email aquí (puedes activarlo después si quieres)
       app_metadata: {
         createdByAdmin: true,
+        must_reset: true, // ✅ clave "vencida" conceptualmente (bloquea login)
         roles,
         permissions: perms,
         email_normalized: email,
@@ -126,6 +128,31 @@ async function createAuth0DbUser({ email, tempPassword, roles, perms }) {
   );
 
   return createRes?.data; // contiene user_id
+}
+
+async function createPasswordChangeTicket({ user_id, ttlSec = 86400 }) {
+  const domain = normalizeDomain(process.env.AUTH0_MGMT_DOMAIN);
+  if (!domain) throw new Error("missing AUTH0_MGMT_DOMAIN");
+
+  const token = await getMgmtToken();
+  if (!token) throw new Error("missing_auth0_mgmt_token");
+
+  const result_url = String(process.env.SENAF_FORCE_PW_CHANGE_URL || "").trim();
+  if (!result_url) throw new Error("missing SENAF_FORCE_PW_CHANGE_URL");
+
+  const r = await axios.post(
+    `https://${domain}/api/v2/tickets/password-change`,
+    {
+      user_id,
+      result_url,
+      ttl_sec: Number(ttlSec || 86400), // 24h por defecto
+    },
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  const ticket = r?.data?.ticket;
+  if (!ticket) throw new Error("ticket_not_returned");
+  return ticket;
 }
 
 /* ===================== GET / (lista admin) ===================== */
@@ -141,7 +168,19 @@ r.get("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
 
     const items = await IamUser.find(
       filter,
-      { name: 1, email: 1, roles: 1, active: 1, perms: 1, createdAt: 1, updatedAt: 1, sub: 1, legacyId: 1, auth0Sub: 1, provider: 1 }
+      {
+        name: 1,
+        email: 1,
+        roles: 1,
+        active: 1,
+        perms: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        sub: 1,
+        legacyId: 1,
+        auth0Sub: 1,
+        provider: 1,
+      }
     )
       .sort({ name: 1, email: 1 })
       .skip(skip)
@@ -260,11 +299,11 @@ r.get("/:id", devOr(requirePerm("iam.users.manage")), async (req, res, next) => 
  * ✅ Caso Auth0 (creado por admin):
  *  - si provider === "auth0" y NO viene password:
  *      1) crea usuario en Auth0 DB Connection (Management API)
- *      2) app_metadata.createdByAdmin=true + roles/perms
- *      3) crea usuario en Mongo con auth0Sub = user_id
+ *      2) app_metadata.must_reset=true (Action Post-Login lo bloquea)
+ *      3) genera link de password reset (24h)
+ *      4) crea usuario en Mongo con auth0Sub = user_id
  *
- * Nota: tempPassword es solo para cumplir requisito de Auth0 al crear usuario DB;
- * el usuario NO necesita saberla, porque en el primer login lo mandas a reset.
+ * Nota: tempPassword es solo para cumplir requisito de Auth0 al crear usuario DB.
  */
 r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
   try {
@@ -293,21 +332,19 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       provider: finalProvider,
     };
 
-    // Local: guarda hash
+    // Local: guarda hash (si todavía lo usas)
     if (wantLocal) {
       doc.passwordHash = await hashPassword(String(password));
       doc.provider = "local";
     }
 
-    // Auth0 creado por admin: crear en Auth0 + marcar createdByAdmin allí
     let auth0User = null;
+    let resetTicketUrl = null;
+
+    // Auth0 creado por admin
     if (!wantLocal && doc.provider === "auth0") {
-      // temp password aleatoria (nadie la usa)
       const tempPassword =
-        "Tmp!" +
-        Math.random().toString(36).slice(2) +
-        "A9*" +
-        Math.random().toString(36).slice(2);
+        "Tmp!" + Math.random().toString(36).slice(2) + "A9*" + Math.random().toString(36).slice(2);
 
       auth0User = await createAuth0DbUser({
         email,
@@ -318,6 +355,9 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
 
       const auth0Sub = String(auth0User?.user_id || "").trim();
       if (auth0Sub) doc.auth0Sub = auth0Sub;
+
+      // ✅ Link 24h para que el usuario establezca su contraseña
+      resetTicketUrl = await createPasswordChangeTicket({ user_id: auth0Sub, ttlSec: 86400 });
     }
 
     const item = await IamUser.create(doc);
@@ -334,6 +374,8 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
         active: item.active,
         provider: item.provider,
         auth0Sub: item.auth0Sub || null,
+        auth0MustReset: doc.provider === "auth0" ? true : null,
+        resetTicketTtlSec: resetTicketUrl ? 86400 : null,
       },
     });
 
@@ -354,6 +396,7 @@ r.post("/", devOr(requirePerm("iam.users.manage")), async (req, res, next) => {
       auth0: auth0User
         ? { created: true, user_id: auth0User.user_id, email: auth0User.email }
         : { created: false },
+      reset: resetTicketUrl ? { ticketUrl: resetTicketUrl, ttlSec: 86400 } : null,
     });
   } catch (err) {
     next(err);

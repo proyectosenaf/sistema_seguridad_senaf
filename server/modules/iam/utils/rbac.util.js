@@ -259,7 +259,7 @@ export async function buildContextFrom(req) {
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
 
-  // ✅ Roles/perms desde token (Auth0 Action) si vienen:
+  // Roles/perms desde token (Auth0 Action) si vienen:
   const tokenRoles = source === "auth0" ? parseRolesFromPayload(payload) : [];
   const tokenPerms = source === "auth0" ? parsePermsFromPayload(payload) : [];
 
@@ -285,9 +285,9 @@ export async function buildContextFrom(req) {
 
   const hasIdentity = !!payload && (!!email || !!auth0Sub);
 
-  // ✅ Política empresarial:
-  // - NO auto-crear "visitas" en IAM
-  // - SOLO auto-crear bootstrap admin (superadmin/root admins) si no existe
+  // ✅ Política:
+  // - Sí auto-crear VISITA en IAM para llevar control
+  // - Auto-crear bootstrap admin (superadmin/root) si no existe
   if (!user && hasIdentity) {
     const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
       String(x).toLowerCase().trim()
@@ -301,6 +301,7 @@ export async function buildContextFrom(req) {
       (!!email && !!superEmail && email === superEmail) ||
       (!!email && rootAdmins.includes(email));
 
+    // 1) Bootstrap admin
     if (isBootstrapAdmin && email) {
       const doc = {
         email: email || undefined,
@@ -310,6 +311,13 @@ export async function buildContextFrom(req) {
         provider: source === "local" ? "local" : "auth0",
         roles: ["admin"],
         perms: ["*"],
+
+        // ✅ explícito: bootstrap admin NO usa prelogin
+        mustChangePassword: false,
+        tempPassHash: "",
+        tempPassExpiresAt: null,
+        tempPassUsedAt: null,
+        tempPassAttempts: 0,
       };
 
       try {
@@ -321,7 +329,45 @@ export async function buildContextFrom(req) {
         user = created.toObject();
         console.log(`[iam] auto-provisioned: ${doc.email} (ADMIN)`);
       } catch (e) {
-        console.warn("[iam] auto-provision failed:", e?.message || e);
+        // si chocó por unique, intenta leer
+        const existing = email ? await IamUser.findOne({ email }).lean() : null;
+        if (existing) user = existing;
+        else console.warn("[iam] auto-provision failed:", e?.message || e);
+      }
+    }
+
+    // 2) Auto-provision VISITA (si no era bootstrap admin o si no se creó arriba)
+    if (!user && email) {
+      const doc = {
+        email,
+        name: email.split("@")[0],
+        auth0Sub: auth0Sub || undefined,
+        active: true,
+        provider: source === "local" ? "local" : "auth0",
+        roles: [getDefaultVisitorRole()],
+        perms: [],
+
+        // ✅ visitas NO pasan por prelogin
+        mustChangePassword: false,
+        tempPassHash: "",
+        tempPassExpiresAt: null,
+        tempPassUsedAt: null,
+        tempPassAttempts: 0,
+      };
+
+      try {
+        const created = await withTimeout(
+          IamUser.create(doc),
+          4000,
+          "IamUser.create(visitor)"
+        );
+        user = created.toObject();
+        console.log(`[iam] auto-provisioned: ${doc.email} (VISITA)`);
+      } catch (e) {
+        // si chocó por unique (paralelo), intenta leerlo
+        const existing = await IamUser.findOne({ email }).lean();
+        if (existing) user = existing;
+        else console.warn("[iam] visitor auto-provision failed:", e?.message || e);
       }
     }
   }
@@ -343,9 +389,9 @@ export async function buildContextFrom(req) {
   const normRole = (r) => String(r || "").trim().toLowerCase();
   const normPerm = (p) => String(p || "").trim();
 
-  // ✅ Fuente de roles:
-  // - Si existe usuario en IAM => su roles (verdad)
-  // - Si NO existe (visitante) => tokenRoles (si vienen) o defaultVisitorRole
+  // Fuente de roles:
+  // - Si existe usuario en IAM => su roles
+  // - Si NO existe (caso raro) => tokenRoles o defaultVisitorRole
   // - + headers dev (si aplica)
   const defaultVisitorRole = getDefaultVisitorRole();
 
@@ -362,7 +408,7 @@ export async function buildContextFrom(req) {
     [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
   );
 
-  // ✅ Fuente de permisos:
+  // Fuente de permisos:
   // - IAM user perms (si existe)
   // - tokenPerms (si vienen)
   // - headers dev (si aplica)

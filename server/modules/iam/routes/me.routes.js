@@ -1,4 +1,3 @@
-// server/modules/iam/routes/me.routes.js
 import { Router } from "express";
 import { buildContextFrom } from "../utils/rbac.util.js";
 
@@ -40,11 +39,11 @@ r.get("/", async (req, res, next) => {
         email: null,
         isSuperAdmin: false,
         auth0Sub: null,
+        mustChangePassword: false,
       });
     }
 
     // 2) Hay identidad pero buildContextFrom no pudo crear usuario (normalmente por falta de email)
-    //    Nota: tu schema exige email, así que sin email no podemos auto-provisionar.
     if (!ctx.user) {
       return res.status(401).json({
         ok: false,
@@ -67,9 +66,9 @@ r.get("/", async (req, res, next) => {
       email: u.email,
       isSuperAdmin: !!ctx.isSuperAdmin,
       auth0Sub: u.auth0Sub || auth0Sub || null,
+      mustChangePassword: !!u.mustChangePassword, // ✅
     });
   } catch (e) {
-    // Si es timeout, responde claro (sin colgar UI)
     if (String(e?.message || "").startsWith("[timeout]")) {
       return res.status(503).json({
         ok: false,
