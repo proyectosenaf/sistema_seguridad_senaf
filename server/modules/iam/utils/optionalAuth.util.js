@@ -1,23 +1,18 @@
+// server/modules/iam/utils/optionalAuth.util.js
 import { makeAuthMw } from "./auth.util.js";
 
-/**
- * Auth opcional:
- * - Si hay Bearer token -> intenta validarlo (req.auth.payload)
- * - Si no hay token -> sigue
- * - Si token inválido -> sigue (visitor)
- */
 export function makeOptionalAuthMw() {
-  const strict = makeAuthMw();
+  const authMw = makeAuthMw();
+  const disableAuth = process.env.DISABLE_AUTH === "1";
 
   return (req, res, next) => {
-    const h = String(req.headers.authorization || "");
-    const hasBearer = h.toLowerCase().startsWith("bearer ");
-    if (!hasBearer) return next();
+    if (disableAuth) return next();
 
-    strict(req, res, (err) => {
-      // si falla validación, NO bloquea /me
-      if (err) return next();
-      return next();
-    });
+    const h = String(req.headers.authorization || "");
+    if (!h.toLowerCase().startsWith("bearer ")) return next();
+
+    return authMw(req, res, next);
   };
 }
+
+export default makeOptionalAuthMw;

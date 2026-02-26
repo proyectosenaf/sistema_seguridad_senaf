@@ -1,12 +1,9 @@
 // src/pages/Home/Home.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
 import { NAV_SECTIONS } from "../../config/navConfig.js";
-import api, { setAuthToken } from "../../lib/api.js";
+import api from "../../lib/api.js";
 import IamGuard from "../../iam/api/IamGuard.jsx";
-
-// ✅ socket global (NO crear otro io())
 import { socket } from "../../lib/socket.js";
 
 import {
@@ -21,9 +18,7 @@ import {
   Home as HomeIcon,
 } from "lucide-react";
 
-/* ===============
-   Mapa de íconos
-   =============== */
+/* Mapa de íconos */
 const ICONS = {
   home: HomeIcon,
   accesos: DoorOpen,
@@ -78,7 +73,6 @@ function Badge({ value }) {
 
 export default function Home() {
   const nav = useNavigate();
-  const { getAccessTokenSilently } = useAuth0();
 
   const [incStats, setIncStats] = React.useState({
     total: 0,
@@ -88,15 +82,13 @@ export default function Home() {
     alta: 0,
   });
 
-  /* -------------------------
-     Socket listeners (global)
-     ------------------------- */
+  /* Socket listeners */
   React.useEffect(() => {
     if (!socket) return;
 
     const onCheck = () => {
-      // si quieres, aquí puedes refrescar KPIs
-      // (ej: volver a cargar incidentes, rondas, etc.)
+      // opcional: refrescar KPIs si llega un evento
+      // refreshIncStats();
     };
 
     socket.on("rondasqr:check", onCheck);
@@ -108,27 +100,7 @@ export default function Home() {
     };
   }, []);
 
-  /* -------------------------
-     Token para axios (Auth0)
-     ------------------------- */
-  React.useEffect(() => {
-    setAuthToken(async () => {
-      try {
-        return await getAccessTokenSilently({
-          authorizationParams: {
-            audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-            scope: "openid profile email",
-          },
-        });
-      } catch {
-        return null;
-      }
-    });
-  }, [getAccessTokenSilently]);
-
-  /* -------------------------
-     KPIs de incidentes
-     ------------------------- */
+  /* KPIs incidentes */
   React.useEffect(() => {
     let alive = true;
 
@@ -160,43 +132,39 @@ export default function Home() {
     };
   }, []);
 
-  /* ---------------------------------------------
-     Secciones (normalización + rutas canónicas)
-     --------------------------------------------- */
+  /* Secciones normalizadas */
   const SECTIONS = React.useMemo(() => {
     const base = (NAV_SECTIONS || []).map((s) => {
-      // Normaliza rondas a rondasqr
       if (s.key === "rondas") {
-        return {
-          ...s,
-          key: "rondasqr",
-          // ✅ entrar directo al módulo (scan es lo más común)
-          path: "/rondasqr/scan",
-        };
+        return { ...s, key: "rondasqr", path: "/rondasqr/scan" };
       }
-      if (s.key === "rondasqr") {
-        return { ...s, path: "/rondasqr/scan" };
-      }
+      if (s.key === "rondasqr") return { ...s, path: "/rondasqr/scan" };
       return s;
     });
 
-    // Asegura IAM (por si algún menú lo omitió)
     if (!base.some((s) => s.key === "iam")) {
       base.push({ key: "iam", label: "Usuarios y Permisos", path: "/iam/admin" });
     }
 
     // Orden estable (opcional, pero ayuda consistencia visual)
-    const order = ["accesos", "iam", "rondasqr", "incidentes", "visitas", "bitacora", "supervision"];
+
+    const order = [
+      "accesos",
+      "iam",
+      "rondasqr",
+      "incidentes",
+      "visitas",
+      "bitacora",
+      "supervision",
+    ];
     base.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
 
     return base;
   }, []);
 
-  /* -------------------------
-     Badges por módulo
-     ------------------------- */
-  const BADGES = React.useMemo(() => {
-    return {
+  /* Badges */
+  const BADGES = React.useMemo(
+    () => ({
       accesos: 0,
       iam: 0,
       rondasqr: 0,
@@ -204,8 +172,9 @@ export default function Home() {
       incidentes: incStats.total || 0,
       visitas: 0,
       bitacora: 0,
-    };
-  }, [incStats.total]);
+    }),
+    [incStats.total]
+  );
 
   return (
     <div className="space-y-6 layer-content">
@@ -237,20 +206,15 @@ export default function Home() {
       <div className="fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
 
-        {/* ✅ grid con tiles + badge (estilo consistente) */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SECTIONS.map((s) => {
             const key = s.key;
             const Icon = ICONS[key] || null;
-            const anyOf = PERMS_BY_SECTION[key] || ["*"];
             const badgeValue = BADGES[key] ?? 0;
 
             return (
-              <IamGuard key={key} anyOf={anyOf} fallback={null}>
-                <button
-                  onClick={() => nav(s.path)}
-                  className="fx-tile text-left p-4"
-                >
+              <IamGuard key={key} section={key} fallback={null}>
+                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
                   <div className="flex items-center gap-3">
                     {Icon && <Icon className="w-5 h-5 opacity-80" />}
                     <div className="font-medium">{s.label}</div>

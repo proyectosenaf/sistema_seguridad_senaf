@@ -12,8 +12,7 @@ export default function IncidentFormGuard({ roundId, siteId }) {
       <IncidenteForm
         stayOnFinish={true}
         origin="ronda"
-        prefillZone="gps"        // ✅ autollenado de zona (GPS)
-        prefillReporter="auth0"  // ✅ autoselección del guardia por email Auth0
+        prefillZone="gps" // autollenado de zona por GPS
         extraData={{
           fromRonda: true,
           roundId: roundId || null,

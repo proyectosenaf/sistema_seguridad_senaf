@@ -1,135 +1,34 @@
 // server/modules/iam/routes/auth.routes.js
 import { Router } from "express";
-import jwt from "jsonwebtoken";
-import crypto from "node:crypto";
 
 import IamUser from "../models/IamUser.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
+import { signToken, verifyToken, getBearer } from "../utils/jwt.util.js";
 
 const r = Router();
 
 /* ===================== helpers ===================== */
-function safeEq(a = "", b = "") {
-  const aa = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (aa.length !== bb.length) return false;
-  if (aa.length === 0) return false;
-  return crypto.timingSafeEqual(aa, bb);
-}
-
 function normEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
-function isMongoDupKeyError(e) {
-  const msg = String(e?.message || "");
-  return e?.code === 11000 || msg.includes("E11000 duplicate key");
+function getClientIp(req) {
+  const xf = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xf || req.ip || req.connection?.remoteAddress || "";
 }
 
-/* ===================== POST-REGISTER (AUTH0 WEBHOOK) ===================== */
-/**
- * POST /api/iam/v1/auth/post-register
- * Llamado por Auth0 Action (Post User Registration).
- *
- * Headers:
- *  x-senaf-webhook-secret: <secret>
- *
- * Body:
- *  { email, auth0Sub, provider }
- *
- * ✅ Política SENAF:
- * - Auto-registro SIEMPRE crea "visita" si no existe.
- * - Empleados (guardia/admin/etc.) los crea/asigna el admin desde el módulo.
- * - NO confiar en roles/perms externos para auto-registro (seguridad).
- */
-r.post("/post-register", async (req, res, next) => {
-  try {
-    const expected = String(process.env.SENAF_WEBHOOK_SECRET || "").trim();
-    const got = String(req.headers["x-senaf-webhook-secret"] || "").trim();
+function signUserToken(user) {
+  // ⚠️ Compat: roles/perms en token. Fuente canónica: DB via buildContextFrom(/me)
+  const payload = {
+    sub: String(user._id),
+    email: user.email,
+    roles: Array.isArray(user.roles) ? user.roles : [],
+    permissions: Array.isArray(user.perms) ? user.perms : [],
+    provider: "local",
+  };
 
-    if (!expected || !got || !safeEq(got, expected)) {
-      return res.status(401).json({ ok: false, error: "unauthorized_webhook" });
-    }
-
-    const email = normEmail(req.body?.email);
-    const auth0Sub = String(req.body?.auth0Sub || "").trim();
-    const provider = String(req.body?.provider || "auth0").trim();
-
-    if (!email) {
-      return res.status(400).json({ ok: false, error: "email_required" });
-    }
-
-    const DEFAULT_ROLE = String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
-      .trim()
-      .toLowerCase();
-
-    let u = await IamUser.findOne({ email });
-
-    if (!u) {
-      try {
-        u = await IamUser.create({
-          email,
-          name: email.split("@")[0],
-          roles: [DEFAULT_ROLE],
-          perms: [],
-          active: true,
-          provider: provider === "local" ? "auth0" : provider, // harden
-          auth0Sub: auth0Sub || undefined,
-          // ⚠️ NO createdByAdmin aquí, porque esto es auto-registro
-        });
-
-        return res.status(201).json({
-          ok: true,
-          created: true,
-          id: String(u._id),
-          email: u.email,
-          role: DEFAULT_ROLE,
-        });
-      } catch (e) {
-        if (isMongoDupKeyError(e)) {
-          u = await IamUser.findOne({ email });
-          if (u) {
-            return res.status(200).json({
-              ok: true,
-              existed: true,
-              updated: false,
-              id: String(u._id),
-              email: u.email,
-              note: "duplicate_race_resolved",
-            });
-          }
-        }
-        throw e;
-      }
-    }
-
-    // Si existe, solo sincronizar auth0Sub si faltaba (NO tocar roles/perms)
-    let changed = false;
-    let warned = null;
-
-    if (auth0Sub) {
-      if (!u.auth0Sub) {
-        u.auth0Sub = auth0Sub;
-        changed = true;
-      } else if (u.auth0Sub !== auth0Sub) {
-        warned = "auth0Sub_mismatch_not_overwritten";
-      }
-    }
-
-    if (changed) await u.save();
-
-    return res.json({
-      ok: true,
-      existed: true,
-      updated: changed,
-      id: String(u._id),
-      email: u.email,
-      warn: warned,
-    });
-  } catch (e) {
-    next(e);
-  }
-});
+  return signToken(payload, { expiresIn: "8h" });
+}
 
 /* ===================== LOGIN (LOCAL) ===================== */
 r.post("/login", async (req, res, next) => {
@@ -138,84 +37,91 @@ r.post("/login", async (req, res, next) => {
     const password = String(req.body?.password || "");
 
     if (!email || !password) {
-      return res.status(400).json({ error: "Email y password requeridos" });
+      return res.status(400).json({ ok: false, error: "email_password_required" });
     }
 
     const user = await IamUser.findOne({ email }).select("+passwordHash");
-    if (!user) return res.status(401).json({ error: "Credenciales no válidas" });
+    if (!user) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
     if (user.provider !== "local") {
-      return res
-        .status(400)
-        .json({ error: "Usuario autenticado externamente (Auth0)" });
+      return res.status(400).json({
+        ok: false,
+        error: "user_not_local",
+        message: "Este usuario no es local (provider != local).",
+      });
     }
 
-    const valid = await verifyPassword(password, user.passwordHash);
-    if (!valid) return res.status(401).json({ error: "Credenciales no válidas" });
+    if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-    if (!user.active) return res.status(403).json({ error: "Usuario inactivo" });
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
     // expiración password
     let mustChange = !!user.mustChangePassword;
     if (user.passwordExpiresAt && new Date() > user.passwordExpiresAt) mustChange = true;
 
-    const token = jwt.sign(
-      {
-        sub: String(user._id),
-        email: user.email,
-        roles: Array.isArray(user.roles) ? user.roles : [],
-        permissions: Array.isArray(user.perms) ? user.perms : [],
-        provider: "local",
-      },
-      process.env.JWT_SECRET || "dev_secret",
-      { expiresIn: "8h" }
-    );
+    // auditoría (no bloquea login si falla)
+    try {
+      user.lastLoginAt = new Date();
+      user.lastLoginIp = getClientIp(req);
+      await user.save();
+    } catch {
+      // ignore
+    }
 
-    return res.json({ token, mustChangePassword: mustChange });
+    const token = signUserToken(user);
+
+    return res.json({ ok: true, token, mustChangePassword: mustChange });
   } catch (e) {
     next(e);
   }
 });
 
+/* ===================== LOGOUT (LOCAL) ===================== */
+r.post("/logout", async (_req, res) => {
+  return res.json({ ok: true });
+});
+
 /* ===================== CHANGE PASSWORD (LOCAL) ===================== */
 r.post("/change-password", async (req, res, next) => {
   try {
-    const authHeader = String(req.headers.authorization || "");
-    if (!authHeader.toLowerCase().startsWith("bearer ")) {
-      return res.status(401).json({ ok: false, error: "Token requerido" });
+    const token = getBearer(req);
+    if (!token) {
+      return res.status(401).json({ ok: false, error: "token_required" });
     }
 
-    const token = authHeader.split(" ")[1];
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+      decoded = verifyToken(token);
     } catch {
-      return res.status(401).json({ ok: false, error: "Token inválido o expirado" });
+      return res.status(401).json({ ok: false, error: "token_invalid_or_expired" });
     }
 
     const userId = decoded?.sub ? String(decoded.sub) : null;
-    if (!userId) return res.status(401).json({ ok: false, error: "Token inválido" });
+    if (!userId) return res.status(401).json({ ok: false, error: "token_invalid" });
 
-    const passwordActual = req.body?.passwordActual;
-    const passwordNueva = req.body?.passwordNueva;
+    const passwordActual = String(req.body?.passwordActual || "");
+    const passwordNueva = String(req.body?.passwordNueva || "");
 
     if (!passwordActual || !passwordNueva) {
-      return res.status(400).json({ ok: false, error: "Faltan datos" });
+      return res.status(400).json({ ok: false, error: "missing_fields" });
+    }
+    if (passwordNueva.length < 8) {
+      return res.status(400).json({ ok: false, error: "password_too_short" });
     }
 
     const user = await IamUser.findById(userId).select("+passwordHash");
-    if (!user) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
     if (user.provider !== "local") {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Usuario autenticado externamente (Auth0)" });
+      return res.status(400).json({ ok: false, error: "user_not_local" });
     }
-
-    if (!user.active) return res.status(403).json({ ok: false, error: "Usuario inactivo" });
+    if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
 
     const match = await verifyPassword(passwordActual, user.passwordHash);
-    if (!match) return res.status(400).json({ ok: false, error: "Contraseña actual incorrecta" });
+    if (!match) {
+      return res.status(400).json({ ok: false, error: "current_password_wrong" });
+    }
 
     const newHash = await hashPassword(passwordNueva);
 
@@ -229,7 +135,13 @@ r.post("/change-password", async (req, res, next) => {
     user.passwordExpiresAt = expires;
     await user.save();
 
-    return res.json({ ok: true, message: "Contraseña actualizada correctamente" });
+    const newToken = signUserToken(user);
+
+    return res.json({
+      ok: true,
+      message: "Contraseña actualizada correctamente",
+      token: newToken,
+    });
   } catch (e) {
     next(e);
   }
@@ -243,11 +155,13 @@ r.post("/bootstrap", async (req, res, next) => {
     const name = String(req.body?.name || "").trim();
 
     if (!email || !password) {
-      return res.status(400).json({ ok: false, error: "Email y password requeridos" });
+      return res.status(400).json({ ok: false, error: "email_password_required" });
     }
 
     const count = await IamUser.countDocuments({});
-    if (count > 0) return res.status(409).json({ ok: false, error: "Bootstrap ya no disponible" });
+    if (count > 0) {
+      return res.status(409).json({ ok: false, error: "bootstrap_not_available" });
+    }
 
     const rootAdmins = String(process.env.ROOT_ADMINS || "")
       .split(/[,\s]+/)
@@ -257,7 +171,9 @@ r.post("/bootstrap", async (req, res, next) => {
     const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
     const allowed = (superEmail && email === superEmail) || rootAdmins.includes(email);
 
-    if (!allowed) return res.status(403).json({ ok: false, error: "Email no permitido para bootstrap" });
+    if (!allowed) {
+      return res.status(403).json({ ok: false, error: "bootstrap_email_not_allowed" });
+    }
 
     const passwordHash = await hashPassword(password);
 

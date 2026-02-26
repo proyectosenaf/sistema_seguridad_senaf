@@ -1,32 +1,17 @@
 // client/src/modules/rondasqr/api/rondasqrApi.js
 
-// 👉 Convención: VITE_API_BASE_URL YA incluye /api
-//    ej. https://urchin-app-fuirh.ondigitalocean.app/api
+// Convención: VITE_API_BASE_URL YA incluye /api
+// ej. https://tu-dominio.com/api
 const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api").replace(/\/$/, "");
 
 // Base de RondasQR: /api/rondasqr/v1
 const BASE = `${ROOT}/rondasqr/v1`;
-
-const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
-const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
-
-/** Permite inyectar un proveedor de token (Auth0, etc.) */
-let tokenProvider = null;
-export function attachRondasAuth(provider /* async () => string|null */) {
-  tokenProvider = provider;
-}
 
 function toQS(o = {}) {
   return Object.entries(o)
     .filter(([, v]) => v !== "" && v != null)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join("&");
-}
-
-function isLocalhostRuntime() {
-  if (typeof window === "undefined") return false;
-  const h = window.location.hostname;
-  return h === "localhost" || h === "127.0.0.1";
 }
 
 /* ───────────── helpers ───────────── */
@@ -74,47 +59,9 @@ function normalizePlanBody(body = {}) {
   return { siteId, roundId, points };
 }
 
-function getDevIdentity() {
-  const email =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
-    import.meta.env.VITE_DEV_IAM_EMAIL ||
-    "";
-  const roles =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
-    import.meta.env.VITE_DEV_IAM_ROLES ||
-    "";
-  const perms =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
-    import.meta.env.VITE_DEV_IAM_PERMS ||
-    "*";
-  return {
-    email: String(email || "").trim(),
-    roles: String(roles || "").trim(),
-    perms: String(perms || "*").trim() || "*",
-  };
-}
-
 async function buildHeaders({ json = true } = {}) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
-
-  // Token primero
-  if (typeof tokenProvider === "function") {
-    try {
-      const token = await tokenProvider();
-      if (token) h["Authorization"] = `Bearer ${token}`;
-    } catch {}
-  }
-
-  // Dev headers solo en local / disable / force
-  const shouldSendDev = DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime() || import.meta.env.DEV;
-  if (shouldSendDev && !h["Authorization"]) {
-    const { email, roles, perms } = getDevIdentity();
-    if (email) h["x-user-email"] = email;
-    if (roles) h["x-roles"] = roles;
-    h["x-perms"] = perms || "*";
-  }
-
   return h;
 }
 
@@ -125,7 +72,7 @@ async function fetchJson(url, opts = {}) {
   const wantsJson = typeof body === "string";
 
   const r = await fetch(url, {
-    credentials: "include",
+    credentials: "include", // si NO usas cookies/sesión, cambia a "omit"
     ...opts,
     headers: { ...(await buildHeaders({ json: wantsJson })), ...(opts.headers || {}) },
   });
@@ -360,18 +307,13 @@ export const rondasqrApi = {
   /** JSON repo (si lo implementas) */
   async listQrRepo(params = {}) {
     const qs = toQS(params);
-
-    // 1) donde tu front lo llama hoy
     const url1 = `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
-    // 2) fallback si el backend lo montó fuera de /admin
     const url2 = `${BASE}/qr-repo${qs ? `?${qs}` : ""}`;
 
     try {
       return await fetchJson(url1);
     } catch (err) {
-      if (err.status === 404 || err.status === 405) {
-        return await fetchJson(url2);
-      }
+      if (err.status === 404 || err.status === 405) return await fetchJson(url2);
       throw err;
     }
   },
@@ -379,7 +321,6 @@ export const rondasqrApi = {
   /** URL para abrir en nueva pestaña */
   qrRepoUrl(params = {}) {
     const qs = toQS(params);
-    // preferimos /admin/qr-repo (tu intención original)
     return `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
   },
 
@@ -396,9 +337,7 @@ export const rondasqrApi = {
         try {
           return await fetchJson(legacyUrl);
         } catch (err2) {
-          if (err2.status === 404 || err2.status === 405) {
-            return { items: [], count: 0 };
-          }
+          if (err2.status === 404 || err2.status === 405) return { items: [], count: 0 };
           throw err2;
         }
       }
@@ -430,16 +369,9 @@ export const rondasqrApi = {
     const payload = { ...base, ...extras, pointIds };
 
     const tryAndReload = async (url, method) => {
-      const res = await fetchJson(url, {
-        method,
-        body: JSON.stringify(payload),
-      });
+      const res = await fetchJson(url, { method, body: JSON.stringify(payload) });
       return res == null
-        ? this.getPlan({
-            siteId: base.siteId,
-            roundId: base.roundId,
-            shift: payload.shift,
-          })
+        ? this.getPlan({ siteId: base.siteId, roundId: base.roundId, shift: payload.shift })
         : res;
     };
 
@@ -511,7 +443,7 @@ export const rondasqrApi = {
     });
   },
 
-  // ✅ alias para ScanPage
+  // alias para ScanPage
   async checkinScan(payload) {
     return this.postScan(payload);
   },

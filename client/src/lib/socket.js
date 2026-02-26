@@ -2,7 +2,7 @@
 import { io } from "socket.io-client";
 import { SOCKET_BASE } from "./api.js";
 
-// ✅ Normaliza base: si viene con /api lo quitamos
+// Normaliza base: si viene con /api lo quitamos
 function normalizeSocketBase(v) {
   const raw = String(v || "").trim();
   if (!raw) return "";
@@ -11,23 +11,20 @@ function normalizeSocketBase(v) {
 
 const BASE = normalizeSocketBase(SOCKET_BASE);
 
-// ✅ fallback seguro si BASE quedó vacío
+// Fallback seguro si BASE quedó vacío
 const FALLBACK =
   typeof window !== "undefined" ? window.location.origin : "";
 
 export const socket =
   typeof window !== "undefined"
     ? io(BASE || FALLBACK, {
-        // path default es /socket.io, lo dejamos explícito (ok)
         path: "/socket.io",
-
-        // ✅ no forzar sólo websocket; dejamos fallback
         transports: ["websocket", "polling"],
 
-        // ✅ si no usas cookies, déjalo false (recomendado con Auth0 Bearer)
+        // Si tu backend usa cookies/sesión, pon true.
+        // Si no usas autenticación basada en cookies, déjalo false.
         withCredentials: false,
 
-        // ✅ reconexión más estable
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 800,
@@ -38,11 +35,15 @@ export const socket =
 
 // Debug opcional
 if (socket) {
-  socket.on("connect", () => console.log("[socket] connected:", socket.id));
-  socket.on("connect_error", (e) =>
-    console.warn("[socket] connect_error:", e?.message || e)
-  );
-  socket.on("disconnect", (reason) =>
-    console.warn("[socket] disconnected:", reason)
-  );
+  socket.on("connect", () => {
+    console.log("[socket] connected:", socket.id);
+  });
+
+  socket.on("connect_error", (e) => {
+    console.warn("[socket] connect_error:", e?.message || e);
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.warn("[socket] disconnected:", reason);
+  });
 }

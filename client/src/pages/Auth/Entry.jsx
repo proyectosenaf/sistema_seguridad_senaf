@@ -1,23 +1,45 @@
 // client/src/pages/Auth/Entry.jsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
 
+/** Solo permitimos rutas internas tipo /algo */
 function safeInternalPath(p) {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
+}
+
+function getReturnToFromSession() {
+  try {
+    const rt = sessionStorage.getItem("auth:returnTo");
+    return safeInternalPath(rt) ? rt : "/start";
+  } catch {
+    return "/start";
+  }
+}
+
+async function fetchMe() {
+  // VITE_API_BASE_URL incluye /api
+  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+  const API_ROOT = String(RAW || "").replace(/\/$/, "");
+  const url = `${API_ROOT}/iam/v1/me`;
+
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) return null;
+
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
 }
 
 export default function Entry() {
   const { search } = useLocation();
   const nav = useNavigate();
-  const { isAuthenticated, isLoading, loginWithRedirect, error } = useAuth0();
 
-  // env
-  const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
-  const MODE = String(import.meta.env.MODE || "").toLowerCase();
-  const IS_PROD = VITE_ENV === "production" || MODE === "production";
+  const [status, setStatus] = React.useState("checking"); // checking | redirecting | error
+  const [errMsg, setErrMsg] = React.useState("");
 
-  // captura ?to=/ruta y guárdalo para el callback
+  // 1) captura ?to=/ruta y guárdalo para redirección post-login
   React.useEffect(() => {
     const qs = new URLSearchParams(search);
     const to = qs.get("to");
@@ -30,67 +52,52 @@ export default function Entry() {
     }
   }, [search]);
 
-  // si ya está autenticado, manda a /start (o returnTo lo hará tu callback)
+  // 2) check sesión local; si no hay → /login
   React.useEffect(() => {
-    if (!isLoading && isAuthenticated) {
-      nav("/start", { replace: true });
-    }
-  }, [isLoading, isAuthenticated, nav]);
+    let alive = true;
 
-  // inicia Auth0 login en PROD y también en DEV (si quieres)
-  React.useEffect(() => {
-    if (isLoading) return;
-    if (isAuthenticated) return;
-
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
-
-    // En DEV podrías permitir /login local, pero si quieres mantener todo en Auth0, déjalo igual.
-    // Aquí: en PROD SIEMPRE Auth0.
     (async () => {
       try {
-        await loginWithRedirect({
-          appState: {
-            returnTo: (() => {
-              try {
-                const rt = sessionStorage.getItem("auth:returnTo");
-                return safeInternalPath(rt) ? rt : "/start";
-              } catch {
-                return "/start";
-              }
-            })(),
-          },
-          authorizationParams: {
-            audience,
-          },
-        });
+        setStatus("checking");
+        const me = await fetchMe();
+
+        if (!alive) return;
+
+        // ✅ si me existe, asumimos sesión válida
+        if (me) {
+          setStatus("redirecting");
+          nav(getReturnToFromSession(), { replace: true });
+          return;
+        }
+
+        // ❌ no autenticado → login local
+        setStatus("redirecting");
+        nav("/login", { replace: true });
       } catch (e) {
-        console.error("[Entry] loginWithRedirect failed:", e?.message || e);
+        if (!alive) return;
+        setStatus("error");
+        setErrMsg(e?.message || "No se pudo verificar la sesión.");
       }
     })();
-  }, [isLoading, isAuthenticated, loginWithRedirect]);
 
-  // UI simple mientras redirige
-  if (error) {
+    return () => {
+      alive = false;
+    };
+  }, [nav]);
+
+  if (status === "error") {
     return (
       <div className="p-6">
-        <div className="font-semibold">Error de autenticación</div>
-        <div className="mt-2 text-sm opacity-80">
-          {error?.message || "No se pudo iniciar sesión."}
+        <div className="font-semibold">Error</div>
+        <div className="mt-2 text-sm opacity-80">{errMsg}</div>
+        <div className="mt-4">
+          <button className="underline" onClick={() => nav("/login", { replace: true })}>
+            Ir a login
+          </button>
         </div>
-
-        {!IS_PROD && (
-          <div className="mt-4">
-            <button
-              className="underline"
-              onClick={() => nav("/login", { replace: true })}
-            >
-              Ir a login local (DEV)
-            </button>
-          </div>
-        )}
       </div>
     );
   }
 
-  return <div className="p-6">Redirigiendo a inicio de sesión…</div>;
+  return <div className="p-6">Verificando sesión…</div>;
 }

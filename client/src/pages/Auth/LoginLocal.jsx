@@ -1,52 +1,107 @@
-// Página de login local (email/password)
-// Creada el 19/02/2026 para implementar Login, cambio de contraseña y vencimiento
-import React, { useState } from "react";
+// client/src/pages/auth/LoginLocal.jsx
+// Login local (email/password)
+// 19/02/2026 - SENAF
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api, { API } from "../../lib/api.js"; // ✅ usa tu API_ROOT (VITE_API_BASE_URL)
+import api, { API } from "../../lib/api.js";
 
 export default function LoginLocal() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPass, setShowPass] = useState(false); // ✅ NUEVO
-  const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [showPass, setShowPass] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const emailNorm = useMemo(() => String(email || "").trim().toLowerCase(), [email]);
+
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
+    if (!emailNorm) return setError("Ingresa tu correo.");
+    if (!password) return setError("Ingresa tu contraseña.");
+
     try {
-      // ✅ POST relativo al baseURL (API_ROOT ya incluye /api)
-      // ruta final: `${VITE_API_BASE_URL}/iam/v1/auth/login`
-      const res = await api.post("/iam/v1/auth/login", { email, password });
+      setSubmitting(true);
+
+      // ✅ endpoint correcto (API ya incluye /api)
+      const res = await api.post("/iam/v1/auth/login", {
+        email: emailNorm,
+        password,
+      });
 
       const data = res?.data || {};
 
-      // Mantengo tu lógica
-      if (!data?.token) {
-        setError(data?.error || "Error en login");
+      // ✅ si tu backend responde con error aunque sea 200
+      if (data?.ok === false) {
+        setError(data?.error || "Login fallido.");
         return;
       }
 
-      localStorage.setItem("token", data.token);
-
-      if (data.mustChangePassword) {
-        navigate("/change-password");
-      } else {
-        navigate("/");
+      // ✅ flujo OTP (si tu backend lo usa)
+      // Ajusta estos flags según tu backend real:
+      const otpRequired = !!(data?.otpRequired || data?.requireOtp || data?.require_otp);
+      if (otpRequired) {
+        // Guardamos email para VerifyOtp.jsx
+        localStorage.setItem("senaf_otp_email", emailNorm);
+        navigate("/otp", { replace: true });
+        return;
       }
+
+      // ✅ token obligatorio
+      if (!data?.token) {
+        setError(data?.error || "El servidor no devolvió token.");
+        return;
+      }
+
+      // ✅ clave correcta: tu App.jsx busca "senaf_token"
+      localStorage.setItem("senaf_token", data.token);
+
+      // (opcional) guarda info simple para mostrar nombre/email en UI
+      // Si tu backend retorna user
+      if (data?.user) {
+        try {
+          localStorage.setItem("senaf_user", JSON.stringify(data.user));
+        } catch {}
+      } else {
+        // al menos email
+        try {
+          localStorage.setItem("senaf_user", JSON.stringify({ email: emailNorm }));
+        } catch {}
+      }
+
+      // ✅ flags posibles de "debe cambiar contraseña"
+      const mustChangePassword = !!(
+        data?.mustChangePassword ||
+        data?.must_change_password ||
+        data?.must_reset ||
+        data?.forcePasswordChange
+      );
+
+      if (mustChangePassword) {
+        navigate("/change-password", { replace: true });
+        return;
+      }
+
+      // ✅ deja que /start consulte /me y redirija a Home según roles/permisos
+      navigate("/start", { replace: true });
     } catch (err) {
       const msg =
         err?.response?.data?.error ||
         err?.response?.data?.message ||
         `Error de conexión (${API})`;
       setError(msg);
+    } finally {
+      setSubmitting(false);
     }
-  };
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <form onSubmit={handleSubmit} className="p-6 border rounded w-80">
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <form onSubmit={handleSubmit} className="p-6 border rounded w-80 bg-white shadow-sm">
         <h2 className="text-lg mb-4 font-bold">Login</h2>
 
         <input
@@ -56,9 +111,10 @@ export default function LoginLocal() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="username"
+          inputMode="email"
         />
 
-        {/* ✅ Password con "ojito" */}
+        {/* Password con ojito */}
         <div className="relative mb-3">
           <input
             className="border w-full p-2 pr-10"
@@ -80,11 +136,19 @@ export default function LoginLocal() {
           </button>
         </div>
 
-        {error && <div className="text-red-500 mb-2">{error}</div>}
+        {error && <div className="text-red-600 mb-2 text-sm">{error}</div>}
 
-        <button className="bg-blue-600 text-white w-full p-2">
-          Ingresar
+        <button
+          type="submit"
+          disabled={submitting}
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
+        >
+          {submitting ? "Ingresando..." : "Ingresar"}
         </button>
+
+        <div className="mt-3 text-xs text-gray-500">
+          API: <span className="font-mono">{API}</span>
+        </div>
       </form>
     </div>
   );

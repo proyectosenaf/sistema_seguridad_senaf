@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@auth0/auth0-react": "^2.8.0",
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "csv-stringify": "^6.6.0",

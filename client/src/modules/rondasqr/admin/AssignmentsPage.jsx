@@ -18,8 +18,8 @@ export default function AssignmentsPage() {
   const [roundId, setRoundId] = useState("");
 
   // Guardias (IAM)
-  const [guards, setGuards] = useState([]); // [{_id, name, email, sub, opId, active}]
-  const [guardId, setGuardId] = useState(""); // ✅ aquí vamos a guardar EL SUB (auth0|...)
+  const [guards, setGuards] = useState([]); // [{_id, name, email, active, roles}]
+  const [guardId, setGuardId] = useState(""); // ✅ guardId = _id del usuario IAM
 
   // Horarios
   const [startTime, setStartTime] = useState("");
@@ -58,48 +58,40 @@ export default function AssignmentsPage() {
       try {
         let users = [];
 
-        // Si tienes endpoint directo de guardias úsalo:
+        // Si existe endpoint directo de guardias, úsalo
         if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards("", true);
-          users = r?.items || [];
+          const r = await iamApi.listGuards();
+          users = r?.items || r?.users || [];
         } else {
-          const r = await iamApi.listUsers("");
-          users = r?.items || [];
+          const r = await iamApi.listUsers();
+          users = r?.items || r?.users || [];
         }
 
-        // Normaliza y filtra por rol guardia (si listGuards no existe)
-        const NS = "https://senaf.local/roles";
+        // Filtra guardias (solo por roles locales en tu IAM)
         const normalized = (users || [])
+          .filter((u) => u?.active !== false)
           .filter((u) => {
-            // si listGuards existe, probablemente ya vienen filtrados
-            if (typeof iamApi.listGuards === "function") return u?.active !== false;
+            // Si listGuards existe, probablemente ya vienen filtrados
+            if (typeof iamApi.listGuards === "function") return true;
 
-            const roles = [
-              ...(Array.isArray(u?.roles) ? u.roles : []),
-              ...(Array.isArray(u?.[NS]) ? u[NS] : []),
-            ]
+            const roles = (Array.isArray(u?.roles) ? u.roles : [])
               .map((x) => String(x).toLowerCase().trim())
               .filter(Boolean);
 
             return (
-              (u?.active !== false) &&
-              (roles.includes("guardia") ||
-                roles.includes("guard") ||
-                roles.includes("rondasqr.guard"))
+              roles.includes("guardia") ||
+              roles.includes("guard") ||
+              roles.includes("rondasqr.guard")
             );
           })
-          .map((u) => {
-            const sub = u?.sub ? String(u.sub) : "";
-            return {
-              _id: u?._id ? String(u._id) : "",
-              name: u?.name || u?.fullName || "",
-              email: u?.email || "",
-              sub, // ✅ ESTE es el que debemos usar como guardId
-              // opId: dejamos por compat, pero NO lo usaremos para asignar
-              opId: sub || u?.opId || u?.legacyId || (u?._id ? String(u._id) : ""),
-              active: u?.active !== false,
-            };
-          });
+          .map((u) => ({
+            _id: u?._id ? String(u._id) : "",
+            name: u?.name || u?.fullName || "",
+            email: u?.email || "",
+            active: u?.active !== false,
+            roles: Array.isArray(u?.roles) ? u.roles : [],
+          }))
+          .filter((u) => !!u._id);
 
         if (mounted) setGuards(normalized);
       } catch (e) {
@@ -141,7 +133,7 @@ export default function AssignmentsPage() {
     if (endTime && !isHHMM(endTime)) return alert("Hora de fin inválida (usa HH:mm)");
 
     try {
-      // ✅ guardId = Auth0 sub
+      // ✅ guardId = _id (IAM)
       await api.createAssignment({
         date,
         roundId,
@@ -181,17 +173,14 @@ export default function AssignmentsPage() {
 
   /* ─────────────── Render guardia ─────────────── */
   function renderGuardCell(a) {
-    // ✅ Primero intentamos match por sub
     const g =
-      guards.find((x) => x.sub && x.sub === a.guardId) ||
-      // fallback: match por opId (por si hay datos viejos)
-      guards.find((x) => x.opId && x.opId === a.guardId) ||
-      // fallback: match por _id
-      guards.find((x) => x._id && x._id === a.guardId);
+      guards.find((x) => x._id && x._id === a.guardId) ||
+      // fallback por si backend manda objeto
+      guards.find((x) => x._id && x._id === a.guardId?._id);
 
     return g
       ? `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`
-      : a.guardId || "—";
+      : (typeof a.guardId === "string" ? a.guardId : "—");
   }
 
   const controlClass =
@@ -255,16 +244,11 @@ export default function AssignmentsPage() {
           >
             <option value="">-- Selecciona --</option>
             {guards.map((g) => (
-              // ✅ value = sub
-              <option key={g._id || g.sub} value={g.sub || ""} disabled={!g.sub}>
-                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}{" "}
-                {!g.sub ? "— (SIN SUB)" : ""}
+              <option key={g._id} value={g._id}>
+                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}
               </option>
             ))}
           </select>
-          <div className="text-xs opacity-60 mt-1">
-            * La asignación se guarda por <b>sub</b> (Auth0). Si un usuario sale “SIN SUB”, ese usuario no podrá recibir rondas.
-          </div>
         </div>
 
         <div className="md:col-span-2">

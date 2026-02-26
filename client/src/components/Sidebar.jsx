@@ -1,6 +1,6 @@
 // client/src/components/Sidebar.jsx
 import React from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
   DoorOpen,
@@ -12,12 +12,13 @@ import {
   ShieldCheck,
   LogOut,
 } from "lucide-react";
-import { useAuth0 } from "@auth0/auth0-react";
+
+// ✅ IMPORTA useAuth (esto faltaba y causaba 500)
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 const NAV_ITEMS = [
   { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },
 
-  // Módulos
   { to: "/accesos", label: "Control de Acceso", Icon: DoorOpen },
   { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: Footprints },
   { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
@@ -55,24 +56,26 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
     >
       <div className="flex items-center gap-3 px-4 py-3">
         <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
-        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
-          {label}
-        </span>
+        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">{label}</span>
       </div>
     </NavLink>
   );
 }
 
 export default function Sidebar({ onNavigate }) {
-  const { isAuthenticated, logout } = useAuth0();
+  const nav = useNavigate();
+  const { isAuthenticated, logout } = useAuth();
 
   const handleLogoutClick = () => {
     onNavigate?.();
     try {
-      const returnTo = `${window.location.origin}/login`;
-      logout({ logoutParams: { returnTo, federated: true } });
-    } catch (err) {
-      console.error("Error al cerrar sesión:", err);
+      logout?.();
+    } finally {
+      // limpia también token si tu app lo usa
+      try {
+        localStorage.removeItem("senaf_token");
+      } catch {}
+      nav("/login", { replace: true });
     }
   };
 

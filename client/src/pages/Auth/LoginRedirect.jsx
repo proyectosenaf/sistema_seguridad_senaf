@@ -1,16 +1,14 @@
 import React from "react";
-import { useAuth0 } from "@auth0/auth0-react";
+import { useNavigate } from "react-router-dom";
 
 function safeInternalPath(p) {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
 }
 
 export default function LoginRedirect() {
-  const { loginWithRedirect, isLoading } = useAuth0();
+  const nav = useNavigate();
 
   React.useEffect(() => {
-    if (isLoading) return;
-
     const returnTo = (() => {
       try {
         const raw = sessionStorage.getItem("auth:returnTo");
@@ -20,16 +18,15 @@ export default function LoginRedirect() {
       }
     })();
 
-    loginWithRedirect({
-      authorizationParams: {
-        prompt: "login", // ✅ fuerza SIEMPRE
-        audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-        scope: "openid profile email",
-      },
-      // Nota: appState lo leeremos en callback via sessionStorage (más confiable)
-      appState: { returnTo, force: true },
-    }).catch(() => {});
-  }, [isLoading, loginWithRedirect]);
+    // En login local, pasamos returnTo por query (opcional) y/o mantenemos sessionStorage
+    try {
+      sessionStorage.setItem("auth:returnTo", returnTo);
+    } catch {
+      // ignore
+    }
+
+    nav(`/login?to=${encodeURIComponent(returnTo)}`, { replace: true });
+  }, [nav]);
 
   return <div className="p-6">Redirigiendo a inicio de sesión…</div>;
 }

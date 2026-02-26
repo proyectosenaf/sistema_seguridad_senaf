@@ -3,11 +3,12 @@ import express from "express";
 import fileUpload from "express-fileupload";
 
 import { makeAuthMw } from "./utils/auth.util.js";
-import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js"; // ✅ NUEVO
+import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js";
 import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
-import authOtpRoutes from "./routes/auth.otp.routes.js"; // ✅ NUEVO (empleados: login-otp, verify-otp, change-password)
+import authOtpRoutes from "./routes/auth.otp.routes.js";
+
 import meRoutes from "./routes/me.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import rolesRoutes from "./routes/roles.routes.js";
@@ -16,6 +17,7 @@ import auditRoutes from "./routes/audit.routes.js";
 
 import { parseExcelRolesPermissions, seedFromParsed } from "./utils/seed.util.js";
 
+/** async handler helper */
 const ah =
   (fn) =>
   (req, res, next) =>
@@ -34,41 +36,45 @@ export async function registerIAMModule({
   // Body JSON
   router.use(express.json({ limit: jsonLimit }));
 
-  // Preflight defensivo (si tu app global no maneja CORS)
+  // Preflight defensivo
   router.use((req, res, next) => {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
 
-  // Auth middleware
+  // Auth middleware (LOCAL JWT HS256)
   const authMw = makeAuthMw();
-  const authOptional = makeOptionalAuthMw(); // ✅ NUEVO
+  const authOptional = makeOptionalAuthMw();
 
-  // Ping para probar montaje
+  // Ping
   router.get("/_ping", (_req, res) =>
-    res.json({ ok: true, module: "iam", version: "v1" })
+    res.json({ ok: true, module: "iam", version: "v1", mode: "local" })
   );
 
-  // AUTH público (lo que ya tienes)
+  /* ───────────────────────── AUTH (LOCAL) ─────────────────────────
+     Montamos /auth con endpoints locales:
+     - POST /auth/login
+     - POST /auth/logout
+     - POST /auth/change-password
+     - POST /auth/bootstrap
+  */
   router.use("/auth", authRoutes);
 
-  // ✅ AUTH OTP empleados (NO rompe tus rutas existentes)
+  /* ───────────────────────── OTP (si lo usas) ─────────────────────────
+     OTP para flujos que tengas (ej: login por código, 2FA, etc.)
+  */
   router.use("/auth", authOtpRoutes);
 
-  /**
-   * ✅ /me con auth opcional:
-   * - Si NO hay token -> visitor:true
-   * - Si HAY token -> se valida y queda req.auth.payload listo para buildContextFrom()
-   */
+  /* ───────────────────────── ME (auth opcional) ───────────────────────── */
   router.use("/me", authOptional, meRoutes);
 
-  // Rutas protegidas (admin/gestión)
+  /* ───────────────────────── ADMIN / GESTIÓN (PROTEGIDO) ───────────────────────── */
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);
   router.use("/audit", authMw, auditRoutes);
 
-  // Import Excel (solo dev) + recomendado: dev autenticado
+  /* ───────────────────────── IMPORT EXCEL (PROTEGIDO) ───────────────────────── */
   router.post(
     "/import/excel",
     authMw,
@@ -110,7 +116,7 @@ export async function registerIAMModule({
     })
   );
 
-  // Error handler dentro del router (al final)
+  // Error handler
   router.use((err, _req, res, _next) => {
     const status = Number(err?.status || err?.statusCode || 500);
     const code = status >= 400 && status < 600 ? status : 500;
@@ -123,7 +129,7 @@ export async function registerIAMModule({
     });
   });
 
-  // ----- Montaje -----
+  // Montaje
   app.use(basePath, router);
   app.use("/api/iam", router); // legacy alias
 

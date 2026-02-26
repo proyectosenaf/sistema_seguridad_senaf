@@ -1,8 +1,10 @@
 // client/src/components/ChatDock.jsx
 import React from "react";
-import api, { attachAuth0 } from "../lib/api.js";
-import { useAuth0 } from "@auth0/auth0-react";
+import api from "../lib/api.js";
 import { socket } from "../lib/socket.js";
+
+// ✅ auth local (sin Auth0)
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 /* === Iconos (SVG) === */
 const ChatIcon = (props) => (
@@ -56,6 +58,12 @@ function safeParseJson(raw, fallback) {
   }
 }
 
+// Helper: id del usuario local (no Auth0)
+function getMyId(user) {
+  // Preferible: tu backend debe devolver user.id (string)
+  return user?.id || user?._id || user?.email || null;
+}
+
 export default function ChatDock() {
   const bubbleSize = 60;
   const margin = 10;
@@ -63,28 +71,10 @@ export default function ChatDock() {
   const panelW = 360;
   const panelH = 460;
 
-  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
-  const myId = user?.sub || null;
+  const { user, isAuthenticated } = useAuth();
+  const myId = getMyId(user);
 
   const room = "global";
-
-  /* Inyecta provider de Auth0 al api */
-  React.useEffect(() => {
-    if (!isAuthenticated) {
-      attachAuth0(null);
-      return;
-    }
-    attachAuth0(async () => {
-      try {
-        const token = await getAccessTokenSilently({
-          authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
-        });
-        return token || null;
-      } catch {
-        return null;
-      }
-    });
-  }, [getAccessTokenSilently, isAuthenticated]);
 
   const clampToViewport = React.useCallback(
     (x, y) => {
@@ -267,12 +257,14 @@ export default function ChatDock() {
     const tempId =
       (globalThis.crypto?.randomUUID && globalThis.crypto.randomUUID()) || String(Date.now());
 
+    const displayName = user?.name || user?.nickname || user?.email || "Usuario";
+
     const optimistic = {
       _id: tempId,
       clientId: tempId,
       room,
       text: txt,
-      user: myId ? { sub: myId, name: user?.name, email: user?.email } : undefined,
+      user: myId ? { id: myId, name: displayName, email: user?.email } : undefined,
       createdAt: new Date().toISOString(),
       optimistic: true,
     };
@@ -285,9 +277,14 @@ export default function ChatDock() {
         text: txt,
         room,
         clientId: tempId,
-        userName: user?.name || user?.nickname || user?.email,
+        userName: displayName,
         userEmail: user?.email || null,
-        userSub: user?.sub || null,
+
+        // ✅ nuevo (local)
+        userId: myId,
+
+        // compat legacy si tu backend lo usaba como “sub”
+        userSub: myId,
       });
 
       setMessages((m) => m.map((msg) => (msg.clientId === tempId ? data : msg)));
@@ -309,8 +306,10 @@ export default function ChatDock() {
     if (!grew) return;
 
     const last = messages[messages.length - 1];
-    const isMine =
-      (last?.user?.sub && myId && last.user.sub === myId) || last?.optimistic === true;
+
+    // ✅ mine: compara id/email, no Auth0 sub
+    const lastUserId = last?.user?.id || last?.user?._id || last?.user?.sub || last?.user?.email || null;
+    const isMine = (lastUserId && myId && lastUserId === myId) || last?.optimistic === true;
 
     if (open) {
       listRef.current?.scrollTo({
@@ -364,6 +363,9 @@ export default function ChatDock() {
     pointerEvents: "auto",
   };
 
+  // Si no hay sesión, puedes ocultar el chat
+  if (!isAuthenticated) return null;
+
   return (
     <>
       {open && (
@@ -385,10 +387,12 @@ export default function ChatDock() {
               <div className="chat-empty">No hay mensajes todavía.</div>
             ) : (
               messages.map((m) => {
-                const mine =
-                  (m.user?.sub && myId && m.user.sub === myId) || m.optimistic === true;
+                const mUserId = m.user?.id || m.user?._id || m.user?.sub || m.user?.email || null;
+                const mine = (mUserId && myId && mUserId === myId) || m.optimistic === true;
 
-                const displayName = mine ? "Tú" : m.user?.name || m.user?.email || "Desconocido";
+                const displayName = mine
+                  ? "Tú"
+                  : m.user?.name || m.user?.email || "Desconocido";
 
                 return (
                   <div key={m._id || m.id || m.clientId} className={`chat-row ${mine ? "me" : ""}`}>

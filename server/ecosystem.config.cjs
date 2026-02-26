@@ -1,21 +1,31 @@
 module.exports = {
   apps: [
     {
-      name: "senaf-api",
+      name: "senaf",
       script: "src/server.js",
-      cwd: __dirname,
+      cwd: "./api",
 
       env_production: {
         NODE_ENV: "production",
         PORT: 4000,
 
-        // ✅ OBLIGATORIO (Atlas / Producción)
-        MONGODB_URI:"mongodb+srv://proyectosenaf_db_user:SENAFdb2025@senafcluster.vwwt8sy.mongodb.net/senafseg?retryWrites=true&w=majority" ,
+        // Mongo
+        MONGODB_URI: "mongodb+srv://proyectosenaf_db_user:SENAFdb2025@senafcluster.vwwt8sy.mongodb.net/senafseg?retryWrites=true&w=majority",
 
+        // ✅ JWT HS256 (lo que tu middleware/IAM usan)
+        JWT_SECRET: "***", // 32+ chars
 
-        // Opcional (si usas Auth0 en backend)
-        // AUTH0_DOMAIN: "dev-0046gqmh011jo75x.us.auth0.com",
-        // AUTH0_AUDIENCE: "https://senaf",
+        // OTP / seguridad
+        OTP_TTL_MINUTES: "10",
+        OTP_MAX_ATTEMPTS: "5",
+
+        // SMTP
+        SMTP_HOST: "***",
+        SMTP_PORT: "587",
+        SMTP_SECURE: "0",
+        SMTP_USER: "***",
+        SMTP_PASS: "***",
+        SMTP_FROM: "SENAF <proyectosenaf@gmail.com>",
 
         IAM_DEV_ALLOW_ALL: "0",
       },
