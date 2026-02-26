@@ -1,75 +1,45 @@
 // client/src/App.jsx
 import React, { Suspense, useEffect, useRef } from "react";
-import {
-  Routes,
-  Route,
-  Navigate,
-  useNavigate,
-  useLocation,
-} from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 
-import { attachAuth0 } from "./lib/api.js";
-import { attachRondasAuth } from "./modules/rondasqr/api/rondasqrApi.js";
-import { attachIamAuth } from "./iam/api/iamApi.js";
+// ✅ auth local (sin Auth0)
+import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
-import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Layout from "./components/Layout.jsx";
 import IamGuard from "./iam/api/IamGuard.jsx";
 
-// Login local (solo DEV)
-import LoginLocal from "./pages/Auth/LoginLocal";
-import ChangePassword from "./pages/Auth/ChangePassword";
+// Login local
+import LoginLocal from "./pages/auth/LoginLocal.jsx";
+import ChangePassword from "./pages/auth/ChangePassword.jsx";
 
-// Auth pages
-const Entry = React.lazy(() => import("./pages/Auth/Entry.jsx"));
-const AuthCallback = React.lazy(() => import("./pages/Auth/AuthCallback.jsx"));
+// ✅ Pantalla para forzar cambio de contraseña
+const ForceChangePassword = React.lazy(() => import("./pages/ForceChangePassword.jsx"));
 
-// ✅ NUEVO: pantalla para forzar cambio de contraseña
-const ForceChangePassword = React.lazy(() =>
-  import("./pages/ForceChangePassword.jsx")
-);
+// ✅ OTP (debe existir y exportar default)
+const VerifyOtp = React.lazy(() => import("./pages/auth/VerifyOtp.jsx"));
 
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));
 const Home = React.lazy(() => import("./pages/Home/Home.jsx"));
 
-const IncidentesList = React.lazy(() =>
-  import("./pages/Incidentes/IncidentesList.jsx")
-);
-const IncidenteForm = React.lazy(() =>
-  import("./pages/Incidentes/IncidenteForm.jsx")
-);
+const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesList.jsx"));
+const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
 // Rondas QR
-const RondasDashboard = React.lazy(() =>
-  import("./modules/rondasqr/supervisor/ReportsPage.jsx")
-);
-const RondasScan = React.lazy(() =>
-  import("./modules/rondasqr/guard/ScanPage.jsx")
-);
-const AdminHub = React.lazy(() =>
-  import("./modules/rondasqr/admin/AdminHub.jsx")
-);
+const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
+const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
+const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
 
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() =>
-  import("./pages/Supervision/Supervision.jsx")
-);
-const Evaluacion = React.lazy(() =>
-  import("./pages/Evaluacion/Evaluacion.jsx")
-);
+const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
+const Evaluacion = React.lazy(() => import("./pages/Evaluacion/Evaluacion.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Visitas
-const VisitsPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/VisitsPage.jsx")
-);
-const AgendaPageCore = React.lazy(() =>
-  import("./modules/visitas/pages/AgendaPage.jsx")
-);
+const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
+const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 
 /* ───────────────── ENV helpers ───────────────── */
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
@@ -77,11 +47,7 @@ const MODE = String(import.meta.env.MODE || "").toLowerCase();
 const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
 /* ───────────────── SUPER ADMIN FRONTEND ───────────────── */
-const ROOT_ADMINS = (
-  import.meta.env.VITE_ROOT_ADMINS ||
-  import.meta.env.VITE_SUPERADMIN_EMAIL ||
-  ""
-)
+const ROOT_ADMINS = (import.meta.env.VITE_ROOT_ADMINS || import.meta.env.VITE_SUPERADMIN_EMAIL || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
@@ -92,7 +58,7 @@ function isSuperAdminUser(user) {
 }
 
 function IamGuardSuper(props) {
-  const { user } = useAuth0();
+  const { user } = useAuth();
   if (isSuperAdminUser(user)) return <>{props.children}</>;
   return <IamGuard {...props} />;
 }
@@ -104,67 +70,34 @@ function pickHome({ roles = [], perms = [], visitor = false }) {
   const P = new Set(Praw.map((p) => String(p)));
   const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
 
-  const hasWildcard =
-    P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
+  const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
   if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
-  if (hasWildcard || R.has("ti") || R.has("administrador_it"))
-    return "/iam/admin";
+  if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
   if (R.has("guardia")) return "/rondasqr/scan";
   if (R.has("supervisor")) return "/rondasqr/reports";
   if (R.has("recepcion")) return "/visitas/control";
   return "/";
 }
 
-/* ───────────────── Token utils (limpiar HS256) ───────────────── */
-function looksLikeJwt(t) {
-  return typeof t === "string" && t.split(".").length === 3;
-}
+/* ───────────────── ProtectedRoute (local) ───────────────── */
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const loc = useLocation();
 
-function base64UrlDecode(str) {
-  try {
-    let s = String(str || "").replace(/-/g, "+").replace(/_/g, "/");
-    while (s.length % 4) s += "=";
-    return atob(s);
-  } catch {
-    return "";
+  if (isLoading) return <div className="p-6">Cargando…</div>;
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
   }
-}
 
-function decodeJwtHeader(token) {
-  try {
-    const h = String(token || "").split(".")[0] || "";
-    const decoded = base64UrlDecode(h);
-    if (!decoded) return null;
-    return JSON.parse(decoded);
-  } catch {
-    return null;
-  }
-}
-
-function isHs256Jwt(token) {
-  const hdr = decodeJwtHeader(token);
-  return String(hdr?.alg || "").toUpperCase() === "HS256";
-}
-
-function purgeLocalHs256Token() {
-  try {
-    const t = localStorage.getItem("token");
-    if (t && looksLikeJwt(t) && isHs256Jwt(t)) {
-      localStorage.removeItem("token");
-      console.warn(
-        "[App] Se eliminó localStorage.token HS256 (incompatible con Auth0/JWKS RS256)."
-      );
-      return true;
-    }
-  } catch {}
-  return false;
+  return <>{children}</>;
 }
 
 /** Redirección tras login */
 function RoleRedirectInline() {
   const navigate = useNavigate();
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { isAuthenticated } = useAuth();
   const ranRef = useRef(false);
 
   useEffect(() => {
@@ -176,21 +109,15 @@ function RoleRedirectInline() {
     const API_ROOT = String(RAW).replace(/\/$/, "");
     const ME_URL = `${API_ROOT}/iam/v1/me`;
 
-    const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
-
     async function fetchMe(headers = {}) {
       try {
-        const res = await fetch(ME_URL, {
-          method: "GET",
-          credentials: "omit",
-          headers,
-        });
+        const res = await fetch(ME_URL, { method: "GET", credentials: "omit", headers });
         if (!res.ok) return null;
 
         const data = (await res.json().catch(() => ({}))) || {};
         const roles = data?.roles || data?.user?.roles || [];
         const perms = data?.permissions || data?.perms || [];
-        const visitor = !!data?.visitor;
+        const visitor = !!data?.visitor || !!data?.isVisitor;
         return { roles, perms, visitor };
       } catch {
         return null;
@@ -198,14 +125,10 @@ function RoleRedirectInline() {
     }
 
     (async () => {
-      let headers = {};
+      const headers = {};
       if (isAuthenticated) {
-        try {
-          const token = await getAccessTokenSilently({
-            authorizationParams: { audience },
-          });
-          if (token) headers.Authorization = `Bearer ${token}`;
-        } catch {}
+        const token = localStorage.getItem("senaf_token");
+        if (token) headers.Authorization = `Bearer ${token}`;
       }
 
       const me = await fetchMe(headers);
@@ -216,61 +139,33 @@ function RoleRedirectInline() {
     return () => {
       alive = false;
     };
-  }, [navigate, isAuthenticated, getAccessTokenSilently]);
+  }, [navigate, isAuthenticated]);
 
   return <div className="p-6">Redirigiendo…</div>;
 }
 
-/** Inyecta token de Auth0 a axios, Rondas QR e IAM */
+/** Solo bloqueo de rutas privadas (sin attach*). */
 function AuthTokenBridge({ children }) {
-  const { isAuthenticated, isLoading, getAccessTokenSilently } = useAuth0();
+  const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
-  const audience = import.meta.env.VITE_AUTH0_AUDIENCE || "https://senaf";
 
   const path = location?.pathname || "/";
   const isPublicRoute =
-    path === "/entry" ||
-    path === "/callback" ||
-    path === "/login" || // ✅ importante: /login también público
-    path === "/force-change-password" || // ✅ NUEVO: pantalla pública
-    path.startsWith("/verify");
+    path === "/login" ||
+    path === "/entry" || // legacy
+    path === "/callback" || // legacy
+    path === "/force-change-password" ||
+    path.startsWith("/verify") ||
+    path === "/otp" ||
+    path === "/change-password";
 
-  useEffect(() => {
-    purgeLocalHs256Token();
-  }, []);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      attachAuth0(null);
-      attachRondasAuth(null);
-      attachIamAuth(null);
-      return;
-    }
-
-    const provider = async () => {
-      try {
-        const token = await getAccessTokenSilently({
-          authorizationParams: { audience },
-        });
-        return token || null;
-      } catch (e) {
-        console.warn("[AuthTokenBridge] tokenProvider falló:", e?.message || e);
-        return null;
-      }
-    };
-
-    attachAuth0(provider);
-    attachRondasAuth(provider);
-    attachIamAuth(provider);
-  }, [isAuthenticated, getAccessTokenSilently, audience]);
-
-  // ✅ Bloquea SOLO rutas privadas
+  // En PROD: bloquea rutas privadas si no está logueado
   if (IS_PROD && !isLoading && !isAuthenticated && !isPublicRoute) {
     return (
       <div className="p-6">
-        Debes iniciar sesión con Auth0 para acceder al sistema.
+        Debes iniciar sesión para acceder al sistema.
         <div className="mt-3">
-          <a className="underline" href="/entry">
+          <a className="underline" href="/login">
             Ir al inicio de sesión
           </a>
         </div>
@@ -286,14 +181,17 @@ export default function App() {
     <AuthTokenBridge>
       <Suspense fallback={<div className="p-6">Cargando…</div>}>
         <Routes>
-          {/* Auth */}
-          <Route path="/entry" element={<Entry />} />
-          <Route path="/callback" element={<AuthCallback />} />
+          {/* ✅ Login local */}
+          <Route path="/login" element={<LoginLocal />} />
 
-          {/* ✅ /login en PROD = alias de /entry (EVITA LOOP) */}
-          <Route path="/login" element={IS_PROD ? <Entry /> : <LoginLocal />} />
+          {/* ✅ Legacy Auth0 routes: alias */}
+          <Route path="/entry" element={<Navigate to="/login" replace />} />
+          <Route path="/callback" element={<Navigate to="/login" replace />} />
 
-          {/* ✅ NUEVO: primer login (creados por admin) -> reset password */}
+          {/* ✅ OTP */}
+          <Route path="/otp" element={<VerifyOtp />} />
+
+          {/* ✅ primer login / password vencida */}
           <Route path="/force-change-password" element={<ForceChangePassword />} />
 
           {/* Home */}
@@ -419,13 +317,7 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <IamGuardSuper
-                    anyOf={[
-                      "guardia",
-                      "rondasqr.view",
-                      "rondasqr.scan.qr",
-                      "rondasqr.scan.manual",
-                      "*",
-                    ]}
+                    anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}
                   >
                     <RondasScan />
                   </IamGuardSuper>
@@ -550,7 +442,9 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
+                  <IamGuardSuper
+                    anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}
+                  >
                     <Supervision />
                   </IamGuardSuper>
                 </Layout>
@@ -562,7 +456,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
+                  <IamGuardSuper
+                    anyOf={[
+                      "evaluacion.list",
+                      "evaluacion.create",
+                      "evaluacion.edit",
+                      "evaluacion.reports",
+                      "evaluacion.kpi",
+                      "*",
+                    ]}
+                  >
                     <Evaluacion />
                   </IamGuardSuper>
                 </Layout>

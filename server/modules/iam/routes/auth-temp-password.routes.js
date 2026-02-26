@@ -1,8 +1,9 @@
+// server/modules/iam/routes/auth-temp-password.routes.js
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 import IamUser from "../models/IamUser.model.js";
 import { hashPassword, verifyPassword } from "../utils/password.util.js";
 import { writeAudit } from "../utils/audit.util.js";
+import { signToken, verifyToken, getBearer } from "../utils/jwt.util.js";
 
 const r = Router();
 
@@ -12,9 +13,11 @@ function normEmail(e) {
 
 /**
  * POST /api/iam/v1/auth/temp/verify
- * (Este router se monta en /auth con authMw)
  * Body: { tempPassword }
- * Retorna: { preauth }
+ *
+ * ✅ SIN Auth0:
+ * - Identidad viene del authMw local en req.auth.payload (email/sub/uid)
+ * - Verifica tempPassHash y devuelve un preauth token corto (5m).
  */
 r.post("/temp/verify", async (req, res, next) => {
   try {
@@ -25,23 +28,20 @@ r.post("/temp/verify", async (req, res, next) => {
     // authMw debe dejar req.auth.payload
     const p = req?.auth?.payload || {};
     const email = normEmail(p.email);
-    const auth0Sub = String(p.sub || "").trim();
+    const uid = String(p.uid || p.sub || "").trim(); // compat: sub=userId local
 
-    if (!email && !auth0Sub) {
+    if (!email && !uid) {
       return res.status(401).json({ ok: false, error: "missing_identity" });
     }
 
-    // Traer usuario (incluye tempPassHash)
-    const u = await IamUser.findOne({
-      $or: [
-        ...(auth0Sub ? [{ auth0Sub }] : []),
-        ...(email ? [{ email }] : []),
-      ],
-    })
-      .select("+tempPassHash")
-      .lean();
+    const query = uid ? { _id: uid } : { email };
 
+    const u = await IamUser.findOne(query).select("+tempPassHash").lean();
     if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+
+    if (!u.active) {
+      return res.status(403).json({ ok: false, error: "user_inactive", message: "Usuario inactivo" });
+    }
 
     if (!u.mustChangePassword) {
       return res.json({ ok: true, mustChangePassword: false });
@@ -70,13 +70,9 @@ r.post("/temp/verify", async (req, res, next) => {
       return res.status(401).json({ ok: false, error: "temp_invalid", message: "Clave temporal incorrecta" });
     }
 
-    if (!process.env.JWT_SECRET) {
-      return res.status(500).json({ ok: false, error: "missing_JWT_SECRET" });
-    }
-
-    const preauth = jwt.sign(
+    // preauth token corto (solo para cambio de contraseña)
+    const preauth = signToken(
       { uid: String(u._id), purpose: "pw_change" },
-      process.env.JWT_SECRET,
       { expiresIn: "5m" }
     );
 
@@ -109,17 +105,12 @@ r.post("/password/change", async (req, res, next) => {
       return res.status(400).json({ ok: false, error: "min_10_chars", message: "Mínimo 10 caracteres" });
     }
 
-    const raw = String(req.headers.authorization || "");
-    const token = raw.replace(/^Bearer\s+/i, "").trim();
+    const token = getBearer(req);
     if (!token) return res.status(401).json({ ok: false, error: "missing_token" });
-
-    if (!process.env.JWT_SECRET) {
-      return res.status(500).json({ ok: false, error: "missing_JWT_SECRET" });
-    }
 
     let payload;
     try {
-      payload = jwt.verify(token, process.env.JWT_SECRET);
+      payload = verifyToken(token);
     } catch {
       return res.status(401).json({ ok: false, error: "token_invalid_or_expired" });
     }
@@ -128,8 +119,12 @@ r.post("/password/change", async (req, res, next) => {
       return res.status(403).json({ ok: false, error: "forbidden" });
     }
 
-    const before = await IamUser.findById(payload.uid).select("+passwordHash").lean();
-    if (!before) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    const user = await IamUser.findById(payload.uid).select("+passwordHash").lean();
+    if (!user) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+
+    if (!user.active) {
+      return res.status(403).json({ ok: false, error: "user_inactive", message: "Usuario inactivo" });
+    }
 
     const passwordHash = await hashPassword(pwd);
 
@@ -141,6 +136,7 @@ r.post("/password/change", async (req, res, next) => {
           provider: "local",
           mustChangePassword: false,
           passwordChangedAt: new Date(),
+
           tempPassUsedAt: new Date(),
           tempPassExpiresAt: null,
           tempPassAttempts: 0,

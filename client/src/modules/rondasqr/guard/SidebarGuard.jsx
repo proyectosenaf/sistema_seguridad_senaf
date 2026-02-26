@@ -10,40 +10,10 @@ import {
   LogOut,
   FileBarChart,
 } from "lucide-react";
-import { useAuth0 } from "@auth0/auth0-react";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 import { emitLocalPanic } from "../utils/panicBus.js";
-
-/* ==========================
-   Helpers roles/perms
-========================== */
-function toArr(v) {
-  return !v ? [] : Array.isArray(v) ? v : [v];
-}
-function uniqLower(arr) {
-  return Array.from(
-    new Set(
-      toArr(arr)
-        .map((x) => String(x).trim().toLowerCase())
-        .filter(Boolean)
-    )
-  );
-}
-function uniq(arr) {
-  return Array.from(new Set(toArr(arr).map((x) => String(x)).filter(Boolean)));
-}
-function readCsvLS(key) {
-  try {
-    if (typeof localStorage === "undefined") return [];
-    const raw = localStorage.getItem(key) || "";
-    return raw
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
+import { useAccess } from "../../../iam/hooks/useAccess.js";
+import iamApi from "../../../iam/api/iamApi.js";
 
 export default function SidebarGuard({
   variant = "desktop",
@@ -51,50 +21,13 @@ export default function SidebarGuard({
   onCloseMobile,
   onSendAlert,
   onDumpDb,
-  asGlobal = false, // se mantiene por compatibilidad
+  asGlobal = false,
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { user, logout, isAuthenticated } = useAuth0();
 
-  // Claims Auth0
-  const ROLES_CLAIM = "https://senaf.local/roles";
-  const PERMS_CLAIM = "https://senaf.local/permissions";
-
-  const rolesAuth0 = uniqLower(user?.roles);
-  const rolesClaim = uniqLower(user?.[ROLES_CLAIM]);
-  const permsClaim = uniq((user?.[PERMS_CLAIM] || []).map((x) => String(x).trim()));
-
-  // DEV override
-  const devRoles = import.meta.env.DEV ? uniqLower(readCsvLS("iamDevRoles")) : [];
-  const devPerms = import.meta.env.DEV ? uniq(readCsvLS("iamDevPerms")) : [];
-
-  const roles = uniqLower([...rolesAuth0, ...rolesClaim, ...devRoles]);
-  const perms = uniq([...permsClaim, ...devPerms]);
-
-  // Reglas de acceso
-  const canReports =
-    perms.includes("*") ||
-    perms.includes("rondasqr.reports") ||
-    perms.includes("rondasqr.view") ||
-    roles.includes("supervisor") ||
-    roles.includes("admin") ||
-    roles.includes("rondasqr.admin");
-
-  const canAdmin =
-    perms.includes("*") ||
-    perms.includes("rondasqr.admin") ||
-    roles.includes("admin") ||
-    roles.includes("rondasqr.admin");
-
-  const canScan =
-    perms.includes("*") ||
-    roles.includes("guardia") ||
-    perms.includes("rondasqr.view") ||
-    perms.includes("rondasqr.reports") ||
-    perms.includes("rondasqr.admin") ||
-    roles.includes("admin") ||
-    roles.includes("rondasqr.admin");
+  // ✅ viene del módulo IAM, no se calcula aquí
+  const { user, roles, perms, canReports, canAdmin, canScan } = useAccess();
 
   // UI classes
   const itemBase =
@@ -142,7 +75,10 @@ export default function SidebarGuard({
           }
 
           await rondasqrApi.panic(gps || null);
-          emitLocalPanic({ source: "sidebar", user: user?.email || user?.name || "" });
+          emitLocalPanic({
+            source: "sidebar",
+            user: user?.email || user?.name || "",
+          });
 
           window.alert("🚨 Alerta de pánico enviada.");
           navigate("/rondasqr/scan");
@@ -166,6 +102,7 @@ export default function SidebarGuard({
               ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
               online: typeof navigator !== "undefined" ? navigator.onLine : false,
             },
+            user: user ? { id: user._id || user.id || null, email: user.email || null, name: user.name || null } : null,
           };
 
           const resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
@@ -194,12 +131,17 @@ export default function SidebarGuard({
         }
 
         case "logout": {
-          if (isAuthenticated && typeof logout === "function") {
-            const returnTo = `${window.location.origin}/login`;
-            logout({ logoutParams: { returnTo, federated: true } });
-          } else {
-            navigate("/login");
-          }
+          await iamApi.logout();
+
+          // limpieza defensiva
+          try {
+            localStorage.removeItem("token");
+            localStorage.removeItem("iamDevEmail");
+            localStorage.removeItem("iamDevRoles");
+            localStorage.removeItem("iamDevPerms");
+          } catch {}
+
+          navigate("/login", { replace: true });
           break;
         }
 
@@ -283,7 +225,7 @@ export default function SidebarGuard({
 
           {import.meta.env.DEV && !collapsed && (
             <div className="mt-3 text-[11px] opacity-70 leading-snug">
-              <div className="font-semibold">DEV roles/perms</div>
+              <div className="font-semibold">IAM roles/perms</div>
               <div>roles: {roles.join(", ") || "-"}</div>
               <div>perms: {perms.join(", ") || "-"}</div>
               <div>path: {pathname}</div>

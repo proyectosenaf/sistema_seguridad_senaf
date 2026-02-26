@@ -3,12 +3,11 @@ import express from "express";
 import fileUpload from "express-fileupload";
 
 import { makeAuthMw } from "./utils/auth.util.js";
-import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js"; // ✅ NUEVO
+import { makeOptionalAuthMw } from "./utils/optionalAuth.util.js";
 import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
-import authOtpRoutes from "./routes/auth.otp.routes.js"; // ✅ NUEVO
-import preloginRoutes from "./routes/prelogin.routes.js"; // ✅ NUEVO
+import authOtpRoutes from "./routes/auth.otp.routes.js";
 
 import meRoutes from "./routes/me.routes.js";
 import usersRoutes from "./routes/users.routes.js";
@@ -18,6 +17,7 @@ import auditRoutes from "./routes/audit.routes.js";
 
 import { parseExcelRolesPermissions, seedFromParsed } from "./utils/seed.util.js";
 
+/** async handler helper */
 const ah =
   (fn) =>
   (req, res, next) =>
@@ -42,37 +42,39 @@ export async function registerIAMModule({
     next();
   });
 
-  // Auth middleware
+  // Auth middleware (LOCAL JWT HS256)
   const authMw = makeAuthMw();
   const authOptional = makeOptionalAuthMw();
 
   // Ping
   router.get("/_ping", (_req, res) =>
-    res.json({ ok: true, module: "iam", version: "v1" })
+    res.json({ ok: true, module: "iam", version: "v1", mode: "local" })
   );
 
-  // AUTH público
+  /* ───────────────────────── AUTH (LOCAL) ─────────────────────────
+     Montamos /auth con endpoints locales:
+     - POST /auth/login
+     - POST /auth/logout
+     - POST /auth/change-password
+     - POST /auth/bootstrap
+  */
   router.use("/auth", authRoutes);
 
-  // AUTH OTP empleados
+  /* ───────────────────────── OTP (si lo usas) ─────────────────────────
+     OTP para flujos que tengas (ej: login por código, 2FA, etc.)
+  */
   router.use("/auth", authOtpRoutes);
 
-  // ✅ PRELOGIN (PROTEGIDO con Auth0 token)
-  // endpoints:
-  // POST /api/iam/v1/auth/temp/verify
-  // POST /api/iam/v1/auth/password/change
-  router.use("/auth", authMw, preloginRoutes);
-
-  // /me con auth opcional
+  /* ───────────────────────── ME (auth opcional) ───────────────────────── */
   router.use("/me", authOptional, meRoutes);
 
-  // Rutas protegidas (admin/gestión)
+  /* ───────────────────────── ADMIN / GESTIÓN (PROTEGIDO) ───────────────────────── */
   router.use("/users", authMw, usersRoutes);
   router.use("/roles", authMw, rolesRoutes);
   router.use("/permissions", authMw, permissionsRoutes);
   router.use("/audit", authMw, auditRoutes);
 
-  // Import Excel
+  /* ───────────────────────── IMPORT EXCEL (PROTEGIDO) ───────────────────────── */
   router.post(
     "/import/excel",
     authMw,

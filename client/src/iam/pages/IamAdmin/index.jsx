@@ -1,7 +1,6 @@
 // src/iam/pages/IamAdmin/index.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
 
 import IamGuard from "../../api/IamGuard.jsx";
 
@@ -13,8 +12,6 @@ import AuditPage from "./AuditPage.jsx";
 
 import { iamApi } from "../../api/iamApi.js";
 import { permisosKeys, rolesKeys } from "../../catalog/perms.js";
-
-const AUTH_AUDIENCE = import.meta.env.VITE_AUTH0_AUDIENCE;
 
 /* =========================
    Helpers normalización
@@ -132,8 +129,6 @@ async function seedFromLocalCatalog(token) {
 }
 
 export default function IamAdmin() {
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
-
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
@@ -172,28 +167,16 @@ export default function IamAdmin() {
   const [seeding, setSeeding] = useState(false);
   const [checkErr, setCheckErr] = useState("");
 
-  // ✅ FIX: NO offline_access
-  const getToken = useCallback(async () => {
-    if (!isAuthenticated) return null;
-    try {
-      const token = await getAccessTokenSilently({
-        authorizationParams: {
-          audience: AUTH_AUDIENCE || undefined,
-          scope: "openid profile email",
-        },
-      });
-      return token || null;
-    } catch (e) {
-      console.warn("[IamAdmin] no se pudo obtener token:", e?.message || e);
-      return null;
-    }
-  }, [isAuthenticated, getAccessTokenSilently]);
+  /**
+   * ✅ SIN Auth0:
+   * - iamApi.rawFetch ya intenta tokenProvider automáticamente (attachIamAuth)
+   * - aquí devolvemos null; no rompe nada y mantiene estructura
+   */
+  const getToken = useCallback(async () => null, []);
 
   /**
    * ✅ CHECK “catálogo vacío” (robusto)
-   * - Primero intenta con token (si existe)
-   * - Si NO hay token, intenta SIN token (modo dev)
-   * - Solo muestra error si realmente no se puede consultar
+   * - Intenta con token (si existiera) y si no, deja que iamApi use tokenProvider o modo dev
    */
   useEffect(() => {
     let alive = true;
@@ -202,7 +185,6 @@ export default function IamAdmin() {
       try {
         const token = await getToken();
 
-        // 1) intentamos con token si existe, si no, seguimos en dev sin token
         const [pRes, rRes] = await Promise.all([
           iamApi.listPerms(token || undefined),
           iamApi.listRoles(token || undefined),
@@ -213,7 +195,6 @@ export default function IamAdmin() {
 
         if (!alive) return;
 
-        // Si sí respondió la API, NO es error de token
         setCheckErr("");
         setNeedsSeed(pCount === 0 || rCount === 0);
       } catch (e) {
@@ -232,15 +213,14 @@ export default function IamAdmin() {
     try {
       setSeeding(true);
 
-      // ✅ para sembrar sí requerimos token (porque create/update deberían ser protegidos)
+      // ✅ SIN Auth0: dejamos que iamApi use tokenProvider automáticamente
       const token = await getToken();
-      if (!token) throw new Error("No se pudo obtener token de sesión.");
 
-      await seedFromLocalCatalog(token);
+      await seedFromLocalCatalog(token || undefined);
 
       const [pRes, rRes] = await Promise.all([
-        iamApi.listPerms(token),
-        iamApi.listRoles(token),
+        iamApi.listPerms(token || undefined),
+        iamApi.listRoles(token || undefined),
       ]);
 
       const pCount = pickListPayload(pRes).length;
@@ -337,19 +317,39 @@ export default function IamAdmin() {
           })}
         </div>
 
-        <section role="tabpanel" id="panel-users" aria-labelledby="tab-users" hidden={activeTab !== "users"}>
+        <section
+          role="tabpanel"
+          id="panel-users"
+          aria-labelledby="tab-users"
+          hidden={activeTab !== "users"}
+        >
           {activeTab === "users" && <UsersPage />}
         </section>
 
-        <section role="tabpanel" id="panel-roles" aria-labelledby="tab-roles" hidden={activeTab !== "roles"}>
+        <section
+          role="tabpanel"
+          id="panel-roles"
+          aria-labelledby="tab-roles"
+          hidden={activeTab !== "roles"}
+        >
           {activeTab === "roles" && <RolesPage />}
         </section>
 
-        <section role="tabpanel" id="panel-perms" aria-labelledby="tab-perms" hidden={activeTab !== "perms"}>
+        <section
+          role="tabpanel"
+          id="panel-perms"
+          aria-labelledby="tab-perms"
+          hidden={activeTab !== "perms"}
+        >
           {activeTab === "perms" && <PermissionCatalog />}
         </section>
 
-        <section role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden={activeTab !== "audit"}>
+        <section
+          role="tabpanel"
+          id="panel-audit"
+          aria-labelledby="tab-audit"
+          hidden={activeTab !== "audit"}
+        >
           {activeTab === "audit" && <AuditPage />}
         </section>
       </div>

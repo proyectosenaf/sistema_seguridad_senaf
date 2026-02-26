@@ -1,365 +1,10 @@
 // client/src/iam/pages/IamAdmin/UsersPage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../../api/iamApi.js";
 import { Edit3, Trash2 } from "lucide-react";
 
-/* ===== Catálogos estáticos ===== */
-
-const ESTADOS_CIVILES = [
-  "Soltero/a",
-  "Casado/a",
-  "Divorciado/a",
-  "Viudo/a",
-  "Unión libre",
-];
-
-/* 🌎 Lista de países (en español) */
-const COUNTRIES = [
-  "Afganistán",
-  "Albania",
-  "Alemania",
-  "Andorra",
-  "Angola",
-  "Antigua y Barbuda",
-  "Arabia Saudita",
-  "Argelia",
-  "Argentina",
-  "Armenia",
-  "Australia",
-  "Austria",
-  "Azerbaiyán",
-  "Bahamas",
-  "Bangladés",
-  "Barbados",
-  "Baréin",
-  "Bélgica",
-  "Belice",
-  "Benín",
-  "Bielorrusia",
-  "Birmania (Myanmar)",
-  "Bolivia",
-  "Bosnia y Herzegovina",
-  "Botsuana",
-  "Brasil",
-  "Brunéi",
-  "Bulgaria",
-  "Burkina Faso",
-  "Burundi",
-  "Bután",
-  "Cabo Verde",
-  "Camboya",
-  "Camerún",
-  "Canadá",
-  "Catar",
-  "Chad",
-  "Chile",
-  "China",
-  "Chipre",
-  "Colombia",
-  "Comoras",
-  "Corea del Norte",
-  "Corea del Sur",
-  "Costa de Marfil",
-  "Costa Rica",
-  "Croacia",
-  "Cuba",
-  "Dinamarca",
-  "Dominica",
-  "Ecuador",
-  "Egipto",
-  "El Salvador",
-  "Emiratos Árabes Unidos",
-  "Eritrea",
-  "Eslovaquia",
-  "Eslovenia",
-  "España",
-  "Estados Unidos",
-  "Estonia",
-  "Esuatini",
-  "Etiopía",
-  "Fiyi",
-  "Filipinas",
-  "Finlandia",
-  "Francia",
-  "Gabón",
-  "Gambia",
-  "Georgia",
-  "Ghana",
-  "Granada",
-  "Grecia",
-  "Guatemala",
-  "Guinea",
-  "Guinea-Bisáu",
-  "Guinea Ecuatorial",
-  "Guyana",
-  "Haití",
-  "Honduras",
-  "Hungría",
-  "India",
-  "Indonesia",
-  "Irak",
-  "Irán",
-  "Irlanda",
-  "Islandia",
-  "Islas Marshall",
-  "Islas Salomón",
-  "Israel",
-  "Italia",
-  "Jamaica",
-  "Japón",
-  "Jordania",
-  "Kazajistán",
-  "Kenia",
-  "Kirguistán",
-  "Kiribati",
-  "Kuwait",
-  "Laos",
-  "Lesoto",
-  "Letonia",
-  "Líbano",
-  "Liberia",
-  "Libia",
-  "Liechtenstein",
-  "Lituania",
-  "Luxemburgo",
-  "Madagascar",
-  "Malasia",
-  "Malaui",
-  "Maldivas",
-  "Malí",
-  "Malta",
-  "Marruecos",
-  "Mauricio",
-  "Mauritania",
-  "México",
-  "Micronesia",
-  "Moldavia",
-  "Mónaco",
-  "Mongolia",
-  "Montenegro",
-  "Mozambique",
-  "Namibia",
-  "Nauru",
-  "Nepal",
-  "Nicaragua",
-  "Níger",
-  "Nigeria",
-  "Noruega",
-  "Nueva Zelanda",
-  "Omán",
-  "Países Bajos",
-  "Pakistán",
-  "Palaos",
-  "Panamá",
-  "Papúa Nueva Guinea",
-  "Paraguay",
-  "Perú",
-  "Polonia",
-  "Portugal",
-  "Reino Unido",
-  "República Centroafricana",
-  "República Checa",
-  "República del Congo",
-  "República Democrática del Congo",
-  "República Dominicana",
-  "Ruanda",
-  "Rumanía",
-  "Rusia",
-  "Samoa",
-  "San Cristóbal y Nieves",
-  "San Marino",
-  "San Vicente y las Granadinas",
-  "Santa Lucía",
-  "Santo Tomé y Príncipe",
-  "Senegal",
-  "Serbia",
-  "Seychelles",
-  "Sierra Leona",
-  "Singapur",
-  "Siria",
-  "Somalia",
-  "Sri Lanka",
-  "Sudáfrica",
-  "Sudán",
-  "Sudán del Sur",
-  "Suecia",
-  "Suiza",
-  "Surinam",
-  "Tailandia",
-  "Tanzania",
-  "Tayikistán",
-  "Timor Oriental",
-  "Togo",
-  "Tonga",
-  "Trinidad y Tobago",
-  "Túnez",
-  "Turkmenistán",
-  "Turquía",
-  "Tuvalu",
-  "Ucrania",
-  "Uganda",
-  "Uruguay",
-  "Uzbekistán",
-  "Vanuatu",
-  "Venezuela",
-  "Vietnam",
-  "Yemen",
-  "Yibuti",
-  "Zambia",
-  "Zimbabue",
-];
-
-/* Catálogo grande de profesiones y oficios */
-const PROFESIONES_OFICIOS = [
-  // Administración y oficina
-  "Administrador/a",
-  "Asistente administrativo/a",
-  "Secretaria/o",
-  "Recepcionista",
-  "Archivista",
-  "Oficinista",
-  "Gerente de Recursos Humanos",
-  "Gerente General",
-  "Supervisor/a",
-  // Contabilidad, finanzas y leyes
-  "Contador/a",
-  "Auxiliar contable",
-  "Auditor/a",
-  "Analista financiero",
-  "Cajero/a",
-  "Abogado/a",
-  "Notario/a",
-  "Juez / Jueza",
-  "Fiscal",
-  "Asesor/a legal",
-  // Salud
-  "Médico/a General",
-  "Médico/a Especialista",
-  "Cirujano/a",
-  "Odontólogo/a (Dentista)",
-  "Enfermero/a",
-  "Auxiliar de enfermería",
-  "Paramédico/a",
-  "Técnico/a en Laboratorio Clínico",
-  "Farmacéutico/a",
-  "Nutricionista",
-  "Fisioterapeuta",
-  "Psicólogo/a",
-  "Trabajador/a Social en Salud",
-  "Veterinario/a",
-  // Educación
-  "Docente de Prebásica",
-  "Docente de Educación Básica",
-  "Docente de Secundaria",
-  "Profesor/a Universitario/a",
-  "Tutor/a",
-  "Orientador/a Educativo/a",
-  "Pedagogo/a",
-  "Psicopedagogo/a",
-  // Tecnología e informática
-  "Ingeniero/a en Sistemas",
-  "Desarrollador/a de Software",
-  "Programador/a",
-  "Analista de Sistemas",
-  "Administrador/a de Bases de Datos",
-  "Administrador/a de Redes",
-  "Soporte Técnico",
-  "Técnico/a en Informática",
-  "Especialista en Ciberseguridad",
-  "Diseñador/a Web",
-  "Tester / QA",
-  // Ingeniería
-  "Ingeniero/a Civil",
-  "Ingeniero/a Industrial",
-  "Ingeniero/a Eléctrico",
-  "Ingeniero/a Mecánico",
-  "Ingeniero/a Electrónico",
-  "Ingeniero/a Agrónomo",
-  "Ingeniero/a Ambiental",
-  "Ingeniero/a Químico",
-  "Ingeniero/a en Telecomunicaciones",
-  // Seguridad y fuerzas del orden
-  "Guardia de Seguridad",
-  "Policía",
-  "Militar",
-  "Bombero/a",
-  "Inspector/a de Seguridad",
-  "Vigilante",
-  // Comercio y ventas
-  "Vendedor/a",
-  "Ejecutivo/a de Ventas",
-  "Representante Comercial",
-  "Mercadólogo/a",
-  "Promotor/a",
-  "Dependiente de tienda",
-  "Encargado/a de Bodega",
-  "Logístico/a",
-  // Construcción y oficios técnicos
-  "Albañil",
-  "Carpintero/a",
-  "Plomero / Fontanero",
-  "Electricista",
-  "Soldador/a",
-  "Pintor/a",
-  "Herrero/a",
-  "Yesero/a",
-  "Maestro de Obras",
-  "Topógrafo/a",
-  // Transporte
-  "Chofer",
-  "Taxista",
-  "Conductor de Bus",
-  "Conductor de Camión",
-  "Piloto",
-  "Ayudante de Transporte",
-  "Coordinador de Transporte",
-  // Servicios y atención al cliente
-  "Mesero/a",
-  "Cocinero/a",
-  "Chef",
-  "Barista",
-  "Bartender",
-  "Recepcionista de Hotel",
-  "Camarero/a de Hotel",
-  "Personal de Limpieza",
-  "Conserje",
-  "Estilista",
-  "Barbero",
-  "Manicurista / Pedicurista",
-  // Comunicación, arte y medios
-  "Periodista",
-  "Reportero/a",
-  "Locutor/a",
-  "Comunicador/a Social",
-  "Diseñador/a Gráfico",
-  "Fotógrafo/a",
-  "Camarógrafo/a",
-  "Editor/a de Video",
-  "Músico/a",
-  "Actor / Actriz",
-  "Productor/a Audiovisual",
-  // Campo, producción y otros
-  "Agricultor/a",
-  "Ganadero/a",
-  "Jornalero/a",
-  "Jardinero/a",
-  "Operador/a de Maquinaria",
-  "Obrero/a de Fábrica",
-  "Panadero/a",
-  "Carnicero/a",
-  "Empresario/a",
-  "Comerciante",
-  "Trabajador/a Independiente",
-  "Ama de Casa",
-  "Estudiante",
-  "Desempleado/a",
-  "Otro",
-];
-
 // mismo flag que en iamApi.js, pero del lado del cliente
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
-const AUTH_AUDIENCE = import.meta.env.VITE_AUTH0_AUDIENCE;
 
 /* ===================== Helpers básicos ===================== */
 
@@ -400,7 +45,7 @@ function formatDateYMD(date) {
 }
 
 /** Normaliza el objeto de backend a las claves del form */
-function mapUserToFormSafe(api = {}) {
+function mapUserToFormSafe(api = {}, { estadosCiviles = [] } = {}) {
   const nombreFromParts =
     [getVal(api, ["persona.nombres"], ""), getVal(api, ["persona.apellidos"], "")]
       .join(" ")
@@ -422,9 +67,7 @@ function mapUserToFormSafe(api = {}) {
   if (Array.isArray(roles)) {
     roles = roles
       .map((r) =>
-        typeof r === "string"
-          ? r
-          : r?.code || r?.name || r?.nombre || r?.key || ""
+        typeof r === "string" ? r : r?.code || r?.name || r?.nombre || r?.key || ""
       )
       .filter(Boolean);
   } else {
@@ -444,7 +87,7 @@ function mapUserToFormSafe(api = {}) {
     ["estadoCivil", "estado_civil", "civilStatus", "persona.estadoCivil"],
     ""
   );
-  const civilOk = ESTADOS_CIVILES.includes(civil) ? civil : "";
+  const civilOk = Array.isArray(estadosCiviles) && estadosCiviles.includes(civil) ? civil : "";
 
   return {
     // PERSONALES
@@ -456,104 +99,45 @@ function mapUserToFormSafe(api = {}) {
     tipoDni: getVal(api, ["tipoDni", "persona.tipoDni"], "Identidad"),
     dni: getVal(
       api,
-      [
-        "dni",
-        "documento",
-        "num_documento",
-        "numeroDocumento",
-        "persona.dni",
-        "persona.numeroDocumento",
-      ],
+      ["dni", "documento", "num_documento", "numeroDocumento", "persona.dni", "persona.numeroDocumento"],
       ""
     ),
     estadoCivil: civilOk,
     fechaNacimiento: toDateInputSafe(fechaRaw),
     paisNacimiento: getVal(
       api,
-      [
-        "paisNacimiento",
-        "pais_nacimiento",
-        "countryOfBirth",
-        "persona.pais",
-        "datosNacimiento.pais",
-        "nacimiento.pais",
-      ],
+      ["paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais", "datosNacimiento.pais", "nacimiento.pais"],
       ""
     ),
     ciudadNacimiento: getVal(
       api,
-      [
-        "ciudadNacimiento",
-        "ciudad_nacimiento",
-        "cityOfBirth",
-        "persona.ciudad",
-        "datosNacimiento.ciudad",
-        "nacimiento.ciudad",
-      ],
+      ["ciudadNacimiento", "ciudad_nacimiento", "cityOfBirth", "persona.ciudad", "datosNacimiento.ciudad", "nacimiento.ciudad"],
       ""
     ),
     municipioNacimiento: getVal(
       api,
-      [
-        "municipioNacimiento",
-        "municipio",
-        "persona.municipio",
-        "datosNacimiento.municipio",
-        "nacimiento.municipio",
-        "ubicacion.municipio",
-      ],
+      ["municipioNacimiento", "municipio", "persona.municipio", "datosNacimiento.municipio", "nacimiento.municipio", "ubicacion.municipio"],
       ""
     ),
     correoPersona: getVal(
       api,
-      [
-        "correoPersona",
-        "email",
-        "correo",
-        "mail",
-        "persona.correo",
-        "persona.email",
-      ],
+      ["correoPersona", "email", "correo", "mail", "persona.correo", "persona.email"],
       ""
     ),
     profesion: getVal(api, ["profesion", "ocupacion", "persona.ocupacion"], ""),
     lugarTrabajo: getVal(
       api,
-      [
-        "lugarTrabajo",
-        "dondeLabora",
-        "empresa",
-        "persona.lugar_trabajo",
-        "persona.dondeLabora",
-      ],
+      ["lugarTrabajo", "dondeLabora", "empresa", "persona.lugar_trabajo", "persona.dondeLabora"],
       ""
     ),
     telefono: getVal(
       api,
-      [
-        "telefono",
-        "phone",
-        "celular",
-        "tel",
-        "telefono1",
-        "telefono2",
-        "persona.telefono",
-        "persona.celular",
-        "contacto.telefono",
-      ],
+      ["telefono", "phone", "celular", "tel", "telefono1", "telefono2", "persona.telefono", "persona.celular", "contacto.telefono"],
       ""
     ),
     domicilio: getVal(
       api,
-      [
-        "domicilio",
-        "direccion",
-        "address",
-        "direccionResidencia",
-        "persona.direccion",
-        "persona.domicilio",
-        "ubicacion.direccion",
-      ],
+      ["domicilio", "direccion", "address", "direccionResidencia", "persona.direccion", "persona.domicilio", "ubicacion.direccion"],
       ""
     ),
     // IAM
@@ -564,12 +148,10 @@ function mapUserToFormSafe(api = {}) {
   };
 }
 
-/* ====== UI helpers ====== */
+/* ===================== UI helpers ===================== */
 
 function RoleBadges({ roles = [], roleLabelMap = {} }) {
-  const labels = Array.isArray(roles)
-    ? roles.map((code) => roleLabelMap[code] || code)
-    : [];
+  const labels = Array.isArray(roles) ? roles.map((code) => roleLabelMap[code] || code) : [];
   return (
     <div className="flex flex-wrap gap-1">
       {labels.length === 0 ? (
@@ -629,9 +211,7 @@ function RoleSelect({ value = [], onChange, availableRoles = [] }) {
       {open && (
         <div className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-cyan-500/40 bg-slate-950/95 shadow-[0_0_25px_rgba(34,211,238,0.35)]">
           {normalizedRoles.length === 0 && (
-            <div className="px-3 py-2 text-sm text-neutral-500">
-              No hay roles configurados.
-            </div>
+            <div className="px-3 py-2 text-sm text-neutral-500">No hay roles configurados.</div>
           )}
           {normalizedRoles.map((r) => (
             <label
@@ -653,8 +233,8 @@ function RoleSelect({ value = [], onChange, availableRoles = [] }) {
   );
 }
 
-/** Selector de país */
-function CountrySelect({ label, name, value, onChange }) {
+/** Selector de país (catálogo viene del backend) */
+function CountrySelect({ label, name, value, onChange, items = [] }) {
   const [open, setOpen] = useState(false);
   const selected = value || "";
   const listRef = useRef(null);
@@ -689,20 +269,21 @@ function CountrySelect({ label, name, value, onChange }) {
       {open && (
         <div className="absolute z-40 mt-1 w-full rounded-xl border border-cyan-500/50 bg-slate-950/70 backdrop-blur-sm shadow-[0_0_25px_rgba(34,211,238,0.45)] flex">
           <div ref={listRef} className="flex-1 max-h-56 overflow-y-auto">
-            {COUNTRIES.map((c) => (
+            {(items || []).map((c) => (
               <button
                 key={c}
                 type="button"
                 onClick={() => handleSelect(c)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-cyan-500/15 ${
-                  selected === c
-                    ? "bg-cyan-500/20 text-cyan-100"
-                    : "text-neutral-100"
+                  selected === c ? "bg-cyan-500/20 text-cyan-100" : "text-neutral-100"
                 }`}
               >
                 {c}
               </button>
             ))}
+            {(items || []).length === 0 && (
+              <div className="px-3 py-2 text-sm text-neutral-500">Catálogo no disponible.</div>
+            )}
           </div>
 
           <div className="flex flex-col border-l border-cyan-500/40">
@@ -729,8 +310,8 @@ function CountrySelect({ label, name, value, onChange }) {
   );
 }
 
-/** Selector de profesión */
-function ProfessionSelect({ value, onChange }) {
+/** Selector de profesión (catálogo viene del backend) */
+function ProfessionSelect({ value, onChange, items = [] }) {
   const [open, setOpen] = useState(false);
   const selected = value || "";
   const listRef = useRef(null);
@@ -762,20 +343,21 @@ function ProfessionSelect({ value, onChange }) {
       {open && (
         <div className="absolute z-30 mt-1 w-full rounded-xl border border-cyan-500/50 bg-slate-950/95 shadow-[0_0_25px_rgba(34,211,238,0.45)] flex">
           <div ref={listRef} className="flex-1 max-h-56 overflow-y-auto">
-            {PROFESIONES_OFICIOS.map((p) => (
+            {(items || []).map((p) => (
               <button
                 key={p}
                 type="button"
                 onClick={() => handleSelect(p)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-cyan-500/15 ${
-                  selected === p
-                    ? "bg-cyan-500/20 text-cyan-100"
-                    : "text-neutral-100"
+                  selected === p ? "bg-cyan-500/20 text-cyan-100" : "text-neutral-100"
                 }`}
               >
                 {p}
               </button>
             ))}
+            {(items || []).length === 0 && (
+              <div className="px-3 py-2 text-sm text-neutral-500">Catálogo no disponible.</div>
+            )}
           </div>
 
           <div className="flex flex-col border-l border-cyan-500/40">
@@ -944,11 +526,21 @@ function passwordRules(p = "") {
 /* ===================== Página principal ===================== */
 
 export default function UsersPage() {
-  // 🔐 Auth0
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  // ✅ Sin Auth0: token solo desde login local (localStorage)
+  const getToken = async () => {
+    if (DISABLE_AUTH) return null;
+    const localToken = localStorage.getItem("token");
+    return localToken || null;
+  };
 
   const [items, setItems] = useState([]);
   const [roleCatalog, setRoleCatalog] = useState([]);
+  const [catalogs, setCatalogs] = useState({
+    estadosCiviles: [],
+    countries: [],
+    profesiones: [],
+  });
+
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -986,12 +578,10 @@ export default function UsersPage() {
   const [showPwd, setShowPwd] = useState(false);
 
   const pwdR = passwordRules(creds.password);
-  const match =
-    creds.password && creds.confirm && creds.password === creds.confirm;
+  const match = creds.password && creds.confirm && creds.password === creds.confirm;
   const showPwdRules = creds.password && creds.password.length > 0;
 
   const firstFieldRef = useRef(null);
-  const tokenRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
 
   const roleLabelMap = useMemo(
@@ -1005,56 +595,6 @@ export default function UsersPage() {
     [roleCatalog]
   );
 
-  // 👉 helper centralizado para obtener el token
-  // const getToken = async () => {
-  //   // si desactivas auth en .env, no se pide token y se usan x-user-*
-  //   if (DISABLE_AUTH) return null;
-  //   if (!isAuthenticated) return null;
-  //   if (tokenRef.current) return tokenRef.current;
-
-  //   try {
-  //     const t = await getAccessTokenSilently({
-  //       authorizationParams: {
-  //         audience: AUTH_AUDIENCE,
-  //         scope: "openid profile email offline_access",
-  //       },
-  //     });
-  //     tokenRef.current = t;
-  //     return t || null;
-  //   } catch (e) {
-  //     console.warn("[UsersPage] no se pudo obtener token:", e?.message || e);
-  //     return null;
-  //   }
-  // };
-
-  //Para obtener el token, sin auth0 hecho el 20/02/2026
-const getToken = async () => {
-  if (DISABLE_AUTH) return null;
-
-  // 🔥 Login local
-  const localToken = localStorage.getItem("token");
-  if (localToken) return localToken;
-
-  // 🔐 Si algún día usas Auth0
-  if (isAuthenticated) {
-    try {
-      const t = await getAccessTokenSilently({
-        authorizationParams: {
-          audience: AUTH_AUDIENCE,
-          scope: "openid profile email offline_access",
-        },
-      });
-      return t || null;
-    } catch (e) {
-      console.warn("[UsersPage] no se pudo obtener token:", e?.message || e);
-      return null;
-    }
-  }
-  return null;
-};
-//Para obtener el token, sin auth0 hecho el 20/02/2026
-
-
   async function load() {
     try {
       setLoading(true);
@@ -1063,23 +603,38 @@ const getToken = async () => {
       const token = await getToken();
 
       if (!DISABLE_AUTH && !token) {
-        setErr(
-          "No se pudo obtener token de sesión. Inicia sesión de nuevo para gestionar usuarios."
-        );
+        setErr("No se pudo obtener token de sesión. Inicia sesión de nuevo para gestionar usuarios.");
         setItems([]);
         setRoleCatalog([]);
         return;
       }
 
-      const [resUsers, resRoles] = await Promise.all([
+      // ✅ catálogos vienen del backend (si implementaste endpoints)
+      const catPromise =
+        typeof iamApi.getCatalogs === "function"
+          ? iamApi.getCatalogs(token)
+          : Promise.resolve({});
+
+      const [resUsers, resRoles, resCats] = await Promise.all([
         iamApi.listUsers("", token),
         iamApi.listRoles ? iamApi.listRoles(token) : Promise.resolve({}),
+        catPromise,
       ]);
 
       setItems(resUsers.items || []);
 
       const rolesRaw = resRoles?.items || resRoles?.roles || [];
       setRoleCatalog(Array.isArray(rolesRaw) ? rolesRaw : []);
+
+      const estadosCiviles = resCats?.estadosCiviles || resCats?.civilStatus || [];
+      const countries = resCats?.countries || resCats?.paises || [];
+      const profesiones = resCats?.profesiones || resCats?.professions || resCats?.oficios || [];
+
+      setCatalogs({
+        estadosCiviles: Array.isArray(estadosCiviles) ? estadosCiviles : [],
+        countries: Array.isArray(countries) ? countries : [],
+        profesiones: Array.isArray(profesiones) ? profesiones : [],
+      });
     } catch (e) {
       setErr(e?.message || "Error al cargar usuarios");
     } finally {
@@ -1087,29 +642,18 @@ const getToken = async () => {
     }
   }
 
-  // useEffect(() => {
-  //   // En modo dev (DISABLE_AUTH=1) siempre cargamos; en prod solo si está autenticado
-  //   if (!DISABLE_AUTH && !isAuthenticated) return;
-  //   load();
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [isAuthenticated]);
-
   useEffect(() => {
-  load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredAll = useMemo(() => {
     const t = q.trim().toLowerCase();
     let res = items;
     if (t) {
       res = res.filter((u) =>
-        (u.nombreCompleto || u.name || "")
-          .toLowerCase()
-          .includes(t) ||
-        (u.correoPersona || u.email || "")
-          .toLowerCase()
-          .includes(t) ||
+        (u.nombreCompleto || u.name || "").toLowerCase().includes(t) ||
+        (u.correoPersona || u.email || "").toLowerCase().includes(t) ||
         (u.dni || "").toLowerCase().includes(t) ||
         String(u.id_persona || "").toLowerCase().includes(t)
       );
@@ -1127,8 +671,7 @@ const getToken = async () => {
     if (!form.nombreCompleto.trim()) v.nombreCompleto = "Requerido";
     if (!form.dni.trim()) v.dni = "Requerido";
     if (!form.correoPersona.trim()) v.correoPersona = "Requerido";
-    else if (!/^\S+@\S+\.\S+$/.test(form.correoPersona))
-      v.correoPersona = "Correo inválido";
+    else if (!/^\S+@\S+\.\S+$/.test(form.correoPersona)) v.correoPersona = "Correo inválido";
 
     if (!Array.isArray(form.roles) || form.roles.length === 0) {
       v.roles = "Seleccione al menos un rol";
@@ -1137,8 +680,7 @@ const getToken = async () => {
     if (creds.password || creds.confirm) {
       if (!creds.password) v.password = "Debe ingresar contraseña";
       if (!creds.confirm) v.confirm = "Debe confirmar la contraseña";
-      if (creds.password !== creds.confirm)
-        v.confirm = "Las contraseñas no coinciden";
+      if (creds.password !== creds.confirm) v.confirm = "Las contraseñas no coinciden";
       if (!pwdR.length || !pwdR.upper || !pwdR.lower || !pwdR.digit) {
         v.password = "La contraseña no cumple los requisitos mínimos";
       }
@@ -1148,13 +690,10 @@ const getToken = async () => {
   }
 
   async function triggerVerification(userId, email) {
-    if (!/^\S+@\S+\.\S+$/.test(email || ""))
-      throw new Error("Correo inválido para verificación");
+    if (!/^\S+@\S+\.\S+$/.test(email || "")) throw new Error("Correo inválido para verificación");
 
     const token = await getToken();
-    if (!DISABLE_AUTH && !token) {
-      throw new Error("No hay token para enviar verificación");
-    }
+    if (!DISABLE_AUTH && !token) throw new Error("No hay token para enviar verificación");
 
     if (typeof iamApi.sendVerificationEmail === "function") {
       return await iamApi.sendVerificationEmail(userId, email, token);
@@ -1183,9 +722,7 @@ const getToken = async () => {
 
       const token = await getToken();
       if (!DISABLE_AUTH && !token) {
-        alert(
-          "No se pudo obtener token de sesión. Inicia sesión nuevamente para guardar."
-        );
+        alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para guardar.");
         return;
       }
 
@@ -1199,36 +736,21 @@ const getToken = async () => {
       if (editing) {
         res = await iamApi.updateUser(editing, payload, token);
         savedId =
-          res?._id ||
-          res?.id ||
-          res?.userId ||
-          res?.data?._id ||
-          res?.data?.item?._id ||
-          savedId;
+          res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id || savedId;
         alert("Usuario actualizado correctamente");
       } else {
         res = await iamApi.createUser(payload, token);
-        savedId =
-          res?._id ||
-          res?.id ||
-          res?.userId ||
-          res?.data?._id ||
-          res?.data?.item?._id;
+        savedId = res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id;
         alert("Usuario creado correctamente ✅");
       }
 
       if (creds.sendVerification && savedId && form.correoPersona) {
         try {
           await triggerVerification(savedId, form.correoPersona);
-          alert(
-            "Se envió el correo de verificación a " + form.correoPersona
-          );
+          alert("Se envió el correo de verificación a " + form.correoPersona);
         } catch (ev) {
           console.warn("[UsersPage] verificación no enviada:", ev);
-          alert(
-            "⚠️ No se pudo enviar la verificación: " +
-              (ev?.message || "revisa el backend")
-          );
+          alert("⚠️ No se pudo enviar la verificación: " + (ev?.message || "revisa el backend"));
         }
       }
 
@@ -1248,11 +770,8 @@ const getToken = async () => {
   async function toggleActive(u) {
     try {
       const token = await getToken();
-
       if (!DISABLE_AUTH && !token) {
-        alert(
-          "No se pudo obtener token de sesión. Inicia sesión nuevamente para cambiar estado."
-        );
+        alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para cambiar estado.");
         return;
       }
 
@@ -1266,14 +785,10 @@ const getToken = async () => {
   }
 
   async function startEdit(u) {
-    console.log("[UsersPage] entrar a edición:", u);
     setEditing(u._id);
     setCreds({ password: "", confirm: "", sendVerification: false });
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
 
     setLoading(true);
     let full = u;
@@ -1299,10 +814,7 @@ const getToken = async () => {
           u;
       }
     } catch (e) {
-      console.warn(
-        "[UsersPage] no se pudo obtener detalle; usando item de lista:",
-        e
-      );
+      console.warn("[UsersPage] no se pudo obtener detalle; usando item de lista:", e);
     } finally {
       setLoading(false);
     }
@@ -1310,12 +822,12 @@ const getToken = async () => {
     try {
       setForm((prev) => ({
         ...prev,
-        ...mapUserToFormSafe(full),
+        ...mapUserToFormSafe(full, { estadosCiviles: catalogs.estadosCiviles }),
       }));
     } catch {
       setForm((prev) => ({
         ...prev,
-        ...mapUserToFormSafe(u),
+        ...mapUserToFormSafe(u, { estadosCiviles: catalogs.estadosCiviles }),
       }));
     }
 
@@ -1332,19 +844,14 @@ const getToken = async () => {
 
   async function handleDelete(u) {
     const ok = window.confirm(
-      `¿Seguro que deseas eliminar al usuario "${
-        u.nombreCompleto || u.name || ""
-      }"?`
+      `¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`
     );
     if (!ok) return;
 
     try {
       const token = await getToken();
-
       if (!DISABLE_AUTH && !token) {
-        alert(
-          "No se pudo obtener token de sesión. Inicia sesión nuevamente para eliminar."
-        );
+        alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para eliminar.");
         return;
       }
 
@@ -1371,8 +878,8 @@ const getToken = async () => {
           Administración de Usuarios (IAM)
         </h1>
         <p className="text-sm text-neutral-400 max-w-2xl">
-          Crea, edita y administra los usuarios del sistema SENAF, incluyendo sus
-          datos personales y roles de acceso.
+          Crea, edita y administra los usuarios del sistema SENAF, incluyendo sus datos personales y
+          roles de acceso.
         </p>
       </header>
 
@@ -1387,11 +894,7 @@ const getToken = async () => {
             onClick={() => {
               setEditing(null);
               setForm(empty);
-              setCreds({
-                password: "",
-                confirm: "",
-                sendVerification: false,
-              });
+              setCreds({ password: "", confirm: "", sendVerification: false });
               setErrors({});
             }}
             className="text-xs md:text-sm px-3 py-1.5 rounded-lg border border-cyan-500/60 hover:bg-cyan-500/10 transition-colors"
@@ -1410,9 +913,7 @@ const getToken = async () => {
           {/* Datos personales */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Nombre completo
-              </label>
+              <label className="text-sm text-neutral-200">Nombre completo</label>
               <input
                 ref={firstFieldRef}
                 name="nombreCompleto"
@@ -1421,17 +922,11 @@ const getToken = async () => {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="Ej. Juan Pérez"
               />
-              {errors.nombreCompleto && (
-                <p className="text-xs text-red-400">
-                  {errors.nombreCompleto}
-                </p>
-              )}
+              {errors.nombreCompleto && <p className="text-xs text-red-400">{errors.nombreCompleto}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Tipo de documento
-              </label>
+              <label className="text-sm text-neutral-200">Tipo de documento</label>
               <select
                 name="tipoDni"
                 value={form.tipoDni}
@@ -1453,9 +948,7 @@ const getToken = async () => {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="0000-0000-00000"
               />
-              {errors.dni && (
-                <p className="text-xs text-red-400">{errors.dni}</p>
-              )}
+              {errors.dni && <p className="text-xs text-red-400">{errors.dni}</p>}
             </div>
 
             <div className="space-y-1">
@@ -1467,7 +960,7 @@ const getToken = async () => {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               >
                 <option value="">Seleccione…</option>
-                {ESTADOS_CIVILES.map((c) => (
+                {(catalogs.estadosCiviles || []).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -1489,30 +982,23 @@ const getToken = async () => {
               name="paisNacimiento"
               value={form.paisNacimiento}
               onChange={setField}
+              items={catalogs.countries}
             />
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Ciudad de nacimiento
-              </label>
+              <label className="text-sm text-neutral-200">Ciudad de nacimiento</label>
               <input
                 name="ciudadNacimiento"
                 value={form.ciudadNacimiento}
-                onChange={(e) =>
-                  setField("ciudadNacimiento", e.target.value)
-                }
+                onChange={(e) => setField("ciudadNacimiento", e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Municipio de nacimiento
-              </label>
+              <label className="text-sm text-neutral-200">Municipio de nacimiento</label>
               <input
                 name="municipioNacimiento"
                 value={form.municipioNacimiento}
-                onChange={(e) =>
-                  setField("municipioNacimiento", e.target.value)
-                }
+                onChange={(e) => setField("municipioNacimiento", e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               />
             </div>
@@ -1521,9 +1007,7 @@ const getToken = async () => {
           {/* Contacto y trabajo */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Correo electrónico
-              </label>
+              <label className="text-sm text-neutral-200">Correo electrónico</label>
               <input
                 name="correoPersona"
                 type="email"
@@ -1532,17 +1016,11 @@ const getToken = async () => {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="usuario@dominio.com"
               />
-              {errors.correoPersona && (
-                <p className="text-xs text-red-400">
-                  {errors.correoPersona}
-                </p>
-              )}
+              {errors.correoPersona && <p className="text-xs text-red-400">{errors.correoPersona}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Teléfono / Celular
-              </label>
+              <label className="text-sm text-neutral-200">Teléfono / Celular</label>
               <input
                 name="telefono"
                 value={form.telefono}
@@ -1553,9 +1031,7 @@ const getToken = async () => {
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Lugar de trabajo
-              </label>
+              <label className="text-sm text-neutral-200">Lugar de trabajo</label>
               <input
                 name="lugarTrabajo"
                 value={form.lugarTrabajo}
@@ -1565,19 +1041,16 @@ const getToken = async () => {
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Profesión / oficio
-              </label>
+              <label className="text-sm text-neutral-200">Profesión / oficio</label>
               <ProfessionSelect
                 value={form.profesion}
                 onChange={(val) => setField("profesion", val)}
+                items={catalogs.profesiones}
               />
             </div>
 
             <div className="space-y-1 md:col-span-2">
-              <label className="text-sm text-neutral-200">
-                Domicilio / Dirección
-              </label>
+              <label className="text-sm text-neutral-200">Domicilio / Dirección</label>
               <input
                 name="domicilio"
                 value={form.domicilio}
@@ -1591,17 +1064,13 @@ const getToken = async () => {
           {/* Roles + estado + password */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
             <div className="space-y-1 md:col-span-2">
-              <label className="text-sm text-neutral-200">
-                Roles en el sistema
-              </label>
+              <label className="text-sm text-neutral-200">Roles en el sistema</label>
               <RoleSelect
                 value={form.roles}
                 onChange={(val) => setField("roles", val)}
                 availableRoles={roleCatalog}
               />
-              {errors.roles && (
-                <p className="text-xs text-red-400">{errors.roles}</p>
-              )}
+              {errors.roles && <p className="text-xs text-red-400">{errors.roles}</p>}
             </div>
 
             <div className="space-y-1">
@@ -1609,9 +1078,7 @@ const getToken = async () => {
               <select
                 name="active"
                 value={form.active ? "1" : "0"}
-                onChange={(e) =>
-                  setField("active", e.target.value === "1")
-                }
+                onChange={(e) => setField("active", e.target.value === "1")}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               >
                 <option value="1">Activo</option>
@@ -1625,22 +1092,13 @@ const getToken = async () => {
             <div className="space-y-1">
               <label className="text-sm text-neutral-200">
                 Contraseña
-                {!editing && (
-                  <span className="text-xs text-cyan-300 ml-2">
-                    (solo al crear o cambiar)
-                  </span>
-                )}
+                {!editing && <span className="text-xs text-cyan-300 ml-2">(solo al crear o cambiar)</span>}
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type={showPwd ? "text" : "password"}
                   value={creds.password}
-                  onChange={(e) =>
-                    setCreds((prev) => ({
-                      ...prev,
-                      password: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setCreds((prev) => ({ ...prev, password: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                   placeholder="••••••••"
                 />
@@ -1652,36 +1110,21 @@ const getToken = async () => {
                   {showPwd ? "Ocultar" : "Ver"}
                 </button>
               </div>
-              {errors.password && (
-                <p className="text-xs text-red-400">{errors.password}</p>
-              )}
+              {errors.password && <p className="text-xs text-red-400">{errors.password}</p>}
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm text-neutral-200">
-                Confirmar contraseña
-              </label>
+              <label className="text-sm text-neutral-200">Confirmar contraseña</label>
               <input
                 type={showPwd ? "text" : "password"}
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 value={creds.confirm}
-                onChange={(e) =>
-                  setCreds((prev) => ({
-                    ...prev,
-                    confirm: e.target.value,
-                  }))
-                }
+                onChange={(e) => setCreds((prev) => ({ ...prev, confirm: e.target.value }))}
                 placeholder="••••••••"
               />
-              {errors.confirm && (
-                <span className="text-xs text-red-500">
-                  {errors.confirm}
-                </span>
-              )}
+              {errors.confirm && <span className="text-xs text-red-500">{errors.confirm}</span>}
               {!errors.confirm && creds.confirm && !match && (
-                <span className="text-xs text-red-500">
-                  No coincide con la contraseña.
-                </span>
+                <span className="text-xs text-red-500">No coincide con la contraseña.</span>
               )}
             </div>
 
@@ -1693,32 +1136,18 @@ const getToken = async () => {
                   checked={creds.sendVerification}
                   onChange={async (e) => {
                     const checked = e.target.checked;
-                    setCreds((prev) => ({
-                      ...prev,
-                      sendVerification: checked,
-                    }));
-                    // opción de enviar inmediato cuando se marca en edición
-                    if (
-                      checked &&
-                      editing &&
-                      /^\S+@\S+\.\S+$/.test(form.correoPersona || "")
-                    ) {
+                    setCreds((prev) => ({ ...prev, sendVerification: checked }));
+
+                    if (checked && editing && /^\S+@\S+\.\S+$/.test(form.correoPersona || "")) {
                       try {
                         setSubmitting(true);
                         await triggerVerification(editing, form.correoPersona);
-                        alert(
-                          "Se envió el correo de verificación a " +
-                            form.correoPersona
-                        );
+                        alert("Se envió el correo de verificación a " + form.correoPersona);
                       } catch (ev) {
-                        console.warn(
-                          "[UsersPage] verificación inmediata falló:",
-                          ev
-                        );
+                        console.warn("[UsersPage] verificación inmediata falló:", ev);
                         alert(
                           "⚠️ No se pudo enviar verificación ahora: " +
-                            (ev?.message ||
-                              "se intentará al guardar, si está habilitado")
+                            (ev?.message || "se intentará al guardar, si está habilitado")
                         );
                       } finally {
                         setSubmitting(false);
@@ -1733,34 +1162,24 @@ const getToken = async () => {
 
           {showPwdRules && (
             <div className="text-xs text-neutral-300 bg-slate-900/70 border border-cyan-500/30 rounded-lg px-3 py-2 space-y-1">
-              <div className="font-semibold text-cyan-300 mb-1">
-                Requisitos de contraseña:
-              </div>
+              <div className="font-semibold text-cyan-300 mb-1">Requisitos de contraseña:</div>
               <div>
-                <span
-                  className={pwdR.length ? "text-green-400" : "text-red-400"}
-                >
+                <span className={pwdR.length ? "text-green-400" : "text-red-400"}>
                   • Al menos 8 caracteres
                 </span>
               </div>
               <div>
-                <span
-                  className={pwdR.upper ? "text-green-400" : "text-red-400"}
-                >
+                <span className={pwdR.upper ? "text-green-400" : "text-red-400"}>
                   • Una letra mayúscula
                 </span>
               </div>
               <div>
-                <span
-                  className={pwdR.lower ? "text-green-400" : "text-red-400"}
-                >
+                <span className={pwdR.lower ? "text-green-400" : "text-red-400"}>
                   • Una letra minúscula
                 </span>
               </div>
               <div>
-                <span
-                  className={pwdR.digit ? "text-green-400" : "text-red-400"}
-                >
+                <span className={pwdR.digit ? "text-green-400" : "text-red-400"}>
                   • Un número
                 </span>
               </div>
@@ -1785,11 +1204,7 @@ const getToken = async () => {
               disabled={submitting}
               className="px-4 py-2 text-sm rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold shadow-[0_0_20px_rgba(34,211,238,0.6)] disabled:opacity-60"
             >
-              {submitting
-                ? "Guardando..."
-                : editing
-                ? "Guardar cambios"
-                : "Crear usuario"}
+              {submitting ? "Guardando..." : editing ? "Guardar cambios" : "Crear usuario"}
             </button>
           </div>
         </form>
@@ -1799,12 +1214,8 @@ const getToken = async () => {
       <section className="max-w-6xl mx-auto space-y-4">
         <div className="flex flex-col md:flex-row gap-3 justify-between items-start">
           <div>
-            <h2 className="text-lg font-semibold mb-1">
-              Usuarios registrados
-            </h2>
-            <p className="text-xs text-neutral-400">
-              {filteredAll.length} usuario(s) encontrados
-            </p>
+            <h2 className="text-lg font-semibold mb-1">Usuarios registrados</h2>
+            <p className="text-xs text-neutral-400">{filteredAll.length} usuario(s) encontrados</p>
           </div>
           <div className="flex flex-wrap gap-3 items-center">
             <input
@@ -1814,11 +1225,7 @@ const getToken = async () => {
               className="px-3 py-1.5 rounded-lg bg-slate-900/70 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             />
             <label className="flex items-center gap-2 text-xs text-neutral-300">
-              <input
-                type="checkbox"
-                checked={onlyActive}
-                onChange={(e) => setOnlyActive(e.target.checked)}
-              />
+              <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
               Mostrar solo activos
             </label>
           </div>
@@ -1839,50 +1246,33 @@ const getToken = async () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-6 text-center text-neutral-400"
-                  >
+                  <td colSpan={6} className="px-4 py-6 text-center text-neutral-400">
                     Cargando usuarios…
                   </td>
                 </tr>
               ) : visibleList.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-6 text-center text-neutral-400"
-                  >
+                  <td colSpan={6} className="px-4 py-6 text-center text-neutral-400">
                     No hay usuarios que coincidan con el filtro.
                   </td>
                 </tr>
               ) : (
                 visibleList.map((u) => (
-                  <tr
-                    key={u._id}
-                    className="border-b border-slate-800/70 hover:bg-slate-900/70"
-                  >
+                  <tr key={u._id} className="border-b border-slate-800/70 hover:bg-slate-900/70">
                     <td className="px-4 py-3">
                       <div className="font-medium text-neutral-100">
                         {u.nombreCompleto || u.name || "(Sin nombre)"}
                       </div>
-                      <div className="text-[11px] text-neutral-400">
-                        ID persona: {u.id_persona || "—"}
-                      </div>
+                      <div className="text-[11px] text-neutral-400">ID persona: {u.id_persona || "—"}</div>
                     </td>
                     <td className="px-4 py-3 text-neutral-200">
                       <div className="text-xs">
-                        {u.tipoDni || "Documento"}:{" "}
-                        <span className="font-mono">{u.dni || "—"}</span>
+                        {u.tipoDni || "Documento"}: <span className="font-mono">{u.dni || "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-neutral-200">
-                      {u.correoPersona || u.email || "—"}
-                    </td>
+                    <td className="px-4 py-3 text-neutral-200">{u.correoPersona || u.email || "—"}</td>
                     <td className="px-4 py-3">
-                      <RoleBadges
-                        roles={u.roles}
-                        roleLabelMap={roleLabelMap}
-                      />
+                      <RoleBadges roles={u.roles} roleLabelMap={roleLabelMap} />
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span

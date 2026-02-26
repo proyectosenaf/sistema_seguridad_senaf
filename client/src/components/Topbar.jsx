@@ -1,6 +1,5 @@
 // client/src/components/Topbar.jsx
 import React from "react";
-import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
@@ -21,6 +20,10 @@ import {
   ClipboardCheck,
   ShieldCheck,
 } from "lucide-react";
+
+// ✅ auth local (sin Auth0)
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
+
 
 // ✅ usar el socket global (NO crear otro)
 import { socket } from "../lib/socket.js";
@@ -152,7 +155,7 @@ const MODULES = [
 ];
 
 export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
-  const { user, logout } = useAuth0();
+  const { user, logout, isAuthenticated } = useAuth();
   const nav = useNavigate();
   const { pathname } = useLocation();
 
@@ -279,13 +282,23 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   return (
     <div className="flex items-center gap-3 px-4 md:px-6 h-14">
       {/* Hamburguesa móvil */}
-      <button type="button" onClick={onToggleMenu} className={"md:hidden " + fxBtn} aria-label="Abrir menú">
+      <button
+        type="button"
+        onClick={onToggleMenu}
+        className={"md:hidden " + fxBtn}
+        aria-label="Abrir menú"
+      >
         <Menu className="w-5 h-5" />
       </button>
 
       {/* Regresar (opcional) */}
       {showBack && (
-        <button type="button" onClick={goBack} className={fxBtnText} title={back?.label || "Regresar"}>
+        <button
+          type="button"
+          onClick={goBack}
+          className={fxBtnText}
+          title={back?.label || "Regresar"}
+        >
           <ArrowLeft className="w-4 h-4" />
           <span className="hidden sm:inline">{back?.label || "Regresar"}</span>
         </button>
@@ -381,24 +394,34 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           <ThemeToggle />
         </div>
 
-        <span className="hidden sm:block text-sm opacity-80">{user?.name}</span>
-        <button
-          onClick={() =>
-            logout({
-              logoutParams: { returnTo: `${window.location.origin}/login`, federated: true },
-            })
-          }
-          className="btn-outline-neon inline-flex items-center gap-1"
-          title="Salir"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline">Salir</span>
-        </button>
+        <span className="hidden sm:block text-sm opacity-80">
+          {user?.name || user?.fullName || user?.email || ""}
+        </span>
+
+        {isAuthenticated && (
+          <button
+            onClick={() => {
+              try {
+                logout?.();
+              } finally {
+                nav("/login", { replace: true });
+              }
+            }}
+            className="btn-outline-neon inline-flex items-center gap-1"
+            title="Salir"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Salir</span>
+          </button>
+        )}
       </div>
 
       {/* Modal búsqueda */}
       {searchOpen && (
-        <div className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35" onClick={() => setSearchOpen(false)}>
+        <div
+          className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35"
+          onClick={() => setSearchOpen(false)}
+        >
           <div className={fxModal} onClick={(e) => e.stopPropagation()}>
             <div className="text-sm mb-2 opacity-70">Búsqueda global</div>
             <div className="relative">
@@ -424,7 +447,9 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 </button>
               )}
             </div>
-            <div className="text-xs opacity-60 mt-2">Enter para buscar en el módulo actual · Esc para cerrar</div>
+            <div className="text-xs opacity-60 mt-2">
+              Enter para buscar en el módulo actual · Esc para cerrar
+            </div>
           </div>
         </div>
       )}
@@ -440,7 +465,13 @@ function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPop
   return (
     <>
       <div ref={btnRef}>
-        <button onClick={toggle} className={fxBtn} title="Abrir módulo" aria-haspopup="menu" aria-expanded={open}>
+        <button
+          onClick={toggle}
+          className={fxBtn}
+          title="Abrir módulo"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
           <Plus className="w-5 h-5" />
         </button>
       </div>
@@ -483,26 +514,39 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos, fxPopove
   }, [anchorRef, setPosFn]);
 
   return (
-    <div className={fxPopover + " p-2"} style={{ left: `${pos.left}px`, top: `${pos.top}px` }} role="menu">
+    <div
+      className={fxPopover + " p-2"}
+      style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
+      role="menu"
+    >
       <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
 
       <div className="p-2 text-sm space-y-1">
         <div className="flex items-center justify-between">
           <span className="opacity-80">Sin leer</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.unread || 0}</span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+            {counts.unread || 0}
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Alertas</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.alerts || 0}</span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+            {counts.alerts || 0}
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="opacity-80">Total</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">{counts.total || 0}</span>
+          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+            {counts.total || 0}
+          </span>
         </div>
       </div>
 
       <div className="p-2 pt-1 flex gap-2">
-        <button onClick={onClear} className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition">
+        <button
+          onClick={onClear}
+          className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
+        >
           Marcar todo como leído
         </button>
         <button

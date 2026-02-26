@@ -1,30 +1,38 @@
 // client/src/components/GlobalPanicListener.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
 
-// 👇 ajusta esta ruta si tu hook está en otro lado
-import { useAssignmentSocket } from "../modules/rondasqr/hooks/useAssignmentSocket.js";
+// ✅ auth local (sin Auth0)
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
+
+
 // 👇 este es el bus local que ya usas en ScanPage
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 
 export default function GlobalPanicListener() {
-  const { user } = useAuth0();
+  const { user, isAuthenticated } = useAuth();
+
   const audioRef = useRef(null);
   const [hasAlert, setHasAlert] = useState(false);
 
   // sonido corto integrado en base64
   const BEEP_SRC =
-    "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
+    "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
+
+  function triggerAlert() {
+    setHasAlert(true);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {
+        // si no deja reproducir porque no hubo interacción, lo ignoramos
+      });
+    }
+  }
 
   // 1) escuchar lo que venga por socket (servidor)
-  useAssignmentSocket(user, (evt) => {
+  // ✅ Solo si hay sesión; si no, evitamos suscripciones raras
+  useAssignmentSocket(isAuthenticated ? user : null, (evt) => {
     const t = evt?.type || evt?.event || evt?.kind;
-    if (
-      t === "panic" ||
-      t === "rondasqr:panic" ||
-      t === "alert" ||
-      t === "rondasqr:alert"
-    ) {
+    if (t === "panic" || t === "rondasqr:panic" || t === "alert" || t === "rondasqr:alert") {
       triggerAlert();
     }
   });
@@ -37,15 +45,8 @@ export default function GlobalPanicListener() {
     return () => unsub && unsub();
   }, []);
 
-  function triggerAlert() {
-    setHasAlert(true);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        // si no deja reproducir porque no hubo interacción, lo ignoramos
-      });
-    }
-  }
+  // si no hay sesión, no mostramos UI
+  if (!isAuthenticated) return null;
 
   return (
     <>

@@ -1,7 +1,6 @@
 // client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { useAuth0 } from "@auth0/auth0-react";
 
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
@@ -144,8 +143,6 @@ function parseDateValue(d) {
 }
 
 export default function IncidentesList() {
-  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
-
   const [incidentes, setIncidentes] = useState([]);
   const [stats, setStats] = useState({
     abiertos: 0,
@@ -261,9 +258,7 @@ export default function IncidentesList() {
   }
 
   function nextEvidence() {
-    setActiveEvidenceIdx((prev) =>
-      Math.min(prev + 1, evidenceItems.length - 1)
-    );
+    setActiveEvidenceIdx((prev) => Math.min(prev + 1, evidenceItems.length - 1));
   }
   function prevEvidence() {
     setActiveEvidenceIdx((prev) => Math.max(prev - 1, 0));
@@ -353,7 +348,7 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── cargar guardias desde IAM ─────────
+  // ───────── cargar guardias desde IAM (SIN Auth0) ─────────
   useEffect(() => {
     let mounted = true;
 
@@ -361,24 +356,13 @@ export default function IncidentesList() {
       try {
         let items = [];
 
+        // ✅ Preferir endpoint dedicado (backend decide quién es guardia)
         if (typeof iamApi.listGuards === "function") {
-          let token;
-
-          try {
-            if (isAuthenticated) {
-              token = await getAccessTokenSilently({
-                authorizationParams: {
-                  audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-                },
-              });
-            }
-          } catch (e) {
-            console.warn("[IncidentesList] no token IAM:", e?.message || e);
-          }
-
-          const r = await iamApi.listGuards("", true, token);
+          // token lo resuelve iamApi (tokenProvider/localStorage/dev headers)
+          const r = await iamApi.listGuards("", true, undefined);
           items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
+          // fallback (no recomendado, pero mantiene compat)
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || []).filter((u) => {
@@ -415,7 +399,7 @@ export default function IncidentesList() {
     return () => {
       mounted = false;
     };
-  }, [getAccessTokenSilently, isAuthenticated]);
+  }, []);
 
   const actualizarEstado = async (id, nuevoEstado) => {
     try {
@@ -664,7 +648,6 @@ export default function IncidentesList() {
       const t = d ? parseDateValue(d) : null;
       if (fromTs != null && t != null && t < fromTs) return false;
       if (toTs != null && t != null && t > toTs) return false;
-      // si no tiene fecha, lo dejamos pasar (o cámbialo a false si quieres excluirlos)
 
       // text search
       if (!text) return true;
@@ -724,7 +707,6 @@ export default function IncidentesList() {
     doc.setFontSize(14);
     doc.text("Reporte de Incidentes", 40, 30);
 
-    // autotable seguro
     if (typeof doc.autoTable !== "function") {
       alert("autoTable no está disponible. Revisa la importación de jspdf-autotable.");
       return;

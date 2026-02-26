@@ -1,72 +1,132 @@
-// server/modules/iam/routes/actions.context.routes.js
-import { Router } from "express";
-import IamUser from "../models/IamUser.model.js";
+import mongoose from "mongoose";
 
-const r = Router();
+const IamUserSchema = new mongoose.Schema(
+  {
+    /* =========================================================
+       IDENTIDAD
+    ========================================================= */
 
-function normEmail(v) {
-  return String(v || "").trim().toLowerCase();
-}
+    email: {
+      type: String,
+      required: true,
+      lowercase: true,
+      trim: true,
+    },
 
-function mustActionsKey(req) {
-  const expected = String(process.env.SENAF_ACTIONS_KEY || "").trim();
-  const got = String(req.header("x-actions-key") || "").trim();
-  if (!expected || got !== expected) {
-    const err = new Error("Unauthorized");
-    err.status = 401;
-    throw err;
+    name: {
+      type: String,
+      trim: true,
+    },
+
+    active: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
+    /* =========================================================
+       AUTENTICACIÓN
+    ========================================================= */
+
+    provider: {
+      type: String,
+      enum: ["local", "external"],
+      default: "local", // ✅ ahora SENAF es el proveedor principal
+      index: true,
+    },
+
+    passwordHash: {
+      type: String,
+      select: false,
+    },
+
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+    },
+
+    passwordChangedAt: {
+      type: Date,
+    },
+
+    passwordExpiresAt: {
+      type: Date,
+    },
+
+    /* =========================================================
+       CLAVE TEMPORAL (PRELOGIN)
+    ========================================================= */
+
+    tempPassHash: {
+      type: String,
+      select: false,
+      default: "",
+    },
+
+    tempPassExpiresAt: {
+      type: Date,
+      default: null,
+    },
+
+    tempPassUsedAt: {
+      type: Date,
+      default: null,
+    },
+
+    tempPassAttempts: {
+      type: Number,
+      default: 0,
+    },
+
+    /* =========================================================
+       RBAC
+    ========================================================= */
+
+    roles: {
+      type: [String],
+      default: [],
+      index: true,
+    },
+
+    perms: {
+      type: [String],
+      default: [],
+    },
+
+    /* =========================================================
+       CAMPOS LEGACY (opcional, no obligatorios)
+       Mantener solo si necesitas migraciones antiguas
+    ========================================================= */
+
+    externalId: {
+      type: String,
+      trim: true,
+      sparse: true,
+    },
+
+    legacySub: {
+      type: String,
+      trim: true,
+      sparse: true,
+    },
+  },
+  {
+    timestamps: true,
+    collection: "iamusers",
   }
-}
+);
 
-/**
- * GET /api/iam/v1/actions/context?email=...
- * - Lo llama Auth0 Action (Post Login)
- * - Devuelve roles/perms + mustReset (si debe forzar cambio de clave)
- */
-r.get("/context", async (req, res, next) => {
-  try {
-    mustActionsKey(req);
+/* =========================================================
+   ÍNDICES
+========================================================= */
 
-    const email = normEmail(req.query.email);
-    if (!email) return res.status(400).json({ ok: false, error: "email requerido" });
+// Email único
+IamUserSchema.index({ email: 1 }, { unique: true });
 
-    const u = await IamUser.findOne({ email }).lean();
+// externalId único (si se usa)
+IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
 
-    // Visitante (no existe en IAM)
-    if (!u) {
-      return res.json({
-        ok: true,
-        email,
-        roles: ["visita"],
-        perms: [],
-        mustReset: false,
-        provider: "auth0",
-        active: true,
-      });
-    }
+// legacySub opcional
+IamUserSchema.index({ legacySub: 1 }, { unique: true, sparse: true });
 
-    const active = u.active !== false;
-
-    // Si está desactivado: no permisos/roles (se comporta como visita)
-    const roles = active && Array.isArray(u.roles) ? u.roles : [];
-    const perms = active && Array.isArray(u.perms) ? u.perms : [];
-
-    // ✅ bandera que usará la Action
-    const mustReset = active && u.mustChangePassword === true;
-
-    return res.json({
-      ok: true,
-      email,
-      roles: roles.length ? roles : ["visita"],
-      perms,
-      mustReset,
-      userId: String(u._id),
-      provider: u.provider || "auth0",
-      active,
-    });
-  } catch (e) {
-    next(e);
-  }
-});
-
-export default r;
+export default mongoose.model("IamUser", IamUserSchema);

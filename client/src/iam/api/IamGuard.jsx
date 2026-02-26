@@ -1,6 +1,5 @@
 // client/src/iam/api/IamGuard.jsx
 import React, { useEffect, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
 import { iamApi } from "../api/iamApi";
 
 // 🌍 Detectar si estamos en localhost
@@ -10,11 +9,14 @@ const IS_LOCALHOST =
     window.location.hostname === "127.0.0.1");
 
 // 📧 Super-admin por correo (configurable por env)
-const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "").toLowerCase();
+const SUPERADMIN_EMAIL = String(
+  import.meta.env.VITE_SUPERADMIN_EMAIL || ""
+).toLowerCase();
 
 // 🌐 Entorno (por convención tuya: VITE_ENV=production)
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
-const IS_PROD = VITE_ENV === "production";
+const MODE = String(import.meta.env.MODE || "").toLowerCase();
+const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
 // 🔓 Skip IAM SOLO en localhost o flags explícitos
 const SKIP_IAM =
@@ -22,6 +24,21 @@ const SKIP_IAM =
   String(import.meta.env.VITE_SKIP_VERIFY || "") === "1" ||
   String(import.meta.env.VITE_DISABLE_AUTH || "") === "1" ||
   String(import.meta.env.VITE_FORCE_DEV_IAM || "") === "1";
+
+/* =========================================================
+   ✅ Cache global para evitar múltiples /me por cada IamGuard
+   - 1 sola llamada por sesión (mientras no recargues página)
+   - si falla, cachea el fallo para no spamear el backend
+========================================================= */
+let _mePromise = null;
+let _meCache = null; // { ok:true, roles, perms, email } OR { ok:false }
+function resetIamMeCache() {
+  _mePromise = null;
+  _meCache = null;
+}
+
+// opcional: si tu app hace logout, puedes llamar resetIamMeCache()
+// desde fuera, pero aquí no lo exporto para no romper imports.
 
 function asArr(v) {
   if (!v) return [];
@@ -40,12 +57,83 @@ function normalizePerms(v) {
     .filter(Boolean);
 }
 
+function pickEmailFromMe(me) {
+  return String(
+    me?.email ||
+      me?.user?.email ||
+      me?.data?.email ||
+      me?.profile?.email ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function pickAuthUserFromMe(me) {
+  // Algunos backends devuelven profile/user
+  const u = me?.user || me?.profile || me?.data?.user || null;
+  return u && typeof u === "object" ? u : null;
+}
+
+async function getMeCached() {
+  if (_meCache) return _meCache;
+
+  if (!_mePromise) {
+    _mePromise = (async () => {
+      try {
+        const me = await iamApi.me(undefined);
+
+        let roles = me?.roles || me?.user?.roles || me?.data?.roles || [];
+        let perms =
+          me?.perms ||
+          me?.permissions ||
+          me?.data?.perms ||
+          me?.data?.permissions ||
+          [];
+
+        roles = normalizeRoles(roles);
+        perms = normalizePerms(perms);
+
+        const emailFromMe = pickEmailFromMe(me);
+        const authUser = pickAuthUserFromMe(me);
+        const emailFromProfile =
+          String(authUser?.email || authUser?.correo || "").trim().toLowerCase();
+
+        // Superadmin por correo => wildcard
+        const isSuperadmin =
+          !!SUPERADMIN_EMAIL &&
+          (emailFromMe === SUPERADMIN_EMAIL || emailFromProfile === SUPERADMIN_EMAIL);
+
+        if (isSuperadmin) {
+          roles = Array.from(new Set([...roles, "admin"]));
+          perms = Array.from(new Set([...perms, "*"]));
+        }
+
+        const out = { ok: true, roles, perms, email: emailFromMe };
+        _meCache = out;
+        return out;
+      } catch (e) {
+        const out = { ok: false, roles: [], perms: [], email: "" };
+        _meCache = out;
+
+        if (!IS_PROD) {
+          // eslint-disable-next-line no-console
+          console.warn("[IamGuard] fallo /me:", e?.message || e);
+        }
+        return out;
+      }
+    })();
+  }
+
+  return _mePromise;
+}
+
 /**
  * IamGuard
  * Props:
  * - requirePerm: string (p.ej. "iam.users.manage")
- * - anyOf: string | string[]   ✅ acepta roles o permisos
- * - allOf: string | string[]   ✅ acepta roles o permisos
+ * - anyOf: string | string[]   ✅ acepta roles o permisos (compat)
+ * - allOf: string | string[]   ✅ acepta roles o permisos (compat)
  * - requireRole: string | string[]
  * - fallback: ReactNode
  */
@@ -57,13 +145,11 @@ export default function IamGuard({
   fallback = null,
   children,
 }) {
-  const { user, isAuthenticated, getAccessTokenSilently } = useAuth0();
-
   // En modo skip => admin + wildcard
   const [state, setState] = useState(
     SKIP_IAM
-      ? { loading: false, roles: ["admin"], perms: ["*"] }
-      : { loading: true, roles: [], perms: [] }
+      ? { loading: false, roles: ["admin"], perms: ["*"], email: "" }
+      : { loading: true, roles: [], perms: [], email: "" }
   );
 
   useEffect(() => {
@@ -72,96 +158,23 @@ export default function IamGuard({
     let cancel = false;
 
     (async () => {
-      try {
-        // Si NO está autenticado, no intentamos /me (evita estado raro sin token)
-        if (!isAuthenticated) {
-          if (!cancel) setState({ loading: false, roles: [], perms: [] });
-          return;
-        }
+      const d = await getMeCached();
+      if (cancel) return;
 
-        // Token Auth0 (obligatorio para prod)
-        let token = null;
-        try {
-          token = await getAccessTokenSilently({
-            authorizationParams: {
-              audience: import.meta.env.VITE_AUTH0_AUDIENCE,
-            },
-          });
-        } catch (e) {
-          console.warn("[IamGuard] no se pudo obtener access token:", e?.message || e);
-        }
-
-        if (!token) {
-          // En producción: sin token = sin permisos
-          if (!cancel) setState({ loading: false, roles: [], perms: [] });
-          return;
-        }
-
-        // Consulta al backend
-        const me = await iamApi.me(token);
-
-        // email desde IAM
-        const emailFromMe = String(
-          me?.email ||
-            me?.user?.email ||
-            me?.data?.email ||
-            me?.profile?.email ||
-            ""
-        ).toLowerCase();
-
-        // email desde Auth0
-        const emailFromAuth0 = String(user?.email || "").toLowerCase();
-
-        // roles/perms desde backend
-        let roles =
-          me?.roles || me?.user?.roles || me?.data?.roles || [];
-        let perms =
-          me?.perms ||
-          me?.permissions ||
-          me?.data?.perms ||
-          me?.data?.permissions ||
-          [];
-
-        roles = normalizeRoles(roles);
-        perms = normalizePerms(perms);
-
-        // Superadmin por correo => wildcard
-        const isSuperadmin =
-          SUPERADMIN_EMAIL &&
-          (emailFromMe === SUPERADMIN_EMAIL || emailFromAuth0 === SUPERADMIN_EMAIL);
-
-        if (isSuperadmin) {
-          roles = Array.from(new Set([...roles, "admin"]));
-          perms = Array.from(new Set([...perms, "*"]));
-        }
-
-        if (!cancel) {
-          setState({ loading: false, roles, perms });
-        }
-      } catch (e) {
-        const emailFromAuth0 = String(user?.email || "").toLowerCase();
-        const isSuperadmin = SUPERADMIN_EMAIL && emailFromAuth0 === SUPERADMIN_EMAIL;
-
-        if (!cancel) {
-          if (isSuperadmin) {
-            setState({ loading: false, roles: ["admin"], perms: ["*"] });
-          } else {
-            setState({ loading: false, roles: [], perms: [] });
-          }
-        }
-
-        if (!IS_PROD) {
-          console.warn("[IamGuard] fallo /me:", e?.message || e);
-        }
+      if (d?.ok) {
+        setState({ loading: false, roles: d.roles || [], perms: d.perms || [], email: d.email || "" });
+      } else {
+        setState({ loading: false, roles: [], perms: [], email: "" });
       }
     })();
 
     return () => {
       cancel = true;
     };
-  }, [user, isAuthenticated, getAccessTokenSilently]);
+  }, []);
 
-  if (state.loading) return <div className="p-6">Cargando…</div>;
+  // ✅ Mantener estructura UI sin “romper” layout: si loading y fallback existe, úsalo
+  if (state.loading) return fallback || <div className="p-6">Cargando…</div>;
 
   // Sets normalizados
   const roleSet = new Set((state.roles || []).map((r) => String(r).toLowerCase()));
@@ -190,6 +203,7 @@ export default function IamGuard({
 
     const raw = String(k);
     const low = raw.toLowerCase();
+    // compat: cualquier string puede ser permiso o rol (tu diseño actual)
     return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
   };
 
@@ -212,5 +226,5 @@ export default function IamGuard({
   if (asArr(allOf).length) ok = ok && hasAll(allOf);
   if (requireRole) ok = ok && hasRole(requireRole);
 
-  return ok ? <>{children}</> : (fallback || <div className="p-6">No autorizado</div>);
+  return ok ? <>{children}</> : fallback || <div className="p-6">No autorizado</div>;
 }

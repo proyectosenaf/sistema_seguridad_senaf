@@ -33,19 +33,24 @@ function splitCsv(v) {
 
 export const env = {
   node: process.env.NODE_ENV || "development",
-  // ✅ En DO App Platform normalmente viene PORT
+
+  // Puerto (DO App Platform usa PORT)
   port: Number(process.env.PORT || process.env.API_PORT || 4000),
+
+  // Mongo
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URI || null,
-  auth0: {
-    domain: process.env.AUTH0_DOMAIN,
-    audience: process.env.AUTH0_AUDIENCE,
-  },
-  // ✅ Soporta ambos nombres (tu server.js usa CORS_ORIGINS o CORS_ORIGIN)
+
+  // CORS
   corsOrigin: splitCsv(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN),
+
+  // Auth local (HS256)
+  jwtSecret: process.env.JWT_SECRET || "dev_secret",
+
+  // Flags útiles
+  disableAuth: process.env.DISABLE_AUTH === "1",
 };
 
 if (!env.mongoUri) console.error("[env] ❌ Missing mongoUri (define MONGODB_URI)");
-if (!env.auth0.domain || !env.auth0.audience)
-  console.warn(
-    "[env] ⚠️ AUTH0_DOMAIN o AUTH0_AUDIENCE no definidos (Auth0 desactivado)"
-  );
+if (!process.env.JWT_SECRET) {
+  console.warn("[env] ⚠️ JWT_SECRET no definido; usando dev_secret (NO recomendado en producción)");
+}

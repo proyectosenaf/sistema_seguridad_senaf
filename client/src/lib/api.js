@@ -27,190 +27,22 @@ export const API = API_ROOT;
 export const SOCKET_BASE = SOCKET_HOST;
 export const SOCKET_BASE_URL = SOCKET_HOST;
 
-const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
-const FORCE_DEV_API = import.meta.env.VITE_FORCE_DEV_API === "1";
-
-// Detectar producción de forma robusta en Vite
-const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
-const MODE = String(import.meta.env.MODE || "").toLowerCase();
-const IS_PROD = VITE_ENV === "production" || MODE === "production";
-
-const DEBUG_API = String(import.meta.env.VITE_API_DEBUG || "") === "1";
-
-function isLocalhostRuntime() {
-  if (typeof window === "undefined") return false;
-  const h = window.location.hostname;
-  return h === "localhost" || h === "127.0.0.1";
-}
-
-function getDevIdentity() {
-  const email =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevEmail")) ||
-    import.meta.env.VITE_DEV_IAM_EMAIL ||
-    "";
-
-  const roles =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevRoles")) ||
-    import.meta.env.VITE_DEV_IAM_ROLES ||
-    "";
-
-  const perms =
-    (typeof localStorage !== "undefined" && localStorage.getItem("iamDevPerms")) ||
-    import.meta.env.VITE_DEV_IAM_PERMS ||
-    "*";
-
-  return {
-    email: String(email || "").trim(),
-    roles: String(roles || "").trim(),
-    perms: String(perms || "*").trim() || "*",
-  };
-}
-
-/** Axios instance */
+/** Axios instance (JWT local por Authorization header) */
 const api = axios.create({
   baseURL: API_ROOT,
-  withCredentials: true,
+  withCredentials: false, // ✅ JWT por header, no cookies
   timeout: 30000,
 });
 
-let tokenProvider = null;
-
-/** Inyecta provider async() => token|null (Auth0) */
-export function attachAuth0(provider) {
-  tokenProvider = typeof provider === "function" ? provider : null;
-}
-export function setAuthToken(provider) {
-  tokenProvider = typeof provider === "function" ? provider : null;
-}
-
-/** Helpers para token local */
-export function setLocalToken(token) {
-  try {
-    if (typeof localStorage !== "undefined") {
-      if (token) localStorage.setItem("token", String(token));
-      else localStorage.removeItem("token");
-    }
-  } catch {}
-}
-export function clearLocalToken() {
-  return setLocalToken(null);
-}
-
-function getLocalToken() {
-  try {
-    if (typeof localStorage === "undefined") return null;
-    const t = localStorage.getItem("token");
-    return t ? String(t).trim() : null;
-  } catch {
-    return null;
+// ✅ Adjunta token local automáticamente (si existe)
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("senaf_token");
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
   }
-}
-
-/** set header compatible con AxiosHeaders y objetos */
-function setHeader(config, key, value) {
-  if (!config.headers) config.headers = {};
-  if (typeof config.headers.set === "function") config.headers.set(key, value);
-  else config.headers[key] = value;
-}
-
-function looksLikeJwt(t) {
-  return typeof t === "string" && t.split(".").length === 3;
-}
-
-function normalizeToken(t) {
-  if (typeof t !== "string") return null;
-  const s = t.trim();
-  return s ? s : null;
-}
-
-// ✅ No mandar Authorization en endpoints públicos de auth
-function isPublicAuthEndpoint(config) {
-  const url = String(config?.url || "");
-
-  // IAM auth público/local
-  if (url.includes("/iam/v1/auth/login")) return true;
-  if (url.includes("/iam/v1/auth/bootstrap")) return true;
-
-  // ✅ NUEVO: OTP empleado
-  if (url.includes("/iam/v1/auth/login-otp")) return true;
-  if (url.includes("/iam/v1/auth/verify-otp")) return true;
-  if (url.includes("/iam/v1/auth/change-password")) return true;
-
-  // ✅ NUEVO: OTP visitante
-  if (url.includes("/public/v1/auth/start")) return true;
-  if (url.includes("/public/v1/auth/verify")) return true;
-
-  return false;
-}
-
-// ✅ Detectar endpoints de IAM v1 (para no mandar token local HS256 en PROD)
-function isIamV1Endpoint(config) {
-  const url = String(config?.url || "");
-  return url.includes("/iam/v1/");
-}
-
-api.interceptors.request.use(
-  async (config) => {
-    // ✅ IMPORTANTÍSIMO: auth endpoints deben ir sin Authorization
-    if (isPublicAuthEndpoint(config)) {
-      if (DEBUG_API) console.log("[api] public auth endpoint:", config.url);
-      return config;
-    }
-
-    // DEV headers cuando auth está deshabilitado
-    if (DISABLE_AUTH) {
-      const shouldSendDevHeaders = DISABLE_AUTH || FORCE_DEV_API || isLocalhostRuntime();
-      if (shouldSendDevHeaders) {
-        const { email, roles, perms } = getDevIdentity();
-        if (email) setHeader(config, "x-user-email", email);
-        if (roles) setHeader(config, "x-roles", roles);
-        setHeader(config, "x-perms", perms || "*");
-      }
-      return config;
-    }
-
-    // 1) token Auth0 (RS256) desde provider
-    let token = null;
-    if (tokenProvider) {
-      try {
-        token = normalizeToken(await tokenProvider());
-      } catch (err) {
-        if (DEBUG_API) console.warn("[api] tokenProvider failed:", err);
-        token = null;
-      }
-    }
-
-    // ✅ Solo seteamos Authorization si token existe y parece JWT
-    if (token && looksLikeJwt(token)) {
-      setHeader(config, "Authorization", `Bearer ${token}`);
-      return config;
-    }
-
-    /**
-     * 2) fallback token local (HS256)
-     * ✅ PERO: en PRODUCCIÓN NO se permite para /iam/v1/*
-     */
-    if (!(IS_PROD && isIamV1Endpoint(config))) {
-      const localToken = normalizeToken(getLocalToken());
-      if (localToken && looksLikeJwt(localToken)) {
-        setHeader(config, "Authorization", `Bearer ${localToken}`);
-        return config;
-      }
-    }
-
-    // 3) dev headers (solo entornos dev/local)
-    const shouldSendDevHeaders = FORCE_DEV_API || isLocalhostRuntime();
-    if (shouldSendDevHeaders) {
-      const { email, roles, perms } = getDevIdentity();
-      if (email) setHeader(config, "x-user-email", email);
-      if (roles) setHeader(config, "x-roles", roles);
-      setHeader(config, "x-perms", perms || "*");
-    }
-
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+  return config;
+});
 
 export default api;
 export { api };

@@ -1,6 +1,6 @@
 // client/src/components/Sidebar.jsx
 import React from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
   DoorOpen,
@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   LogOut,
 } from "lucide-react";
-import { useAuth0 } from "@auth0/auth0-react";
+
 
 const NAV_ITEMS = [
   { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },
@@ -52,11 +52,16 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={[base, active ? activeCls : inactive, emphasizeCls].filter(Boolean).join(" ")}
+      className={[base, active ? activeCls : inactive, emphasizeCls]
+        .filter(Boolean)
+        .join(" ")}
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
+        <Icon
+          className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white"
+          strokeWidth={2}
+        />
         <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
           {label}
         </span>
@@ -66,15 +71,17 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
 }
 
 export default function Sidebar({ onNavigate }) {
-  const { isAuthenticated, logout } = useAuth0();
+  const nav = useNavigate();
+  const { isAuthenticated, logout } = useAuth();
 
   const handleLogoutClick = () => {
     onNavigate?.();
     try {
-      const returnTo = `${window.location.origin}/login`;
-      logout({ logoutParams: { returnTo, federated: true } });
+      logout?.(); // ✅ limpiar sesión local
     } catch (err) {
       console.error("Error al cerrar sesión:", err);
+    } finally {
+      nav("/login", { replace: true }); // ✅ volver a login
     }
   };
 
@@ -117,7 +124,10 @@ export default function Sidebar({ onNavigate }) {
               "hover:bg-white/70 dark:hover:bg-neutral-900/45",
             ].join(" ")}
           >
-            <LogOut className="w-5 h-5 text-neutral-900 dark:text-white" strokeWidth={2.5} />
+            <LogOut
+              className="w-5 h-5 text-neutral-900 dark:text-white"
+              strokeWidth={2.5}
+            />
             <span className="font-medium">Salir</span>
           </button>
         )}

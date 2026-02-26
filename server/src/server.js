@@ -13,19 +13,16 @@ import fs from "node:fs";
 
 // Importando el middleware para forzar cambio de contraseña
 import forcePasswordChange from "./middleware/forcePasswordChange.js";
-// (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo Auth0/local sin ver su implementación)
+// (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo)
 
-// Auth
-import { requireAuth, attachAuthUser } from "./middleware/auth.js";
+// ✅ AUTH LOCAL (JWT HS256) – centralizado en IAM utils
+import { makeAuthMw } from "../modules/iam/utils/auth.util.js";
 
 // IAM context builder
 import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 
-// ✅ NUEVO: Reset password (Auth0 change_password)
-import passwordResetRoutes from "../modules/iam/routes/password-reset.routes.js";
-
-// ✅ NUEVO: Auth público para visitantes (OTP por email)
-import publicAuthRoutes from "../modules/public/routes/public.auth.routes.js";
+// ✅ Auth OTP (visitantes) desde IAM (sin módulo public)
+import iamOtpAuthRoutes from "../modules/iam/routes/auth.otp.routes.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -127,6 +124,7 @@ function devIdentity(req, _res, next) {
     .toLowerCase()
     .trim();
 
+  // ✅ en dev, simulamos identidad (sub/email)
   req.authUser = { sub: "dev|local", email, name: "DEV USER" };
 
   req.auth = req.auth || {};
@@ -134,6 +132,7 @@ function devIdentity(req, _res, next) {
     sub: req.authUser.sub,
     email: req.authUser.email,
     name: req.authUser.name,
+    provider: "local",
   };
 
   return next();
@@ -166,11 +165,13 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── ✅ PUBLIC AUTH (VISITANTES) ✅ ───────────────────── */
 /**
- * Visitantes: OTP por email sin estar en IAM.
- * Montado temprano, no depende de Auth0.
+ * Visitantes: OTP por email
+ * ✅ SIN módulo public duplicado: usamos el router OTP de IAM como “public”
+ *
+ * Nota: este router debe NO requerir auth (por diseño OTP).
  */
-app.use("/api/public/v1/auth", publicAuthRoutes);
-app.use("/public/v1/auth", publicAuthRoutes);
+app.use("/api/public/v1/auth", iamOtpAuthRoutes);
+app.use("/public/v1/auth", iamOtpAuthRoutes);
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
 
@@ -229,6 +230,13 @@ console.log("[db] MongoDB conectado");
 
 /* ─────────────────── Auth opcional (GLOBAL) ──────────────────── */
 
+/**
+ * ✅ AUTH LOCAL:
+ * - Si hay Authorization Bearer => valida y deja req.auth.payload
+ * - Si no hay Bearer => visitor (pasa)
+ */
+const requireAuth = makeAuthMw();
+
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
   const h = String(req.headers.authorization || "");
@@ -238,22 +246,34 @@ function optionalAuth(req, res, next) {
 app.use(optionalAuth);
 
 /**
- * 1) Normaliza usuario desde JWT -> req.user
+ * 1) Adjunta usuario normalizado desde req.auth.payload -> req.user (local)
  */
+function attachAuthUser(req, _res, next) {
+  if (req?.auth?.payload) {
+    req.user = {
+      sub: req.auth.payload.sub || null,
+      email: req.auth.payload.email || null,
+      name: req.auth.payload.name || null,
+      provider: req.auth.payload.provider || "local",
+    };
+  }
+  next();
+}
 app.use(attachAuthUser);
 
 /**
  * 2) Construye contexto IAM en req.iam si hay señales de identidad
+ * ✅ roles/perms 100% desde DB (IamUser + IamRole)
  */
 app.use(async (req, _res, next) => {
   try {
-    const hasAuth0 = !!req?.auth?.payload;
+    const hasPayload = !!req?.auth?.payload;
     const hasBearer = String(req.headers.authorization || "")
       .toLowerCase()
       .startsWith("bearer ");
     const hasDevEmail = !!req.headers["x-user-email"];
 
-    if (!(hasAuth0 || hasBearer || hasDevEmail)) return next();
+    if (!(hasPayload || hasBearer || hasDevEmail)) return next();
 
     req.iam = await buildContextFrom(req);
     return next();
@@ -261,13 +281,6 @@ app.use(async (req, _res, next) => {
     return next(e);
   }
 });
-
-/* ───────────────────── ✅ NUEVO: password reset ✅ ───────────────────── */
-/**
- * Montado ANTES del IAM module para que no lo opaque un /auth router interno.
- * Solo maneja /request-password-reset y deja pasar el resto.
- */
-app.use("/api/iam/v1/auth", passwordResetRoutes);
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });

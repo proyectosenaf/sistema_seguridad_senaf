@@ -1,9 +1,7 @@
 // server/modules/iam/utils/rbac.util.js
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
-
 import jwt from "jsonwebtoken";
-import axios from "axios";
 
 console.log("[iam] boot", {
   NODE_ENV: process.env.NODE_ENV,
@@ -11,10 +9,7 @@ console.log("[iam] boot", {
   SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL,
   IAM_ALLOW_DEV_HEADERS: process.env.IAM_ALLOW_DEV_HEADERS,
   ROOT_ADMINS: process.env.ROOT_ADMINS,
-  IAM_EMAIL_CLAIM: process.env.IAM_EMAIL_CLAIM,
-  IAM_CLAIMS_NAMESPACE: process.env.IAM_CLAIMS_NAMESPACE,
   IAM_DEFAULT_VISITOR_ROLE: process.env.IAM_DEFAULT_VISITOR_ROLE,
-  AUTH0_MGMT_DOMAIN: process.env.AUTH0_MGMT_DOMAIN ? "[set]" : "[missing]",
 });
 
 export function parseList(v) {
@@ -35,143 +30,32 @@ function withTimeout(promise, ms, label = "op") {
 }
 
 /* =========================
-   Auth0 Management helpers
+   JWT local helpers (HS256)
    ========================= */
-function normalizeDomain(d) {
-  return String(d || "")
-    .replace(/^https?:\/\//i, "")
-    .replace(/\/+$/g, "")
-    .trim();
+function getBearer(req) {
+  const h = String(req?.headers?.authorization || "");
+  if (!h.toLowerCase().startsWith("bearer ")) return null;
+  const token = h.slice(7).trim();
+  return token || null;
 }
 
-let _mgmtToken = null;
-let _mgmtTokenExp = 0;
-
-async function getMgmtToken() {
-  const domain = normalizeDomain(process.env.AUTH0_MGMT_DOMAIN);
-  const client_id = process.env.AUTH0_MGMT_CLIENT_ID;
-  const client_secret = process.env.AUTH0_MGMT_CLIENT_SECRET;
-
-  if (!domain || !client_id || !client_secret) return null;
-
-  const now = Date.now();
-  if (_mgmtToken && now < _mgmtTokenExp - 30_000) return _mgmtToken;
-
-  const url = `https://${domain}/oauth/token`;
-
-  const r = await withTimeout(
-    axios.post(
-      url,
-      {
-        grant_type: "client_credentials",
-        client_id,
-        client_secret,
-        audience: `https://${domain}/api/v2/`,
-      },
-      { timeout: 6000 }
-    ),
-    7000,
-    "auth0.mgmt.token"
-  );
-
-  const token = r?.data?.access_token || null;
-  const expiresIn = Number(r?.data?.expires_in || 3600);
-  if (!token) return null;
-
-  _mgmtToken = token;
-  _mgmtTokenExp = now + expiresIn * 1000;
-  return token;
-}
-
-async function getEmailFromAuth0BySub(auth0Sub) {
-  try {
-    const domain = normalizeDomain(process.env.AUTH0_MGMT_DOMAIN);
-    if (!domain) return null;
-
-    const token = await getMgmtToken();
-    if (!token) return null;
-
-    const r = await withTimeout(
-      axios.get(`https://${domain}/api/v2/users/${encodeURIComponent(auth0Sub)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 6000,
-      }),
-      7000,
-      "auth0.mgmt.getUser"
-    );
-
-    const email = r?.data?.email;
-    return email ? String(email).toLowerCase().trim() : null;
-  } catch (e) {
-    const msg =
-      e?.response?.data?.message ||
-      e?.response?.data ||
-      e?.message ||
-      String(e);
-    console.warn("[iam] auth0 mgmt get email failed:", msg);
-    return null;
-  }
-}
-
-/**
- * Extrae payload:
- * 1) Auth0 (RS256) -> req.auth.payload (ya verificado)
- * 2) Local JWT (HS256) -> Authorization Bearer + JWT_SECRET
- */
 function getJwtPayload(req) {
-  if (req?.auth?.payload) {
-    return { payload: req.auth.payload, source: "auth0" };
-  }
-
-  const authHeader = req?.headers?.authorization || "";
-  const parts = String(authHeader).split(" ");
-  const token = parts.length === 2 ? parts[1] : null;
+  const token = getBearer(req);
   if (!token) return { payload: null, source: "none" };
 
   try {
-    const p = jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+    const p = jwt.verify(token, process.env.JWT_SECRET || "dev_secret", {
+      algorithms: ["HS256"],
+    });
     return { payload: p, source: "local" };
   } catch {
     return { payload: null, source: "none" };
   }
 }
 
-function getAuth0Sub(payload) {
-  const sub = payload?.sub;
-  return sub ? String(sub).trim() : null;
-}
-
-/** Normaliza namespace base (sin slash final) */
-function normalizeBaseNs(ns) {
-  const s = String(ns || "").trim();
-  if (!s) return "";
-  return s.replace(/\/+$/g, "");
-}
-
-function claim(baseNs, key) {
-  const b = normalizeBaseNs(baseNs);
-  return b ? `${b}/${key}` : "";
-}
-
 function getEmailFromPayload(payload) {
   if (!payload) return null;
-
-  // 1) email estándar
   if (payload.email) return String(payload.email).toLowerCase().trim();
-
-  // 2) claim exacto configurable
-  const exact = String(process.env.IAM_EMAIL_CLAIM || "").trim();
-  if (exact && payload[exact]) return String(payload[exact]).toLowerCase().trim();
-
-  // 3) namespace base: https://senaf => https://senaf/email
-  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
-  const nsEmail = payload[claim(baseNs, "email")];
-  if (nsEmail) return String(nsEmail).toLowerCase().trim();
-
-  // 4) fallback compat
-  if (payload["https://senaf/email"]) return String(payload["https://senaf/email"]).toLowerCase().trim();
-  if (payload["https://senaf.local/email"]) return String(payload["https://senaf.local/email"]).toLowerCase().trim();
-
   return null;
 }
 
@@ -181,67 +65,8 @@ function getDefaultVisitorRole() {
     .toLowerCase();
 }
 
-function parseRolesFromPayload(payload) {
-  if (!payload) return [];
-  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
-
-  const rolesRaw =
-    payload[claim(baseNs, "roles")] ||
-    payload["https://senaf/roles"] ||
-    payload["https://senaf.local/roles"] ||
-    payload.roles ||
-    [];
-
-  const arr = Array.isArray(rolesRaw) ? rolesRaw : [rolesRaw];
-  return Array.from(
-    new Set(
-      arr
-        .map((r) => String(r || "").trim().toLowerCase())
-        .filter(Boolean)
-    )
-  );
-}
-
-function parsePermsFromPayload(payload) {
-  if (!payload) return [];
-  const baseNs = normalizeBaseNs(process.env.IAM_CLAIMS_NAMESPACE || "https://senaf");
-
-  // 1) Namespaced permissions (tu Action)
-  const nsPerms = payload[claim(baseNs, "permissions")] || payload["https://senaf/permissions"];
-  let perms = Array.isArray(nsPerms) ? nsPerms : [];
-
-  // 2) Auth0 RBAC permissions (string[])
-  if ((!perms || perms.length === 0) && Array.isArray(payload.permissions)) {
-    perms = payload.permissions;
-  }
-
-  // 3) scope
-  if ((!perms || perms.length === 0) && typeof payload.scope === "string") {
-    perms = payload.scope
-      .split(" ")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-
-  // 4) fallback
-  if ((!perms || perms.length === 0) && Array.isArray(payload.perms)) {
-    perms = payload.perms;
-  }
-
-  return Array.from(
-    new Set(
-      (perms || [])
-        .map((p) => String(p || "").trim())
-        .filter(Boolean)
-    )
-  );
-}
-
 export async function buildContextFrom(req) {
-  const { payload, source } = getJwtPayload(req);
-
-  const auth0Sub = getAuth0Sub(payload);
-  const jwtEmail = getEmailFromPayload(payload);
+  const { payload } = getJwtPayload(req);
 
   const IS_PROD = process.env.NODE_ENV === "production";
   const allowDevHeaders =
@@ -249,33 +74,18 @@ export async function buildContextFrom(req) {
 
   const headerEmail = allowDevHeaders ? req?.headers?.["x-user-email"] : null;
 
+  const jwtEmail = getEmailFromPayload(payload);
   let email = (jwtEmail || headerEmail || "").toLowerCase().trim() || null;
-
-  // Si viene sub Auth0 pero no email, resolverlo vía Management API
-  if (!email && auth0Sub && source === "auth0") {
-    email = await getEmailFromAuth0BySub(auth0Sub);
-  }
 
   const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
   const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
 
-  // Roles/perms desde token (Auth0 Action) si vienen:
-  const tokenRoles = source === "auth0" ? parseRolesFromPayload(payload) : [];
-  const tokenPerms = source === "auth0" ? parsePermsFromPayload(payload) : [];
+  const hasIdentity = !!payload && !!email;
 
   let user = null;
 
-  // Buscar por auth0Sub primero
-  if (auth0Sub) {
-    user = await withTimeout(
-      IamUser.findOne({ auth0Sub }).lean(),
-      4000,
-      "IamUser.findOne(auth0Sub)"
-    );
-  }
-
   // Buscar por email
-  if (!user && email) {
+  if (email) {
     user = await withTimeout(
       IamUser.findOne({ email }).lean(),
       4000,
@@ -283,11 +93,7 @@ export async function buildContextFrom(req) {
     );
   }
 
-  const hasIdentity = !!payload && (!!email || !!auth0Sub);
-
-  // ✅ Política:
-  // - Sí auto-crear VISITA en IAM para llevar control
-  // - Auto-crear bootstrap admin (superadmin/root) si no existe
+  // ✅ Auto-provision (solo si hay identidad)
   if (!user && hasIdentity) {
     const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
       String(x).toLowerCase().trim()
@@ -304,15 +110,13 @@ export async function buildContextFrom(req) {
     // 1) Bootstrap admin
     if (isBootstrapAdmin && email) {
       const doc = {
-        email: email || undefined,
-        name: email ? email.split("@")[0] : undefined,
-        auth0Sub: auth0Sub || undefined,
+        email,
+        name: email.split("@")[0],
         active: true,
-        provider: source === "local" ? "local" : "auth0",
+        provider: "local",
         roles: ["admin"],
         perms: ["*"],
 
-        // ✅ explícito: bootstrap admin NO usa prelogin
         mustChangePassword: false,
         tempPassHash: "",
         tempPassExpiresAt: null,
@@ -329,25 +133,22 @@ export async function buildContextFrom(req) {
         user = created.toObject();
         console.log(`[iam] auto-provisioned: ${doc.email} (ADMIN)`);
       } catch (e) {
-        // si chocó por unique, intenta leer
         const existing = email ? await IamUser.findOne({ email }).lean() : null;
         if (existing) user = existing;
         else console.warn("[iam] auto-provision failed:", e?.message || e);
       }
     }
 
-    // 2) Auto-provision VISITA (si no era bootstrap admin o si no se creó arriba)
+    // 2) Auto-provision VISITA
     if (!user && email) {
       const doc = {
         email,
         name: email.split("@")[0],
-        auth0Sub: auth0Sub || undefined,
         active: true,
-        provider: source === "local" ? "local" : "auth0",
+        provider: "local",
         roles: [getDefaultVisitorRole()],
         perms: [],
 
-        // ✅ visitas NO pasan por prelogin
         mustChangePassword: false,
         tempPassHash: "",
         tempPassExpiresAt: null,
@@ -364,7 +165,6 @@ export async function buildContextFrom(req) {
         user = created.toObject();
         console.log(`[iam] auto-provisioned: ${doc.email} (VISITA)`);
       } catch (e) {
-        // si chocó por unique (paralelo), intenta leerlo
         const existing = await IamUser.findOne({ email }).lean();
         if (existing) user = existing;
         else console.warn("[iam] visitor auto-provision failed:", e?.message || e);
@@ -372,34 +172,15 @@ export async function buildContextFrom(req) {
     }
   }
 
-  // Si existe user y falta auth0Sub, adjuntarlo
-  if (user && auth0Sub && !user.auth0Sub) {
-    try {
-      await withTimeout(
-        IamUser.updateOne({ _id: user._id }, { $set: { auth0Sub } }),
-        4000,
-        "IamUser.updateOne(attach-auth0Sub)"
-      );
-      user.auth0Sub = auth0Sub;
-    } catch (e) {
-      console.warn("[iam] could not attach auth0Sub:", e?.message || e);
-    }
-  }
-
   const normRole = (r) => String(r || "").trim().toLowerCase();
   const normPerm = (p) => String(p || "").trim();
 
-  // Fuente de roles:
-  // - Si existe usuario en IAM => su roles
-  // - Si NO existe (caso raro) => tokenRoles o defaultVisitorRole
-  // - + headers dev (si aplica)
   const defaultVisitorRole = getDefaultVisitorRole();
 
+  // Roles base: user.roles o visitor por defecto si hay identidad
   const baseRoles =
     user && Array.isArray(user.roles) && user.roles.length
       ? user.roles
-      : tokenRoles && tokenRoles.length
-      ? tokenRoles
       : hasIdentity
       ? [defaultVisitorRole]
       : [];
@@ -408,17 +189,8 @@ export async function buildContextFrom(req) {
     [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
   );
 
-  // Fuente de permisos:
-  // - IAM user perms (si existe)
-  // - tokenPerms (si vienen)
-  // - headers dev (si aplica)
-  const permSet = new Set(
-    [
-      ...((user?.perms || []).map(normPerm)),
-      ...(tokenPerms || []).map(normPerm),
-    ].filter(Boolean)
-  );
-
+  // Perms base: user.perms + headers dev
+  const permSet = new Set([...(user?.perms || []).map(normPerm)].filter(Boolean));
   if (allowDevHeaders) headerPerms.map(normPerm).filter(Boolean).forEach((p) => permSet.add(p));
 
   // Expand perms por roles desde IamRole
@@ -440,7 +212,9 @@ export async function buildContextFrom(req) {
     }
   }
 
-  const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+  const superEmail = String(process.env.SUPERADMIN_EMAIL || "")
+    .trim()
+    .toLowerCase();
   const isSuperAdmin = !!email && !!superEmail && email === superEmail;
 
   function has(perm) {
@@ -455,7 +229,6 @@ export async function buildContextFrom(req) {
   return {
     user,
     email,
-    auth0Sub,
     roles: [...roleNames],
     permissions: [...permSet],
     has,
@@ -477,7 +250,7 @@ export function requirePerm(perm) {
       req.iam = ctx;
 
       // Si no hay identidad, no autenticado
-      if (!ctx?.email && !ctx?.auth0Sub) {
+      if (!ctx?.email) {
         return res.status(401).json({ message: "No autenticado" });
       }
 
@@ -486,7 +259,6 @@ export function requirePerm(perm) {
           message: "forbidden",
           need: perm,
           email: ctx.email,
-          auth0Sub: ctx.auth0Sub,
           roles: ctx.roles,
           perms: ctx.permissions,
           visitor: ctx.isVisitor,
