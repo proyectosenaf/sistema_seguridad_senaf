@@ -2,7 +2,7 @@
 import React, { Suspense, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 
-// ✅ auth local (sin Auth0)
+// ✅ auth local (unificado)
 import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
 import Layout from "./components/Layout.jsx";
@@ -15,7 +15,7 @@ import ChangePassword from "./pages/auth/ChangePassword.jsx";
 // ✅ Pantalla para forzar cambio de contraseña
 const ForceChangePassword = React.lazy(() => import("./pages/ForceChangePassword.jsx"));
 
-// ✅ OTP (debe existir y exportar default)
+// ✅ OTP
 const VerifyOtp = React.lazy(() => import("./pages/auth/VerifyOtp.jsx"));
 
 // ---- Páginas (lazy)
@@ -144,7 +144,7 @@ function RoleRedirectInline() {
   return <div className="p-6">Redirigiendo…</div>;
 }
 
-/** Solo bloqueo de rutas privadas (sin attach*). */
+/** Solo bloqueo de rutas privadas. */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
@@ -152,14 +152,13 @@ function AuthTokenBridge({ children }) {
   const path = location?.pathname || "/";
   const isPublicRoute =
     path === "/login" ||
-    path === "/entry" || // legacy
-    path === "/callback" || // legacy
+    path === "/entry" ||
+    path === "/callback" ||
     path === "/force-change-password" ||
     path.startsWith("/verify") ||
     path === "/otp" ||
     path === "/change-password";
 
-  // En PROD: bloquea rutas privadas si no está logueado
   if (IS_PROD && !isLoading && !isAuthenticated && !isPublicRoute) {
     return (
       <div className="p-6">
@@ -181,17 +180,17 @@ export default function App() {
     <AuthTokenBridge>
       <Suspense fallback={<div className="p-6">Cargando…</div>}>
         <Routes>
-          {/* ✅ Login local */}
+          {/* Login */}
           <Route path="/login" element={<LoginLocal />} />
 
-          {/* ✅ Legacy Auth0 routes: alias */}
+          {/* Legacy Auth0 routes */}
           <Route path="/entry" element={<Navigate to="/login" replace />} />
           <Route path="/callback" element={<Navigate to="/login" replace />} />
 
-          {/* ✅ OTP */}
+          {/* OTP */}
           <Route path="/otp" element={<VerifyOtp />} />
 
-          {/* ✅ primer login / password vencida */}
+          {/* primer login / password vencida */}
           <Route path="/force-change-password" element={<ForceChangePassword />} />
 
           {/* Home */}
@@ -225,13 +224,7 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <IamGuardSuper
-                    anyOf={[
-                      "incidentes.read",
-                      "incidentes.create",
-                      "incidentes.edit",
-                      "incidentes.reports",
-                      "*",
-                    ]}
+                    anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
                   >
                     <IncidentesList />
                   </IamGuardSuper>
@@ -245,13 +238,7 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <IamGuardSuper
-                    anyOf={[
-                      "incidentes.read",
-                      "incidentes.create",
-                      "incidentes.edit",
-                      "incidentes.reports",
-                      "*",
-                    ]}
+                    anyOf={["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"]}
                   >
                     <IncidentesList />
                   </IamGuardSuper>
@@ -316,9 +303,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper
-                    anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}
-                  >
+                  <IamGuardSuper anyOf={["guardia", "rondasqr.view", "rondasqr.scan.qr", "rondasqr.scan.manual", "*"]}>
                     <RondasScan />
                   </IamGuardSuper>
                 </Layout>
@@ -442,9 +427,7 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Layout>
-                  <IamGuardSuper
-                    anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}
-                  >
+                  <IamGuardSuper anyOf={["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"]}>
                     <Supervision />
                   </IamGuardSuper>
                 </Layout>
@@ -457,14 +440,7 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <IamGuardSuper
-                    anyOf={[
-                      "evaluacion.list",
-                      "evaluacion.create",
-                      "evaluacion.edit",
-                      "evaluacion.reports",
-                      "evaluacion.kpi",
-                      "*",
-                    ]}
+                    anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}
                   >
                     <Evaluacion />
                   </IamGuardSuper>

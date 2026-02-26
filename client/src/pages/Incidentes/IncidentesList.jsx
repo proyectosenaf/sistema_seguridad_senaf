@@ -8,9 +8,8 @@ import AudioRecorder from "../../components/AudioRecorder.jsx";
 
 import api, { API } from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
+import useSpeechToText from "../../iam/hooks/useSpeechToText.js";
 
-// ✅ Dictado por voz
-import useSpeechToText from "../../hooks/useSpeechToText.js";
 
 // 👉 librerías para exportar
 import jsPDF from "jspdf";

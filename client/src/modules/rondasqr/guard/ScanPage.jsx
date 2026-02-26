@@ -206,13 +206,7 @@ export default function ScanPage() {
     playAlarmTone();
   }
 
-  /* ===== socket: alertas entrantes ===== */
-  useAssignmentSocket(safeUser, (evt) => {
-    const t = evt?.type || evt?.event || evt?.kind;
-    if (t === "panic" || t === "rondasqr:panic") {
-      handleIncomingPanic(evt.payload || {});
-    }
-  });
+
 
   /* ===== bus local: alertas desde otra pestaña ===== */
   useEffect(() => {

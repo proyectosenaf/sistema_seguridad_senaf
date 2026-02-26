@@ -5,9 +5,8 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./styles.css";
 
-// ✅ NUEVO: provider local (sin Auth0)
+// ✅ Provider local (unificado)
 import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
-
 
 /**
  * Presets globales UI

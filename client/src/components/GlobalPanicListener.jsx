@@ -1,20 +1,14 @@
 // client/src/components/GlobalPanicListener.jsx
 import React, { useEffect, useRef, useState } from "react";
-
-// ✅ auth local (sin Auth0)
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
-
-
-// 👇 este es el bus local que ya usas en ScanPage
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 
 export default function GlobalPanicListener() {
-  const { user, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   const audioRef = useRef(null);
   const [hasAlert, setHasAlert] = useState(false);
 
-  // sonido corto integrado en base64
   const BEEP_SRC =
     "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
 
@@ -22,38 +16,22 @@ export default function GlobalPanicListener() {
     setHasAlert(true);
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        // si no deja reproducir porque no hubo interacción, lo ignoramos
-      });
+      audioRef.current.play().catch(() => {});
     }
   }
 
-  // 1) escuchar lo que venga por socket (servidor)
-  // ✅ Solo si hay sesión; si no, evitamos suscripciones raras
-  useAssignmentSocket(isAuthenticated ? user : null, (evt) => {
-    const t = evt?.type || evt?.event || evt?.kind;
-    if (t === "panic" || t === "rondasqr:panic" || t === "alert" || t === "rondasqr:alert") {
-      triggerAlert();
-    }
-  });
-
-  // 2) escuchar lo que dispare cualquier página local (emitLocalPanic)
+  // ✅ Solo bus local (sin socket) para evitar imports inexistentes
   useEffect(() => {
-    const unsub = subscribeLocalPanic(() => {
-      triggerAlert();
-    });
+    const unsub = subscribeLocalPanic(() => triggerAlert());
     return () => unsub && unsub();
   }, []);
 
-  // si no hay sesión, no mostramos UI
   if (!isAuthenticated) return null;
 
   return (
     <>
-      {/* audio oculto */}
       <audio ref={audioRef} src={BEEP_SRC} preload="auto" />
 
-      {/* icono rojo flotante */}
       {hasAlert && (
         <button
           onClick={() => setHasAlert(false)}
