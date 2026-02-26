@@ -133,11 +133,6 @@ export default function Footer() {
                   Supervisión
                 </Link>
               </li>
-              <li>
-                <Link className="hover:underline" to="/evaluacion">
-                  Evaluación
-                </Link>
-              </li>
             </ul>
           </div>
 

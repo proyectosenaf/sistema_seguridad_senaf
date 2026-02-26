@@ -63,7 +63,6 @@ function getPathLabel(pathname) {
   if (P.startsWith("/visitas")) return "Control de Visitas";
   if (P.startsWith("/bitacora")) return "Bitácora Digital";
   if (P.startsWith("/supervision")) return "Supervisión";
-  if (P.startsWith("/evaluacion")) return "Evaluación";
   if (P.startsWith("/iam")) return "Usuarios y Permisos";
 
   return P.replaceAll("/", "");
@@ -147,7 +146,6 @@ const MODULES = [
   { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
   { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/evaluacion", label: "Evaluación", Icon: IconEval },
   { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
 ];
 

@@ -58,9 +58,6 @@ const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
 const Supervision = React.lazy(() =>
   import("./pages/Supervision/Supervision.jsx")
 );
-const Evaluacion = React.lazy(() =>
-  import("./pages/Evaluacion/Evaluacion.jsx")
-);
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Visitas
@@ -557,18 +554,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/evaluacion"
-            element={
-              <ProtectedRoute>
-                <Layout>
-                  <IamGuardSuper anyOf={["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"]}>
-                    <Evaluacion />
-                  </IamGuardSuper>
-                </Layout>
-              </ProtectedRoute>
-            }
-          />
+
           <Route
             path="/chat"
             element={

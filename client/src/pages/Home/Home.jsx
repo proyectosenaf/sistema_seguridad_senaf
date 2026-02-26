@@ -32,7 +32,6 @@ const ICONS = {
   incidentes: AlertTriangle,
   visitas: Users,
   bitacora: NotebookPen,
-  evaluacion: ClipboardCheck,
   supervision: ClipboardList,
   iam: ShieldCheck,
 };
@@ -51,7 +50,6 @@ const PERMS_BY_SECTION = {
   visitas: ["visitas.read", "visitas.write", "visitas.close", "*"],
   bitacora: ["bitacora.read", "bitacora.write", "bitacora.export", "*"],
   supervision: ["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"],
-  evaluacion: ["evaluacion.list", "evaluacion.create", "evaluacion.edit", "evaluacion.reports", "evaluacion.kpi", "*"],
 
   // ✅ CORREGIDO: mismos permisos que usa tu IamAdmin/index.jsx
   iam: ["iam.usuarios.gestionar", "iam.roles.gestionar", "*"],
@@ -188,7 +186,7 @@ export default function Home() {
     }
 
     // Orden estable (opcional, pero ayuda consistencia visual)
-    const order = ["accesos", "evaluacion", "iam", "rondasqr", "incidentes", "visitas", "bitacora", "supervision"];
+    const order = ["accesos", "iam", "rondasqr", "incidentes", "visitas", "bitacora", "supervision"];
     base.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
 
     return base;
@@ -200,7 +198,6 @@ export default function Home() {
   const BADGES = React.useMemo(() => {
     return {
       accesos: 0,
-      evaluacion: 0,
       iam: 0,
       rondasqr: 0,
       supervision: 0,

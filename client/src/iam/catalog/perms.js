@@ -101,19 +101,6 @@ export const permisosKeys = {
   "supervision.reports": "Supervisión • Ver reportes",
   "supervision.export": "Supervisión • Exportar (PDF/Excel/CSV)",
 
-  // ======================
-  // Evaluación
-  // ======================
-  "evaluacion.list": "Evaluación • Ver lista/detalle",
-  "evaluacion.create": "Evaluación • Crear / Asignar",
-  "evaluacion.edit": "Evaluación • Editar",
-  "evaluacion.delete": "Evaluación • Eliminar",
-  "evaluacion.close": "Evaluación • Aprobar / Cerrar",
-  "evaluacion.export": "Evaluación • Exportar (PDF/Excel/CSV)",
-  "evaluacion.reports": "Evaluación • Ver reportes",
-  "evaluacion.kpi": "Evaluación • Ver análisis / KPI",
-  "evaluacion.alertas": "Evaluación • Gestionar alertas",
-  "evaluacion.adjuntar": "Evaluación • Adjuntar evidencias",
 
   // ======================
   // Reportes generales
@@ -196,16 +183,6 @@ export const rolesKeys = {
     "supervision.reports",
     "supervision.export",
 
-    // Evaluación
-    "evaluacion.list",
-    "evaluacion.create",
-    "evaluacion.edit",
-    "evaluacion.close",
-    "evaluacion.export",
-    "evaluacion.reports",
-    "evaluacion.kpi",
-    "evaluacion.alertas",
-    "evaluacion.adjuntar",
 
     // Reportes
     "reportes.read",
@@ -239,10 +216,6 @@ export const rolesKeys = {
     "bitacora.read",
     "bitacora.write",
 
-    // Evaluación
-    "evaluacion.list",
-    "evaluacion.edit",
-    "evaluacion.adjuntar",
   ],
 
   administrador_it: [
@@ -280,16 +253,6 @@ export const rolesKeys = {
     "supervision.reports",
     "supervision.export",
 
-    // Evaluación
-    "evaluacion.list",
-    "evaluacion.create",
-    "evaluacion.edit",
-    "evaluacion.delete",
-    "evaluacion.export",
-    "evaluacion.reports",
-    "evaluacion.kpi",
-    "evaluacion.alertas",
-    "evaluacion.adjuntar",
 
     // Reportes generales
     "reportes.read",

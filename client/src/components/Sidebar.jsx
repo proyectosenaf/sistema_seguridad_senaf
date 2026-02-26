@@ -9,7 +9,6 @@ import {
   UsersRound,
   NotebookPen,
   ClipboardList,
-  ClipboardCheck,
   ShieldCheck,
   LogOut,
 } from "lucide-react";
@@ -25,7 +24,6 @@ const NAV_ITEMS = [
   { to: "/visitas", label: "Control de Visitas", Icon: UsersRound },
   { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
   { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/evaluacion", label: "Evaluación", Icon: ClipboardCheck },
   { to: "/iam/admin", label: "Usuarios y Permisos", Icon: ShieldCheck },
 ];
 

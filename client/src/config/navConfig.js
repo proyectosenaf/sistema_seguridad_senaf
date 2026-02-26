@@ -27,7 +27,6 @@ export const NAV_SECTIONS = [
   { key: "bitacora", label: "Bitácora Digital", path: "/bitacora", icon: NotebookPen },
 
   { key: "supervision", label: "Supervisión", path: "/supervision", icon: ClipboardList },
-  { key: "evaluacion", label: "Evaluación", path: "/evaluacion", icon: ClipboardCheck },
 
   // ✅ IAM visible en todos los menús
   { key: "iam", label: "Usuarios y Permisos", path: "/iam/admin", icon: ShieldCheck },
