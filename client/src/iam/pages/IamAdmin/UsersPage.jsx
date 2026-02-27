@@ -387,10 +387,19 @@ function ProfessionSelect({ value, onChange, items = [] }) {
 /** Calendario para fecha de nacimiento */
 function BirthDatePicker({ label, name, value, onChange }) {
   const [open, setOpen] = useState(false);
-  const parsed = value ? parseDateYMD(value) || new Date() : new Date();
-  const [viewDate, setViewDate] = useState(parsed);
 
   const selectedDate = value ? parseDateYMD(value) : null;
+
+  // Inicializa y se mantiene, pero se sincroniza cuando cambie value
+  const initialView = selectedDate || new Date();
+  const [viewDate, setViewDate] = useState(initialView);
+
+  // Si el usuario abre el picker o cambia el value desde afuera, sincroniza
+  useEffect(() => {
+    if (!open) return;
+    setViewDate(selectedDate || new Date());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, value]);
 
   const months = [
     "Enero",
@@ -406,6 +415,8 @@ function BirthDatePicker({ label, name, value, onChange }) {
     "Noviembre",
     "Diciembre",
   ];
+
+  // ✅ FIX: keys únicas (hay dos "M")
   const daysShort = ["D", "L", "M", "M", "J", "V", "S"];
 
   const year = viewDate.getFullYear();
@@ -475,8 +486,8 @@ function BirthDatePicker({ label, name, value, onChange }) {
           </div>
 
           <div className="grid grid-cols-7 text-[11px] text-center text-neutral-300 mb-1">
-            {daysShort.map((d) => (
-              <div key={d} className="py-1">
+            {daysShort.map((d, i) => (
+              <div key={`${d}-${i}`} className="py-1">
                 {d}
               </div>
             ))}
@@ -484,7 +495,7 @@ function BirthDatePicker({ label, name, value, onChange }) {
 
           <div className="grid grid-cols-7 gap-1 text-sm">
             {cells.map((day, idx) => {
-              if (!day) return <div key={idx} className="h-8" />;
+              if (!day) return <div key={`e-${idx}`} className="h-8" />;
               const isSelected =
                 selectedDate &&
                 selectedDate.getFullYear() === year &&
@@ -493,7 +504,7 @@ function BirthDatePicker({ label, name, value, onChange }) {
 
               return (
                 <button
-                  key={idx}
+                  key={`d-${year}-${month}-${day}`}
                   type="button"
                   onClick={() => handleSelectDay(day)}
                   className={`h-8 w-8 rounded-full flex items-center justify-center text-xs ${
@@ -922,7 +933,9 @@ export default function UsersPage() {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="Ej. Juan Pérez"
               />
-              {errors.nombreCompleto && <p className="text-xs text-red-400">{errors.nombreCompleto}</p>}
+              {errors.nombreCompleto && (
+                <p className="text-xs text-red-400">{errors.nombreCompleto}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1016,7 +1029,9 @@ export default function UsersPage() {
                 className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="usuario@dominio.com"
               />
-              {errors.correoPersona && <p className="text-xs text-red-400">{errors.correoPersona}</p>}
+              {errors.correoPersona && (
+                <p className="text-xs text-red-400">{errors.correoPersona}</p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -1092,7 +1107,9 @@ export default function UsersPage() {
             <div className="space-y-1">
               <label className="text-sm text-neutral-200">
                 Contraseña
-                {!editing && <span className="text-xs text-cyan-300 ml-2">(solo al crear o cambiar)</span>}
+                {!editing && (
+                  <span className="text-xs text-cyan-300 ml-2">(solo al crear o cambiar)</span>
+                )}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -1225,7 +1242,11 @@ export default function UsersPage() {
               className="px-3 py-1.5 rounded-lg bg-slate-900/70 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             />
             <label className="flex items-center gap-2 text-xs text-neutral-300">
-              <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={onlyActive}
+                onChange={(e) => setOnlyActive(e.target.checked)}
+              />
               Mostrar solo activos
             </label>
           </div>

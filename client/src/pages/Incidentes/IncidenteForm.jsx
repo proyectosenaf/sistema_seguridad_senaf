@@ -8,7 +8,7 @@ import api from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
 
 // ✅ Dictado por voz
-import useSpeechToText from "../../hooks/useSpeechToText.js";
+import useSpeechToText from "../../iam/hooks/useSpeechToText";
 
 export default function IncidenteForm({
   stayOnFinish = false,
