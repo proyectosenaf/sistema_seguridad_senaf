@@ -4,7 +4,7 @@ import api from "../lib/api.js";
 import { socket } from "../lib/socket.js";
 
 // ✅ auth local (sin Auth0)
-import { useAuth } from "../pages/auth/AuthProvider.jsx";
+import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
 
 /* === Iconos (SVG) === */
 const ChatIcon = (props) => (

@@ -1,4 +1,4 @@
-// client/src/auth/AuthProvider.jsx
+
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 const AuthContext = createContext(null);

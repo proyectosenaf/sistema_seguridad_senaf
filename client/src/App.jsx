@@ -3,7 +3,7 @@ import React, { Suspense, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 
 // ✅ auth local (unificado)
-import { useAuth } from "./pages/auth/AuthProvider.jsx";
+import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
 
 import Layout from "./components/Layout.jsx";
 import IamGuard from "./iam/api/IamGuard.jsx";
