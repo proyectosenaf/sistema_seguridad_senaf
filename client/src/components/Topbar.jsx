@@ -3,6 +3,7 @@ import React from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import {
   Menu,
   LogOut,
@@ -21,8 +22,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-// ✅ auth local (sin Auth0)
-import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 
 // ✅ usar el socket global (NO crear otro)
