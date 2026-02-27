@@ -4,20 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./styles.css";
 
-import { useAuth } from "./pages/auth/AuthProvider.jsx";
-
-/**
- * Presets globales UI
- */
-(function bootstrapUiTokens() {
-  try {
-    const el = document.documentElement;
-    if (!el.getAttribute("data-fx")) el.setAttribute("data-fx", "neon");
-    if (!el.getAttribute("data-aurora")) el.setAttribute("data-aurora", "medio");
-  } catch {
-    // ignore
-  }
-})();
+import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
