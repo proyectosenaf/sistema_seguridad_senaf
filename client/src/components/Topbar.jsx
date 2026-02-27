@@ -3,7 +3,7 @@ import React from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
-import { useAuth } from "../pages/Auth/AuthProvider.jsx";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import {
   Menu,
   LogOut,

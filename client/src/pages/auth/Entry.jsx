@@ -1,4 +1,4 @@
-// client/src/pages/Auth/Entry.jsx
+// client/src/pages/auth/Entry.jsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 

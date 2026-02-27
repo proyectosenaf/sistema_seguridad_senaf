@@ -1,7 +1,7 @@
 // client/src/components/ProtectedRoute.jsx
 import React from "react";
 import { useLocation, Navigate } from "react-router-dom";
-import { useAuth } from "../pages/Auth/AuthProvider.jsx";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 // localhost?
 const IS_LOCALHOST =

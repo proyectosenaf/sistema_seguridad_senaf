@@ -4,7 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./styles.css";
 
-import { useAuth } from "./pages/Auth/AuthProvider.jsx";
+import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
 /**
  * Presets globales UI

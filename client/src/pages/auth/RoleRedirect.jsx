@@ -1,4 +1,4 @@
-// client/src/pages/Auth/RoleRedirect.jsx
+// client/src/pages/auth/RoleRedirect.jsx
 import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 // ✅ Path real del iamApi
