@@ -6,6 +6,7 @@ const V1 = `${API_ROOT}/iam/v1`;
 
 async function toJson(resp) {
   try {
+    // si no hay body (304/204), esto puede fallar
     return await resp.json();
   } catch {
     return null;
@@ -14,17 +15,23 @@ async function toJson(resp) {
 
 /**
  * fetch base:
- * - por defecto incluye cookies (HttpOnly)
+ * - incluye cookies (HttpOnly) por defecto
  * - agrega Authorization Bearer si hay token (param o localStorage)
+ * - ✅ evita cache HTTP (para que no existan 304 en endpoints dinámicos)
+ * - ✅ si llega 304 por alguna razón, reintenta con cache-buster
  */
 async function req(
   path,
   { method = "GET", body, json = true, token, credentials = "include" } = {}
 ) {
-  const url = `${V1}${path.startsWith("/") ? path : `/${path}`}`;
+  const urlBase = `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
+
+  // ✅ anti-cache (real)
+  headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
+  headers["Pragma"] = "no-cache";
 
   // token explícito o token local
   const bearer =
@@ -35,16 +42,30 @@ async function req(
 
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
-  const r = await fetch(url, {
+  const fetchOpts = {
     method,
     credentials,
     headers,
+    // ✅ clave: evita que el navegador use ETag/If-None-Match
+    cache: "no-store",
     body: body ? (json ? JSON.stringify(body) : body) : undefined,
-  });
+  };
+
+  let r = await fetch(urlBase, fetchOpts);
+
+  // ✅ Manejo real de 304 (por si algún navegador/intermediario lo fuerza)
+  // Reintenta con cache-buster para obligar 200 con body.
+  if (r.status === 304) {
+    const sep = urlBase.includes("?") ? "&" : "?";
+    const urlNoCache = `${urlBase}${sep}_ts=${Date.now()}`;
+    r = await fetch(urlNoCache, fetchOpts);
+  }
 
   if (!r.ok) {
     const payload = await toJson(r);
-    const err = new Error(payload?.message || payload?.error || `${r.status} ${r.statusText}`);
+    const err = new Error(
+      payload?.message || payload?.error || `${r.status} ${r.statusText}`
+    );
     err.status = r.status;
     err.payload = payload;
     throw err;
@@ -65,7 +86,7 @@ export const iamApi = {
         email: String(email || "").trim().toLowerCase(),
         password: String(password || ""),
       },
-      credentials: "omit", // normalmente login local no depende de cookie previa
+      credentials: "omit",
     });
   },
   logout() {
@@ -80,7 +101,11 @@ export const iamApi = {
     return req("/roles", { method: "POST", body: body || {}, token });
   },
   updateRole(id, body, token) {
-    return req(`/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/roles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
   deleteRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
@@ -110,7 +135,11 @@ export const iamApi = {
     return req("/permissions", { method: "POST", body: body || {}, token });
   },
   updatePerm(id, body, token) {
-    return req(`/permissions/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/permissions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
   deletePerm(id, token) {
     return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
@@ -135,13 +164,25 @@ export const iamApi = {
     return req("/users", { method: "POST", body: body || {}, token });
   },
   updateUser(id, body, token) {
-    return req(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
   enableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/enable`, { method: "POST", body: {}, token });
+    return req(`/users/${encodeURIComponent(id)}/enable`, {
+      method: "POST",
+      body: {},
+      token,
+    });
   },
   disableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: {}, token });
+    return req(`/users/${encodeURIComponent(id)}/disable`, {
+      method: "POST",
+      body: {},
+      token,
+    });
   },
   deleteUser(id, token) {
     return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE", token });

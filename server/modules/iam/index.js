@@ -1,4 +1,3 @@
-// server/modules/iam/index.js
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -33,8 +32,23 @@ export async function registerIAMModule({
 
   const router = express.Router();
 
-  // Body JSON
+  // JSON body
   router.use(express.json({ limit: jsonLimit }));
+
+  // ────────────────────────────────────────────────
+  // ✅ ANTI-CACHE GLOBAL PARA TODO IAM
+  // Evita 304 / ETag / If-None-Match
+  // ────────────────────────────────────────────────
+  router.use((req, res, next) => {
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate"
+    );
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    next();
+  });
 
   // Preflight defensivo
   router.use((req, res, next) => {
@@ -51,18 +65,8 @@ export async function registerIAMModule({
     res.json({ ok: true, module: "iam", version: "v1", mode: "local" })
   );
 
-  /* ───────────────────────── AUTH (LOCAL) ─────────────────────────
-     Montamos /auth con endpoints locales:
-     - POST /auth/login
-     - POST /auth/logout
-     - POST /auth/change-password
-     - POST /auth/bootstrap
-  */
+  /* ───────────────────────── AUTH (LOCAL) ───────────────────────── */
   router.use("/auth", authRoutes);
-
-  /* ───────────────────────── OTP (si lo usas) ─────────────────────────
-     OTP para flujos que tengas (ej: login por código, 2FA, etc.)
-  */
   router.use("/auth", authOtpRoutes);
 
   /* ───────────────────────── ME (auth opcional) ───────────────────────── */

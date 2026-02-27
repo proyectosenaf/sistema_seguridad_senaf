@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -50,6 +49,9 @@ import { registerIAMModule } from "../modules/iam/index.js";
 
 const app = express();
 app.set("trust proxy", 1);
+
+// ✅ SOLUCIÓN REAL: deshabilita ETag global en Express (evita 304 por If-None-Match)
+app.set("etag", false);
 
 /* ───────────────────── ENV / MODOS ───────────────────── */
 
@@ -103,12 +105,21 @@ app.use(compression());
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
-if (!IS_PROD) {
-  app.use((req, res, next) => {
-    res.set("Cache-Control", "no-store");
-    next();
-  });
-}
+/**
+ * ✅ SOLUCIÓN REAL: Anti-cache para TODA la API (PROD y DEV)
+ * Esto evita que roles/permisos/me se queden cacheados y que el navegador pida 304.
+ * Se aplica SOLO a /api para no afectar estáticos/frontend.
+ */
+app.use("/api", (req, res, next) => {
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  next();
+});
 
 /* ─────────────────────── DEV IDENTITY GLOBAL ───────────────────── */
 function devIdentity(req, _res, next) {
@@ -273,7 +284,7 @@ app.use(async (req, _res, next) => {
 /**
  * IMPORTANTE:
  * Esto solo funciona si registerIAMModule monta /users.
- * Si no, tendrás 404 en /api/iam/v1/users (tu caso actual).
+ * Si no, tendrás 404 en /api/iam/v1/users.
  */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
 
