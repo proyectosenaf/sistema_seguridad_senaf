@@ -3,20 +3,20 @@ import React, { Suspense, useEffect, useRef } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 
 // ✅ auth local (unificado)
-import { useAuth } from "./pages/auth/AuthProvider.jsx";
+import { useAuth } from "./pages/Auth/AuthProvider.jsx";
 
 import Layout from "./components/Layout.jsx";
 import IamGuard from "./iam/api/IamGuard.jsx";
 
 // Login local
-import LoginLocal from "./pages/auth/LoginLocal.jsx";
-import ChangePassword from "./pages/auth/ChangePassword.jsx";
+import LoginLocal from "./pages/Auth/LoginLocal.jsx";
+import ChangePassword from "./pages/Auth/ChangePassword.jsx";
 
 // ✅ Pantalla para forzar cambio de contraseña
 const ForceChangePassword = React.lazy(() => import("./pages/ForceChangePassword.jsx"));
 
 // ✅ OTP
-const VerifyOtp = React.lazy(() => import("./pages/auth/VerifyOtp.jsx"));
+const VerifyOtp = React.lazy(() => import("./pages/Auth/VerifyOtp.jsx"));
 
 // ---- Páginas (lazy)
 const IamAdminPage = React.lazy(() => import("./iam/pages/IamAdmin/index.jsx"));

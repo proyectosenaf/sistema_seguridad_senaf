@@ -1,12 +1,10 @@
-// client/src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import "./styles.css";
 
-// ✅ Provider local (unificado)
-import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
+import { useAuth } from "./pages/Auth/AuthProvider.jsx";
 
 /**
  * Presets globales UI
@@ -14,7 +12,6 @@ import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
 (function bootstrapUiTokens() {
   try {
     const el = document.documentElement;
-
     if (!el.getAttribute("data-fx")) el.setAttribute("data-fx", "neon");
     if (!el.getAttribute("data-aurora")) el.setAttribute("data-aurora", "medio");
   } catch {
