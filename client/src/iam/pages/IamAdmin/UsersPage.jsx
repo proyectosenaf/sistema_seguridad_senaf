@@ -99,24 +99,52 @@ function mapUserToFormSafe(api = {}, { estadosCiviles = [] } = {}) {
     tipoDni: getVal(api, ["tipoDni", "persona.tipoDni"], "Identidad"),
     dni: getVal(
       api,
-      ["dni", "documento", "num_documento", "numeroDocumento", "persona.dni", "persona.numeroDocumento"],
+      [
+        "dni",
+        "documento",
+        "num_documento",
+        "numeroDocumento",
+        "persona.dni",
+        "persona.numeroDocumento",
+      ],
       ""
     ),
     estadoCivil: civilOk,
     fechaNacimiento: toDateInputSafe(fechaRaw),
     paisNacimiento: getVal(
       api,
-      ["paisNacimiento", "pais_nacimiento", "countryOfBirth", "persona.pais", "datosNacimiento.pais", "nacimiento.pais"],
+      [
+        "paisNacimiento",
+        "pais_nacimiento",
+        "countryOfBirth",
+        "persona.pais",
+        "datosNacimiento.pais",
+        "nacimiento.pais",
+      ],
       ""
     ),
     ciudadNacimiento: getVal(
       api,
-      ["ciudadNacimiento", "ciudad_nacimiento", "cityOfBirth", "persona.ciudad", "datosNacimiento.ciudad", "nacimiento.ciudad"],
+      [
+        "ciudadNacimiento",
+        "ciudad_nacimiento",
+        "cityOfBirth",
+        "persona.ciudad",
+        "datosNacimiento.ciudad",
+        "nacimiento.ciudad",
+      ],
       ""
     ),
     municipioNacimiento: getVal(
       api,
-      ["municipioNacimiento", "municipio", "persona.municipio", "datosNacimiento.municipio", "nacimiento.municipio", "ubicacion.municipio"],
+      [
+        "municipioNacimiento",
+        "municipio",
+        "persona.municipio",
+        "datosNacimiento.municipio",
+        "nacimiento.municipio",
+        "ubicacion.municipio",
+      ],
       ""
     ),
     correoPersona: getVal(
@@ -132,12 +160,30 @@ function mapUserToFormSafe(api = {}, { estadosCiviles = [] } = {}) {
     ),
     telefono: getVal(
       api,
-      ["telefono", "phone", "celular", "tel", "telefono1", "telefono2", "persona.telefono", "persona.celular", "contacto.telefono"],
+      [
+        "telefono",
+        "phone",
+        "celular",
+        "tel",
+        "telefono1",
+        "telefono2",
+        "persona.telefono",
+        "persona.celular",
+        "contacto.telefono",
+      ],
       ""
     ),
     domicilio: getVal(
       api,
-      ["domicilio", "direccion", "address", "direccionResidencia", "persona.direccion", "persona.domicilio", "ubicacion.direccion"],
+      [
+        "domicilio",
+        "direccion",
+        "address",
+        "direccionResidencia",
+        "persona.direccion",
+        "persona.domicilio",
+        "ubicacion.direccion",
+      ],
       ""
     ),
     // IAM
@@ -606,6 +652,13 @@ export default function UsersPage() {
     [roleCatalog]
   );
 
+  function requireFn(fnName) {
+    if (typeof iamApi?.[fnName] !== "function") {
+      throw new Error(`iamApi.${fnName} no está implementado (por eso ves "Not implemented")`);
+    }
+    return iamApi[fnName];
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -626,9 +679,10 @@ export default function UsersPage() {
           ? iamApi.getCatalogs(token)
           : Promise.resolve({});
 
+      const listUsers = requireFn("listUsers");
       const [resUsers, resRoles, resCats] = await Promise.all([
-        iamApi.listUsers("", token),
-        iamApi.listRoles ? iamApi.listRoles(token) : Promise.resolve({}),
+        listUsers("", token),
+        typeof iamApi.listRoles === "function" ? iamApi.listRoles(token) : Promise.resolve({}),
         catPromise,
       ]);
 
@@ -745,12 +799,14 @@ export default function UsersPage() {
       let savedId = editing;
 
       if (editing) {
-        res = await iamApi.updateUser(editing, payload, token);
+        const updateUser = requireFn("updateUser");
+        res = await updateUser(editing, payload, token);
         savedId =
           res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id || savedId;
         alert("Usuario actualizado correctamente");
       } else {
-        res = await iamApi.createUser(payload, token);
+        const createUser = requireFn("createUser");
+        res = await createUser(payload, token);
         savedId = res?._id || res?.id || res?.userId || res?.data?._id || res?.data?.item?._id;
         alert("Usuario creado correctamente ✅");
       }
@@ -786,8 +842,13 @@ export default function UsersPage() {
         return;
       }
 
-      if (u.active === false) await iamApi.enableUser(u._id, token);
-      else await iamApi.disableUser(u._id, token);
+      if (u.active === false) {
+        const enableUser = requireFn("enableUser");
+        await enableUser(u._id, token);
+      } else {
+        const disableUser = requireFn("disableUser");
+        await disableUser(u._id, token);
+      }
 
       await load();
     } catch (e) {
@@ -869,7 +930,7 @@ export default function UsersPage() {
       if (typeof iamApi.deleteUser === "function") {
         await iamApi.deleteUser(u._id, token);
       } else {
-        throw new Error("La API no soporta eliminar usuarios aún");
+        throw new Error("iamApi.deleteUser no está implementado");
       }
 
       if (editing === u._id) cancelEdit();
@@ -1284,14 +1345,19 @@ export default function UsersPage() {
                       <div className="font-medium text-neutral-100">
                         {u.nombreCompleto || u.name || "(Sin nombre)"}
                       </div>
-                      <div className="text-[11px] text-neutral-400">ID persona: {u.id_persona || "—"}</div>
+                      <div className="text-[11px] text-neutral-400">
+                        ID persona: {u.id_persona || "—"}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-neutral-200">
                       <div className="text-xs">
-                        {u.tipoDni || "Documento"}: <span className="font-mono">{u.dni || "—"}</span>
+                        {u.tipoDni || "Documento"}:{" "}
+                        <span className="font-mono">{u.dni || "—"}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-neutral-200">{u.correoPersona || u.email || "—"}</td>
+                    <td className="px-4 py-3 text-neutral-200">
+                      {u.correoPersona || u.email || "—"}
+                    </td>
                     <td className="px-4 py-3">
                       <RoleBadges roles={u.roles} roleLabelMap={roleLabelMap} />
                     </td>

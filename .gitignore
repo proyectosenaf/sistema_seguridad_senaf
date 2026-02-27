@@ -11,3 +11,5 @@ client/.vite/
 .env
 .env.local
 .env.prod
+.env.production
+.env.development

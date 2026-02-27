@@ -115,11 +115,7 @@ function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
   if (!(DEV_OPEN || DISABLE_AUTH)) return next();
 
-  const email = (
-    req.header("x-user-email") ||
-    process.env.SUPERADMIN_EMAIL ||
-    "dev@local"
-  )
+  const email = (req.header("x-user-email") || process.env.SUPERADMIN_EMAIL || "dev@local")
     .toLowerCase()
     .trim();
 
@@ -166,8 +162,6 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 /**
  * Visitantes: OTP por email
  * ✅ SIN módulo public duplicado: usamos el router OTP de IAM como “public”
- *
- * Nota: este router debe NO requerir auth (por diseño OTP).
  */
 app.use("/api/public/v1/auth", iamOtpAuthRoutes);
 app.use("/public/v1/auth", iamOtpAuthRoutes);
@@ -206,12 +200,8 @@ if (!mongoUri) {
 
 mongoose.set("bufferCommands", false);
 
-mongoose.connection.on("error", (e) =>
-  console.error("[db] mongoose error:", e?.message || e)
-);
-mongoose.connection.on("disconnected", () =>
-  console.warn("[db] mongoose disconnected")
-);
+mongoose.connection.on("error", (e) => console.error("[db] mongoose error:", e?.message || e));
+mongoose.connection.on("disconnected", () => console.warn("[db] mongoose disconnected"));
 
 await mongoose
   .connect(mongoUri, {
@@ -267,9 +257,7 @@ app.use(attachAuthUser);
 app.use(async (req, _res, next) => {
   try {
     const hasPayload = !!req?.auth?.payload;
-    const hasBearer = String(req.headers.authorization || "")
-      .toLowerCase()
-      .startsWith("bearer ");
+    const hasBearer = String(req.headers.authorization || "").toLowerCase().startsWith("bearer ");
     const hasDevEmail = !!req.headers["x-user-email"];
 
     if (!(hasPayload || hasBearer || hasDevEmail)) return next();
@@ -282,6 +270,11 @@ app.use(async (req, _res, next) => {
 });
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
+/**
+ * IMPORTANTE:
+ * Esto solo funciona si registerIAMModule monta /users.
+ * Si no, tendrás 404 en /api/iam/v1/users (tu caso actual).
+ */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
@@ -360,8 +353,6 @@ app.use("/incidentes", incidentesRoutes);
 app.use("/api/rondasqr/v1/incidentes", incidentesRoutes);
 app.use("/rondasqr/v1/incidentes", incidentesRoutes);
 
-
-
 /* ────────────────────── Error handler (500) ───────────────────── */
 
 app.use((err, _req, res, _next) => {
@@ -373,7 +364,17 @@ app.use((err, _req, res, _next) => {
 });
 
 /* ─────────────────────────── 404 final ────────────────────────── */
-app.use((_req, res) => res.status(404).json({ ok: false, error: "Not implemented" }));
+/**
+ * ✅ Mejora: devuelve ruta y método para que identifiques rápido qué endpoint falta.
+ */
+app.use((req, res) =>
+  res.status(404).json({
+    ok: false,
+    error: "Not implemented",
+    method: req.method,
+    path: req.originalUrl,
+  })
+);
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 

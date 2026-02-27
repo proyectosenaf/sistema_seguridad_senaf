@@ -14,19 +14,30 @@ async function toJson(resp) {
 
 /**
  * fetch base:
- * - usa cookie de sesión (HttpOnly)
- * - NO usa Authorization
- * - NO usa headers DEV
+ * - por defecto incluye cookies (HttpOnly)
+ * - agrega Authorization Bearer si hay token (param o localStorage)
  */
-async function req(path, { method = "GET", body, json = true } = {}) {
+async function req(
+  path,
+  { method = "GET", body, json = true, token, credentials = "include" } = {}
+) {
   const url = `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
 
+  // token explícito o token local
+  const bearer =
+    token ||
+    localStorage.getItem("senaf_token") ||
+    localStorage.getItem("token") ||
+    null;
+
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
   const r = await fetch(url, {
     method,
-    credentials: "include",
+    credentials,
     headers,
     body: body ? (json ? JSON.stringify(body) : body) : undefined,
   });
@@ -44,8 +55,8 @@ async function req(path, { method = "GET", body, json = true } = {}) {
 
 export const iamApi = {
   // Auth
-  me() {
-    return req("/me");
+  me(token) {
+    return req("/me", { token });
   },
   loginLocal({ email, password }) {
     return req("/auth/login", {
@@ -54,6 +65,7 @@ export const iamApi = {
         email: String(email || "").trim().toLowerCase(),
         password: String(password || ""),
       },
+      credentials: "omit", // normalmente login local no depende de cookie previa
     });
   },
   logout() {
@@ -61,85 +73,89 @@ export const iamApi = {
   },
 
   // Roles
-  listRoles() {
-    return req("/roles");
+  listRoles(token) {
+    return req("/roles", { token });
   },
-  createRole(body) {
-    return req("/roles", { method: "POST", body: body || {} });
+  createRole(body, token) {
+    return req("/roles", { method: "POST", body: body || {}, token });
   },
-  updateRole(id, body) {
-    return req(`/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {} });
+  updateRole(id, body, token) {
+    return req(`/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
-  deleteRole(id) {
-    return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE" });
+  deleteRole(id, token) {
+    return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
-  getRolePerms(id) {
-    return req(`/roles/${encodeURIComponent(id)}/permissions`);
+  getRolePerms(id, token) {
+    return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
-  setRolePerms(id, permissionKeys) {
+  setRolePerms(id, permissionKeys, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
       body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
+      token,
     });
   },
 
   // Permisos
-  listPerms(params = {}) {
+  listPerms(params = {}, token) {
     const qs = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {
       if (v === "" || v == null) return;
       qs.set(k, String(v));
     });
     const q = qs.toString();
-    return req(`/permissions${q ? `?${q}` : ""}`);
+    return req(`/permissions${q ? `?${q}` : ""}`, { token });
   },
-  createPerm(body) {
-    return req("/permissions", { method: "POST", body: body || {} });
+  createPerm(body, token) {
+    return req("/permissions", { method: "POST", body: body || {}, token });
   },
-  updatePerm(id, body) {
-    return req(`/permissions/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {} });
+  updatePerm(id, body, token) {
+    return req(`/permissions/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
-  deletePerm(id) {
-    return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  deletePerm(id, token) {
+    return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
   // Usuarios
-  listUsers(q = "") {
+  listUsers(q = "", token) {
     const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-    return req(`/users${qs}`);
+    return req(`/users${qs}`, { token });
   },
-  listGuards(q = "", active = true) {
+  listGuards(q = "", active = true, token) {
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
     if (active) qs.set("active", "1");
     const s = qs.toString();
-    return req(`/users/guards${s ? `?${s}` : ""}`);
+    return req(`/users/guards${s ? `?${s}` : ""}`, { token });
   },
-  createUser(body) {
-    return req("/users", { method: "POST", body: body || {} });
+  getUser(id, token) {
+    return req(`/users/${encodeURIComponent(id)}`, { token });
   },
-  updateUser(id, body) {
-    return req(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {} });
+  createUser(body, token) {
+    return req("/users", { method: "POST", body: body || {}, token });
   },
-  enableUser(id) {
-    return req(`/users/${encodeURIComponent(id)}/enable`, { method: "POST", body: {} });
+  updateUser(id, body, token) {
+    return req(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
-  disableUser(id) {
-    return req(`/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: {} });
+  enableUser(id, token) {
+    return req(`/users/${encodeURIComponent(id)}/enable`, { method: "POST", body: {}, token });
   },
-  deleteUser(id) {
-    return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+  disableUser(id, token) {
+    return req(`/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: {}, token });
+  },
+  deleteUser(id, token) {
+    return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
   // Audit
-  listAudit(params = {}) {
+  listAudit(params = {}, token) {
     const qs = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {
       if (v === "" || v == null) return;
       qs.set(k, String(v));
     });
     const s = qs.toString();
-    return req(`/audit${s ? `?${s}` : ""}`);
+    return req(`/audit${s ? `?${s}` : ""}`, { token });
   },
 };
 
