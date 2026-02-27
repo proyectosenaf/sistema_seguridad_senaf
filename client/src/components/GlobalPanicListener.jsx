@@ -1,6 +1,6 @@
 // client/src/components/GlobalPanicListener.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { AuthProvider } from "./pages/auth/AuthProvider.jsx";
+
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 
 export default function GlobalPanicListener() {
