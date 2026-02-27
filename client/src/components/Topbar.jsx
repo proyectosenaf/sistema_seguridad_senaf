@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 
 // ✅ auth local (sin Auth0)
-import { useAuth } from "./pages/auth/AuthProvider.jsx";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 
 // ✅ usar el socket global (NO crear otro)
