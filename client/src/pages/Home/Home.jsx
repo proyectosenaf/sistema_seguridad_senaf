@@ -27,11 +27,32 @@ const ICONS = {
   incidentes: AlertTriangle,
   visitas: Users,
   bitacora: NotebookPen,
-  evaluacion: ClipboardCheck,
   supervision: ClipboardList,
   iam: ShieldCheck,
 };
 
+/* ==========================================
+   Permisos requeridos por sección (anyOf)
+   ========================================== */
+const PERMS_BY_SECTION = {
+  accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
+
+  // ✅ rondas: permisos + rol guardia
+  rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
+  rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
+
+  incidentes: ["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"],
+  visitas: ["visitas.read", "visitas.write", "visitas.close", "*"],
+  bitacora: ["bitacora.read", "bitacora.write", "bitacora.export", "*"],
+  supervision: ["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"],
+
+  // ✅ CORREGIDO: mismos permisos que usa tu IamAdmin/index.jsx
+  iam: ["iam.usuarios.gestionar", "iam.roles.gestionar", "*"],
+};
+
+/* ===============
+   Badge pill UI
+   =============== */
 function Badge({ value }) {
   const v = Number(value || 0);
   return (
@@ -125,9 +146,10 @@ export default function Home() {
       base.push({ key: "iam", label: "Usuarios y Permisos", path: "/iam/admin" });
     }
 
+    // Orden estable (opcional, pero ayuda consistencia visual)
+
     const order = [
       "accesos",
-      "evaluacion",
       "iam",
       "rondasqr",
       "incidentes",
@@ -144,7 +166,6 @@ export default function Home() {
   const BADGES = React.useMemo(
     () => ({
       accesos: 0,
-      evaluacion: 0,
       iam: 0,
       rondasqr: 0,
       supervision: 0,

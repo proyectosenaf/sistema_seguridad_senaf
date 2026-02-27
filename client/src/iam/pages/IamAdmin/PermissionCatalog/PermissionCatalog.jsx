@@ -382,7 +382,6 @@ export default function PermissionCatalog() {
             >
               <option value="bitacora">Bitácora</option>
               <option value="acceso">Control de Acceso</option>
-              <option value="evaluacion">Evaluación</option>
               <option value="iam">IAM</option>
               <option value="incidentes">Incidentes</option>
               <option value="rondas">Rondas</option>

@@ -2,7 +2,6 @@
 export const MODULES = [
   { value: "bitacora",   label: "Bitácora" },
   { value: "acceso",     label: "Control de Acceso" },
-  { value: "evaluacion", label: "Evaluación" },
   { value: "iam",        label: "IAM" },
   { value: "incidentes", label: "Incidentes" },
   { value: "rondas",     label: "Rondas" },
@@ -13,7 +12,7 @@ export const MODULES = [
 const CANON_MAP = new Map([
   ["bitacora", "Bitácora"], ["bitácora", "Bitácora"],
   ["acceso", "Control de Acceso"], ["accesos", "Control de Acceso"], ["control de acceso", "Control de Acceso"], ["control de accesos", "Control de Acceso"],
-  ["evaluacion", "Evaluación"], ["evaluación", "Evaluación"],
+
   ["iam", "IAM"],
   ["incidentes", "Incidentes"],
   ["rondas", "Rondas"],

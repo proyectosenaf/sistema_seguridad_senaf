@@ -33,8 +33,7 @@ import rondasqr from "../modules/rondasqr/index.js";
 import rondasReportsRoutes from "../modules/rondasqr/routes/rondasqr.reports.routes.js";
 import rondasOfflineRoutes from "../modules/rondasqr/routes/rondasqr.offline.routes.js";
 
-// Evaluaciones / Incidentes / Acceso / Visitas
-import evaluacionesRoutes from "./routes/evaluaciones.routes.js";
+// Incidentes / Acceso / Visitas
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
 import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
@@ -361,17 +360,7 @@ app.use("/incidentes", incidentesRoutes);
 app.use("/api/rondasqr/v1/incidentes", incidentesRoutes);
 app.use("/rondasqr/v1/incidentes", incidentesRoutes);
 
-/* ───────────────── Evaluaciones ───────────────── */
 
-if (!IS_PROD) {
-  app.use("/api/evaluaciones", (req, _res, next) => {
-    if (req.method === "POST") console.log("[debug] POST /api/evaluaciones body:", req.body);
-    next();
-  });
-}
-
-app.use("/evaluaciones", evaluacionesRoutes);
-app.use("/api/evaluaciones", evaluacionesRoutes);
 
 /* ────────────────────── Error handler (500) ───────────────────── */
 
