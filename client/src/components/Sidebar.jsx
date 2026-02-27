@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 // ✅ IMPORTA useAuth (esto faltaba y causaba 500)
-
+import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
 const NAV_ITEMS = [
   { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },

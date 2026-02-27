@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
+import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
 export default function GlobalPanicListener() {
   const { isAuthenticated } = useAuth();

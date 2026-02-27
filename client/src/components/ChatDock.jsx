@@ -2,7 +2,7 @@
 import React from "react";
 import api from "../lib/api.js";
 import { socket } from "../lib/socket.js";
-
+import { useAuth } from "./pages/auth/AuthProvider.jsx";
 // ✅ auth local (sin Auth0)
 
 
