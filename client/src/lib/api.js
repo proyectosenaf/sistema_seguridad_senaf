@@ -27,6 +27,24 @@ export const API = API_ROOT;
 export const SOCKET_BASE = SOCKET_HOST;
 export const SOCKET_BASE_URL = SOCKET_HOST;
 
+/** ✅ Key canónica para JWT local */
+export const TOKEN_KEY = "senaf_token";
+
+/** ✅ Helpers canónicos */
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function setToken(token) {
+  const t = String(token || "").trim();
+  if (!t) localStorage.removeItem(TOKEN_KEY);
+  else localStorage.setItem(TOKEN_KEY, t);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 /** Axios instance (JWT local por Authorization header) */
 const api = axios.create({
   baseURL: API_ROOT,
@@ -36,11 +54,15 @@ const api = axios.create({
 
 // ✅ Adjunta token local automáticamente (si existe)
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("senaf_token");
+  const token = getToken();
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // cache-bust opcional (evita 304 raros en dev)
+  config.headers = config.headers || {};
+  config.headers["Cache-Control"] = "no-store";
+  config.headers["Pragma"] = "no-cache";
   return config;
 });
 

@@ -1,60 +1,44 @@
 // client/src/iam/api/iamApi.js
-import { API } from "../../lib/api.js";
+import { API, getToken, setToken, clearToken } from "../../lib/api.js";
 
 const API_ROOT = String(API || "").replace(/\/$/, "");
 const V1 = `${API_ROOT}/iam/v1`;
 
 async function toJson(resp) {
   try {
-    // si no hay body (304/204), esto puede fallar
     return await resp.json();
   } catch {
     return null;
   }
 }
 
-/**
- * fetch base:
- * - incluye cookies (HttpOnly) por defecto
- * - agrega Authorization Bearer si hay token (param o localStorage)
- * - ✅ evita cache HTTP (para que no existan 304 en endpoints dinámicos)
- * - ✅ si llega 304 por alguna razón, reintenta con cache-buster
- */
 async function req(
   path,
-  { method = "GET", body, json = true, token, credentials = "include" } = {}
+  { method = "GET", body, json = true, token, credentials = "omit" } = {}
 ) {
   const urlBase = `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 
   const headers = {};
   if (json) headers["Content-Type"] = "application/json";
 
-  // ✅ anti-cache (real)
   headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
   headers["Pragma"] = "no-cache";
 
-  // token explícito o token local
-  const bearer =
-    token ||
-    localStorage.getItem("senaf_token") ||
-    localStorage.getItem("token") ||
-    null;
-
+  // ✅ Token canónico: param > localStorage(senaf_token)
+  const bearer = token || getToken() || null;
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
   const fetchOpts = {
     method,
-    credentials,
+    credentials, // ✅ por defecto omit (JWT por header). Si algún endpoint usa cookies, pásalo explícito.
     headers,
-    // ✅ clave: evita que el navegador use ETag/If-None-Match
     cache: "no-store",
     body: body ? (json ? JSON.stringify(body) : body) : undefined,
   };
 
   let r = await fetch(urlBase, fetchOpts);
 
-  // ✅ Manejo real de 304 (por si algún navegador/intermediario lo fuerza)
-  // Reintenta con cache-buster para obligar 200 con body.
+  // workaround para caches/proxies que devuelven 304 en dev
   if (r.status === 304) {
     const sep = urlBase.includes("?") ? "&" : "?";
     const urlNoCache = `${urlBase}${sep}_ts=${Date.now()}`;
@@ -63,9 +47,7 @@ async function req(
 
   if (!r.ok) {
     const payload = await toJson(r);
-    const err = new Error(
-      payload?.message || payload?.error || `${r.status} ${r.statusText}`
-    );
+    const err = new Error(payload?.message || payload?.error || `${r.status} ${r.statusText}`);
     err.status = r.status;
     err.payload = payload;
     throw err;
@@ -79,8 +61,10 @@ export const iamApi = {
   me(token) {
     return req("/me", { token });
   },
-  loginLocal({ email, password }) {
-    return req("/auth/login", {
+
+  // ✅ login local: guarda token canónico automáticamente
+  async loginLocal({ email, password }) {
+    const data = await req("/auth/login", {
       method: "POST",
       body: {
         email: String(email || "").trim().toLowerCase(),
@@ -88,9 +72,19 @@ export const iamApi = {
       },
       credentials: "omit",
     });
+
+    // Respuesta esperada: { ok:true, token:"...", mustChangePassword:false }
+    if (data?.token) setToken(data.token);
+
+    return data;
   },
-  logout() {
-    return req("/auth/logout", { method: "POST", body: {} });
+
+  // ✅ logout: limpia token canónico
+  async logout() {
+    // si tu backend no requiere token para logout, esto igual es seguro
+    const out = await req("/auth/logout", { method: "POST", body: {}, credentials: "omit" });
+    clearToken();
+    return out;
   },
 
   // Roles
@@ -110,10 +104,24 @@ export const iamApi = {
   deleteRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
+
+  // ✅ NOMBRE CANÓNICO
   getRolePerms(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
   setRolePerms(id, permissionKeys, token) {
+    return req(`/roles/${encodeURIComponent(id)}/permissions`, {
+      method: "PUT",
+      body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
+      token,
+    });
+  },
+
+  // ✅ ALIASES (para que tu RolesPage no reviente)
+  listPermsForRole(id, token) {
+    return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
+  },
+  setPermsForRole(id, permissionKeys, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
       body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },

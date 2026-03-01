@@ -25,7 +25,8 @@ const ah =
 export async function registerIAMModule({
   app,
   basePath = "/api/iam/v1",
-  enableDoAlias = true,
+  // ✅ si quieres compatibilidad con rutas viejas sin duplicar router
+  enableLegacyRedirects = false,
   jsonLimit = "5mb",
 } = {}) {
   if (!app) throw new Error("[IAM] registerIAMModule requiere { app }");
@@ -133,18 +134,21 @@ export async function registerIAMModule({
     });
   });
 
-  // Montaje
+  // ────────────────────────────────────────────────
+  // ✅ MONTAJE ÚNICO (SIN ALIASES DUPLICADOS)
+  // ────────────────────────────────────────────────
   app.use(basePath, router);
-  app.use("/api/iam", router); // legacy alias
 
-  if (enableDoAlias) {
-    app.use("/iam/v1", router);
+  // ✅ Compatibilidad opcional SIN duplicar router (redirect 307)
+  if (enableLegacyRedirects) {
+    app.use("/api/iam", (req, res) => res.redirect(307, `${basePath}${req.url}`));
+    app.use("/iam/v1", (req, res) => res.redirect(307, `${basePath}${req.url}`));
   }
 
   console.log(
-    `[IAM] módulo montado en ${basePath} (+ alias /api/iam${
-      enableDoAlias ? " + alias /iam/v1" : ""
-    })`
+    `[IAM] módulo montado en ${basePath}${
+      enableLegacyRedirects ? " (redirects legacy: /api/iam, /iam/v1)" : ""
+    }`
   );
 
   return router;

@@ -1,34 +1,13 @@
-import React, { useEffect, useState } from "react";
+// client/src/iam/pages/IamAdmin/UserEditor.jsx
+import React, { useEffect, useMemo, useState } from "react";
 import { iamApi } from "../../api/iamApi.js";
 
-const ESTADOS_CIVILES = [
-  "Soltero/a",
-  "Casado/a",
-  "Divorciado/a",
-  "Viudo/a",
-  "Unión libre",
-];
+/* ========================= Helpers ========================= */
 
-// mapeo UI ⇄ DB actualizado a los códigos nuevos
-const ROLE_MAP_UI_TO_DB = {
-  Administrador: "administrador",
-  Supervisor: "supervisor",
-  Guardia: "guardia",
-  "Administrador IT": "administrador_it",
-  "Visita Externa": "visita_externa",
-};
-
-const ROLE_MAP_DB_TO_UI = Object.fromEntries(
-  Object.entries(ROLE_MAP_UI_TO_DB).map(([ui, db]) => [db, ui])
-);
-
-// Helpers
 function toDateInputSafe(raw) {
   if (!raw) return "";
   try {
-    if (typeof raw === "string") {
-      return raw.slice(0, 10);
-    }
+    if (typeof raw === "string") return raw.slice(0, 10);
     const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return "";
     return d.toISOString().slice(0, 10);
@@ -40,355 +19,209 @@ function toDateInputSafe(raw) {
 function pick(obj, ...paths) {
   for (const path of paths) {
     if (!path) continue;
-    const segments = path.split(".");
-    let value = obj;
-    for (const s of segments) {
-      if (value == null) break;
-      value = value[s];
+    const seg = String(path).split(".");
+    let v = obj;
+    for (const k of seg) {
+      if (v == null) break;
+      v = v[k];
     }
-    if (
-      value !== undefined &&
-      value !== null &&
-      String(value).trim() !== ""
-    ) {
-      return value;
-    }
+    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
   }
   return "";
 }
 
-// Normaliza el objeto de backend a las claves del form de este modal
-function mapUserToFormSafe(u = {}) {
-  const civil = pick(
-    u,
-    "estadoCivil",
-    "estado_civil",
-    "civilStatus",
-    "persona.estadoCivil"
-  );
-  const civilOk = ESTADOS_CIVILES.includes(civil) ? civil : "";
-
-  return {
-    nombreCompleto:
-      pick(
-        u,
-        "nombreCompleto",
-        "name",
-        "fullName",
-        "persona.nombreCompleto"
-      ) || "",
-    tipoDni: pick(u, "tipoDni", "persona.tipoDni") || "Identidad",
-    dni:
-      pick(
-        u,
-        "dni",
-        "documento",
-        "num_documento",
-        "persona.dni"
-      ) || "",
-    estadoCivil: civilOk,
-    fechaNacimiento: toDateInputSafe(
-      pick(
-        u,
-        "fechaNacimiento",
-        "birthDate",
-        "fecha_nacimiento",
-        "persona.fechaNacimiento",
-        "persona.fnac"
-      )
+function uniqLower(arr) {
+  return [
+    ...new Set(
+      (arr || [])
+        .filter(Boolean)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
     ),
-    paisNacimiento:
-      pick(
-        u,
-        "paisNacimiento",
-        "pais_nacimiento",
-        "countryOfBirth",
-        "persona.pais"
-      ) || "",
-    ciudadNacimiento:
-      pick(
-        u,
-        "ciudadNacimiento",
-        "ciudad_nacimiento",
-        "cityOfBirth",
-        "persona.ciudad"
-      ) || "",
-    municipio:
-      pick(
-        u,
-        "municipio",
-        "municipioNacimiento",
-        "persona.municipio"
-      ) || "",
-    correoelectrónico:
-      pick(
-        u,
-        "correoelectrónico",
-        "correoPersona",
-        "email",
-        "correo",
-        "mail",
-        "persona.correo"
-      ) || "",
-    profesion:
-      pick(u, "profesion", "ocupacion", "persona.ocupacion") ||
-      "",
-    lugarTrabajo:
-      pick(
-        u,
-        "lugarTrabajo",
-        "dondeLabora",
-        "empresa",
-        "persona.lugar_trabajo"
-      ) || "",
-    telefono:
-      pick(
-        u,
-        "telefono",
-        "phone",
-        "celular",
-        "tel",
-        "persona.telefono"
-      ) || "",
-    domicilio:
-      pick(
-        u,
-        "domicilio",
-        "direccion",
-        "address",
-        "persona.direccion"
-      ) || "",
-    roles: Array.isArray(u.roles)
-      ? u.roles
-      : u.roles
-      ? [u.roles]
-      : [],
+  ];
+}
+
+function mapUserToForm(u = {}) {
+  const roles = Array.isArray(u.roles) ? u.roles : u.roles ? [u.roles] : [];
+  return {
+    nombreCompleto: pick(u, "nombreCompleto", "name", "persona.nombreCompleto") || "",
+    tipoDni: pick(u, "tipoDni", "persona.tipoDni") || "Identidad",
+    dni: pick(u, "dni", "persona.dni") || "",
+    estadoCivil: pick(u, "estadoCivil", "persona.estadoCivil") || "",
+    fechaNacimiento: toDateInputSafe(pick(u, "fechaNacimiento", "persona.fechaNacimiento")),
+    paisNacimiento: pick(u, "paisNacimiento", "persona.pais") || "",
+    ciudadNacimiento: pick(u, "ciudadNacimiento", "persona.ciudad") || "",
+    municipio: pick(u, "municipio", "persona.municipio") || "",
+    email: pick(u, "email", "persona.correo") || "",
+    profesion: pick(u, "profesion", "persona.ocupacion") || "",
+    lugarTrabajo: pick(u, "lugarTrabajo", "persona.lugar_trabajo") || "",
+    telefono: pick(u, "telefono", "persona.telefono") || "",
+    domicilio: pick(u, "domicilio", "persona.direccion") || "",
+    roles: uniqLower(roles),
     active: u.active !== false,
   };
 }
 
-export default function UserEditor({ value, onClose, onSaved }) {
-  const [roles, setRoles] = useState([]); // codes: ["administrador","guardia",...]
+function normalizeCatalogResponse(r) {
+  // admite: {items:[...]}, {data:[...]}, [...] o {catalog:[...]}
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r?.items)) return r.items;
+  if (Array.isArray(r?.data)) return r.data;
+  if (Array.isArray(r?.catalog)) return r.catalog;
+  return [];
+}
 
-  // Cargar roles disponibles desde el backend (codes)
+/* ========================= Component ========================= */
+
+export default function UserEditor({ value, onClose, onSaved }) {
+  const [form, setForm] = useState(() => mapUserToForm(value || {}));
+  const [saving, setSaving] = useState(false);
+
+  // Catálogos (backend)
+  const [rolesCatalog, setRolesCatalog] = useState([]); // [{code,name}]
+  const [civilCatalog, setCivilCatalog] = useState([]); // ["Soltero/a", ...]
+
+  useEffect(() => {
+    setForm(mapUserToForm(value || {}));
+  }, [value]);
+
   useEffect(() => {
     (async () => {
-      try {
-        const r = await iamApi.listRoles();
-        const items = r?.items || r?.roles || [];
-        const codes = items
-          .map((it) =>
-            typeof it === "string"
-              ? it
-              : it.code || it.name || it._id
-          )
-          .filter(Boolean);
-        setRoles(codes);
-      } catch {
-        // fallback por si la API falla
-        setRoles([
-          "administrador",
-          "guardia",
-          "supervisor",
-          "administrador_it",
-          "visita_externa",
-        ]);
-      }
-    })();
+      // Roles reales
+      const rr = await iamApi.listRoles();
+      const items = rr?.items || rr?.roles || [];
+      setRolesCatalog(
+        items
+          .map((r) => ({
+            code: String(r?.code || "").trim().toLowerCase(),
+            name: String(r?.name || r?.code || "").trim(),
+          }))
+          .filter((x) => x.code)
+      );
+
+      // Estado civil (catálogo backend)
+      // ✅ Requiere endpoint en backend (recomendado)
+      const rc = await iamApi.listCivilStatus?.();
+      const civ = normalizeCatalogResponse(rc).map((x) => String(x).trim()).filter(Boolean);
+      setCivilCatalog(civ);
+    })().catch(() => {
+      // si falla, se deja vacío; NO hacemos fallback "quemado"
+      setRolesCatalog([]);
+      setCivilCatalog([]);
+    });
   }, []);
 
-  const [form, setForm] = useState(
-    mapUserToFormSafe(value || {})
-  );
-
-  // Sincroniza el formulario cuando cambia `value`
-  useEffect(() => {
-    setForm(mapUserToFormSafe(value || {}));
-  }, [value]);
+  const civilOptions = useMemo(() => civilCatalog, [civilCatalog]);
 
   function setField(name, v) {
     setForm((prev) => ({ ...prev, [name]: v }));
   }
 
   async function save() {
+    if (saving) return;
+
     try {
-      const payload = { ...form };
-      // El backend usará correoelectrónico -> email mediante iamApi
-      if (value?._id) {
-        await iamApi.updateUser(value._id, payload);
-      } else {
-        await iamApi.createUser(payload);
+      setSaving(true);
+
+      const payload = {
+        ...form,
+        email: String(form.email || "").trim().toLowerCase(),
+        roles: uniqLower(form.roles),
+      };
+
+      // si estadoCivil viene vacío o no existe en catálogo, lo enviamos vacío
+      // (backend valida)
+      if (civilOptions.length > 0 && payload.estadoCivil) {
+        const ok = civilOptions.includes(payload.estadoCivil);
+        if (!ok) payload.estadoCivil = "";
       }
+
+      if (value?._id) await iamApi.updateUser(value._id, payload);
+      else await iamApi.createUser(payload);
+
       onSaved?.();
       onClose?.();
     } catch (e) {
       alert(e?.message || "No se pudo guardar el usuario");
+    } finally {
+      setSaving(false);
     }
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white/90 dark:bg-neutral-950/90 w-[720px] max-w-[95vw] rounded-2xl p-5 space-y-4 border border-white/20 dark:border-neutral-700 shadow-2xl">
+      <div className="bg-white dark:bg-neutral-950 w-[720px] max-w-[95vw] rounded-2xl p-5 space-y-4 shadow-2xl">
         <div className="text-lg font-semibold">
           {value?._id ? "Editar usuario" : "Nuevo usuario"}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field
-            label="Nombre completo"
-            value={form.nombreCompleto}
-            onChange={(v) =>
-              setField("nombreCompleto", v)
-            }
-          />
+          <Field label="Nombre completo" value={form.nombreCompleto} onChange={(v) => setField("nombreCompleto", v)} />
 
-          <div className="md:col-span-2">
-            <div className="text-sm">Documento</div>
-            <div className="flex gap-2 mt-1">
-              <select
-                className="px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
-                value={form.tipoDni}
-                onChange={(e) =>
-                  setField("tipoDni", e.target.value)
-                }
-              >
-                <option>Identidad</option>
-                <option>Pasaporte</option>
-              </select>
-              <input
-                className="flex-1 px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
-                value={form.dni}
-                onChange={(e) =>
-                  setField("dni", e.target.value)
-                }
-              />
-            </div>
-          </div>
+          <Field label="Correo electrónico" value={form.email} onChange={(v) => setField("email", v)} />
 
           <Select
             label="Estado civil"
             value={form.estadoCivil}
             onChange={(v) => setField("estadoCivil", v)}
-            options={ESTADOS_CIVILES}
-          />
-          <Field
-            type="date"
-            label="Fecha de nacimiento"
-            value={form.fechaNacimiento}
-            onChange={(v) =>
-              setField("fechaNacimiento", v)
-            }
+            options={civilOptions}
+            placeholder={civilOptions.length ? "Seleccionar" : "Catálogo no disponible"}
+            disabled={!civilOptions.length}
           />
 
-          <Field
-            label="País nacimiento"
-            value={form.paisNacimiento}
-            onChange={(v) =>
-              setField("paisNacimiento", v)
-            }
-          />
-          <Field
-            label="Ciudad nacimiento"
-            value={form.ciudadNacimiento}
-            onChange={(v) =>
-              setField("ciudadNacimiento", v)
-            }
-          />
-          <Field
-            label="Municipio"
-            value={form.municipio}
-            onChange={(v) => setField("municipio", v)}
-          />
+          <Field label="Teléfono" value={form.telefono} onChange={(v) => setField("telefono", v)} />
 
-          <Field
-            label="Correo electrónico"
-            value={form.correoelectrónico}
-            onChange={(v) =>
-              setField("correoelectrónico", v)
-            }
-          />
-          <Field
-            label="Profesión u oficio"
-            value={form.profesion}
-            onChange={(v) => setField("profesion", v)}
-          />
-          <Field
-            label="Lugar de trabajo"
-            value={form.lugarTrabajo}
-            onChange={(v) =>
-              setField("lugarTrabajo", v)
-            }
-          />
-          <Field
-            label="Teléfono"
-            value={form.telefono}
-            onChange={(v) =>
-              setField("telefono", v)
-            }
-          />
-          <Field
-            className="md:col-span-2"
-            label="Domicilio actual"
-            value={form.domicilio}
-            onChange={(v) =>
-              setField("domicilio", v)
-            }
-          />
-
-          {/* Roles */}
+          {/* Roles dinámicos (sin quemar) */}
           <div className="md:col-span-2">
             <div className="text-sm mb-1">Roles</div>
-            <div className="flex flex-wrap gap-2">
-              {roles.map((code) => {
-                const on = form.roles?.includes(code);
-                const label =
-                  ROLE_MAP_DB_TO_UI[code] || code;
-                return (
-                  <button
-                    key={code}
-                    type="button"
-                    className={`text-sm px-3 py-1.5 rounded-full border border-neutral-400/70 dark:border-neutral-600 backdrop-blur-sm ${
-                      on
-                        ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                        : "bg-white/60 dark:bg-neutral-900/70 text-neutral-800 dark:text-neutral-100"
-                    }`}
-                    onClick={() => {
-                      const set = new Set(form.roles || []);
-                      on ? set.delete(code) : set.add(code);
-                      setField("roles", [...set]);
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
+
+            {!rolesCatalog.length ? (
+              <div className="text-sm text-slate-500">Catálogo de roles no disponible.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {rolesCatalog.map((r) => {
+                  const on = form.roles.includes(r.code);
+                  return (
+                    <button
+                      key={r.code}
+                      type="button"
+                      className={`text-sm px-3 py-1.5 rounded-full border ${
+                        on ? "bg-neutral-900 text-white" : "bg-white text-neutral-800"
+                      }`}
+                      onClick={() => {
+                        const set = new Set(form.roles);
+                        on ? set.delete(r.code) : set.add(r.code);
+                        setField("roles", [...set]);
+                      }}
+                    >
+                      {r.name || r.code}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <label className="inline-flex items-center gap-2 text-sm mt-2">
+          <label className="inline-flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={form.active}
-              onChange={(e) =>
-                setField("active", e.target.checked)
-              }
+              onChange={(e) => setField("active", e.target.checked)}
             />
             Activo
           </label>
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            className="px-3 py-2 rounded-xl bg-neutral-200/80 text-neutral-900 dark:bg-neutral-800/80 dark:text-neutral-100"
-            onClick={onClose}
-          >
+          <button className="px-3 py-2 bg-gray-200 rounded" onClick={onClose}>
             Cancelar
           </button>
           <button
-            className="px-4 py-2 rounded-xl bg-cyan-600 text-white font-medium shadow hover:bg-cyan-500"
+            className="px-4 py-2 bg-cyan-600 text-white rounded disabled:opacity-60"
             onClick={save}
+            disabled={saving}
           >
-            Guardar
+            {saving ? "Guardando..." : "Guardar"}
           </button>
         </div>
       </div>
@@ -396,19 +229,13 @@ export default function UserEditor({ value, onClose, onSaved }) {
   );
 }
 
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-  className = "",
-}) {
+function Field({ label, value, onChange, type = "text" }) {
   return (
-    <label className={`space-y-1 ${className}`}>
+    <label className="space-y-1">
       <div className="text-sm">{label}</div>
       <input
         type={type}
-        className="w-full px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
+        className="w-full px-3 py-2 rounded-xl border"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -416,16 +243,17 @@ function Field({
   );
 }
 
-function Select({ label, value, onChange, options = [] }) {
+function Select({ label, value, onChange, options = [], placeholder = "Seleccionar", disabled = false }) {
   return (
     <label className="space-y-1">
       <div className="text-sm">{label}</div>
       <select
-        className="w-full px-3 py-2 rounded-xl border border-neutral-300/80 dark:border-neutral-700 bg-white/80 dark:bg-neutral-900/80"
-        value={value}
+        className="w-full px-3 py-2 rounded-xl border"
+        value={value || ""}
         onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
       >
-        <option value="">Seleccionar</option>
+        <option value="">{placeholder}</option>
         {options.map((o) => (
           <option key={o} value={o}>
             {o}

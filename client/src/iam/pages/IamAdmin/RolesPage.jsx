@@ -11,22 +11,15 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-/* Config opcional: etiquetas amigables por código de rol */
-const DISPLAY_ROLES = [
-  { code: "administrador", name: "Administrador" },
-  { code: "supervisor", name: "Supervisor" },
-  { code: "guardia", name: "Guardia" },
-  { code: "administrador_it", name: "Administrador IT" },
-  { code: "visita_externa", name: "Visita Externa" },
-];
-
-const CODE_TO_LABEL = Object.fromEntries(
-  DISPLAY_ROLES.map((r) => [r.code, r.name])
-);
-
+/**
+ * Etiqueta de rol:
+ * - Preferir name
+ * - Fallback: code
+ */
 function roleLabel(r) {
-  const code = String(r.code || "").toLowerCase();
-  return CODE_TO_LABEL[code] || r.name || r.code || "(sin nombre)";
+  const name = String(r?.name || "").trim();
+  const code = String(r?.code || "").trim();
+  return name || code || "(sin nombre)";
 }
 
 export default function RolesPage() {
@@ -45,14 +38,10 @@ export default function RolesPage() {
     const items = rRoles?.items || rRoles?.roles || [];
     setRoles(items);
 
-    // rol por defecto: administrador si existe
+    // rol por defecto: si existe "administrador" por code/name, si no el primero
     const adminId =
-      items.find(
-        (x) => String(x.code || "").toLowerCase() === "administrador"
-      )?._id ||
-      items.find(
-        (x) => String(x.name || "").toLowerCase() === "administrador"
-      )?._id ||
+      items.find((x) => String(x.code || "").toLowerCase() === "administrador")?._id ||
+      items.find((x) => String(x.name || "").toLowerCase() === "administrador")?._id ||
       items[0]?._id ||
       null;
 
@@ -90,8 +79,7 @@ export default function RolesPage() {
 
   /* Resumen derivado: agrupa SOLO los permisos selected=true */
   const rolePermSummary = useMemo(() => {
-    if (!permItems || permItems.length === 0)
-      return { count: 0, byGroup: [] };
+    if (!permItems || permItems.length === 0) return { count: 0, byGroup: [] };
 
     const byGroupMap = new Map();
     let total = 0;
@@ -111,9 +99,7 @@ export default function RolesPage() {
     const groups = [...byGroupMap.entries()]
       .map(([group, items]) => ({
         group,
-        items: items.sort((a, b) =>
-          String(a.label).localeCompare(String(b.label))
-        ),
+        items: items.sort((a, b) => String(a.label).localeCompare(String(b.label))),
       }))
       .sort((a, b) => String(a.group).localeCompare(String(b.group)));
 
@@ -154,7 +140,7 @@ export default function RolesPage() {
 
       await iamApi.createRole({
         code: code || undefined,
-        key: code || undefined, // 👈 para backends que piden "key requerida"
+        key: code || undefined, // para backends que piden "key"
         name,
         description: name,
       });
@@ -171,20 +157,16 @@ export default function RolesPage() {
   async function editRole() {
     if (!selected) return;
     try {
-      const newName = window.prompt(
-        "Nuevo nombre del rol:",
-        selected.name || ""
-      );
+      const newName = window.prompt("Nuevo nombre del rol:", selected.name || "");
       if (!newName) return;
       const newDesc =
-        window.prompt(
-          "Nueva descripción:",
-          selected.description || newName
-        ) ?? selected.description;
+        window.prompt("Nueva descripción:", selected.description || newName) ?? selected.description;
+
       await iamApi.updateRole(selected._id, {
         name: newName,
         description: newDesc,
       });
+
       await loadAll();
       setMsg("Rol actualizado.");
       setTimeout(() => setMsg(""), 2000);
@@ -197,12 +179,7 @@ export default function RolesPage() {
   async function deleteRole() {
     if (!selected) return;
     try {
-      if (
-        !window.confirm(
-          `¿Eliminar el rol "${selected.name || selected.code}"?`
-        )
-      )
-        return;
+      if (!window.confirm(`¿Eliminar el rol "${roleLabel(selected)}"?`)) return;
       await iamApi.deleteRole(selected._id);
       await loadAll();
       setMsg("Rol eliminado.");
@@ -329,11 +306,7 @@ export default function RolesPage() {
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:shadow disabled:opacity-60 dark:bg-slate-900/80 dark:text-slate-100 dark:border-slate-700"
             title="Volver a leer permisos desde el servidor"
           >
-            <RefreshCw
-              className={`h-4 w-4 ${
-                permLoading ? "animate-spin" : ""
-              }`}
-            />
+            <RefreshCw className={`h-4 w-4 ${permLoading ? "animate-spin" : ""}`} />
             Refrescar
           </button>
         </div>
@@ -349,9 +322,7 @@ export default function RolesPage() {
               Selecciona un rol para ver sus permisos.
             </div>
           ) : permLoading ? (
-            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
-              Cargando…
-            </div>
+            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">Cargando…</div>
           ) : rolePermSummary.count === 0 ? (
             <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
               Este rol no tiene permisos asignados.
@@ -359,7 +330,7 @@ export default function RolesPage() {
           ) : (
             <>
               {/* Encabezado suave */}
-              <div className="flex items-center justify_between px-5 py-3 bg-gradient-to-r from-slate-50/80 to-indigo-50/80 dark:from-slate-950/70 dark:to-slate-900/80 border-b border-slate-200/70 dark:border-slate-800">
+              <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-50/80 to-indigo-50/80 dark:from-slate-950/70 dark:to-slate-900/80 border-b border-slate-200/70 dark:border-slate-800">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                   Total permisos
                 </div>
