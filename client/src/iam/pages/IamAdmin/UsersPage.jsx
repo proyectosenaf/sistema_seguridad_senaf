@@ -229,7 +229,6 @@ function UsersPageInner() {
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
 
-  // ✅ filtros por fecha (createdAt)
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
 
@@ -237,12 +236,15 @@ function UsersPageInner() {
   const [err, setErr] = useState("");
   const [errors, setErrors] = useState({});
 
-  // ✅ Paginación REAL (backend: limit+skip+total)
+  // ✅ Paginación REAL (backend)
   const PAGE_SIZE = 5;
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
 
-  // ✅ Form MINIMAL
+  // evita race conditions
+  const requestIdRef = useRef(0);
+
+  // Form MINIMAL
   const empty = {
     nombreCompleto: "",
     email: "",
@@ -287,11 +289,13 @@ function UsersPageInner() {
     return t || null;
   }
 
-  function hasAnyFilter() {
-    return !!q.trim() || !!createdFrom || !!createdTo || onlyActive === false;
+  function setField(name, value) {
+    setForm((prev) => ({ ...prev, [name]: value }));
   }
 
   async function load({ append = false } = {}) {
+    const myReqId = ++requestIdRef.current;
+
     try {
       setLoading(true);
       setErr("");
@@ -308,7 +312,8 @@ function UsersPageInner() {
 
       const listUsers = requireFn("listUsers");
 
-      const nextSkip = append ? items.length : 0;
+      // si append => skip = items actuales, si no => 0
+      const skip = append ? items.length : 0;
 
       const [resUsers, resRoles] = await Promise.all([
         listUsers(
@@ -316,7 +321,7 @@ function UsersPageInner() {
             q: q.trim(),
             onlyActive: onlyActive ? 1 : 0,
             limit: PAGE_SIZE,
-            skip: nextSkip,
+            skip,
             createdFrom: createdFrom || "",
             createdTo: createdTo || "",
           },
@@ -325,19 +330,39 @@ function UsersPageInner() {
         typeof iamApi.listRoles === "function" ? iamApi.listRoles(token) : Promise.resolve({}),
       ]);
 
+      // si llegó una respuesta vieja, ignórala
+      if (myReqId !== requestIdRef.current) return;
+
       const newItems = Array.isArray(resUsers?.items) ? resUsers.items : [];
       const meta = resUsers?.meta || {};
 
       setItems((prev) => (append ? [...prev, ...newItems] : newItems));
-      setTotal(Number(meta.total || 0));
-      setHasMore(!!meta.hasMore);
+
+      // fallback si backend no manda total/hasMore:
+      const totalFromApi = Number(meta.total || 0);
+      const hasMoreFromApi = typeof meta.hasMore === "boolean" ? meta.hasMore : undefined;
+
+      if (totalFromApi > 0) {
+        setTotal(totalFromApi);
+      } else {
+        // si no hay total, aproximamos con lo que llevamos cargado
+        setTotal((append ? items.length + newItems.length : newItems.length) || 0);
+      }
+
+      if (hasMoreFromApi !== undefined) {
+        setHasMore(hasMoreFromApi);
+      } else {
+        // heurística: si devolvió PAGE_SIZE, probablemente hay más
+        setHasMore(newItems.length === PAGE_SIZE);
+      }
 
       const rolesRaw = resRoles?.items || resRoles?.roles || [];
       setRoleCatalog(Array.isArray(rolesRaw) ? rolesRaw : []);
     } catch (e) {
+      if (myReqId !== requestIdRef.current) return;
       setErr(e?.message || "Error al cargar usuarios");
     } finally {
-      setLoading(false);
+      if (myReqId === requestIdRef.current) setLoading(false);
     }
   }
 
@@ -347,16 +372,12 @@ function UsersPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // recargar cuando cambian filtros (con debounce)
+  // recargar cuando cambian filtros (debounce) + reset de lista (append=false)
   useEffect(() => {
     const t = setTimeout(() => load({ append: false }), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, onlyActive, createdFrom, createdTo]);
-
-  function setField(name, value) {
-    setForm((prev) => ({ ...prev, [name]: value }));
-  }
 
   function validate() {
     const v = {};
@@ -529,7 +550,6 @@ function UsersPageInner() {
     }
   }
 
-  // ✅ ahora ya NO hacemos slice; items ya viene paginado por backend
   const visibleList = items;
 
   return (
@@ -653,9 +673,7 @@ function UsersPageInner() {
                 placeholder="••••••••"
               />
               {errors.confirm && <span className="text-xs text-red-300">{errors.confirm}</span>}
-              {!errors.confirm && creds.confirm && !match && (
-                <span className="text-xs text-red-300">No coincide con la contraseña.</span>
-              )}
+              {!errors.confirm && creds.confirm && !match && <span className="text-xs text-red-300">No coincide con la contraseña.</span>}
             </div>
 
             <div className="space-y-1">
