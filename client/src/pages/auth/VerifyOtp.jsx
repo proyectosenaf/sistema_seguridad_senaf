@@ -38,18 +38,31 @@ function consumeReturnTo(locationSearch) {
 
 function getOtpEmail() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "")
+      .trim()
+      .toLowerCase();
   } catch {
     return "";
   }
 }
 
-function clearOtpContext() {
+// Limpieza "suave": no borra email (por seguridad de UX)
+// El email lo puedes borrar definitivamente hasta que reset termine.
+function clearOtpFlowOnly() {
+  try {
+    sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+}
+
+function clearOtpAll() {
   try {
     localStorage.removeItem("senaf_otp_email");
   } catch {}
   try {
     sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_pwreset_token");
   } catch {}
 }
 
@@ -63,6 +76,11 @@ function humanOtpError(codeOrMsg) {
   if (s.includes("otp_resend_cooldown")) return "Espera unos segundos antes de reenviar el código.";
   if (s.includes("employee_otp_disabled")) return "OTP deshabilitado por configuración.";
   if (s.includes("email_and_otp_required")) return "Faltan datos (correo/código).";
+
+  if (s.includes("reset_token_invalid_or_expired"))
+    return "Tu sesión de restablecimiento venció. Repite el OTP.";
+  if (s.includes("reset_token"))
+    return "No se pudo iniciar el restablecimiento. Repite el OTP.";
 
   return codeOrMsg || "Error validando OTP";
 }
@@ -110,23 +128,41 @@ export default function VerifyOtp() {
         return;
       }
 
+      // ✅ Nuevo flujo: OTP válido pero debe resetear password
+      if (data?.mustChangePassword) {
+        const rt = String(data?.resetToken || "").trim();
+        if (!rt) {
+          setError("OTP validado, pero el servidor no devolvió resetToken. Repite el proceso.");
+          return;
+        }
+
+        // Guardar por si refresca la pantalla de reset
+        try {
+          sessionStorage.setItem("senaf_pwreset_token", rt);
+        } catch {}
+
+        // Limpia solo el flag del flow, pero conserva el email por si la query falla
+        clearOtpFlowOnly();
+
+        navigate(
+          `/force-change-password?email=${encodeURIComponent(emailNorm)}&rt=${encodeURIComponent(rt)}`,
+          { replace: true }
+        );
+        return;
+      }
+
+      // ✅ Caso normal: devuelve token de login
       const token = data?.token;
       if (!token) {
         setError("El servidor no devolvió token tras validar OTP.");
         return;
       }
 
-      clearOtpContext();
+      // Ya entró: limpieza total
+      clearOtpAll();
 
       setToken(token);
       await auth.login({ email: emailNorm }, token);
-
-      if (data?.mustChangePassword) {
-        navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
-          replace: true,
-        });
-        return;
-      }
 
       const returnTo = consumeReturnTo(loc.search);
       if (returnTo) {
@@ -159,7 +195,6 @@ export default function VerifyOtp() {
     try {
       setResending(true);
 
-      // ✅ Nuevo endpoint: no requiere password
       const res = await api.post("/iam/v1/auth/resend-otp", { email: emailNorm });
       const data = res?.data || {};
 
@@ -185,9 +220,7 @@ export default function VerifyOtp() {
     <div className="min-h-screen flex items-center justify-center bg-slate-100">
       <form onSubmit={handleVerify} className="p-6 border rounded w-96 bg-white shadow-sm">
         <h2 className="text-lg mb-1 font-bold">Verificar código</h2>
-        <div className="text-xs text-slate-500 mb-4">
-          Ingresa el código que enviamos a tu correo
-        </div>
+        <div className="text-xs text-slate-500 mb-4">Ingresa el código que enviamos a tu correo</div>
 
         <input
           className="border w-full mb-3 p-2"

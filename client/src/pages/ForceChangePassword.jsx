@@ -1,109 +1,165 @@
 // client/src/pages/ForceChangePassword.jsx
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import { APP_CONFIG } from "../config/app.config.js";
+import api, { setToken } from "../lib/api.js";
+import { useAuth } from "./auth/AuthProvider.jsx";
 
 function getParam(name) {
   const sp = new URLSearchParams(window.location.search);
   return sp.get(name);
 }
 
-function apiBase() {
-  // Tu convención ya usada en App.jsx: VITE_API_BASE_URL incluye /api
-  const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-  return String(RAW).replace(/\/$/, "");
-}
-
 function getOtpEmailFallback() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "")
+      .trim()
+      .toLowerCase();
   } catch {
     return "";
   }
 }
 
+function getResetTokenFallback() {
+  try {
+    return String(sessionStorage.getItem("senaf_pwreset_token") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function clearOtpResetContext() {
+  try {
+    sessionStorage.removeItem("senaf_pwreset_token");
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_otp_email");
+  } catch {}
+}
+
+function humanResetError(codeOrMsg) {
+  const s = String(codeOrMsg || "").toLowerCase();
+
+  if (s.includes("missing_fields")) return "Faltan datos para restablecer contraseña.";
+  if (s.includes("password_too_short")) return "La contraseña es muy corta.";
+  if (s.includes("reset_token_invalid_or_expired")) return "La sesión de restablecimiento venció. Inicia sesión de nuevo.";
+  if (s.includes("reset_token_email_mismatch")) return "El token no corresponde a este correo. Inicia sesión de nuevo.";
+  if (s.includes("reset_token_user_mismatch")) return "Token inválido. Inicia sesión de nuevo.";
+  if (s.includes("user_not_found")) return "Usuario no encontrado.";
+  if (s.includes("user_inactive")) return "Usuario inactivo. Contacta al administrador.";
+  if (s.includes("not_local_user")) return "Este usuario no es local. No se puede restablecer aquí.";
+
+  return codeOrMsg || "No se pudo restablecer la contraseña.";
+}
+
 export default function ForceChangePassword() {
-  const [status, setStatus] = React.useState("idle"); // idle | sending | sent | error
-  const [msg, setMsg] = React.useState("");
+  const navigate = useNavigate();
+  const auth = useAuth();
 
   const loginRoute = String(APP_CONFIG?.routes?.login || "/login").trim() || "/login";
 
-  // 1) email por query
+  // email por query o fallback del OTP flow
   const emailFromQuery = (getParam("email") || "").trim().toLowerCase();
-  // 2) fallback: el que guardas en OTP flow
   const email = emailFromQuery || getOtpEmailFallback();
 
-  // ✅ Evita doble auto-disparo (StrictMode) y reenvíos sin querer
-  const ranRef = React.useRef(false);
+  // resetToken debe venir del verify-otp (ideal por query) o sessionStorage
+  const resetTokenFromQuery = (getParam("rt") || "").trim();
+  const resetToken = resetTokenFromQuery || getResetTokenFallback();
 
-  // ✅ Evita duplicados aunque el state se quede stale
-  const statusRef = React.useRef("idle");
-  React.useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
+  const [newPassword, setNewPassword] = React.useState("");
+  const [confirmPassword, setConfirmPassword] = React.useState("");
 
-  async function send({ silent = false } = {}) {
+  const [status, setStatus] = React.useState("idle"); // idle | saving | ok | error
+  const [msg, setMsg] = React.useState("");
+
+  const canSubmit =
+    !!email &&
+    !!resetToken &&
+    newPassword.trim().length >= 8 &&
+    confirmPassword.trim().length >= 8 &&
+    newPassword === confirmPassword &&
+    status !== "saving";
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setMsg("");
+
     if (!email) {
       setStatus("error");
       setMsg("No se recibió el email. Vuelve a iniciar sesión.");
       return;
     }
+    if (!resetToken) {
+      setStatus("error");
+      setMsg("No hay sesión de restablecimiento. Vuelve a iniciar sesión y valida el OTP otra vez.");
+      return;
+    }
 
-    // si ya está enviando, no dupliques
-    if (statusRef.current === "sending") return;
+    const pwd = String(newPassword || "").trim();
+    const cpwd = String(confirmPassword || "").trim();
 
-    setStatus("sending");
-    if (!silent) setMsg("");
+    if (pwd.length < 8) {
+      setStatus("error");
+      setMsg("La contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+    if (pwd !== cpwd) {
+      setStatus("error");
+      setMsg("Las contraseñas no coinciden.");
+      return;
+    }
 
     try {
-      const url = `${apiBase()}/iam/v1/auth/request-password-reset`;
+      setStatus("saving");
 
-      const res = await fetch(url, {
-        method: "POST",
-        credentials: "omit",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+      const res = await api.post("/iam/v1/auth/reset-password-otp", {
+        email,
+        resetToken,
+        newPassword: pwd,
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = res?.data || {};
 
-      if (!res.ok) {
+      if (data?.ok === false) {
         setStatus("error");
-        setMsg(
-          data?.message ||
-            data?.details ||
-            data?.error ||
-            "No se pudo enviar el correo. Intenta de nuevo o contacta al administrador."
-        );
+        setMsg(humanResetError(data?.error || data?.message));
         return;
       }
 
-      setStatus("sent");
-      setMsg(
-        "Listo. Te enviamos un correo para restablecer tu contraseña. Revisa tu bandeja y spam."
-      );
-    } catch (e) {
+      const token = data?.token;
+      if (!token) {
+        setStatus("error");
+        setMsg("El servidor no devolvió token tras restablecer la contraseña.");
+        return;
+      }
+
+      // limpiar contexto y loguear
+      clearOtpResetContext();
+      setToken(token);
+      await auth.login({ email }, token);
+
+      setStatus("ok");
+      setMsg("Contraseña actualizada. Entrando…");
+
+      navigate("/start", { replace: true });
+    } catch (err) {
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Error de red.";
       setStatus("error");
-      setMsg(e?.message || "Error de red.");
+      setMsg(humanResetError(msg));
     }
   }
-
-  React.useEffect(() => {
-    // ✅ auto-disparo UNA vez si viene email
-    if (!email) return;
-    if (ranRef.current) return;
-    ranRef.current = true;
-
-    send({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
       <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Restablecer contraseña</h1>
+        <h1 className="text-xl font-semibold">Establecer nueva contraseña</h1>
 
         <p className="mt-2 text-sm text-neutral-600">
-          Por seguridad, debes establecer una nueva contraseña para continuar.
+          Verificaste el OTP. Ahora crea tu nueva contraseña para continuar.
         </p>
 
         <div className="mt-4 rounded-xl border p-3 bg-neutral-50">
@@ -111,44 +167,67 @@ export default function ForceChangePassword() {
           <div className="text-sm font-medium">{email || "(sin email)"}</div>
         </div>
 
-        {status === "sending" && (
-          <p className="mt-4 text-sm">Enviando correo de restablecimiento…</p>
-        )}
-
-        {status === "sent" && (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-            {msg}
-          </div>
-        )}
-
-        {status === "error" && (
+        {/* Si no hay resetToken, el usuario no puede avanzar */}
+        {!resetToken && (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-            {msg || "Ocurrió un error."}
+            No hay sesión de restablecimiento (resetToken). Vuelve a iniciar sesión y valida el OTP otra vez.
           </div>
         )}
+
+        <form onSubmit={handleSubmit} className="mt-4">
+          <label className="block text-sm font-medium mb-1">Nueva contraseña</label>
+          <input
+            className="border w-full p-2 rounded-lg"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="Mínimo 8 caracteres"
+          />
+
+          <label className="block text-sm font-medium mb-1 mt-3">Confirmar contraseña</label>
+          <input
+            className="border w-full p-2 rounded-lg"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="Repite la contraseña"
+          />
+
+          {status === "error" && (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              {msg || "Ocurrió un error."}
+            </div>
+          )}
+
+          {status === "ok" && (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+              {msg}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="mt-4 w-full h-11 rounded-xl bg-neutral-900 text-white text-sm font-semibold disabled:opacity-60"
+          >
+            {status === "saving" ? "Guardando…" : "Guardar y entrar"}
+          </button>
+        </form>
 
         <div className="mt-5 flex gap-3">
-          <button
-            onClick={() => send()}
-            disabled={status === "sending" || !email}
-            className="flex-1 h-11 rounded-xl bg-neutral-900 text-white text-sm font-semibold disabled:opacity-60"
-          >
-            Reenviar correo
-          </button>
-
           <a
             href={loginRoute}
-            className="h-11 px-4 rounded-xl border flex items-center justify-center text-sm font-semibold"
+            className="h-11 flex-1 rounded-xl border flex items-center justify-center text-sm font-semibold"
           >
-            Volver
+            Volver al login
           </a>
         </div>
 
         <p className="mt-4 text-xs text-neutral-500">
-          Si no recibes el correo en 2–3 minutos, revisa Spam/Promociones.
+          Tip: usa una contraseña fuerte y no la compartas.
         </p>
-
-        <p className="mt-2 text-[11px] text-neutral-400 break-all">API: {apiBase()}</p>
       </div>
     </div>
   );
