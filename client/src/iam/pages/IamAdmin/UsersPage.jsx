@@ -25,7 +25,7 @@ class PageErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-[#020617] text-white p-6">
+        <div className="min-h-screen bg-transparent text-white p-6">
           <div className="max-w-3xl mx-auto border border-rose-500/40 bg-rose-500/10 rounded-2xl p-5">
             <div className="text-lg font-semibold text-rose-200 mb-2">
               Se cayó la pantalla de Usuarios por un error de render.
@@ -69,9 +69,7 @@ function normalizeRoles(api) {
   if (typeof roles === "string") roles = [roles];
   if (Array.isArray(roles)) {
     return roles
-      .map((r) =>
-        typeof r === "string" ? r : r?.code || r?.name || r?.nombre || r?.key || ""
-      )
+      .map((r) => (typeof r === "string" ? r : r?.code || r?.name || r?.nombre || r?.key || ""))
       .filter(Boolean);
   }
   return [];
@@ -87,8 +85,6 @@ function mapUserToFormSafeMini(api = {}) {
     getVal(api, ["active"], undefined) ??
     (String(getVal(api, ["estado"], "")).toLowerCase() === "inactivo" ? false : true);
 
-  // Si tu backend usa mustChangePassword (lo más común), lo mapeamos.
-  // Si usa forcePwChange, también lo contemplamos.
   const mustChangePassword =
     getVal(api, ["mustChangePassword"], undefined) ??
     getVal(api, ["forcePwChange"], undefined) ??
@@ -137,7 +133,7 @@ function RoleBadges({ roles = [], roleLabelMap = {} }) {
         labels.map((r, i) => (
           <span
             key={`${r}-${i}`}
-            className="text-xs px-2 py-1 rounded-full border border-cyan-400/40 bg-cyan-500/5 text-cyan-100"
+            className="text-xs px-2 py-1 rounded-full border border-cyan-400/30 bg-cyan-500/5 text-cyan-100"
           >
             {r}
           </span>
@@ -183,14 +179,14 @@ function RoleSelect({ value = [], onChange, availableRoles = [] }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full px-3 py-2 rounded-lg border border-cyan-500/40 bg-slate-950/60 text-left text-sm shadow-inner flex items-center gap-2"
+        className="w-full px-3 py-2 rounded-lg border border-cyan-500/30 bg-black/20 backdrop-blur text-left text-sm flex items-center gap-2"
       >
         <span className="truncate">{labelSelected}</span>
         <span className="ml-auto text-xs opacity-70">▾</span>
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-cyan-500/40 bg-slate-950/95 shadow-[0_0_25px_rgba(34,211,238,0.35)]">
+        <div className="absolute z-30 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-cyan-500/30 bg-black/60 backdrop-blur shadow-[0_0_25px_rgba(34,211,238,0.18)]">
           {normalizedRoles.length === 0 && (
             <div className="px-3 py-2 text-sm text-neutral-500">No hay roles configurados.</div>
           )}
@@ -232,12 +228,19 @@ function UsersPageInner() {
 
   const [q, setQ] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
+
+  // ✅ filtros por fecha (createdAt)
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [errors, setErrors] = useState({});
 
-  const STEP = 10;
-  const [visibleCount, setVisibleCount] = useState(STEP);
+  // ✅ Paginación REAL (backend: limit+skip+total)
+  const PAGE_SIZE = 5;
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   // ✅ Form MINIMAL
   const empty = {
@@ -250,10 +253,7 @@ function UsersPageInner() {
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
 
-  const [creds, setCreds] = useState({
-    password: "",
-    confirm: "",
-  });
+  const [creds, setCreds] = useState({ password: "", confirm: "" });
   const [showPwd, setShowPwd] = useState(false);
 
   const pwdR = passwordRules(creds.password);
@@ -287,27 +287,50 @@ function UsersPageInner() {
     return t || null;
   }
 
-  async function load() {
+  function hasAnyFilter() {
+    return !!q.trim() || !!createdFrom || !!createdTo || onlyActive === false;
+  }
+
+  async function load({ append = false } = {}) {
     try {
       setLoading(true);
       setErr("");
 
       const token = requireTokenOrNull();
-
       if (!DISABLE_AUTH && !token) {
         setErr("No se pudo obtener token de sesión. Inicia sesión de nuevo para gestionar usuarios.");
         setItems([]);
         setRoleCatalog([]);
+        setTotal(0);
+        setHasMore(false);
         return;
       }
 
       const listUsers = requireFn("listUsers");
+
+      const nextSkip = append ? items.length : 0;
+
       const [resUsers, resRoles] = await Promise.all([
-        listUsers("", token),
+        listUsers(
+          {
+            q: q.trim(),
+            onlyActive: onlyActive ? 1 : 0,
+            limit: PAGE_SIZE,
+            skip: nextSkip,
+            createdFrom: createdFrom || "",
+            createdTo: createdTo || "",
+          },
+          token
+        ),
         typeof iamApi.listRoles === "function" ? iamApi.listRoles(token) : Promise.resolve({}),
       ]);
 
-      setItems(resUsers.items || []);
+      const newItems = Array.isArray(resUsers?.items) ? resUsers.items : [];
+      const meta = resUsers?.meta || {};
+
+      setItems((prev) => (append ? [...prev, ...newItems] : newItems));
+      setTotal(Number(meta.total || 0));
+      setHasMore(!!meta.hasMore);
 
       const rolesRaw = resRoles?.items || resRoles?.roles || [];
       setRoleCatalog(Array.isArray(rolesRaw) ? rolesRaw : []);
@@ -318,26 +341,18 @@ function UsersPageInner() {
     }
   }
 
+  // carga inicial
   useEffect(() => {
-    load();
+    load({ append: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredAll = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    let res = items;
-
-    if (t) {
-      res = res.filter((u) => {
-        const name = String(u.nombreCompleto || u.name || "").toLowerCase();
-        const email = String(u.email || u.correoPersona || "").toLowerCase();
-        return name.includes(t) || email.includes(t);
-      });
-    }
-
-    if (onlyActive) res = res.filter((u) => u.active !== false);
-    return res;
-  }, [items, q, onlyActive]);
+  // recargar cuando cambian filtros (con debounce)
+  useEffect(() => {
+    const t = setTimeout(() => load({ append: false }), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, onlyActive, createdFrom, createdTo]);
 
   function setField(name, value) {
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -377,7 +392,6 @@ function UsersPageInner() {
     };
 
     if (creds.password) payload.password = creds.password;
-
     return payload;
   }
 
@@ -421,7 +435,8 @@ function UsersPageInner() {
       setEditing(null);
       setCreds({ password: "", confirm: "" });
       setErrors({});
-      await load();
+
+      await load({ append: false });
     } catch (e2) {
       alert("⚠️ Error al guardar: " + (e2?.message || "Revisa la consola"));
       console.error("[UsersPage] submit error:", e2);
@@ -446,7 +461,7 @@ function UsersPageInner() {
         await disableUser(u._id, token);
       }
 
-      await load();
+      await load({ append: false });
     } catch (e) {
       alert(e?.message || "No se pudo cambiar el estado");
     }
@@ -490,9 +505,7 @@ function UsersPageInner() {
   }
 
   async function handleDelete(u) {
-    const ok = window.confirm(
-      `¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`
-    );
+    const ok = window.confirm(`¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`);
     if (!ok) return;
 
     try {
@@ -509,32 +522,29 @@ function UsersPageInner() {
       }
 
       if (editing === u._id) cancelEdit();
-      await load();
+      await load({ append: false });
       alert("Usuario eliminado correctamente.");
     } catch (e) {
       alert(e?.message || "No se pudo eliminar el usuario");
     }
   }
 
-  const visibleList = filteredAll.slice(0, visibleCount);
+  // ✅ ahora ya NO hacemos slice; items ya viene paginado por backend
+  const visibleList = items;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#020617] via-[#020617] to-black text-white p-6 md:p-8 space-y-8">
+    <div className="min-h-screen bg-transparent text-white p-6 md:p-8 space-y-8">
       <header className="max-w-5xl mx-auto">
-        <h1 className="text-2xl md:text-3xl font-semibold mb-2">
-          Administración de Usuarios (IAM)
-        </h1>
-        <p className="text-sm text-neutral-400 max-w-2xl">
+        <h1 className="text-2xl md:text-3xl font-semibold mb-2">Administración de Usuarios (IAM)</h1>
+        <p className="text-sm text-neutral-300/80 max-w-2xl">
           Crea y administra usuarios del sistema SENAF: cuenta, roles y seguridad mínima.
         </p>
       </header>
 
       {/* Formulario principal (MINI) */}
-      <section className="max-w-5xl mx-auto bg-slate-900/60 border border-cyan-500/30 rounded-2xl shadow-[0_0_30px_rgba(34,211,238,0.25)] p-5 md:p-7 space-y-6">
+      <section className="max-w-5xl mx-auto bg-transparent border border-cyan-500/25 rounded-2xl backdrop-blur-sm shadow-[0_0_30px_rgba(34,211,238,0.10)] p-5 md:p-7 space-y-6">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-lg md:text-xl font-semibold">
-            {editing ? "Editar usuario" : "Registrar nuevo usuario"}
-          </h2>
+          <h2 className="text-lg md:text-xl font-semibold">{editing ? "Editar usuario" : "Registrar nuevo usuario"}</h2>
           <button
             type="button"
             onClick={() => {
@@ -543,14 +553,14 @@ function UsersPageInner() {
               setCreds({ password: "", confirm: "" });
               setErrors({});
             }}
-            className="text-xs md:text-sm px-3 py-1.5 rounded-lg border border-cyan-500/60 hover:bg-cyan-500/10 transition-colors"
+            className="text-xs md:text-sm px-3 py-1.5 rounded-lg border border-cyan-500/40 hover:bg-cyan-500/10 transition-colors"
           >
             Limpiar formulario
           </button>
         </div>
 
         {err && (
-          <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+          <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
             {err}
           </div>
         )}
@@ -565,12 +575,10 @@ function UsersPageInner() {
                 name="nombreCompleto"
                 value={form.nombreCompleto}
                 onChange={(e) => setField("nombreCompleto", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                className="w-full px-3 py-2 rounded-lg bg-black/20 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="Ej. Juan Pérez"
               />
-              {errors.nombreCompleto && (
-                <p className="text-xs text-red-400">{errors.nombreCompleto}</p>
-              )}
+              {errors.nombreCompleto && <p className="text-xs text-red-300">{errors.nombreCompleto}</p>}
             </div>
 
             <div className="space-y-1">
@@ -580,10 +588,10 @@ function UsersPageInner() {
                 type="email"
                 value={form.email}
                 onChange={(e) => setField("email", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                className="w-full px-3 py-2 rounded-lg bg-black/20 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="usuario@dominio.com"
               />
-              {errors.email && <p className="text-xs text-red-400">{errors.email}</p>}
+              {errors.email && <p className="text-xs text-red-300">{errors.email}</p>}
             </div>
           </div>
 
@@ -591,12 +599,8 @@ function UsersPageInner() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
             <div className="space-y-1 md:col-span-2">
               <label className="text-sm text-neutral-200">Rol(es)</label>
-              <RoleSelect
-                value={form.roles}
-                onChange={(val) => setField("roles", val)}
-                availableRoles={roleCatalog}
-              />
-              {errors.roles && <p className="text-xs text-red-400">{errors.roles}</p>}
+              <RoleSelect value={form.roles} onChange={(val) => setField("roles", val)} availableRoles={roleCatalog} />
+              {errors.roles && <p className="text-xs text-red-300">{errors.roles}</p>}
             </div>
 
             <div className="space-y-1">
@@ -605,7 +609,7 @@ function UsersPageInner() {
                 name="active"
                 value={form.active ? "1" : "0"}
                 onChange={(e) => setField("active", e.target.value === "1")}
-                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                className="w-full px-3 py-2 rounded-lg bg-black/20 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               >
                 <option value="1">Activo</option>
                 <option value="0">Inactivo</option>
@@ -617,15 +621,14 @@ function UsersPageInner() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
             <div className="space-y-1">
               <label className="text-sm text-neutral-200">
-                Contraseña
-                <span className="text-xs text-cyan-300 ml-2">(solo al crear o cambiar)</span>
+                Contraseña <span className="text-xs text-cyan-200/80 ml-2">(solo al crear o cambiar)</span>
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type={showPwd ? "text" : "password"}
                   value={creds.password}
                   onChange={(e) => setCreds((prev) => ({ ...prev, password: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                  className="w-full px-3 py-2 rounded-lg bg-black/20 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                   placeholder="••••••••"
                 />
                 <button
@@ -636,7 +639,7 @@ function UsersPageInner() {
                   {showPwd ? "Ocultar" : "Ver"}
                 </button>
               </div>
-              {errors.password && <p className="text-xs text-red-400">{errors.password}</p>}
+              {errors.password && <p className="text-xs text-red-300">{errors.password}</p>}
             </div>
 
             <div className="space-y-1">
@@ -644,20 +647,20 @@ function UsersPageInner() {
               <input
                 type={showPwd ? "text" : "password"}
                 name="confirm"
-                className="w-full px-3 py-2 rounded-lg bg-slate-950/60 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                className="w-full px-3 py-2 rounded-lg bg-black/20 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 value={creds.confirm}
                 onChange={(e) => setCreds((prev) => ({ ...prev, confirm: e.target.value }))}
                 placeholder="••••••••"
               />
-              {errors.confirm && <span className="text-xs text-red-500">{errors.confirm}</span>}
+              {errors.confirm && <span className="text-xs text-red-300">{errors.confirm}</span>}
               {!errors.confirm && creds.confirm && !match && (
-                <span className="text-xs text-red-500">No coincide con la contraseña.</span>
+                <span className="text-xs text-red-300">No coincide con la contraseña.</span>
               )}
             </div>
 
             <div className="space-y-1">
               <label className="text-sm text-neutral-200">Seguridad</label>
-              <label className="flex items-center gap-2 text-xs text-neutral-300">
+              <label className="flex items-center gap-2 text-xs text-neutral-200/80">
                 <input
                   type="checkbox"
                   checked={!!form.forcePwChange}
@@ -665,39 +668,29 @@ function UsersPageInner() {
                 />
                 Forzar cambio de contraseña
               </label>
-              <p className="text-[11px] text-neutral-500">
+              <p className="text-[11px] text-neutral-300/60">
                 Se envía al backend como <span className="font-mono">mustChangePassword</span>.
               </p>
             </div>
           </div>
 
           {showPwdRules && (
-            <div className="text-xs text-neutral-300 bg-slate-900/70 border border-cyan-500/30 rounded-lg px-3 py-2 space-y-1">
-              <div className="font-semibold text-cyan-300 mb-1">Requisitos de contraseña:</div>
+            <div className="text-xs text-neutral-200/80 bg-black/20 border border-cyan-500/25 rounded-lg px-3 py-2 space-y-1">
+              <div className="font-semibold text-cyan-200 mb-1">Requisitos de contraseña:</div>
               <div>
-                <span className={pwdR.length ? "text-green-400" : "text-red-400"}>
-                  • Al menos 8 caracteres
-                </span>
+                <span className={pwdR.length ? "text-green-300" : "text-red-300"}>• Al menos 8 caracteres</span>
               </div>
               <div>
-                <span className={pwdR.upper ? "text-green-400" : "text-red-400"}>
-                  • Una letra mayúscula
-                </span>
+                <span className={pwdR.upper ? "text-green-300" : "text-red-300"}>• Una letra mayúscula</span>
               </div>
               <div>
-                <span className={pwdR.lower ? "text-green-400" : "text-red-400"}>
-                  • Una letra minúscula
-                </span>
+                <span className={pwdR.lower ? "text-green-300" : "text-red-300"}>• Una letra minúscula</span>
               </div>
               <div>
-                <span className={pwdR.digit ? "text-green-400" : "text-red-400"}>
-                  • Un número
-                </span>
+                <span className={pwdR.digit ? "text-green-300" : "text-red-300"}>• Un número</span>
               </div>
               <div>
-                <span className={match ? "text-green-400" : "text-red-400"}>
-                  • Coincidencia entre contraseña y confirmación
-                </span>
+                <span className={match ? "text-green-300" : "text-red-300"}>• Coincidencia entre contraseña y confirmación</span>
               </div>
             </div>
           )}
@@ -706,14 +699,14 @@ function UsersPageInner() {
             <button
               type="button"
               onClick={cancelEdit}
-              className="px-4 py-2 text-sm rounded-lg border border-neutral-500/50 text-neutral-200 hover:bg-neutral-700/40"
+              className="px-4 py-2 text-sm rounded-lg border border-white/15 text-neutral-100 hover:bg-white/5"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 text-sm rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold shadow-[0_0_20px_rgba(34,211,238,0.6)] disabled:opacity-60"
+              className="px-4 py-2 text-sm rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold shadow-[0_0_20px_rgba(34,211,238,0.35)] disabled:opacity-60"
             >
               {submitting ? "Guardando..." : editing ? "Guardar cambios" : "Crear usuario"}
             </button>
@@ -726,29 +719,59 @@ function UsersPageInner() {
         <div className="flex flex-col md:flex-row gap-3 justify-between items-start">
           <div>
             <h2 className="text-lg font-semibold mb-1">Usuarios registrados</h2>
-            <p className="text-xs text-neutral-400">{filteredAll.length} usuario(s) encontrados</p>
+            <p className="text-xs text-neutral-300/70">
+              {items.length} de {total} usuario(s)
+            </p>
           </div>
+
+          {/* filtros */}
           <div className="flex flex-wrap gap-3 items-center">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Buscar por nombre o correo..."
-              className="px-3 py-1.5 rounded-lg bg-slate-900/70 border border-cyan-500/30 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              className="px-3 py-1.5 rounded-lg bg-black/20 backdrop-blur border border-cyan-500/25 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
             />
-            <label className="flex items-center gap-2 text-xs text-neutral-300">
-              <input
-                type="checkbox"
-                checked={onlyActive}
-                onChange={(e) => setOnlyActive(e.target.checked)}
-              />
+
+            <input
+              type="date"
+              value={createdFrom}
+              onChange={(e) => setCreatedFrom(e.target.value)}
+              className="px-3 py-1.5 rounded-lg bg-black/20 backdrop-blur border border-cyan-500/25 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              title="Desde (creación)"
+            />
+            <input
+              type="date"
+              value={createdTo}
+              onChange={(e) => setCreatedTo(e.target.value)}
+              className="px-3 py-1.5 rounded-lg bg-black/20 backdrop-blur border border-cyan-500/25 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              title="Hasta (creación)"
+            />
+
+            <label className="flex items-center gap-2 text-xs text-neutral-200/80">
+              <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
               Mostrar solo activos
             </label>
+
+            <button
+              type="button"
+              onClick={() => {
+                setQ("");
+                setCreatedFrom("");
+                setCreatedTo("");
+                setOnlyActive(true);
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/10"
+              title="Quitar filtros"
+            >
+              Limpiar filtros
+            </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-cyan-500/20 bg-slate-950/70 shadow-[0_0_25px_rgba(34,211,238,0.25)]">
+        <div className="overflow-x-auto rounded-2xl border border-cyan-500/20 bg-black/20 backdrop-blur shadow-[0_0_25px_rgba(34,211,238,0.12)]">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-900/80 text-xs uppercase text-neutral-400 border-b border-cyan-500/20">
+            <thead className="bg-black/20 text-xs uppercase text-neutral-300/70 border-b border-cyan-500/20">
               <tr>
                 <th className="px-4 py-3 text-left">Nombre</th>
                 <th className="px-4 py-3 text-left">Correo</th>
@@ -757,69 +780,75 @@ function UsersPageInner() {
                 <th className="px-4 py-3 text-right">Acciones</th>
               </tr>
             </thead>
+
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-400">
+                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-300/70">
                     Cargando usuarios…
                   </td>
                 </tr>
               ) : visibleList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-400">
+                  <td colSpan={5} className="px-4 py-6 text-center text-neutral-300/70">
                     No hay usuarios que coincidan con el filtro.
                   </td>
                 </tr>
               ) : (
                 visibleList.map((u) => (
-                  <tr key={u._id} className="border-b border-slate-800/70 hover:bg-slate-900/70">
+                  <tr key={u._id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-neutral-100">
-                        {u.nombreCompleto || u.name || "(Sin nombre)"}
+                      <div className="font-medium text-neutral-100">{u.nombreCompleto || u.name || "(Sin nombre)"}</div>
+                      <div className="text-[11px] text-neutral-300/60">
+                        Creado: {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-neutral-200">
-                      {u.email || u.correoPersona || "—"}
-                    </td>
+
+                    <td className="px-4 py-3 text-neutral-200/90">{u.email || u.correoPersona || "—"}</td>
+
                     <td className="px-4 py-3">
                       <RoleBadges roles={u.roles} roleLabelMap={roleLabelMap} />
                     </td>
+
                     <td className="px-4 py-3 text-center">
                       <span
                         className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold ${
                           u.active !== false
-                            ? "bg-emerald-500/15 text-emerald-300 border border-emerald-400/50"
-                            : "bg-red-500/15 text-red-300 border border-red-400/50"
+                            ? "bg-emerald-500/15 text-emerald-300 border border-emerald-400/40"
+                            : "bg-red-500/15 text-red-300 border border-red-400/40"
                         }`}
                       >
                         <span className="w-2 h-2 rounded-full mr-1 bg-current" />
                         {u.active !== false ? "Activo" : "Inactivo"}
                       </span>
                     </td>
+
                     <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => toggleActive(u)}
                         className={`inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border ${
                           u.active !== false
-                            ? "border-yellow-400/60 text-yellow-200 hover:bg-yellow-400/15"
-                            : "border-emerald-400/60 text-emerald-200 hover:bg-emerald-400/15"
+                            ? "border-yellow-400/60 text-yellow-200 hover:bg-yellow-400/10"
+                            : "border-emerald-400/60 text-emerald-200 hover:bg-emerald-400/10"
                         }`}
                       >
                         {u.active !== false ? "Desactivar" : "Activar"}
                       </button>
+
                       <button
                         type="button"
                         onClick={() => startEdit(u)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-cyan-400/70 text-cyan-200 hover:bg-cyan-400/15"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-cyan-400/60 text-cyan-200 hover:bg-cyan-400/10"
                       >
                         <Edit3 className="w-3 h-3" />
                         Editar
                       </button>
+
                       <button
                         type="button"
                         onClick={() => handleDelete(u)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-rose-500/70 text-rose-200 hover:bg-rose-500/15"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-rose-500/60 text-rose-200 hover:bg-rose-500/10"
                       >
                         <Trash2 className="w-3 h-3" />
                         Eliminar
@@ -832,14 +861,15 @@ function UsersPageInner() {
           </table>
         </div>
 
-        {visibleCount < filteredAll.length && (
+        {hasMore && (
           <div className="flex justify-center pt-2">
             <button
               type="button"
-              onClick={() => setVisibleCount((v) => v + STEP)}
-              className="px-4 py-2 text-sm rounded-lg border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/10"
+              onClick={() => load({ append: true })}
+              disabled={loading}
+              className="px-4 py-2 text-sm rounded-lg border border-cyan-500/35 text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-60"
             >
-              Ver más usuarios
+              {loading ? "Cargando..." : "Ver más usuarios"}
             </button>
           </div>
         )}

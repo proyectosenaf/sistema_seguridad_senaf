@@ -98,18 +98,60 @@ function mapBodyToIamUser(body = {}) {
 
 /* ===================== Routes ===================== */
 
+/**
+ * GET /api/iam/v1/users
+ * - Vista normal (sin q y sin fechas) => últimos 5 (default), aunque soloActive esté activo
+ * - Con filtros (q o fechas) => devuelve coincidencias (hasta limit, default 2000)
+ */
 r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
+
+    // ✅ Default recomendado: solo activos
+    // (si UI manda onlyActive=1, ok; si no manda, queda true)
+    const onlyActive = parseBool(req.query.onlyActive, true) || String(req.query.active || "") === "1";
+
+    const createdFromRaw = String(req.query.createdFrom || req.query.from || "").trim();
+    const createdToRaw = String(req.query.createdTo || req.query.to || "").trim();
+
+    const createdFrom = createdFromRaw ? new Date(createdFromRaw) : null;
+    const createdTo = createdToRaw ? new Date(createdToRaw) : null;
+
     const query = {};
+
+    if (onlyActive) query.active = { $ne: false };
 
     if (q) {
       const rx = new RegExp(escapeRegex(q), "i");
       query.$or = [{ name: rx }, { email: rx }];
     }
 
-    const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(500).lean();
-    return res.json({ ok: true, items: items.map(pickUser) });
+    const fromOk = createdFrom && !Number.isNaN(createdFrom.getTime());
+    const toOk = createdTo && !Number.isNaN(createdTo.getTime());
+
+    if (fromOk || toOk) {
+      query.createdAt = {};
+      if (fromOk) query.createdAt.$gte = createdFrom;
+      if (toOk) query.createdAt.$lte = createdTo;
+    }
+
+    // ✅ CAMBIO CLAVE:
+    // "hasFilters" SOLO cuando hay búsqueda por texto o fechas.
+    // onlyActive NO debe disparar "2000", porque es el default de la pantalla.
+    const hasFilters = !!q || !!query.createdAt;
+
+    const limitParam = Number(req.query.limit || 0);
+
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0
+        ? Math.min(limitParam, 2000)
+        : hasFilters
+        ? 2000
+        : 5;
+
+    const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+
+    return res.json({ ok: true, items: items.map(pickUser), meta: { hasFilters, limit, onlyActive } });
   } catch (e) {
     next(e);
   }
@@ -162,10 +204,6 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
 
     const isVisitor = hasRole(roles, "visita");
 
-    // ✅ IMPORTANTÍSIMO:
-    // - Internos (no visita) => password OBLIGATORIO para evitar usuarios sin passwordHash
-    // - Visita => también le pondrás password cuando se registre por tab “Registrate” (ese endpoint lo haremos),
-    //   pero aquí en el módulo admin no creas “visitas” normalmente.
     if (!isVisitor && !password) {
       return res.status(400).json({
         ok: false,
@@ -176,11 +214,7 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
     const exists = await IamUser.findOne({ email }).lean();
     if (exists) return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
 
-    // ✅ mustChangePassword:
-    // - visitantes => SIEMPRE false
-    // - internos => por defecto true (primera vez) salvo que el admin explícitamente lo quite
     const mustChangePassword = isVisitor ? false : parseBool(mustChangePasswordRaw, true);
-
     const passwordHash = password ? await hashPassword(password) : "";
 
     const doc = await IamUser.create({
@@ -193,13 +227,11 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       passwordHash,
       passwordChangedAt: password ? new Date() : null,
 
-      // limpiar reset temporal
       tempPassHash: "",
       tempPassExpiresAt: null,
       tempPassUsedAt: null,
       tempPassAttempts: 0,
 
-      // OTP: internos normalmente lo usarán; visitantes no lo forzamos
       otpVerifiedAt: isVisitor ? new Date() : null,
     });
 
@@ -237,7 +269,8 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     const update = {};
 
     if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
-    if (body.name != null || body.nombreCompleto != null) update.name = String(body.name || body.nombreCompleto || "").trim();
+    if (body.name != null || body.nombreCompleto != null)
+      update.name = String(body.name || body.nombreCompleto || "").trim();
 
     let newRoles = null;
     if (body.roles != null) {
@@ -269,7 +302,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     const before = await IamUser.findById(id).lean();
     if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    // ✅ Regla: si pasa a ser visita, nunca forzar cambio de contraseña
     const effectiveRoles = newRoles || before.roles || [];
     const isVisitor = hasRole(effectiveRoles, "visita");
     if (isVisitor) update.mustChangePassword = false;
@@ -319,7 +351,11 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } }, "enable user");
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } },
+      "enable user"
+    );
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
@@ -337,7 +373,11 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } }, "disable user");
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } },
+      "disable user"
+    );
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);

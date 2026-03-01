@@ -62,14 +62,7 @@ function makeError(r, payload, fallbackText = "") {
  */
 async function req(
   path,
-  {
-    method = "GET",
-    body,
-    json = true,
-    token,
-    credentials = "omit",
-    timeoutMs = 30000,
-  } = {}
+  { method = "GET", body, json = true, token, credentials = "omit", timeoutMs = 30000 } = {}
 ) {
   const urlBase = buildUrl(path);
 
@@ -84,17 +77,9 @@ async function req(
   // ✅ Content-Type solo si es JSON y body es “json serializable”
   const sendingForm = isFormData(body);
   const sendingBinary = isBlob(body) || isArrayBuffer(body);
+  const shouldJson = json && !sendingForm && !sendingBinary && body !== undefined && body !== null;
 
-  const shouldJson =
-    json &&
-    !sendingForm &&
-    !sendingBinary &&
-    body !== undefined &&
-    body !== null;
-
-  if (shouldJson) {
-    headers["Content-Type"] = "application/json";
-  }
+  if (shouldJson) headers["Content-Type"] = "application/json";
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -159,9 +144,7 @@ async function req(
   const payload = await toJson(r);
   const textFallback = payload ? "" : await toText(r);
 
-  if (!r.ok) {
-    throw makeError(r, payload, textFallback);
-  }
+  if (!r.ok) throw makeError(r, payload, textFallback);
 
   return payload ?? { ok: true, text: textFallback };
 }
@@ -169,19 +152,43 @@ async function req(
 /* =========================
    Helpers: catálogos (compat /catalogos vs /catalogs)
 ========================= */
-
 async function reqCatalogs(pathEs, pathEn, token) {
-  // intenta ES, luego EN
   try {
     return await req(pathEs, { token });
   } catch (e1) {
-    // si es 404 o "Not implemented", intenta inglés
     const status = e1?.status;
     const msg = String(e1?.message || "");
     const couldFallback = status === 404 || /not implemented/i.test(msg);
     if (!couldFallback) throw e1;
     return await req(pathEn, { token });
   }
+}
+
+function buildQueryString(params = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v === "" || v == null) return;
+    qs.set(k, String(v));
+  });
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+/** Normaliza enteros seguros (para limit/skip) */
+function toInt(v, def = 0) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.trunc(n);
+}
+
+/** Normaliza booleano a 0/1 */
+function to01(v, def = 0) {
+  if (v === undefined || v === null) return def;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return 1;
+  if (["0", "false", "no", "n", "off"].includes(s)) return 0;
+  return def;
 }
 
 /* =========================
@@ -204,9 +211,7 @@ export const iamApi = {
       credentials: "omit",
     });
 
-    // Esperado: { ok:true, token:"...", mustChangePassword:false }
     if (data?.token) setToken(data.token);
-
     return data;
   },
 
@@ -222,13 +227,8 @@ export const iamApi = {
   },
 
   /* =========================
-     Catálogos (backend)
-     ✅ compat:
-     - /catalogos/... (ES viejo)
-     - /catalogs/...  (EN nuevo)
+     Catálogos
   ========================= */
-
-  // individuales
   getCivilStatusCatalog(token) {
     return reqCatalogs("/catalogos/estado-civil", "/catalogs/civil-status", token);
   },
@@ -238,22 +238,14 @@ export const iamApi = {
   getProfessionsCatalog(token) {
     return reqCatalogs("/catalogos/profesiones", "/catalogs/professions", token);
   },
-
-  // todo junto
   getAllCatalogs(token) {
     return reqCatalogs("/catalogos/todos", "/catalogs/all", token);
   },
 
-  // helper canónico: devuelve SIEMPRE {ok, estadosCiviles, countries, profesiones}
   async getCatalogs(token) {
-    // 1) intenta todo junto (ES/EN)
     try {
       const r = await this.getAllCatalogs(token);
 
-      // soporta:
-      // - { ok:true, items:{ civilStatus:[], countries:[], professions:[] } }
-      // - { civilStatus:[], countries:[], professions:[] }
-      // - { estadosCiviles:[], countries:[], profesiones:[] }
       const src =
         r?.items && typeof r.items === "object" && !Array.isArray(r.items) ? r.items : r;
 
@@ -269,9 +261,7 @@ export const iamApi = {
         raw: r,
       };
     } catch (e) {
-      // 2) fallback: pedir individuales
-      const asArray = (x) =>
-        Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : [];
+      const asArray = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : []);
 
       const [civil, ctys, prof] = await Promise.allSettled([
         this.getCivilStatusCatalog(token),
@@ -297,26 +287,20 @@ export const iamApi = {
     return req("/roles", { method: "POST", body: body || {}, token });
   },
   updateRole(id, body, token) {
-    return req(`/roles/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: body || {},
-      token,
-    });
+    return req(`/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
   deleteRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
-  // Permisos por rol (canónico)
+  // Permisos por rol
   getRolePerms(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
   setRolePerms(id, permissionKeys, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
-      body: {
-        permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [],
-      },
+      body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
       token,
     });
   },
@@ -328,92 +312,112 @@ export const iamApi = {
   setPermsForRole(id, permissionKeys, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
-      body: {
-        permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [],
-      },
+      body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
       token,
     });
   },
 
   // Permisos
   listPerms(params = {}, token) {
-    const qs = new URLSearchParams();
-    Object.entries(params || {}).forEach(([k, v]) => {
-      if (v === "" || v == null) return;
-      qs.set(k, String(v));
-    });
-    const q = qs.toString();
-    return req(`/permissions${q ? `?${q}` : ""}`, { token });
+    return req(`/permissions${buildQueryString(params)}`, { token });
   },
   createPerm(body, token) {
     return req("/permissions", { method: "POST", body: body || {}, token });
   },
   updatePerm(id, body, token) {
-    return req(`/permissions/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: body || {},
-      token,
-    });
+    return req(`/permissions/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
   deletePerm(id, token) {
-    return req(`/permissions/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      token,
-    });
+    return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
+  // =========================
   // Usuarios
-  listUsers(q = "", token) {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-    return req(`/users${qs}`, { token });
+  // =========================
+
+  /**
+   * listUsers()
+   * ✅ Backward compatible:
+   *  - listUsers("texto", token) -> usa q=texto, default onlyActive=1, limit=5, skip=0
+   * ✅ Nuevo:
+   *  - listUsers({ q, onlyActive, limit, skip, createdFrom, createdTo }, token)
+   */
+  listUsers(qOrParams = "", token) {
+    // defaults seguros (para evitar "me trae todo")
+    const DEFAULT_ONLY_ACTIVE = 1;
+    const DEFAULT_LIMIT = 5;
+    const DEFAULT_SKIP = 0;
+
+    // modo viejo: string => q
+    if (typeof qOrParams === "string") {
+      const q = String(qOrParams || "").trim();
+
+      // por compat: si buscas algo, por default amplía el limit a 2000
+      const limit = q ? 2000 : DEFAULT_LIMIT;
+
+      const params = {
+        q,
+        onlyActive: DEFAULT_ONLY_ACTIVE,
+        limit,
+        skip: DEFAULT_SKIP,
+      };
+
+      return req(`/users${buildQueryString(params)}`, { token });
+    }
+
+    // modo nuevo: params object (normalizado)
+    const p = qOrParams && typeof qOrParams === "object" ? qOrParams : {};
+
+    const params = {
+      q: String(p.q || "").trim(),
+      onlyActive: to01(p.onlyActive, DEFAULT_ONLY_ACTIVE),
+      limit: Math.max(1, Math.min(2000, toInt(p.limit, DEFAULT_LIMIT))),
+      skip: Math.max(0, toInt(p.skip, DEFAULT_SKIP)),
+      createdFrom: p.createdFrom || "",
+      createdTo: p.createdTo || "",
+    };
+
+    return req(`/users${buildQueryString(params)}`, { token });
   },
+
   listGuards(q = "", active = true, token) {
     const qs = new URLSearchParams();
-    if (q) qs.set("q", q);
+    if (q) qs.set("q", String(q).trim());
+
+    // ✅ si active=true manda active=1, si active=false no manda nada
     if (active) qs.set("active", "1");
+
     const s = qs.toString();
     return req(`/users/guards${s ? `?${s}` : ""}`, { token });
   },
+
   getUser(id, token) {
     return req(`/users/${encodeURIComponent(id)}`, { token });
   },
+
   createUser(body, token) {
     return req("/users", { method: "POST", body: body || {}, token });
   },
+
   updateUser(id, body, token) {
-    return req(`/users/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: body || {},
-      token,
-    });
+    return req(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
   },
+
   enableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/enable`, {
-      method: "POST",
-      body: {},
-      token,
-    });
+    return req(`/users/${encodeURIComponent(id)}/enable`, { method: "POST", body: {}, token });
   },
+
   disableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/disable`, {
-      method: "POST",
-      body: {},
-      token,
-    });
+    return req(`/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: {}, token });
   },
+
   deleteUser(id, token) {
     return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
   // Audit
   listAudit(params = {}, token) {
-    const qs = new URLSearchParams();
-    Object.entries(params || {}).forEach(([k, v]) => {
-      if (v === "" || v == null) return;
-      qs.set(k, String(v));
-    });
-    const s = qs.toString();
-    return req(`/audit${s ? `?${s}` : ""}`, { token });
+    return req(`/audit${buildQueryString(params)}`, { token });
   },
 };
 
