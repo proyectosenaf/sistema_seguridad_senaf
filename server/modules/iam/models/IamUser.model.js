@@ -1,4 +1,3 @@
-// server/modules/iam/models/IamUser.model.js
 import mongoose from "mongoose";
 
 const IamUserSchema = new mongoose.Schema(
@@ -35,11 +34,19 @@ const IamUserSchema = new mongoose.Schema(
       type: [String],
       default: [],
       index: true,
+      set: (arr) =>
+        Array.isArray(arr)
+          ? arr.map((x) => String(x || "").trim()).filter(Boolean)
+          : [],
     },
 
     perms: {
       type: [String],
       default: [],
+      set: (arr) =>
+        Array.isArray(arr)
+          ? arr.map((x) => String(x || "").trim()).filter(Boolean)
+          : [],
     },
 
     /* =========================
@@ -48,21 +55,23 @@ const IamUserSchema = new mongoose.Schema(
 
     provider: {
       type: String,
-      enum: ["local"], // si luego metes auth0, aquí lo amplías
+      enum: ["local"],
       default: "local",
       index: true,
     },
 
+    // ✅ OJO: select:false => debes usar .select("+passwordHash") para leerlo
     passwordHash: {
       type: String,
       select: false,
       default: "",
     },
 
-    // ✅ Si el admin crea el usuario, normalmente esto va en true para obligar reset.
+    // ✅ Solo para usuarios internos creados por admin (no visitantes)
     mustChangePassword: {
       type: Boolean,
       default: false,
+      index: true,
     },
 
     passwordChangedAt: {
@@ -73,12 +82,11 @@ const IamUserSchema = new mongoose.Schema(
     passwordExpiresAt: {
       type: Date,
       default: null,
+      index: true,
     },
 
     /* =========================
        OTP (PRIMER LOGIN)
-       - Si es null => aún no completó OTP nunca.
-       - Si tiene fecha => ya pasó OTP al menos una vez.
     ========================= */
     otpVerifiedAt: {
       type: Date,
@@ -87,7 +95,7 @@ const IamUserSchema = new mongoose.Schema(
     },
 
     /* =========================
-       CLAVE TEMPORAL (PRELOGIN)
+       CLAVE TEMPORAL (RESET)
     ========================= */
 
     tempPassHash: {
@@ -99,6 +107,7 @@ const IamUserSchema = new mongoose.Schema(
     tempPassExpiresAt: {
       type: Date,
       default: null,
+      index: true,
     },
 
     tempPassUsedAt: {
@@ -134,7 +143,6 @@ const IamUserSchema = new mongoose.Schema(
 /* =========================
    ÍNDICES
 ========================= */
-
 IamUserSchema.index({ email: 1 }, { unique: true });
 IamUserSchema.index({ createdAt: -1 });
 

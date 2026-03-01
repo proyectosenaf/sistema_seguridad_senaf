@@ -1,4 +1,3 @@
-// server/modules/iam/routes/users.routes.js
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
@@ -11,7 +10,7 @@ const r = Router();
 /* ===================== Centralized helpers ===================== */
 
 const MW_USERS_MANAGE = devOr(requirePerm("iam.users.manage"));
-const MW_USERS_VIEW = devOr(requirePerm("iam.users.view")); // si no lo tienes en catálogo, usa iam.users.manage en ambos
+const MW_USERS_VIEW = devOr(requirePerm("iam.users.view")); // si no lo tienes, usa manage en ambos
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
@@ -45,6 +44,11 @@ function parseBool(v, def = false) {
   if (["1", "true", "yes", "y", "on"].includes(s)) return true;
   if (["0", "false", "no", "n", "off"].includes(s)) return false;
   return def;
+}
+
+function hasRole(roles, role) {
+  const rr = Array.isArray(roles) ? roles : [];
+  return rr.map((x) => String(x).toLowerCase()).includes(String(role).toLowerCase());
 }
 
 function pickUser(u) {
@@ -83,21 +87,17 @@ function mapBodyToIamUser(body = {}) {
   const roles = toStringArray(body.roles);
   const active = body.active === false ? false : true;
 
-  // ✅ soporta mustChangePassword y el checkbox del UI (forcePwChange)
-  const mustChangePassword = parseBool(body.mustChangePassword ?? body.forcePwChange, false);
+  // checkbox del UI
+  const mustChangePasswordRaw = body.mustChangePassword ?? body.forcePwChange;
 
-  // ✅ password sanitizado (evita "   ")
+  // password sanitizado
   const password = body.password != null ? String(body.password).trim() : "";
 
-  return { email, name, roles, active, mustChangePassword, password };
+  return { email, name, roles, active, mustChangePasswordRaw, password };
 }
 
 /* ===================== Routes ===================== */
 
-/**
- * GET /api/iam/v1/users?q=
- * ✅ protegido (view)
- */
 r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -115,10 +115,6 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   }
 });
 
-/**
- * GET /api/iam/v1/users/guards?active=1&q=
- * ✅ protegido (view)
- */
 r.get("/guards", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -139,10 +135,6 @@ r.get("/guards", MW_USERS_VIEW, async (req, res, next) => {
   }
 });
 
-/**
- * GET /api/iam/v1/users/:id
- * ✅ protegido (view)
- */
 r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
@@ -158,21 +150,37 @@ r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
 });
 
 /**
- * POST /api/iam/v1/users
- * ✅ protegido (manage)
+ * POST /api/iam/v1/users  (crear por ADMIN)
  */
 r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
   try {
-    const { email, name, roles, active, mustChangePassword, password } = mapBodyToIamUser(req.body || {});
+    const { email, name, roles, active, mustChangePasswordRaw, password } = mapBodyToIamUser(req.body || {});
 
     if (!email) return res.status(400).json({ ok: false, message: "email/correoPersona requerido" });
     if (!name) return res.status(400).json({ ok: false, message: "name/nombreCompleto requerido" });
     if (!roles.length) return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
 
+    const isVisitor = hasRole(roles, "visita");
+
+    // ✅ IMPORTANTÍSIMO:
+    // - Internos (no visita) => password OBLIGATORIO para evitar usuarios sin passwordHash
+    // - Visita => también le pondrás password cuando se registre por tab “Registrate” (ese endpoint lo haremos),
+    //   pero aquí en el módulo admin no creas “visitas” normalmente.
+    if (!isVisitor && !password) {
+      return res.status(400).json({
+        ok: false,
+        message: "password requerido para usuarios internos (no visitantes).",
+      });
+    }
+
     const exists = await IamUser.findOne({ email }).lean();
     if (exists) return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
 
-    // ✅ si viene password, la guardamos; si no, queda vacío (y no podrá loguear por local)
+    // ✅ mustChangePassword:
+    // - visitantes => SIEMPRE false
+    // - internos => por defecto true (primera vez) salvo que el admin explícitamente lo quite
+    const mustChangePassword = isVisitor ? false : parseBool(mustChangePasswordRaw, true);
+
     const passwordHash = password ? await hashPassword(password) : "";
 
     const doc = await IamUser.create({
@@ -180,14 +188,19 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       name,
       roles,
       active,
-      mustChangePassword: !!mustChangePassword,
+      provider: "local",
+      mustChangePassword,
       passwordHash,
       passwordChangedAt: password ? new Date() : null,
-      // limpia temporales por seguridad al crear con contraseña fija
+
+      // limpiar reset temporal
       tempPassHash: "",
       tempPassExpiresAt: null,
       tempPassUsedAt: null,
       tempPassAttempts: 0,
+
+      // OTP: internos normalmente lo usarán; visitantes no lo forzamos
+      otpVerifiedAt: isVisitor ? new Date() : null,
     });
 
     await auditSafe(
@@ -215,10 +228,6 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
   }
 });
 
-/**
- * PATCH /api/iam/v1/users/:id
- * ✅ protegido (manage)
- */
 r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
@@ -230,10 +239,11 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
     if (body.name != null || body.nombreCompleto != null) update.name = String(body.name || body.nombreCompleto || "").trim();
 
+    let newRoles = null;
     if (body.roles != null) {
       const roles = toStringArray(body.roles);
-      // ✅ evita dejar usuario sin roles por accidente
       if (!roles.length) return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
+      newRoles = roles;
       update.roles = roles;
     }
 
@@ -243,14 +253,12 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       update.mustChangePassword = parseBool(body.mustChangePassword ?? body.forcePwChange, false);
     }
 
-    // ✅ cambio de contraseña (trim)
     if (body.password != null) {
       const pwd = String(body.password).trim();
       if (pwd.length > 0) {
         update.passwordHash = await hashPassword(pwd);
         update.passwordChangedAt = new Date();
 
-        // por seguridad, si había tempPass, la invalidamos
         update.tempPassHash = "";
         update.tempPassExpiresAt = null;
         update.tempPassUsedAt = null;
@@ -261,12 +269,12 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     const before = await IamUser.findById(id).lean();
     if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    const u = await IamUser.findByIdAndUpdate(
-      id,
-      { $set: update },
-      { new: true, runValidators: true }
-    ).lean();
+    // ✅ Regla: si pasa a ser visita, nunca forzar cambio de contraseña
+    const effectiveRoles = newRoles || before.roles || [];
+    const isVisitor = hasRole(effectiveRoles, "visita");
+    if (isVisitor) update.mustChangePassword = false;
 
+    const u = await IamUser.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
     await auditSafe(
@@ -300,10 +308,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
   }
 });
 
-/**
- * POST /api/iam/v1/users/:id/enable
- * ✅ protegido (manage)
- */
 r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
@@ -315,22 +319,13 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(
-      req,
-      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } },
-      "enable user"
-    );
-
+    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } }, "enable user");
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
   }
 });
 
-/**
- * POST /api/iam/v1/users/:id/disable
- * ✅ protegido (manage)
- */
 r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
@@ -342,22 +337,13 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(
-      req,
-      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } },
-      "disable user"
-    );
-
+    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } }, "disable user");
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
   }
 });
 
-/**
- * DELETE /api/iam/v1/users/:id
- * ✅ protegido (manage)
- */
 r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();

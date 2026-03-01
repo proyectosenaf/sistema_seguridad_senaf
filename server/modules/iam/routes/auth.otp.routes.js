@@ -1,4 +1,3 @@
-// server/modules/iam/routes/auth.otp.routes.js
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
@@ -59,6 +58,11 @@ function randomOtp6() {
 
 function sha256(s) {
   return crypto.createHash("sha256").update(String(s)).digest("hex");
+}
+
+function hasRole(user, role) {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  return roles.map((x) => String(x).toLowerCase()).includes(String(role).toLowerCase());
 }
 
 function isPasswordExpired(user) {
@@ -146,14 +150,12 @@ function isExpired(entry) {
 
 /* ---------------------- Reset token (pwreset) ---------------------- */
 function signPwResetToken({ email, userId }) {
-  // token corto SOLO para reset (NO login)
   const secret = jwtSecret();
   const payload = {
     typ: "pwreset",
     email: normEmail(email),
     uid: String(userId),
   };
-  // 10 min por defecto (configurable)
   const expMinutes = Number(process.env.PWRESET_TOKEN_TTL_MINUTES || 10);
   return jwt.sign(payload, secret, { expiresIn: `${expMinutes}m`, algorithm: "HS256" });
 }
@@ -169,20 +171,8 @@ function verifyPwResetToken(token) {
    Handlers reutilizables
 ========================= */
 
-/**
- * ✅ Regla objetivo:
- * - OTP SOLO si:
- *   a) otpVerifiedAt es null  (primera vez), o
- *   b) mustChangePassword = true (usuarios creados por admin), o
- *   c) password expiró
- *
- * - Si NO aplica OTP => devolvemos token directo (sin enviar OTP).
- */
 async function loginOtpHandler(req, res) {
   const settings = getOtpSettings();
-  if (!settings?.features?.enableEmployeeOtp) {
-    return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
-  }
 
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
@@ -191,15 +181,67 @@ async function loginOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_password_required" });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash").exec();
-  if (!user) return res.status(401).json({ ok: false, error: "invalid_credentials" });
+  // necesitamos passwordHash para verificar
+  const user = await IamUser.findOne({ email }).select("+passwordHash roles active provider mustChangePassword otpVerifiedAt passwordExpiresAt").exec();
+
+  // Si no existe: esto es lo que tu UI debe usar para decir "Regístrate"
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+
   if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
+  // Si no hay hash => nunca va a validar; esto evita confusión de "credenciales"
+  if (!user.passwordHash) {
+    return res.status(403).json({
+      ok: false,
+      error: "password_not_set",
+      message: "Este usuario no tiene contraseña configurada. Contacta al administrador o restablece.",
+    });
+  }
+
   const okPwd = await verifyPassword(password, user.passwordHash);
   if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
+
+  const isVisitor = hasRole(user, "visita");
+
+  // ✅ VISITAS: NUNCA OTP, NUNCA force reset
+  if (isVisitor) {
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    });
+
+    return res.json({
+      ok: true,
+      otpRequired: false,
+      token,
+      mustChangePassword: false,
+    });
+  }
+
+  // ✅ INTERNOS: OTP solo si está habilitado
+  if (!settings?.features?.enableEmployeeOtp) {
+    // si no hay OTP habilitado, igual dejamos entrar con token
+    const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
+
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    });
+
+    return res.json({
+      ok: true,
+      otpRequired: false,
+      token,
+      mustChangePassword: mustChange,
+    });
+  }
 
   const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
   const firstTimeOtp = !user.otpVerifiedAt;
@@ -262,10 +304,6 @@ async function loginOtpHandler(req, res) {
   });
 }
 
-/**
- * ✅ Reenviar OTP SIN password (tu frontend ya lo usa)
- * POST /resend-otp  body: { email }
- */
 async function resendOtpHandler(req, res) {
   const settings = getOtpSettings();
   if (!settings?.features?.enableEmployeeOtp) {
@@ -275,12 +313,15 @@ async function resendOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-  // Por seguridad: solo reenviamos si el usuario existe/activo/local
-  const user = await IamUser.findOne({ email }).select("_id email active provider").lean();
+  const user = await IamUser.findOne({ email }).select("_id email active provider roles").lean();
   if (!user || !user.active || String(user.provider || "").toLowerCase() !== "local") {
-    // respuesta uniforme (no enumerar)
     return res.json({ ok: true });
   }
+
+  // no OTP a visitas
+  const roles = Array.isArray(user.roles) ? user.roles : [];
+  const isVisitor = roles.map((x) => String(x).toLowerCase()).includes("visita");
+  if (isVisitor) return res.json({ ok: true });
 
   const existing = OTP_STORE.get(email);
   if (existing && !isExpired(existing)) {
@@ -357,7 +398,17 @@ async function verifyOtpHandler(req, res) {
   const user = await IamUser.findOne({ email }).exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  // ✅ Marca “ya pasó OTP alguna vez” (solo si estaba vacío)
+  // visitas no usan OTP; si llegaron aquí por error, igual devolvemos token normal
+  if (hasRole(user, "visita")) {
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    });
+    return res.json({ ok: true, token, mustChangePassword: false });
+  }
+
   if (!user.otpVerifiedAt) {
     user.otpVerifiedAt = new Date();
     try {
@@ -369,7 +420,6 @@ async function verifyOtpHandler(req, res) {
 
   const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
 
-  // ✅ Si debe cambiar contraseña: NO login token aún. Devolvemos resetToken.
   if (mustChange) {
     const resetToken = signPwResetToken({ email: user.email, userId: user._id });
     return res.json({
@@ -379,7 +429,6 @@ async function verifyOtpHandler(req, res) {
     });
   }
 
-  // ✅ Caso normal: ya validó OTP y puede entrar
   const token = signLocalJwt({
     sub: `local|${user._id}`,
     email: user.email,
@@ -394,12 +443,6 @@ async function verifyOtpHandler(req, res) {
   });
 }
 
-/**
- * ✅ Reset de contraseña DESPUÉS de OTP (seguro)
- * POST /reset-password-otp  body: { email, resetToken, newPassword }
- * - Valida resetToken (JWT pwreset) y cambia password en Mongo
- * - Devuelve token de login para continuar
- */
 async function resetPasswordOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   const resetToken = String(req.body?.resetToken || "").trim();
@@ -410,9 +453,7 @@ async function resetPasswordOtpHandler(req, res) {
   }
 
   const s = getSecuritySettings?.() || {};
-  const minLength = Number.isFinite(Number(s?.password?.minLength))
-    ? Number(s.password.minLength)
-    : 8;
+  const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
 
   if (newPassword.length < minLength) {
     return res.status(400).json({ ok: false, error: "password_too_short", minLength });
@@ -425,19 +466,23 @@ async function resetPasswordOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "reset_token_invalid_or_expired" });
   }
 
-  // debe coincidir email
   if (normEmail(decoded?.email) !== email) {
     return res.status(401).json({ ok: false, error: "reset_token_email_mismatch" });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash").exec();
+  const user = await IamUser.findOne({ email }).select("+passwordHash roles").exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+
+  // ✅ visitantes nunca deberían resetear por este flujo
+  if (hasRole(user, "visita")) {
+    return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
+  }
+
   if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  // seguridad extra: uid debe coincidir
   if (String(user._id) !== String(decoded?.uid)) {
     return res.status(401).json({ ok: false, error: "reset_token_user_mismatch" });
   }
@@ -446,12 +491,8 @@ async function resetPasswordOtpHandler(req, res) {
   user.mustChangePassword = false;
   user.passwordChangedAt = new Date();
 
-  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays))
-    ? Number(s.password.expiresDays)
-    : 0;
-
-  user.passwordExpiresAt =
-    expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : undefined;
+  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays)) ? Number(s.password.expiresDays) : 0;
+  user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : null;
 
   await user.save();
 
@@ -465,10 +506,6 @@ async function resetPasswordOtpHandler(req, res) {
   return res.json({ ok: true, token, mustChangePassword: false });
 }
 
-/**
- * ⚠️ Endpoint antiguo (abierto) – lo dejamos por compatibilidad,
- * pero en el flujo nuevo NO lo usamos.
- */
 async function changePasswordHandler(req, res) {
   const email = normEmail(req.body?.email);
   const newPassword = String(req.body?.newPassword || "");
@@ -478,20 +515,19 @@ async function changePasswordHandler(req, res) {
   }
 
   const s = getSecuritySettings?.() || {};
-  const minLength = Number.isFinite(Number(s?.password?.minLength))
-    ? Number(s.password.minLength)
-    : 8;
+  const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
 
   if (newPassword.length < minLength) {
-    return res.status(400).json({
-      ok: false,
-      error: "password_too_short",
-      minLength,
-    });
+    return res.status(400).json({ ok: false, error: "password_too_short", minLength });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash").exec();
+  const user = await IamUser.findOne({ email }).select("+passwordHash roles").exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+
+  if (hasRole(user, "visita")) {
+    return res.status(403).json({ ok: false, error: "visitor_change_not_allowed" });
+  }
+
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
@@ -500,12 +536,8 @@ async function changePasswordHandler(req, res) {
   user.mustChangePassword = false;
   user.passwordChangedAt = new Date();
 
-  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays))
-    ? Number(s.password.expiresDays)
-    : 0;
-
-  user.passwordExpiresAt =
-    expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : undefined;
+  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays)) ? Number(s.password.expiresDays) : 0;
+  user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : null;
 
   await user.save();
 
@@ -522,7 +554,7 @@ r.post("/reset-password-otp", resetPasswordOtpHandler);
 r.post("/change-password", changePasswordHandler);
 
 /* =========================================================
-   ✅ ALIASES por si montas el router con /auth delante
+   Aliases
 ========================================================= */
 r.post("/auth/login-otp", loginOtpHandler);
 r.post("/auth/verify-otp", verifyOtpHandler);

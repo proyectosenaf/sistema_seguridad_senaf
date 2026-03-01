@@ -23,6 +23,9 @@ import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 // ✅ Auth OTP (visitantes) desde IAM (sin módulo public)
 import iamOtpAuthRoutes from "../modules/iam/routes/auth.otp.routes.js";
 
+// ✅ NUEVO: Registro de visitantes (self-register)
+import registerVisitorRoutes from "../modules/iam/routes/auth.register.visitor.routes.js";
+
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
 import notificationsRoutes from "./core/notifications.routes.js";
@@ -114,10 +117,7 @@ app.use(express.urlencoded({ extended: true, limit: "30mb" }));
  * Se aplica SOLO a /api para no afectar estáticos/frontend.
  */
 app.use("/api", (req, res, next) => {
-  res.setHeader(
-    "Cache-Control",
-    "no-store, no-cache, must-revalidate, proxy-revalidate"
-  );
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   res.setHeader("Surrogate-Control", "no-store");
@@ -290,6 +290,20 @@ app.use(async (req, _res, next) => {
  * Si no, tendrás 404 en /api/iam/v1/users.
  */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
+
+/* ───────────────────── ✅ REGISTRO VISITANTES ✅ ───────────────────── */
+/**
+ * ✅ NUEVO:
+ * POST /api/iam/v1/auth/register-visitor
+ * - crea usuario con roles:["visita"] y passwordHash
+ * - NO requiere token
+ *
+ * Lo montamos DESPUÉS del optionalAuth (opcionalAuth no bloquea si no hay bearer),
+ * y DESPUÉS de registerIAMModule para no interferir con cómo montas otros routers internos.
+ */
+app.use("/api/iam/v1/auth", registerVisitorRoutes);
+// alias opcional sin /api (por si llamas desde otros lados)
+app.use("/iam/v1/auth", registerVisitorRoutes);
 
 /* ───────────────────── ✅ IAM CATALOGS REGISTER ✅ ───────────────────── */
 /**

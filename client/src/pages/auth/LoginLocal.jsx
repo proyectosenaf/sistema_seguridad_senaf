@@ -1,5 +1,5 @@
 // client/src/pages/auth/LoginLocal.jsx
-// Login local (email/password) - SENAF
+// Login local (email/password) + Registro visitante - SENAF
 import React, { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import api, { getToken, clearToken, setToken } from "../../lib/api.js";
@@ -37,6 +37,46 @@ function consumeReturnTo(locationSearch) {
   return picked;
 }
 
+function stashReturnTo(returnTo) {
+  if (!returnTo) return;
+  try {
+    sessionStorage.setItem("auth:returnTo", returnTo);
+  } catch {}
+}
+
+function humanLoginError(codeOrMsg) {
+  const s = String(codeOrMsg || "").toLowerCase();
+
+  if (s.includes("user_not_found"))
+    return "No existe una cuenta con ese correo. Regístrate en la pestaña de registro.";
+  if (s.includes("invalid_credentials"))
+    return "Credenciales inválidas. Revisa correo y contraseña.";
+  if (s.includes("password_not_set"))
+    return "Tu usuario no tiene contraseña configurada. Contacta al administrador.";
+  if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
+  if (s.includes("not_local_user")) return "Usuario no permitido para login local.";
+  if (s.includes("employee_otp_disabled")) return "OTP deshabilitado por configuración.";
+  if (s.includes("otp_resend_cooldown")) return "Espera unos segundos y vuelve a intentar.";
+  if (s.includes("otp_required")) return "Debes validar el código OTP para continuar.";
+
+  return codeOrMsg || "Login fallido.";
+}
+
+function humanRegisterError(codeOrMsg) {
+  const s = String(codeOrMsg || "").toLowerCase();
+
+  if (s.includes("name_required")) return "Ingresa tu nombre completo.";
+  if (s.includes("email_required")) return "Ingresa tu correo.";
+  if (s.includes("password_required")) return "Ingresa una contraseña.";
+  if (s.includes("password_too_short")) return "La contraseña debe tener al menos 8 caracteres.";
+  if (s.includes("email_invalid")) return "Correo inválido. Revisa el formato.";
+  if (s.includes("email_taken")) return "Ya existe una cuenta con ese correo. Inicia sesión.";
+  if (s.includes("user_exists")) return "Ya existe una cuenta con ese correo. Inicia sesión.";
+  if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
+
+  return codeOrMsg || "No se pudo completar el registro.";
+}
+
 export default function LoginLocal() {
   const navigate = useNavigate();
   const loc = useLocation();
@@ -49,18 +89,19 @@ export default function LoginLocal() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
 
-  // visitante registro (pendiente backend)
+  // visitante registro
   const [fullName, setFullName] = useState("");
   const [vEmail, setVEmail] = useState("");
   const [vPassword, setVPassword] = useState("");
   const [vPassword2, setVPassword2] = useState("");
 
-  // visibilidad password (separado por tab)
+  // UI state
   const [showPassInternal, setShowPassInternal] = useState(false);
   const [showPassVisitor, setShowPassVisitor] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
   const emailNorm = useMemo(() => String(identifier || "").trim().toLowerCase(), [identifier]);
   const visitorEmailNorm = useMemo(() => String(vEmail || "").trim().toLowerCase(), [vEmail]);
@@ -83,6 +124,7 @@ export default function LoginLocal() {
     e.preventDefault();
     if (submitting) return;
     setError("");
+    setInfo("");
 
     if (!emailNorm || !emailNorm.includes("@")) return setError("Ingresa tu correo (email).");
     if (!password) return setError("Ingresa tu contraseña.");
@@ -101,7 +143,8 @@ export default function LoginLocal() {
       const data = res?.data || {};
 
       if (data?.ok === false) {
-        setError(data?.error || data?.message || "Login fallido.");
+        setError(humanLoginError(data?.error || data?.message));
+        // si el server devolvió "user_not_found" => sugerimos cambiar a pestaña registro
         return;
       }
 
@@ -111,6 +154,7 @@ export default function LoginLocal() {
         setToken(tkn);
         await auth.login({ email: emailNorm }, tkn);
 
+        // Si el server dice mustChangePassword, entonces lo llevas a forzar reset
         if (data?.mustChangePassword) {
           navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
             replace: true,
@@ -131,14 +175,13 @@ export default function LoginLocal() {
       stashOtpContext({ email: emailNorm, flow: "login", returnTo });
       navigate("/otp", { replace: true });
     } catch (err) {
-      const base = api?.defaults?.baseURL || "";
       const msg =
         err?.response?.data?.error ||
         err?.response?.data?.message ||
         err?.message ||
-        `Error de conexión (${base})`;
+        "Error de conexión";
 
-      setError(msg);
+      setError(humanLoginError(msg));
 
       const st = err?.response?.status || err?.status;
       if (st === 401 || st === 403) clearToken();
@@ -151,15 +194,73 @@ export default function LoginLocal() {
     e.preventDefault();
     if (submitting) return;
     setError("");
+    setInfo("");
 
-    if (!String(fullName || "").trim()) return setError("Ingresa tu nombre.");
-    if (!visitorEmailNorm) return setError("Ingresa tu correo.");
+    const name = String(fullName || "").trim();
+    if (!name) return setError("Ingresa tu nombre.");
+    if (!visitorEmailNorm || !visitorEmailNorm.includes("@")) return setError("Ingresa tu correo.");
     if (!vPassword) return setError("Ingresa tu contraseña.");
+    if (String(vPassword).length < 8) return setError("La contraseña debe tener al menos 8 caracteres.");
     if (String(vPassword) !== String(vPassword2)) return setError("Las contraseñas no coinciden.");
+
+    // Mantener returnTo si venía desde una ruta protegida
+    const returnTo = readReturnTo(loc.search);
+    stashReturnTo(returnTo);
 
     try {
       setSubmitting(true);
-      setError("Registro de visitas pendiente: falta endpoint en backend (register + enviar OTP).");
+      clearToken();
+
+      // ✅ Registro visitante (endpoint nuevo)
+      // Esperado: POST /api/iam/v1/auth/register-visitor
+      // body: { name, email, password }
+      const res = await api.post("/iam/v1/auth/register-visitor", {
+        name,
+        email: visitorEmailNorm,
+        password: String(vPassword),
+      });
+
+      const data = res?.data || {};
+
+      if (data?.ok === false) {
+        setError(humanRegisterError(data?.error || data?.message));
+        return;
+      }
+
+      // Diseño recomendado del backend:
+      // - Puede devolver token directo (sin OTP) -> login inmediato
+      // - O puede devolver otpRequired true (si decides confirmar email)
+      // En tu requerimiento: visitante NO debe ir a reset; y debería poder entrar normalmente luego.
+      if (data?.token) {
+        const tkn = String(data.token || "").trim();
+        setToken(tkn);
+        await auth.login({ email: visitorEmailNorm }, tkn);
+
+        const picked = consumeReturnTo(loc.search);
+        navigate(picked || "/start", { replace: true });
+        return;
+      }
+
+      if (data?.otpRequired) {
+        stashOtpContext({ email: visitorEmailNorm, flow: "register", returnTo });
+        navigate("/otp", { replace: true });
+        return;
+      }
+
+      // Fallback UX si backend respondió ok pero no devolvió token/otpRequired
+      setInfo("Registro completado. Ahora puedes iniciar sesión en la pestaña de acceso.");
+      setMode("internal");
+      setIdentifier(visitorEmailNorm);
+      setPassword("");
+      setVPassword("");
+      setVPassword2("");
+    } catch (err) {
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Error registrando visitante";
+      setError(humanRegisterError(msg));
     } finally {
       setSubmitting(false);
     }
@@ -168,37 +269,39 @@ export default function LoginLocal() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100">
       <div className="w-[360px] bg-white shadow-sm border rounded">
-        {/* Tabs */}
         <div className="flex border-b">
           <button
             type="button"
             onClick={() => {
               setMode("internal");
               setError("");
+              setInfo("");
             }}
             className={`flex-1 p-3 text-sm font-semibold ${
               mode === "internal" ? "bg-white" : "bg-slate-50 text-slate-600"
             }`}
           >
-            Ingreso interno
+            Si Tienes cuenta creada Ingresar a SENAF
           </button>
+
           <button
             type="button"
             onClick={() => {
               setMode("visitor");
               setError("");
+              setInfo("");
             }}
             className={`flex-1 p-3 text-sm font-semibold ${
               mode === "visitor" ? "bg-white" : "bg-slate-50 text-slate-600"
             }`}
           >
-            Registro visita
+            Si aun no Tienes cuenta Registrate
           </button>
         </div>
 
         <div className="p-6">
           <h2 className="text-lg mb-4 font-bold">
-            {mode === "internal" ? "Login" : "Registro de visita"}
+            {mode === "internal" ? "Acceso" : "Registro de visita"}
           </h2>
 
           {mode === "internal" ? (
@@ -211,6 +314,7 @@ export default function LoginLocal() {
                 onChange={(e) => {
                   setIdentifier(e.target.value);
                   if (error) setError("");
+                  if (info) setInfo("");
                 }}
                 autoComplete="username"
                 inputMode="email"
@@ -226,6 +330,7 @@ export default function LoginLocal() {
                   onChange={(e) => {
                     setPassword(e.target.value);
                     if (error) setError("");
+                    if (info) setInfo("");
                   }}
                 />
 
@@ -240,6 +345,7 @@ export default function LoginLocal() {
                 </button>
               </div>
 
+              {info && <div className="text-emerald-700 mb-2 text-sm">{info}</div>}
               {error && <div className="text-red-600 mb-2 text-sm">{error}</div>}
 
               <button
@@ -265,6 +371,7 @@ export default function LoginLocal() {
                 onChange={(e) => {
                   setFullName(e.target.value);
                   if (error) setError("");
+                  if (info) setInfo("");
                 }}
                 autoComplete="name"
               />
@@ -277,6 +384,7 @@ export default function LoginLocal() {
                 onChange={(e) => {
                   setVEmail(e.target.value);
                   if (error) setError("");
+                  if (info) setInfo("");
                 }}
                 autoComplete="email"
                 inputMode="email"
@@ -286,12 +394,13 @@ export default function LoginLocal() {
                 <input
                   className="border w-full p-2 pr-10"
                   type={showPassVisitor ? "text" : "password"}
-                  placeholder="Contraseña"
+                  placeholder="Contraseña (mínimo 8)"
                   autoComplete="new-password"
                   value={vPassword}
                   onChange={(e) => {
                     setVPassword(e.target.value);
                     if (error) setError("");
+                    if (info) setInfo("");
                   }}
                 />
                 <button
@@ -314,9 +423,11 @@ export default function LoginLocal() {
                 onChange={(e) => {
                   setVPassword2(e.target.value);
                   if (error) setError("");
+                  if (info) setInfo("");
                 }}
               />
 
+              {info && <div className="text-emerald-700 mb-2 text-sm">{info}</div>}
               {error && <div className="text-red-600 mb-2 text-sm">{error}</div>}
 
               <button
@@ -327,17 +438,12 @@ export default function LoginLocal() {
                 {submitting ? "Procesando..." : "Continuar"}
               </button>
 
-              <button
-                type="button"
-                disabled
-                className="mt-3 w-full p-2 rounded border text-slate-500 bg-slate-50 cursor-not-allowed"
-                title="Pendiente de integrar (Google OAuth)"
-              >
-                Continuar con Google (pendiente)
-              </button>
-
               <div className="mt-3 text-xs text-gray-500">
                 API: <span className="font-mono">{api?.defaults?.baseURL || "—"}</span>
+              </div>
+
+              <div className="mt-2 text-[11px] text-gray-400">
+                Al registrarte como visitante, podrás iniciar sesión normalmente en la pestaña de acceso.
               </div>
             </form>
           )}
