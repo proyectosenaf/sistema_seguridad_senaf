@@ -2,7 +2,8 @@
 // Login local (email/password) - SENAF
 import React, { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import api, { getToken, clearToken } from "../../lib/api.js";
+import api, { getToken, clearToken, setToken } from "../../lib/api.js";
+import { useAuth } from "./AuthProvider.jsx";
 
 function safeInternalPath(p) {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
@@ -39,15 +40,16 @@ function consumeReturnTo(locationSearch) {
 export default function LoginLocal() {
   const navigate = useNavigate();
   const loc = useLocation();
+  const auth = useAuth();
 
   // mode: "internal" | "visitor"
   const [mode, setMode] = useState("internal");
 
-  // interno (tu requerimiento: puede ser email o nombre, pero TU backend OTP usa email)
+  // interno
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
 
-  // visitante registro (aún pendiente backend endpoint)
+  // visitante registro (pendiente backend)
   const [fullName, setFullName] = useState("");
   const [vEmail, setVEmail] = useState("");
   const [vPassword, setVPassword] = useState("");
@@ -60,9 +62,7 @@ export default function LoginLocal() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const identifierNorm = useMemo(() => String(identifier || "").trim(), [identifier]);
   const emailNorm = useMemo(() => String(identifier || "").trim().toLowerCase(), [identifier]);
-
   const visitorEmailNorm = useMemo(() => String(vEmail || "").trim().toLowerCase(), [vEmail]);
 
   function stashOtpContext({ email, flow, returnTo }) {
@@ -84,7 +84,6 @@ export default function LoginLocal() {
     if (submitting) return;
     setError("");
 
-    // ✅ IMPORTANTÍSIMO: TU backend OTP login-otp requiere EMAIL + PASSWORD
     if (!emailNorm || !emailNorm.includes("@")) return setError("Ingresa tu correo (email).");
     if (!password) return setError("Ingresa tu contraseña.");
 
@@ -92,11 +91,8 @@ export default function LoginLocal() {
 
     try {
       setSubmitting(true);
-
-      // evita sesión fantasma
       clearToken();
 
-      // ✅ TU ENDPOINT REAL: POST /login-otp
       const res = await api.post("/iam/v1/auth/login-otp", {
         email: emailNorm,
         password: String(password || ""),
@@ -105,11 +101,33 @@ export default function LoginLocal() {
       const data = res?.data || {};
 
       if (data?.ok === false) {
-        setError(data?.error || data?.message || "Login OTP fallido.");
+        setError(data?.error || data?.message || "Login fallido.");
         return;
       }
 
-      // ✅ En este flujo SIEMPRE va a OTP después
+      // ✅ Caso A: NO requiere OTP => token directo
+      if (data?.otpRequired === false && data?.token) {
+        const tkn = String(data.token || "").trim();
+        setToken(tkn);
+        await auth.login({ email: emailNorm }, tkn);
+
+        if (data?.mustChangePassword) {
+          navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
+            replace: true,
+          });
+          return;
+        }
+
+        if (returnTo) {
+          navigate(returnTo, { replace: true });
+          return;
+        }
+
+        navigate("/start", { replace: true });
+        return;
+      }
+
+      // ✅ Caso B: requiere OTP => ir a /otp
       stashOtpContext({ email: emailNorm, flow: "login", returnTo });
       navigate("/otp", { replace: true });
     } catch (err) {
@@ -119,6 +137,7 @@ export default function LoginLocal() {
         err?.response?.data?.message ||
         err?.message ||
         `Error de conexión (${base})`;
+
       setError(msg);
 
       const st = err?.response?.status || err?.status;
@@ -133,8 +152,6 @@ export default function LoginLocal() {
     if (submitting) return;
     setError("");
 
-    // ⚠️ Tu backend AÚN NO tiene endpoint de registro visita + OTP.
-    // Aquí dejamos UI lista y un error claro para que no parezca que “se queda pegado”.
     if (!String(fullName || "").trim()) return setError("Ingresa tu nombre.");
     if (!visitorEmailNorm) return setError("Ingresa tu correo.");
     if (!vPassword) return setError("Ingresa tu contraseña.");
@@ -230,7 +247,7 @@ export default function LoginLocal() {
                 disabled={submitting}
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
               >
-                {submitting ? "Enviando código..." : "Continuar"}
+                {submitting ? "Procesando..." : "Continuar"}
               </button>
 
               <div className="mt-3 text-xs text-gray-500">

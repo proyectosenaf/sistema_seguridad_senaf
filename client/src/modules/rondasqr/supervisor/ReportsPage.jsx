@@ -1,7 +1,7 @@
 // client/src/modules/rondasqr/pages/ScanPage.jsx
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import QrScanner from "./QrScanner.jsx";
+import QrScanner from "../guard/QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";

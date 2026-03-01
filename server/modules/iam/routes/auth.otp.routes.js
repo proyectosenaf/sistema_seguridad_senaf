@@ -2,13 +2,11 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import nodemailer from "nodemailer";
 
 import IamUser from "../models/IamUser.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 import { getSecuritySettings } from "../services/settings.service.js";
-
-// SMTP simple (si no hay MAIL_* configurado, log en consola en DEV)
-import nodemailer from "nodemailer";
 
 const r = Router();
 
@@ -47,7 +45,6 @@ function getOtpSettings() {
 function signLocalJwt(payload) {
   const secret = ensureEnv("JWT_SECRET") || "dev_secret";
   const expiresIn = String(process.env.JWT_EXPIRES_IN || "12h");
-  // ✅ fija HS256 explícitamente
   return jwt.sign(payload, secret, { expiresIn, algorithm: "HS256" });
 }
 
@@ -58,6 +55,13 @@ function randomOtp6() {
 
 function sha256(s) {
   return crypto.createHash("sha256").update(String(s)).digest("hex");
+}
+
+function isPasswordExpired(user) {
+  if (!user?.passwordExpiresAt) return false;
+  const d = new Date(user.passwordExpiresAt);
+  if (Number.isNaN(d.getTime())) return false;
+  return new Date() > d;
 }
 
 /* ---------------------- mailer (cache) ---------------------- */
@@ -115,7 +119,6 @@ async function sendOtpEmail({ to, code }) {
 
     return { ok: true };
   } catch (e) {
-    // ✅ no “revienta” el login, pero sí te deja el error claro
     console.error("[otp] sendMail failed:", e?.message || e);
     return { ok: false, error: "mail_send_failed", message: e?.message || String(e) };
   }
@@ -139,7 +142,17 @@ function isExpired(entry) {
 
 /* =========================
    Handlers reutilizables
-   ========================= */
+========================= */
+
+/**
+ * ✅ Regla objetivo:
+ * - OTP SOLO si:
+ *   a) otpVerifiedAt es null  (primera vez), o
+ *   b) mustChangePassword = true (usuarios creados por admin), o
+ *   c) password expiró
+ *
+ * - Si NO aplica OTP => devolvemos token directo (sin enviar OTP).
+ */
 async function loginOtpHandler(req, res) {
   const settings = getOtpSettings();
   if (!settings?.features?.enableEmployeeOtp) {
@@ -153,7 +166,8 @@ async function loginOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_password_required" });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash").lean();
+  // ⚠️ Aquí NO lean() porque luego podríamos necesitar guardar auditoría; pero para performance puede ser lean.
+  const user = await IamUser.findOne({ email }).select("+passwordHash").exec();
   if (!user) return res.status(401).json({ ok: false, error: "invalid_credentials" });
   if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
   if (String(user.provider || "").toLowerCase() !== "local") {
@@ -163,13 +177,35 @@ async function loginOtpHandler(req, res) {
   const okPwd = await verifyPassword(password, user.passwordHash);
   if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
+  const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
+  const firstTimeOtp = !user.otpVerifiedAt; // null => primera vez
+  const otpRequired = firstTimeOtp || mustChange;
+
+  // ✅ Si NO requiere OTP => token directo
+  if (!otpRequired) {
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    });
+
+    return res.json({
+      ok: true,
+      otpRequired: false,
+      token,
+      mustChangePassword: false,
+    });
+  }
+
+  // ✅ Requiere OTP => aplicar cooldown y enviar OTP
   const existing = OTP_STORE.get(email);
   if (existing && !isExpired(existing)) {
     if (!canResend(existing, settings.resendCooldownSeconds)) {
       return res.status(429).json({
         ok: false,
         error: "otp_resend_cooldown",
-        cooldownSeconds: settings.resendCooldownSeconds, // ✅ útil para UI
+        cooldownSeconds: settings.resendCooldownSeconds,
         message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
       });
     }
@@ -185,7 +221,6 @@ async function loginOtpHandler(req, res) {
 
   const mail = await sendOtpEmail({ to: email, code });
   if (mail?.ok === false) {
-    // ✅ si falla correo, te lo digo explícito
     return res.status(502).json({
       ok: false,
       error: "mail_send_failed",
@@ -195,9 +230,11 @@ async function loginOtpHandler(req, res) {
 
   return res.json({
     ok: true,
+    otpRequired: true,
     sentTo: maskEmail(email),
     ttlSeconds: settings.ttlSeconds,
     resendCooldownSeconds: settings.resendCooldownSeconds,
+    mustChangePassword: mustChange, // ✅ el cliente puede saber si luego forzará reset
   });
 }
 
@@ -236,12 +273,21 @@ async function verifyOtpHandler(req, res) {
 
   OTP_STORE.delete(email);
 
-  const user = await IamUser.findOne({ email }).lean();
+  const user = await IamUser.findOne({ email }).exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  // mustChangePassword si está marcado o si expiró
-  let mustChange = !!user.mustChangePassword;
-  if (user.passwordExpiresAt && new Date() > new Date(user.passwordExpiresAt)) mustChange = true;
+  // ✅ Marca “ya pasó OTP alguna vez” (solo si estaba vacío)
+  if (!user.otpVerifiedAt) {
+    user.otpVerifiedAt = new Date();
+    try {
+      await user.save();
+    } catch (e) {
+      // no bloquea: solo auditoría
+      console.warn("[otp] could not persist otpVerifiedAt:", e?.message || e);
+    }
+  }
+
+  let mustChange = !!user.mustChangePassword || isPasswordExpired(user);
 
   const token = signLocalJwt({
     sub: `local|${user._id}`,
@@ -258,10 +304,9 @@ async function verifyOtpHandler(req, res) {
 }
 
 /**
- * ✅ Nota: este endpoint NO debe estar abierto públicamente en producción.
- * Lo dejo porque lo traías, pero lo recomendado es:
- * - reset por link (request-password-reset + reset-password) o
- * - change-password autenticado (Bearer)
+ * ⚠️ Recomendación: NO dejarlo abierto así en PROD.
+ * Ideal: reset por link o change-password con Bearer.
+ * (Lo dejo por compatibilidad, tal como lo pediste.)
  */
 async function changePasswordHandler(req, res) {
   const email = normEmail(req.body?.email);
@@ -314,8 +359,7 @@ r.post("/verify-otp", verifyOtpHandler);
 r.post("/change-password", changePasswordHandler);
 
 /* =========================================================
-   ✅ ALIASES de compatibilidad (por si lo montas en /auth o no)
-   Esto te salva de 404 según dónde montes el router.
+   ✅ ALIASES por si montas el router con /auth delante
 ========================================================= */
 r.post("/auth/login-otp", loginOtpHandler);
 r.post("/auth/verify-otp", verifyOtpHandler);

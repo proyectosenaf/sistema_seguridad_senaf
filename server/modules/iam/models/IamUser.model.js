@@ -59,6 +59,7 @@ const IamUserSchema = new mongoose.Schema(
       default: "",
     },
 
+    // ✅ Si el admin crea el usuario, normalmente esto va en true para obligar reset.
     mustChangePassword: {
       type: Boolean,
       default: false,
@@ -72,6 +73,17 @@ const IamUserSchema = new mongoose.Schema(
     passwordExpiresAt: {
       type: Date,
       default: null,
+    },
+
+    /* =========================
+       OTP (PRIMER LOGIN)
+       - Si es null => aún no completó OTP nunca.
+       - Si tiene fecha => ya pasó OTP al menos una vez.
+    ========================= */
+    otpVerifiedAt: {
+      type: Date,
+      default: null,
+      index: true,
     },
 
     /* =========================
@@ -124,6 +136,6 @@ const IamUserSchema = new mongoose.Schema(
 ========================= */
 
 IamUserSchema.index({ email: 1 }, { unique: true });
-IamUserSchema.index({ createdAt: -1 }); // útil para listados recientes
+IamUserSchema.index({ createdAt: -1 });
 
 export default mongoose.model("IamUser", IamUserSchema);
