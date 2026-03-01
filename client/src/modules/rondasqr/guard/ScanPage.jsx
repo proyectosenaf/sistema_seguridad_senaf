@@ -5,14 +5,12 @@ import QrScanner from "./QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
+import { getOutbox, queueCheckin, transmitOutbox, countOutbox } from "../utils/outbox.js";
 
-import {
-  getOutbox,
-  queueCheckin,
-  transmitOutbox,
-  removeById,
-  countOutbox,
-} from "../utils/outbox.js";
+// ✅ IAM API (central)
+import iamApi from "../../../iam/api/iamApi.js";
+// ✅ token canónico (central)
+import { getToken } from "../../../lib/api.js";
 
 /* ===== helpers pequeños ===== */
 function toArr(v) {
@@ -50,11 +48,41 @@ function buildAssignmentKey(a) {
   );
 }
 
+/* ===== fetch con JWT header (si hay token) ===== */
+async function authFetch(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  headers.set("Content-Type", headers.get("Content-Type") || "application/json");
+
+  const t = getToken?.();
+  if (t) headers.set("Authorization", `Bearer ${t}`);
+
+  // ✅ NO cookies; si algún endpoint requiere cookies, cámbialo a "include" puntualmente
+  const res = await fetch(url, {
+    ...opts,
+    headers,
+    credentials: "omit",
+    cache: "no-store",
+  });
+  return res;
+}
+
+function pickUserFromMePayload(data) {
+  if (!data) return null;
+  const user = data?.user || data?.me || data?.profile || data || null;
+  if (!user || typeof user !== "object") return null;
+  return {
+    ...user,
+    _id: user?._id || user?.id || null,
+    email: user?.email || null,
+    name: user?.name || user?.fullName || user?.nombreCompleto || null,
+  };
+}
+
 export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
 
-  // ✅ Identidad real desde tu IAM (NO Auth0)
+  // ✅ Identidad real desde IAM
   const [me, setMe] = useState(null); // { _id, email, name, roles, perms, ... }
   const [iamMe, setIamMe] = useState({ roles: [], perms: [] });
 
@@ -66,72 +94,45 @@ export default function ScanPage() {
 
     async function loadMe() {
       try {
-        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-        const ROOT = RAW.replace(/\/api\/?$/, "").replace(/\/$/, "");
-        const V1 = `${ROOT}/api/iam/v1`;
-        const LEGACY = `${ROOT}/api/iam`;
+        // 1) preferir iamApi.me() si existe
+        if (iamApi && typeof iamApi.me === "function") {
+          const data = await iamApi.me();
+          if (!alive) return;
 
-        const candidates = [
-          `${V1}/me`,
-          `${V1}/auth/me`,
-          `${LEGACY}/me`,
-          `${LEGACY}/auth/me`,
-        ];
+          const user = pickUserFromMePayload(data);
+          const roles =
+            data?.roles || data?.user?.roles || user?.roles || data?.user?.perms?.roles || [];
+          const perms =
+            data?.permissions ||
+            data?.perms ||
+            data?.user?.perms ||
+            user?.perms ||
+            user?.permissions ||
+            [];
 
-        for (const url of candidates) {
-          try {
-            const res = await fetch(url, { credentials: "include" });
-            if (!res.ok) continue;
-
-            const data = (await res.json().catch(() => ({}))) || {};
-
-            // Normalizar formas típicas
-            const user =
-              data?.user ||
-              data?.me ||
-              data?.profile ||
-              data ||
-              null;
-
-            const roles =
-              data?.roles ||
-              data?.user?.roles ||
-              user?.roles ||
-              [];
-
-            const perms =
-              data?.permissions ||
-              data?.perms ||
-              data?.user?.perms ||
-              user?.perms ||
-              user?.permissions ||
-              [];
-
-            if (!alive) return;
-
-            // set identidad (si existe)
-            const normalizedUser =
-              user && typeof user === "object"
-                ? {
-                    ...user,
-                    _id: user?._id || user?.id || null,
-                    email: user?.email || null,
-                    name: user?.name || user?.fullName || null,
-                  }
-                : null;
-
-            setMe(normalizedUser);
-            setIamMe({ roles, perms });
-            return;
-          } catch {
-            // probar siguiente candidate
-          }
+          setMe(user);
+          setIamMe({ roles, perms });
+          return;
         }
 
-        // si ninguno funcionó, dejamos vacío
+        // 2) fallback: endpoint canónico único
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/iam/v1/me`; // porque VITE_API_BASE_URL ya incluye /api
+
+        const res = await authFetch(url, { method: "GET" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        const data = (await res.json().catch(() => ({}))) || {};
         if (!alive) return;
-        setMe(null);
-        setIamMe({ roles: [], perms: [] });
+
+        const user = pickUserFromMePayload(data);
+        const roles = data?.roles || data?.user?.roles || user?.roles || [];
+        const perms =
+          data?.permissions || data?.perms || data?.user?.perms || user?.perms || user?.permissions || [];
+
+        setMe(user);
+        setIamMe({ roles, perms });
       } catch {
         if (!alive) return;
         setMe(null);
@@ -169,9 +170,7 @@ export default function ScanPage() {
         audioCtxRef.current = new Ctx();
       }
       const ctx = audioCtxRef.current;
-      if (ctx.state === "suspended") {
-        ctx.resume().catch(() => {});
-      }
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -206,14 +205,10 @@ export default function ScanPage() {
     playAlarmTone();
   }
 
-
-
   /* ===== bus local: alertas desde otra pestaña ===== */
   useEffect(() => {
     const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
-    return () => {
-      if (unsub) unsub();
-    };
+    return () => unsub?.();
   }, []);
 
   /* ===== roles/permisos SOLO desde IAM ===== */
@@ -224,9 +219,7 @@ export default function ScanPage() {
     perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
 
   const isSupervisorLike =
-    roles.includes("supervisor") ||
-    perms.includes("rondasqr.view") ||
-    perms.includes("rondasqr.reports");
+    roles.includes("supervisor") || perms.includes("rondasqr.view") || perms.includes("rondasqr.reports");
 
   /* ===== qué pestaña ===== */
   const tab = useMemo(() => {
@@ -240,12 +233,10 @@ export default function ScanPage() {
 
   // redirección de pestaña msg al módulo global de incidentes
   useEffect(() => {
-    if (tab === "msg") {
-      nav("/incidentes/nuevo?from=ronda", { replace: true });
-    }
+    if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
   }, [tab, nav]);
 
-  /* ===== estados de formularios ===== */
+  /* ===== estados ===== */
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
   const [sendingAlert, setSendingAlert] = useState(false);
@@ -278,19 +269,12 @@ export default function ScanPage() {
   }, []);
 
   /* ===== progreso local ===== */
-  const [progress, setProgress] = useState({
-    lastPoint: null,
-    nextPoint: null,
-    pct: 0,
-  });
+  const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
 
   function loadLocalProgress() {
     const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
     const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
-    const pct = Math.max(
-      0,
-      Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0))
-    );
+    const pct = Math.max(0, Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0)));
     setProgress({ lastPoint, nextPoint, pct });
   }
 
@@ -298,7 +282,7 @@ export default function ScanPage() {
     loadLocalProgress();
   }, []);
 
-  /* ===== RONDAS ASIGNADAS AL GUARDIA ===== */
+  /* ===== RONDAS ASIGNADAS ===== */
   const [myAssignments, setMyAssignments] = useState([]);
   const [assignmentStates, setAssignmentStates] = useState({});
   const [currentAssignmentKey, setCurrentAssignmentKey] = useState(null);
@@ -401,13 +385,9 @@ export default function ScanPage() {
       const gEmail = String(a.guardEmail || a.guard?.email || "").toLowerCase().trim();
       const gName = String(a.guardName || a.guard?.name || "").toLowerCase().trim();
 
-      // Preferimos match por guardId (IAM _id)
       if (myId && gId) return gId === myId;
-
-      // Fallback por email/nombre (solo si no hay IDs)
       if (myEmail && gEmail) return gEmail === myEmail;
       if (myName && gName) return gName === myName;
-
       return false;
     });
 
@@ -449,7 +429,7 @@ export default function ScanPage() {
     setSendingAlert(true);
     try {
       let gps;
-      if ("geolocation" in navigator) {
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
         await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
             (pos) => {
@@ -480,7 +460,7 @@ export default function ScanPage() {
     const qr = typeof result === "string" ? result : result?.text;
     if (!qr) return;
 
-    if (!navigator.onLine) {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
       queueCheckin({ qr, gps: null });
       alert("📦 Sin conexión. QR guardado para transmitir más tarde.");
       nav("/rondasqr/scan", { replace: true });
@@ -489,7 +469,7 @@ export default function ScanPage() {
 
     try {
       let gps = null;
-      if ("geolocation" in navigator) {
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
         await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
             (pos) => {
@@ -507,18 +487,15 @@ export default function ScanPage() {
       } else if (typeof rondasqrApi.scan === "function") {
         await rondasqrApi.scan({ qr, gps });
       } else {
-        await fetch(
-          (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000") +
-            "/api/rondasqr/v1/checkin/scan",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ qr, gps }),
-          }
-        ).then((r) => {
-          if (!r.ok) throw new Error("HTTP " + r.status);
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
+
+        const res = await authFetch(url, {
+          method: "POST",
+          body: JSON.stringify({ qr, gps }),
         });
+        if (!res.ok) throw new Error("HTTP " + res.status);
       }
 
       localStorage.setItem("rondasqr:lastPointName", qr);
@@ -585,22 +562,22 @@ export default function ScanPage() {
   async function sendCheckinViaApi(it) {
     if (typeof rondasqrApi.checkinScan === "function") {
       await rondasqrApi.checkinScan({ qr: it.qr, gps: it.gps || null });
-    } else if (typeof rondasqrApi.scan === "function") {
-      await rondasqrApi.scan({ qr: it.qr, gps: it.gps || null });
-    } else {
-      await fetch(
-        (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000") +
-          "/api/rondasqr/v1/checkin/scan",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ qr: it.qr, gps: it.gps || null }),
-        }
-      ).then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-      });
+      return;
     }
+    if (typeof rondasqrApi.scan === "function") {
+      await rondasqrApi.scan({ qr: it.qr, gps: it.gps || null });
+      return;
+    }
+
+    const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+    const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+    const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
+
+    const res = await authFetch(url, {
+      method: "POST",
+      body: JSON.stringify({ qr: it.qr, gps: it.gps || null }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
   }
 
   async function transmitNow() {
@@ -633,6 +610,7 @@ export default function ScanPage() {
       nextPoint: localStorage.getItem("rondasqr:nextPointName") || null,
       pct: Number(localStorage.getItem("rondasqr:progressPct") || 0),
     };
+
     const device = {
       ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
       online: typeof navigator !== "undefined" ? navigator.onLine : false,
@@ -676,11 +654,12 @@ export default function ScanPage() {
         return;
       }
 
-      const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-      const res = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+      const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+      const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+      const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
+
+      const res = await authFetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
 
@@ -699,8 +678,11 @@ export default function ScanPage() {
 
   /* ===== AUTO-SYNC ===== */
   useEffect(() => {
+    let stop = false;
+
     async function autoSync() {
       try {
+        if (stop) return;
         if (typeof navigator !== "undefined" && !navigator.onLine) return;
 
         const pendingOutbox = getOutbox();
@@ -717,18 +699,18 @@ export default function ScanPage() {
 
         const payload = buildOfflinePayload(safeUser);
         const hasDumpOutbox = Array.isArray(payload.outbox) && payload.outbox.length > 0;
-        const hasAssignments =
-          Array.isArray(payload.assignments) && payload.assignments.length > 0;
+        const hasAssignments = Array.isArray(payload.assignments) && payload.assignments.length > 0;
         const hasLogs = Array.isArray(payload.logs) && payload.logs.length > 0;
 
         if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
 
-        const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
+
         try {
-          const res = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
+          const res = await authFetch(url, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
             body: JSON.stringify(payload),
           });
           if (!res.ok) {
@@ -751,24 +733,21 @@ export default function ScanPage() {
 
     if (typeof window !== "undefined") {
       window.addEventListener("online", handleOnline);
-      return () => window.removeEventListener("online", handleOnline);
+      return () => {
+        stop = true;
+        window.removeEventListener("online", handleOnline);
+      };
     }
-  }, [safeUser]);
+  }, [safeUser?._id]); // ✅ evita loop por referencia de objeto
 
   /* ===== estilos ===== */
   const pageClass = "space-y-6 layer-content";
-  const headerClass =
-    "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
+  const headerClass = "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
   const cardClass = "fx-card rounded-2xl p-4 sm:p-6";
   const headerFallback =
     "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
   const cardFallback =
     "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
-
-  const neutralBtn =
-    "px-4 py-2 rounded-lg border font-medium " +
-    "border-neutral-300/70 bg-white/70 hover:bg-white/80 text-neutral-900 " +
-    "dark:border-white/15 dark:bg-white/5 dark:hover:bg-white/10 dark:text-white";
 
   const neonStyles = `
     .btn-neon {
@@ -808,16 +787,13 @@ export default function ScanPage() {
   }, [currentAssignmentKey]);
 
   function finishActiveIfAny() {
-    if (activeAssignment) {
-      handleFinishRound(activeAssignment);
-    }
+    if (activeAssignment) handleFinishRound(activeAssignment);
     nav("/rondasqr/scan", { replace: true });
   }
 
   return (
     <div className={pageClass}>
       <style>{neonStyles}</style>
-
       <audio ref={alertAudioRef} src={BEEP_SRC} preload="auto" />
 
       {lastPanic && (
@@ -837,7 +813,6 @@ export default function ScanPage() {
           <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
             Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás tus rondas y alertas de hoy.
           </p>
-
           <p className="text-[10px] mt-1 opacity-60">
             roles={roles.join(",") || "—"} · perms={perms.join(",") || "—"}
           </p>
@@ -868,25 +843,20 @@ export default function ScanPage() {
               >
                 {sendingAlert ? "ENVIANDO..." : "ALERTA"}
               </button>
-              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
-                Oprima en caso de emergencia
-              </p>
+              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">Oprima en caso de emergencia</p>
             </div>
 
             <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
               <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
                 Registrador Punto Control
               </button>
-              <button
-                onClick={() => nav("/incidentes/nuevo?from=ronda")}
-                className="w-full btn-neon btn-neon-purple"
-              >
+              <button onClick={() => nav("/incidentes/nuevo?from=ronda")} className="w-full btn-neon btn-neon-purple">
                 Mensaje Incidente
               </button>
             </div>
           </section>
 
-          {/* progreso de ronda */}
+          {/* progreso */}
           <section className={[cardClass, cardFallback].join(" ")}>
             <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
@@ -928,12 +898,9 @@ export default function ScanPage() {
                 </div>
               </>
             ) : (
-              <>
-                <p className="text-sm text-slate-600 dark:text-white/80">
-                  Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el
-                  primer punto asignado.
-                </p>
-              </>
+              <p className="text-sm text-slate-600 dark:text-white/80">
+                Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el primer punto asignado.
+              </p>
             )}
           </section>
 
@@ -956,10 +923,13 @@ export default function ScanPage() {
             </section>
           )}
 
-          {/* rondas asignadas */}
+          {/* rondas asignadas (deja tu tabla aquí) */}
           <section className={[cardClass, cardFallback, "md:col-span-2 xl:col-span-3"].join(" ")}>
-            {/* (tabla y UI exactamente como la tenías; no depende de Auth0) */}
-            {/* ... tu bloque de tabla de asignaciones se queda igual ... */}
+            {/* Tu UI de asignaciones puede ir aquí sin cambios. */}
+            {/* Si quieres que te la complete tal cual la tenías, pégame esa parte que omitiste. */}
+            <div className="text-sm opacity-70">
+              Asignaciones cargadas: <b>{myAssignments.length}</b>
+            </div>
           </section>
         </div>
       )}
@@ -1001,8 +971,42 @@ export default function ScanPage() {
         </section>
       )}
 
-      {/* OUTBOX / DUMP / FOTOS / MSG quedan igual (no tienen Auth0 ya) */}
-      {/* ... el resto de tu componente permanece igual ... */}
+      {/* OUTBOX */}
+      {tab === "outbox" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="font-semibold text-lg">Pendientes por enviar</h3>
+            <button disabled={syncing} onClick={transmitNow} className="btn-neon btn-neon-green">
+              {syncing ? "Enviando..." : "Transmitir ahora"}
+            </button>
+          </div>
+
+          <div className="text-sm opacity-80">Pendientes: {outbox.length}</div>
+        </section>
+      )}
+
+      {/* DUMP */}
+      {tab === "dump" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Enviar base offline</h3>
+          <button onClick={sendOfflineDump} className="btn-neon">
+            Enviar
+          </button>
+        </section>
+      )}
+
+      {/* FOTOS */}
+      {tab === "fotos" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Fotos</h3>
+          <PhotoPicker photos={photos} setPhotos={setPhotos} />
+          <div className="mt-4">
+            <button disabled={sendingPhotos} onClick={sendPhotos} className="btn-neon btn-neon-green">
+              {sendingPhotos ? "Enviando..." : "Enviar fotos"}
+            </button>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -1,11 +1,9 @@
-// src/modules/rondasqr/admin/AdminHub.jsx
+// client/src/modules/rondasqr/admin/AdminHub.jsx
 import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import AssignmentsPage from "./AssignmentsPage.jsx";
 
-/* =========
-   FX tokens
-   ========= */
+/* ========= FX tokens ========= */
 
 const fxCard =
   "rounded-3xl border border-neutral-200/60 dark:border-white/10 " +
@@ -48,9 +46,7 @@ function Section({ title, subtitle, actions, children }) {
       <div className="flex items-end justify-between gap-3">
         <div>
           <h3 className="text-2xl font-extrabold tracking-tight">{title}</h3>
-          {subtitle ? (
-            <p className={"text-sm mt-1 " + fxTextMuted}>{subtitle}</p>
-          ) : null}
+          {subtitle ? <p className={"text-sm mt-1 " + fxTextMuted}>{subtitle}</p> : null}
         </div>
         {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
@@ -68,18 +64,13 @@ function Table({ cols, children }) {
         <thead className={fxTextMuted}>
           <tr className={fxDivider}>
             {cols.map((c) => (
-              <th
-                key={c}
-                className="text-left py-3 px-4 font-extrabold tracking-tight"
-              >
+              <th key={c} className="text-left py-3 px-4 font-extrabold tracking-tight">
                 {c}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-neutral-200/40 dark:divide-white/10">
-          {children}
-        </tbody>
+        <tbody className="divide-y divide-neutral-200/40 dark:divide-white/10">{children}</tbody>
       </table>
     </div>
   );
@@ -93,7 +84,6 @@ const ctrlClass =
   "border border-neutral-200/60 dark:border-white/10 " +
   "focus:outline-none focus:ring-2 focus:ring-cyan-400/40";
 
-/* fix number input para que no se vea “aro raro” */
 const numberClass =
   ctrlClass +
   " [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
@@ -117,14 +107,9 @@ export default function AdminHub({ initialTab = "sites" }) {
 
   return (
     <div className="space-y-4 layer-content">
-      {/* Tabs */}
       <div className="flex flex-wrap gap-2">
         {tabs.map((t) => (
-          <button
-            key={t.k}
-            onClick={() => setTab(t.k)}
-            className={tabClass(tab === t.k)}
-          >
+          <button key={t.k} onClick={() => setTab(t.k)} className={tabClass(tab === t.k)}>
             {t.label.toUpperCase()}
           </button>
         ))}
@@ -178,12 +163,7 @@ function SitesTab() {
       <div className="p-5 space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className={ctrlWrap + " flex-1"}>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Nuevo sitio"
-              className={ctrlClass}
-            />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nuevo sitio" className={ctrlClass} />
           </div>
           <button onClick={add} className={fxBtnPrimary + " sm:w-auto w-full"}>
             Agregar
@@ -260,22 +240,14 @@ function RoundsTab() {
       title="Rondas"
       subtitle="Selecciona un sitio y administra sus rondas."
       actions={
-        <button
-          onClick={loadRounds}
-          className={fxBtnPrimary}
-          disabled={!siteId}
-        >
+        <button onClick={loadRounds} className={fxBtnPrimary} disabled={!siteId}>
           Actualizar
         </button>
       }
     >
       <div className="p-5 space-y-4">
         <div className={ctrlWrap}>
-          <select
-            value={siteId}
-            onChange={(e) => setSiteId(e.target.value)}
-            className={ctrlClass}
-          >
+          <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
             <option value="">-- Sitio --</option>
             {sites.map((s) => (
               <option key={s._id} value={s._id}>
@@ -287,18 +259,9 @@ function RoundsTab() {
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className={ctrlWrap + " flex-1"}>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Nueva ronda"
-              className={ctrlClass}
-            />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nueva ronda" className={ctrlClass} />
           </div>
-          <button
-            onClick={add}
-            className={fxBtnPrimary + " sm:w-auto w-full"}
-            disabled={!siteId}
-          >
+          <button onClick={add} className={fxBtnPrimary + " sm:w-auto w-full"} disabled={!siteId}>
             Agregar
           </button>
         </div>
@@ -348,7 +311,6 @@ function PointsTab() {
   const [name, setName] = useState("");
   const [order, setOrder] = useState(0);
 
-  // ✅ anti-spam / evita carreras de requests
   const reqSeq = useRef(0);
 
   const loadSites = useCallback(async () => {
@@ -370,40 +332,33 @@ function PointsTab() {
     setRounds(r?.items || []);
   }, [siteId]);
 
-  const reloadPoints = useCallback(async (sid, rid) => {
-    const nextSiteId = sid ?? siteId;
-    const nextRoundId = rid ?? roundId;
+  const reloadPoints = useCallback(
+    async (sid, rid) => {
+      const nextSiteId = sid ?? siteId;
+      const nextRoundId = rid ?? roundId;
 
-    // ✅ No llamar backend si no hay siteId (y opcionalmente si no hay roundId)
-    if (!nextSiteId) {
-      setRows([]);
-      return;
-    }
-
-    // ✅ Si tu backend requiere roundId obligatoriamente para listar puntos,
-    // descomenta esto:
-    // if (!nextRoundId) { setRows([]); return; }
-
-    const mySeq = ++reqSeq.current;
-
-    try {
-      const p = await api.listPoints({
-        siteId: nextSiteId,
-        roundId: nextRoundId || undefined,
-      });
-
-      // ✅ Solo aplicar si es la última respuesta
-      if (mySeq === reqSeq.current) {
-        setRows(p?.items || []);
+      if (!nextSiteId) {
+        setRows([]);
+        return;
       }
-    } catch (e) {
-      // ✅ Evita loop de errores: no relanzar, no reintentar aquí
-      console.error("[PointsTab] listPoints error:", e?.message || e);
-      if (mySeq === reqSeq.current) setRows([]);
-    }
-  }, [siteId, roundId]);
 
-  // ✅ Cuando cambia siteId: resetear ronda y recargar rounds/puntos una sola vez
+      const mySeq = ++reqSeq.current;
+
+      try {
+        const p = await api.listPoints({
+          siteId: nextSiteId,
+          roundId: nextRoundId || undefined,
+        });
+
+        if (mySeq === reqSeq.current) setRows(p?.items || []);
+      } catch (e) {
+        console.error("[PointsTab] listPoints error:", e?.message || e);
+        if (mySeq === reqSeq.current) setRows([]);
+      }
+    },
+    [siteId, roundId]
+  );
+
   useEffect(() => {
     (async () => {
       if (!siteId) {
@@ -412,18 +367,15 @@ function PointsTab() {
         setRoundId("");
         return;
       }
-      // Si cambias de sitio, roundId anterior ya no aplica
       setRoundId("");
       await reloadRounds(siteId);
-      await reloadPoints(siteId, ""); // sin ronda seleccionada aún
+      await reloadPoints(siteId, "");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId]);
 
-  // ✅ Cuando cambia roundId (y ya hay siteId): recargar puntos
   useEffect(() => {
     if (!siteId) return;
-    // Ojo: roundId puede ser ""
     reloadPoints(siteId, roundId);
   }, [siteId, roundId, reloadPoints]);
 
@@ -453,11 +405,8 @@ function PointsTab() {
   async function rotateQr(id) {
     if (!window.confirm("¿Rotar el código QR de este punto?")) return;
     try {
-      if (typeof api.rotatePointQr === "function") {
-        await api.rotatePointQr(id);
-      } else {
-        await api.updatePoint(id, { qr: undefined });
-      }
+      if (typeof api.rotatePointQr === "function") await api.rotatePointQr(id);
+      else await api.updatePoint(id, { qr: undefined });
       await reloadPoints(siteId, roundId);
     } catch (e) {
       console.error("Error al rotar QR", e);
@@ -466,17 +415,10 @@ function PointsTab() {
   }
 
   function openQrRepo() {
-    if (!siteId || !roundId) {
-      alert("Seleccione un sitio y una ronda para ver el repositorio de QRs.");
-      return;
-    }
-    if (typeof api.qrRepoUrl !== "function") {
-      alert("Falta implementar qrRepoUrl en rondasqrApi.");
-      return;
-    }
+    if (!siteId || !roundId) return alert("Seleccione un sitio y una ronda para ver el repositorio de QRs.");
+    if (typeof api.qrRepoUrl !== "function") return alert("Falta implementar qrRepoUrl en rondasqrApi.");
     const url = api.qrRepoUrl({ siteId, roundId });
-    if (!url) return;
-    window.open(url, "_blank", "noopener");
+    if (url) window.open(url, "_blank", "noopener");
   }
 
   function pointQrPngUrl(id) {
@@ -490,33 +432,20 @@ function PointsTab() {
       subtitle="Selecciona sitio y ronda. Agrega puntos con orden y rota su QR cuando sea necesario."
       actions={
         <div className="flex gap-2">
-          <button
-            onClick={() => reloadPoints(siteId, roundId)}
-            className={fxBtnPrimary}
-            disabled={!siteId}
-          >
+          <button onClick={() => reloadPoints(siteId, roundId)} className={fxBtnPrimary} disabled={!siteId}>
             Actualizar
           </button>
-          <button
-            onClick={openQrRepo}
-            className={fxBtnPrimary}
-            disabled={!siteId || !roundId}
-          >
+          <button onClick={openQrRepo} className={fxBtnPrimary} disabled={!siteId || !roundId}>
             Repositorio de QRs
           </button>
         </div>
       }
     >
       <div className="p-5 space-y-4">
-        {/* Toolbar */}
         <div className="grid gap-3 items-end grid-cols-1 md:grid-cols-2 xl:grid-cols-5">
           <div className={ctrlWrap}>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Sitio</label>
-            <select
-              value={siteId}
-              onChange={(e) => setSiteId(e.target.value)}
-              className={ctrlClass}
-            >
+            <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
               <option value="">-- Sitio --</option>
               {sites.map((s) => (
                 <option key={s._id} value={s._id}>
@@ -528,12 +457,7 @@ function PointsTab() {
 
           <div className={ctrlWrap}>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Ronda</label>
-            <select
-              value={roundId}
-              onChange={(e) => setRoundId(e.target.value)}
-              className={ctrlClass}
-              disabled={!siteId}
-            >
+            <select value={roundId} onChange={(e) => setRoundId(e.target.value)} className={ctrlClass} disabled={!siteId}>
               <option value="">-- Ronda --</option>
               {rounds.map((r) => (
                 <option key={r._id} value={r._id}>
@@ -544,45 +468,22 @@ function PointsTab() {
           </div>
 
           <div className={ctrlWrap + " xl:col-span-2"}>
-            <label className={"block text-xs mb-1 " + fxTextMuted}>
-              Nombre del punto
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Nombre punto"
-              className={ctrlClass}
-              disabled={!siteId || !roundId}
-            />
+            <label className={"block text-xs mb-1 " + fxTextMuted}>Nombre del punto</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre punto" className={ctrlClass} disabled={!siteId || !roundId} />
           </div>
 
           <div className="flex gap-2 items-end">
             <div className="w-28">
               <label className={"block text-xs mb-1 " + fxTextMuted}>Orden</label>
-              <input
-                type="number"
-                value={order}
-                onChange={(e) => setOrder(e.target.value)}
-                placeholder="0"
-                className={numberClass}
-                disabled={!siteId || !roundId}
-              />
+              <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="0" className={numberClass} disabled={!siteId || !roundId} />
             </div>
 
-            <button
-              onClick={add}
-              className={fxBtnPrimary + " shrink-0"}
-              disabled={!siteId || !roundId || !name.trim()}
-              title={
-                !siteId || !roundId ? "Seleccione sitio y ronda" : "Agregar punto"
-              }
-            >
+            <button onClick={add} className={fxBtnPrimary + " shrink-0"} disabled={!siteId || !roundId || !name.trim()} title={!siteId || !roundId ? "Seleccione sitio y ronda" : "Agregar punto"}>
               Agregar
             </button>
           </div>
         </div>
 
-        {/* Tabla */}
         <div className="rounded-2xl overflow-hidden border border-neutral-200/50 dark:border-white/10">
           <Table cols={["Orden", "Punto", "QR", "Acciones"]}>
             {rows.map((r) => {
@@ -594,9 +495,7 @@ function PointsTab() {
 
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <code className="text-xs px-2 py-1 rounded-xl bg-white/40 dark:bg-white/10">
-                        {r.qr || "—"}
-                      </code>
+                      <code className="text-xs px-2 py-1 rounded-xl bg-white/40 dark:bg-white/10">{r.qr || "—"}</code>
 
                       {qrUrl && r.qr && (
                         <a
@@ -708,9 +607,7 @@ function PlansTab() {
   }, [siteId, roundId]);
 
   const pickPlanItem = (res) =>
-    res?.item ??
-    (Array.isArray(res?.items) ? res.items[0] : undefined) ??
-    null;
+    res?.item ?? (Array.isArray(res?.items) ? res.items[0] : undefined) ?? null;
 
   useEffect(() => {
     (async () => {
@@ -787,18 +684,10 @@ function PlansTab() {
       subtitle="Define el orden de puntos por sitio, ronda y turno."
       actions={
         <div className="flex gap-2">
-          <button
-            onClick={savePlan}
-            className={fxBtnPrimary}
-            disabled={!siteId || !roundId || !planIds.length}
-          >
+          <button onClick={savePlan} className={fxBtnPrimary} disabled={!siteId || !roundId || !planIds.length}>
             Guardar plan
           </button>
-          <button
-            onClick={deletePlan}
-            className={fxBtnDanger}
-            disabled={!siteId || !roundId}
-          >
+          <button onClick={deletePlan} className={fxBtnDanger} disabled={!siteId || !roundId}>
             Eliminar plan
           </button>
         </div>
@@ -808,11 +697,7 @@ function PlansTab() {
         <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
           <div>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Sitio</label>
-            <select
-              value={siteId}
-              onChange={(e) => setSiteId(e.target.value)}
-              className={ctrlClass}
-            >
+            <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
               <option value="">-- Sitio --</option>
               {sites.map((s) => (
                 <option key={s._id} value={s._id}>
@@ -824,12 +709,7 @@ function PlansTab() {
 
           <div>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Ronda</label>
-            <select
-              value={roundId}
-              onChange={(e) => setRoundId(e.target.value)}
-              className={ctrlClass}
-              disabled={!siteId}
-            >
+            <select value={roundId} onChange={(e) => setRoundId(e.target.value)} className={ctrlClass} disabled={!siteId}>
               <option value="">-- Ronda --</option>
               {rounds.map((r) => (
                 <option key={r._id} value={r._id}>
@@ -841,12 +721,7 @@ function PlansTab() {
 
           <div>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Turno</label>
-            <select
-              value={shift}
-              onChange={(e) => setShift(e.target.value)}
-              className={ctrlClass}
-              disabled={!siteId || !roundId}
-            >
+            <select value={shift} onChange={(e) => setShift(e.target.value)} className={ctrlClass} disabled={!siteId || !roundId}>
               {shiftOptions.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
@@ -858,15 +733,9 @@ function PlansTab() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="rounded-2xl overflow-hidden border border-neutral-200/50 dark:border-white/10">
-            <div
-              className={
-                "px-4 py-3 " + fxDivider + " flex items-center justify-between"
-              }
-            >
+            <div className={"px-4 py-3 " + fxDivider + " flex items-center justify-between"}>
               <h4 className="font-extrabold tracking-tight">Puntos disponibles</h4>
-              <span className={"text-xs " + fxTextMuted}>
-                {points.length} puntos
-              </span>
+              <span className={"text-xs " + fxTextMuted}>{points.length} puntos</span>
             </div>
 
             <div className="max-h-[360px] overflow-auto">
@@ -874,16 +743,10 @@ function PlansTab() {
                 <tbody>
                   {points.map((p) => (
                     <tr key={p._id} className={rowClass}>
-                      <td className="px-4 py-3 w-14 text-xs opacity-60">
-                        {typeof p.order === "number" ? p.order : "-"}
-                      </td>
+                      <td className="px-4 py-3 w-14 text-xs opacity-60">{typeof p.order === "number" ? p.order : "-"}</td>
                       <td className="px-4 py-3">{p.name}</td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => addPointToPlan(p._id)}
-                          className={fxBtnSmall}
-                          disabled={planIds.includes(p._id)}
-                        >
+                        <button onClick={() => addPointToPlan(p._id)} className={fxBtnSmall} disabled={planIds.includes(p._id)}>
                           Añadir
                         </button>
                       </td>
@@ -903,15 +766,9 @@ function PlansTab() {
           </div>
 
           <div className="rounded-2xl overflow-hidden border border-neutral-200/50 dark:border-white/10">
-            <div
-              className={
-                "px-4 py-3 " + fxDivider + " flex items-center justify-between"
-              }
-            >
+            <div className={"px-4 py-3 " + fxDivider + " flex items-center justify-between"}>
               <h4 className="font-extrabold tracking-tight">Plan actual (orden)</h4>
-              <span className={"text-xs " + fxTextMuted}>
-                {planIds.length} en el orden
-              </span>
+              <span className={"text-xs " + fxTextMuted}>{planIds.length} en el orden</span>
             </div>
 
             <div className="max-h-[360px] overflow-auto">
@@ -921,31 +778,18 @@ function PlansTab() {
                     const p = points.find((x) => x._id === id);
                     return (
                       <tr key={id} className={rowClass}>
-                        <td className="px-4 py-3 w-14 text-xs opacity-60">
-                          {idx + 1}
-                        </td>
+                        <td className="px-4 py-3 w-14 text-xs opacity-60">{idx + 1}</td>
                         <td className="px-4 py-3">{p?.name || id}</td>
                         <td className="px-4 py-3 w-24 text-right space-x-1">
-                          <button
-                            onClick={() => moveUp(idx)}
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15"
-                            title="Subir"
-                          >
+                          <button onClick={() => moveUp(idx)} className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15" title="Subir">
                             ↑
                           </button>
-                          <button
-                            onClick={() => moveDown(idx)}
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15"
-                            title="Bajar"
-                          >
+                          <button onClick={() => moveDown(idx)} className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15" title="Bajar">
                             ↓
                           </button>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => removePointFromPlan(id)}
-                            className="h-9 px-4 rounded-2xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500"
-                          >
+                          <button onClick={() => removePointFromPlan(id)} className="h-9 px-4 rounded-2xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500">
                             Quitar
                           </button>
                         </td>

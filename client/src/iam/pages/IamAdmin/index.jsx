@@ -128,7 +128,15 @@ async function seedFromLocalCatalog(token) {
   }
 }
 
-export default function IamAdmin() {
+/**
+ * IamAdmin (centralizado)
+ * - ✅ NO llama /me aquí.
+ * - ✅ Recibe `me` y `meLoading` desde App.jsx (único lugar que llama /me).
+ *
+ * En App.jsx:
+ * <Route path="/iam/admin" element={<IamAdmin me={me} meLoading={meLoading} />} />
+ */
+export default function IamAdmin({ me, meLoading }) {
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
@@ -176,6 +184,7 @@ export default function IamAdmin() {
 
   /**
    * ✅ CHECK “catálogo vacío” (robusto)
+   * - NO toca /me
    * - Intenta con token (si existiera) y si no, deja que iamApi use tokenProvider o modo dev
    */
   useEffect(() => {
@@ -256,6 +265,9 @@ export default function IamAdmin() {
 
   return (
     <IamGuard
+      me={me}
+      meLoading={meLoading}
+      fallback={<div className="p-6">Cargando…</div>}
       anyOf={[
         "iam.users.manage",
         "iam.roles.manage",

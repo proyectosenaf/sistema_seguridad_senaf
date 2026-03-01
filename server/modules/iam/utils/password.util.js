@@ -1,14 +1,14 @@
-// ESM module
+// server/modules/iam/utils/password.util.js
 import bcrypt from "bcryptjs";
 
 /**
- * Hashea una contraseña con bcrypt (cost=10).
- * Devuelve un string con el hash.
+ * Hashea una contraseña con bcrypt.
+ * Cost configurable por env: BCRYPT_ROUNDS (default 10).
  */
 export async function hashPassword(pwd) {
-  const plain = String(pwd ?? "");
+  const plain = String(pwd ?? "").trim();
   if (!plain) throw new Error("password vacío");
-  const saltRounds = 10;
+  const saltRounds = Number(process.env.BCRYPT_ROUNDS || 10);
   return bcrypt.hash(plain, saltRounds);
 }
 

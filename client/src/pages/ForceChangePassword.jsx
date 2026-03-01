@@ -1,5 +1,6 @@
 // client/src/pages/ForceChangePassword.jsx
 import React from "react";
+import { APP_CONFIG } from "../config/app.config.js";
 
 function getParam(name) {
   const sp = new URLSearchParams(window.location.search);
@@ -12,14 +13,33 @@ function apiBase() {
   return String(RAW).replace(/\/$/, "");
 }
 
+function getOtpEmailFallback() {
+  try {
+    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 export default function ForceChangePassword() {
   const [status, setStatus] = React.useState("idle"); // idle | sending | sent | error
   const [msg, setMsg] = React.useState("");
 
-  const email = (getParam("email") || "").trim().toLowerCase();
+  const loginRoute = String(APP_CONFIG?.routes?.login || "/login").trim() || "/login";
+
+  // 1) email por query
+  const emailFromQuery = (getParam("email") || "").trim().toLowerCase();
+  // 2) fallback: el que guardas en OTP flow
+  const email = emailFromQuery || getOtpEmailFallback();
 
   // ✅ Evita doble auto-disparo (StrictMode) y reenvíos sin querer
   const ranRef = React.useRef(false);
+
+  // ✅ Evita duplicados aunque el state se quede stale
+  const statusRef = React.useRef("idle");
+  React.useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   async function send({ silent = false } = {}) {
     if (!email) {
@@ -29,7 +49,7 @@ export default function ForceChangePassword() {
     }
 
     // si ya está enviando, no dupliques
-    if (status === "sending") return;
+    if (statusRef.current === "sending") return;
 
     setStatus("sending");
     if (!silent) setMsg("");
@@ -59,7 +79,7 @@ export default function ForceChangePassword() {
 
       setStatus("sent");
       setMsg(
-        "Listo. Te enviamos un correo para establecer tu contraseña. Revisa tu bandeja y spam."
+        "Listo. Te enviamos un correo para restablecer tu contraseña. Revisa tu bandeja y spam."
       );
     } catch (e) {
       setStatus("error");
@@ -80,10 +100,10 @@ export default function ForceChangePassword() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
       <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Configura tu contraseña</h1>
+        <h1 className="text-xl font-semibold">Restablecer contraseña</h1>
 
         <p className="mt-2 text-sm text-neutral-600">
-          Esta cuenta fue creada por un administrador. Por seguridad, debes establecer tu contraseña en el primer inicio de sesión.
+          Por seguridad, debes establecer una nueva contraseña para continuar.
         </p>
 
         <div className="mt-4 rounded-xl border p-3 bg-neutral-50">
@@ -117,7 +137,7 @@ export default function ForceChangePassword() {
           </button>
 
           <a
-            href="/entry"
+            href={loginRoute}
             className="h-11 px-4 rounded-xl border flex items-center justify-center text-sm font-semibold"
           >
             Volver
@@ -128,9 +148,7 @@ export default function ForceChangePassword() {
           Si no recibes el correo en 2–3 minutos, revisa Spam/Promociones.
         </p>
 
-        <p className="mt-2 text-[11px] text-neutral-400 break-all">
-          API: {apiBase()}
-        </p>
+        <p className="mt-2 text-[11px] text-neutral-400 break-all">API: {apiBase()}</p>
       </div>
     </div>
   );

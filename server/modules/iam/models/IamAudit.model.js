@@ -6,7 +6,15 @@ const IamAuditSchema = new Schema(
   {
     action: {
       type: String,
-      enum: ["create", "update", "delete", "activate", "deactivate"],
+      enum: [
+        "create",
+        "update",
+        "delete",
+        "activate",
+        "deactivate",
+        "enable",   // compat (opcional)
+        "disable",  // compat (opcional)
+      ],
       index: true,
       required: true,
     },
@@ -23,6 +31,14 @@ const IamAuditSchema = new Schema(
 
     before: Schema.Types.Mixed,
     after: Schema.Types.Mixed,
+
+    // ✅ para guardar ip/ua/path/method
+    meta: {
+      ip: { type: String, default: null },
+      ua: { type: String, default: null },
+      path: { type: String, default: null },
+      method: { type: String, default: null },
+    },
   },
   {
     timestamps: true, // createdAt / updatedAt
@@ -31,9 +47,7 @@ const IamAuditSchema = new Schema(
   }
 );
 
-/* =========================
- * Índices compuestos
- * =======================*/
+/* Índices */
 IamAuditSchema.index({ createdAt: -1 });
 IamAuditSchema.index({ entity: 1, action: 1, createdAt: -1 });
 IamAuditSchema.index({ actorEmail: 1, createdAt: -1 });

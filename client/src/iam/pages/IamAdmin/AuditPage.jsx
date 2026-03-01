@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useMemo, useState as useStateAlt } from "react";
+// client/src/iam/pages/IamAdmin/AuditPage.jsx
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { iamApi } from "../../api/iamApi.js";
+
 import { saveAs } from "file-saver";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -19,11 +21,13 @@ const ACTION_LABEL = {
   deactivate: "desactivación",
   delete: "eliminación",
 };
+
 const ENTITY_LABEL = {
   user: "Usuario",
   role: "Rol",
   permission: "Permiso",
 };
+
 const KEY_LABEL = {
   name: "Nombre",
   email: "Correo",
@@ -36,7 +40,7 @@ const KEY_LABEL = {
 
 // --- Componente para truncar texto largo ---
 function Truncate({ children, max = 220 }) {
-  const [open, setOpen] = useStateAlt(false);
+  const [open, setOpen] = useState(false);
   const text = typeof children === "string" ? children : String(children ?? "");
   if (text.length <= max) return <>{text}</>;
   return (
@@ -56,6 +60,7 @@ function Truncate({ children, max = 220 }) {
 // --- Render de valores bonitos ---
 function fmtValue(v) {
   if (v === null || v === undefined) return "—";
+
   if (typeof v === "boolean") {
     return (
       <span
@@ -69,6 +74,7 @@ function fmtValue(v) {
       </span>
     );
   }
+
   if (Array.isArray(v)) {
     if (v.length === 0) return "—";
     return (
@@ -84,22 +90,22 @@ function fmtValue(v) {
       </div>
     );
   }
+
   if (typeof v === "object") {
     const entries = Object.entries(v);
     if (entries.length === 0) return "—";
     return (
       <Truncate max={260}>
         {entries
-          .map(
-            ([k, val]) =>
-              `${KEY_LABEL[k] || k}: ${
-                typeof val === "object" ? JSON.stringify(val) : String(val)
-              }`
-          )
+          .map(([k, val]) => {
+            const vv = typeof val === "object" ? JSON.stringify(val) : String(val);
+            return `${KEY_LABEL[k] || k}: ${vv}`;
+          })
           .join(" · ")}
       </Truncate>
     );
   }
+
   return String(v);
 }
 
@@ -111,30 +117,33 @@ function diffKeys(before = {}, after = {}) {
 
 // Caja “bonita” para Antes/Después.
 function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
-  if (!obj || (typeof obj === "object" && Object.keys(obj).length === 0))
+  if (!obj || (typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).length === 0)) {
     return <span className="text-slate-400">—</span>;
+  }
 
   if (typeof obj !== "object" || Array.isArray(obj)) {
     return <div className="text-slate-200">{fmtValue(obj)}</div>;
   }
 
   const keys = diffKeys(compareWith, obj);
+
   return (
     <div className="space-y-1">
       {keys.map((k) => {
         const changed =
           emphasizeChanges &&
           JSON.stringify((compareWith || {})[k]) !== JSON.stringify(obj[k]);
+
         return (
           <div
             key={k}
             className={`flex gap-2 ${
-              changed ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 rounded-md px-2 py-1" : ""
+              changed
+                ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 rounded-md px-2 py-1"
+                : ""
             }`}
           >
-            <span className="shrink-0 text-slate-300">
-              {KEY_LABEL[k] || k}:
-            </span>
+            <span className="shrink-0 text-slate-300">{KEY_LABEL[k] || k}:</span>
             <div className="text-slate-200">{fmtValue(obj[k])}</div>
           </div>
         );
@@ -146,12 +155,17 @@ function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
 // Para exportar valores legibles
 const toPlain = (v) =>
   typeof v === "boolean"
-    ? v ? "Sí" : "No"
+    ? v
+      ? "Sí"
+      : "No"
     : Array.isArray(v)
     ? v.join(", ")
     : v && typeof v === "object"
     ? Object.entries(v)
-        .map(([k, val]) => `${KEY_LABEL[k] || k}: ${typeof val === "object" ? JSON.stringify(val) : String(val)}`)
+        .map(([k, val]) => {
+          const vv = typeof val === "object" ? JSON.stringify(val) : String(val);
+          return `${KEY_LABEL[k] || k}: ${vv}`;
+        })
         .join(" | ")
     : v ?? "—";
 
@@ -166,11 +180,11 @@ export default function AuditPage() {
   const [filterEntity, setFilterEntity] = useState("");
   const [filterActor, setFilterActor] = useState("");
   const [dateFrom, setDateFrom] = useState(""); // YYYY-MM-DD
-  const [dateTo, setDateTo] = useState("");     // YYYY-MM-DD
+  const [dateTo, setDateTo] = useState(""); // YYYY-MM-DD
   const [dateErr, setDateErr] = useState("");
 
   // -------- Fetch real al backend ----------
-  async function fetchAudits() {
+  const fetchAudits = useCallback(async () => {
     try {
       setErr("");
       setLoading(true);
@@ -188,9 +202,9 @@ export default function AuditPage() {
         skip: 0,
         ...(filterAction ? { action: filterAction } : {}),
         ...(filterEntity ? { entity: filterEntity } : {}),
-        ...(filterActor  ? { actor: filterActor } : {}),
+        ...(filterActor ? { actor: filterActor } : {}),
         ...(dateFrom ? { from: dateFrom } : {}),
-        ...(dateTo   ? { to: dateTo } : {}),
+        ...(dateTo ? { to: dateTo } : {}),
       };
 
       const res = await iamApi.listAudit(params);
@@ -202,7 +216,6 @@ export default function AuditPage() {
         [];
 
       const items = raw.map((x) => {
-        // actor puede venir como string o como objeto
         const actorEmail =
           x?.actorEmail ||
           x?.actor ||
@@ -231,20 +244,23 @@ export default function AuditPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [dateFrom, dateTo, filterAction, filterEntity, filterActor]);
 
-  useEffect(() => { fetchAudits(); }, []); // carga inicial
+  useEffect(() => {
+    fetchAudits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // -------- Helpers de fecha ----------
   const toStartOfDay = (s) => (s ? new Date(`${s}T00:00:00`) : null);
-  const toEndOfDay   = (s) => (s ? new Date(`${s}T23:59:59.999`) : null);
+  const toEndOfDay = (s) => (s ? new Date(`${s}T23:59:59.999`) : null);
 
   // -------- Filters locales ----------
   useEffect(() => {
     let list = [...audits];
 
     const from = toStartOfDay(dateFrom);
-    const to   = toEndOfDay(dateTo);
+    const to = toEndOfDay(dateTo);
 
     if (from && to && from > to) setDateErr("La fecha 'desde' no puede ser mayor que 'hasta'.");
     else setDateErr("");
@@ -294,6 +310,7 @@ export default function AuditPage() {
     if (dateFrom && dateTo) rango = `Rango: ${dateFrom} → ${dateTo}`;
     else if (dateFrom) rango = `Desde: ${dateFrom}`;
     else if (dateTo) rango = `Hasta: ${dateTo}`;
+
     if (rango) doc.text(rango, doc.internal.pageSize.getWidth() - marginX, marginY + 12, { align: "right" });
 
     const body = filtered.map((a) => [
@@ -310,16 +327,13 @@ export default function AuditPage() {
       head: [["Fecha", "Acción", "Entidad", "Actor", "Antes", "Después"]],
       body,
       styles: { fontSize: 9, cellPadding: 4 },
-      headStyles: { fillColor: [32, 32, 32] },
     });
+
     doc.save(`Historial_Auditoria_${Date.now()}.pdf`);
   };
 
   // -------- UI helpers ----------
-  const zebra = useMemo(
-    () => filtered.map((_, i) => (i % 2 === 0 ? "bg-white/5" : "bg-white/[0.03]")),
-    [filtered]
-  );
+  const zebra = useMemo(() => filtered.map((_, i) => (i % 2 === 0 ? "bg-white/5" : "bg-white/[0.03]")), [filtered]);
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative">
@@ -341,13 +355,26 @@ export default function AuditPage() {
               <p className="text-sm text-slate-400">Bitácora de acciones sobre usuarios, roles y permisos</p>
             </div>
             <div className="flex gap-2">
-              <button onClick={fetchAudits} className="px-3 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700">
+              <button
+                onClick={fetchAudits}
+                className="px-3 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700"
+              >
                 Actualizar
               </button>
-              <button onClick={exportExcel} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500" disabled={!!dateErr} title={dateErr || ""}>
+              <button
+                onClick={exportExcel}
+                className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500"
+                disabled={!!dateErr}
+                title={dateErr || ""}
+              >
                 Excel
               </button>
-              <button onClick={exportPDF} className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-500" disabled={!!dateErr} title={dateErr || ""}>
+              <button
+                onClick={exportPDF}
+                className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-500"
+                disabled={!!dateErr}
+                title={dateErr || ""}
+              >
                 PDF
               </button>
             </div>
@@ -361,7 +388,9 @@ export default function AuditPage() {
               onChange={(e) => setFilterAction(e.target.value)}
             >
               {ACTIONS.map((a, idx) => (
-                <option key={idx} value={a}>{a ? (ACTION_LABEL[a] || a) : "Todas las acciones"}</option>
+                <option key={idx} value={a}>
+                  {a ? ACTION_LABEL[a] || a : "Todas las acciones"}
+                </option>
               ))}
             </select>
 
@@ -371,7 +400,9 @@ export default function AuditPage() {
               onChange={(e) => setFilterEntity(e.target.value)}
             >
               {ENTITIES.map((e, idx) => (
-                <option key={idx} value={e}>{e ? (ENTITY_LABEL[e] || e) : "Todas las entidades"}</option>
+                <option key={idx} value={e}>
+                  {e ? ENTITY_LABEL[e] || e : "Todas las entidades"}
+                </option>
               ))}
             </select>
 
@@ -389,6 +420,7 @@ export default function AuditPage() {
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
             />
+
             <input
               type="date"
               className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
@@ -416,21 +448,38 @@ export default function AuditPage() {
                   <th>Después</th>
                 </tr>
               </thead>
+
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="6" className="text-center py-12 text-slate-400">Cargando…</td></tr>
+                  <tr>
+                    <td colSpan="6" className="text-center py-12 text-slate-400">
+                      Cargando…
+                    </td>
+                  </tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan="6" className="text-center py-12 text-slate-400">Sin registros</td></tr>
+                  <tr>
+                    <td colSpan="6" className="text-center py-12 text-slate-400">
+                      Sin registros
+                    </td>
+                  </tr>
                 ) : (
                   filtered.map((a, i) => (
-                    <tr key={a._id || i} className={`${zebra[i]} hover:bg-slate-800/50 transition-colors border-b border-gray-800`}>
-                      <td className="px-3 py-2 text-slate-300">{a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</td>
+                    <tr
+                      key={a._id || i}
+                      className={`${zebra[i]} hover:bg-slate-800/50 transition-colors border-b border-gray-800`}
+                    >
+                      <td className="px-3 py-2 text-slate-300">
+                        {a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}
+                      </td>
+
                       <td className="px-3 py-2">
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/5 text-slate-200 ring-1 ring-white/10">
                           {ACTION_LABEL[a.action] || a.action}
                         </span>
                       </td>
+
                       <td className="px-3 py-2">{ENTITY_LABEL[a.entity] || a.entity || "—"}</td>
+
                       <td className="px-3 py-2 text-slate-300">{a.actorEmail || "—"}</td>
 
                       <td className="px-3 py-2 text-xs text-slate-300 whitespace-pre-wrap align-top">
@@ -450,7 +499,12 @@ export default function AuditPage() {
           <div className="px-4 py-3 text-[12px] text-slate-400 border-t border-gray-800">
             Mostrando <span className="text-slate-200">{filtered.length}</span> de{" "}
             <span className="text-slate-200">{audits.length}</span> registros totales
-            {dateFrom || dateTo ? <> · rango aplicado {dateFrom || "—"} → {dateTo || "—"}</> : null}
+            {dateFrom || dateTo ? (
+              <>
+                {" "}
+                · rango aplicado {dateFrom || "—"} → {dateTo || "—"}
+              </>
+            ) : null}
           </div>
         </div>
       </div>

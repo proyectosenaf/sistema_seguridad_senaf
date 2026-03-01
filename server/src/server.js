@@ -47,6 +47,9 @@ import { startDailyAssignmentCron } from "./cron/assignments.cron.js";
 // ✅ IAM
 import { registerIAMModule } from "../modules/iam/index.js";
 
+// ✅ ✅ Catálogos IAM (IMPORTANTE: montarlo o da 404)
+import catalogsRoutes from "../modules/iam/routes/catalogs.routes.js";
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -287,6 +290,15 @@ app.use(async (req, _res, next) => {
  * Si no, tendrás 404 en /api/iam/v1/users.
  */
 await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
+
+/* ───────────────────── ✅ IAM CATALOGS REGISTER ✅ ───────────────────── */
+/**
+ * ✅ Esto era lo que te faltaba.
+ * Monta los catálogos (estado civil, países, profesiones)
+ */
+app.use("/api/iam/v1/catalogs", catalogsRoutes);
+// alias opcional
+app.use("/api/iam/v1/catalogs", catalogsRoutes);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
 

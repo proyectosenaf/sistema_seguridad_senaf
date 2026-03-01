@@ -1,32 +1,25 @@
 // client/src/components/Sidebar.jsx
 import React from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import {
-  Home,
-  DoorOpen,
-  Footprints,
-  AlertTriangle,
-  UsersRound,
-  NotebookPen,
-  ClipboardList,
-  ShieldCheck,
-  LogOut,
-} from "lucide-react";
+import { Home, LogOut } from "lucide-react";
 
-// ✅ IMPORTA useAuth (esto faltaba y causaba 500)
+// ✅ Auth local (RUTA REAL)
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
-const NAV_ITEMS = [
-  { to: "/", label: "Panel principal", Icon: Home, emphasizeDark: true },
+// ✅ Token canónico (centralizado)
+import { clearToken } from "../lib/api.js";
 
-  { to: "/accesos", label: "Control de Acceso", Icon: DoorOpen },
-  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: Footprints },
-  { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
-  { to: "/visitas", label: "Control de Visitas", Icon: UsersRound },
-  { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
-  { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: ShieldCheck },
-];
+// ✅ Config central de navegación
+import { NAV_SECTIONS } from "../config/navConfig.js";
+
+const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+
+// Opcional: limitar qué secciones se muestran sin hardcode
+// Ej: VITE_NAV_KEYS_ALLOWLIST="accesos,rondas,visitas"
+const NAV_KEYS_ALLOWLIST = String(import.meta.env.VITE_NAV_KEYS_ALLOWLIST || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 function isPathActive(currentPath, to) {
   if (to === "/") return currentPath === "/";
@@ -55,29 +48,69 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
+        {Icon ? (
+          <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
+        ) : (
+          <span className="w-6 h-6 shrink-0" />
+        )}
         <span className="text-[16px] leading-none text-neutral-900 dark:text-white">{label}</span>
       </div>
     </NavLink>
   );
 }
 
-export default function Sidebar({ onNavigate }) {
+export default function Sidebar({ onNavigate, variant }) {
   const nav = useNavigate();
   const { isAuthenticated, logout } = useAuth();
 
-  const handleLogoutClick = () => {
+  const handleLogoutClick = async () => {
     onNavigate?.();
+
+    // 1) logout del provider (tu AuthProvider lo soporta)
     try {
-      logout?.();
-    } finally {
-      // limpia también token si tu app lo usa
-      try {
-        localStorage.removeItem("senaf_token");
-      } catch {}
-      nav("/login", { replace: true });
+      await logout?.();
+    } catch {
+      // no bloquea
     }
+
+    // 2) limpia token canónico + legacy
+    try {
+      clearToken(); // senaf_token (canónico)
+      localStorage.removeItem("token"); // legacy por compat
+      localStorage.removeItem("access_token"); // por si quedó algo viejo
+    } catch {
+      // ignore
+    }
+
+    // 3) manda a login (parametrizado)
+    nav(ROUTE_LOGIN, { replace: true });
   };
+
+  // Home + secciones centralizadas
+  const homeItem = {
+    key: "home",
+    label: "Director del panel",
+    path: "/",
+    icon: Home,
+    emphasizeDark: true,
+  };
+
+  const sections = Array.isArray(NAV_SECTIONS) ? NAV_SECTIONS : [];
+  const filteredSections =
+    NAV_KEYS_ALLOWLIST.length > 0
+      ? sections.filter((x) => NAV_KEYS_ALLOWLIST.includes(String(x.key || "").trim()))
+      : sections;
+
+  const items = [
+    homeItem,
+    ...filteredSections.map((s) => ({
+      key: s.key,
+      label: s.label,
+      path: s.path,
+      icon: s.icon, // debe ser componente (ej: DoorOpen), no string
+      emphasizeDark: false,
+    })),
+  ];
 
   return (
     <div
@@ -86,15 +119,15 @@ export default function Sidebar({ onNavigate }) {
         "bg-white/55 dark:bg-neutral-950/45 backdrop-blur-2xl",
         "border-r border-neutral-200/60 dark:border-white/10",
       ].join(" ")}
-      aria-label="Barra lateral"
+      aria-label={variant === "mobile" ? "Barra lateral (móvil)" : "Barra lateral"}
     >
       <div className="text-2xl font-extrabold mb-6 tracking-tight">SENAF</div>
 
       <nav className="flex flex-col gap-1 text-[15px]">
-        {NAV_ITEMS.map(({ to, label, Icon, emphasizeDark }) => (
+        {items.map(({ key, path, label, icon: Icon, emphasizeDark }) => (
           <NavItem
-            key={to}
-            to={to}
+            key={key || path}
+            to={path}
             label={label}
             Icon={Icon}
             onClick={onNavigate}

@@ -1,28 +1,25 @@
 // server/modules/iam/utils/auth.util.js
-import jwt from "jsonwebtoken";
+import { getBearer, verifyToken } from "./jwt.util.js";
 
-export function getBearer(req) {
-  const h = String(req.headers.authorization || "");
-  if (!h.toLowerCase().startsWith("bearer ")) return null;
-  const token = h.slice(7).trim();
-  return token || null;
-}
+/**
+ * makeAuthMw(options?)
+ * - required: true => 401 si no hay token o inválido
+ * - required: false => si no hay token -> next() sin req.auth
+ * - attachToReqUser: true => req.user = payload (compat)
+ *
+ * NOTA:
+ * - Siempre deja payload en req.auth.payload para reutilizarlo en buildContextFrom
+ */
+export function makeAuthMw(options = {}) {
+  const {
+    required = true,
+    attachToReqUser = true,
+    errorMessage = "Unauthorized",
+  } = options;
 
-export function getJwtSecret() {
-  return String(process.env.JWT_SECRET || "dev_secret").trim() || "dev_secret";
-}
-
-export function verifyToken(token) {
-  return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] });
-}
-
-export function signToken(payload, options = {}) {
-  return jwt.sign(payload, getJwtSecret(), options);
-}
-
-export function makeAuthMw() {
   const disableAuth = process.env.DISABLE_AUTH === "1";
 
+  // ✅ Si DISABLE_AUTH=1, no bloquea y no valida token
   if (disableAuth) {
     console.warn("[AUTH] DISABLE_AUTH=1 → JWT deshabilitado");
     return (_req, _res, next) => next();
@@ -30,7 +27,11 @@ export function makeAuthMw() {
 
   return (req, res, next) => {
     const token = getBearer(req);
-    if (!token) return res.status(401).json({ ok: false, error: "Unauthorized" });
+
+    if (!token) {
+      if (!required) return next();
+      return res.status(401).json({ ok: false, error: errorMessage });
+    }
 
     try {
       const payload = verifyToken(token);
@@ -38,15 +39,18 @@ export function makeAuthMw() {
       req.auth = req.auth || {};
       req.auth.payload = payload;
 
-      // compat opcional
-      req.user = req.user || payload;
+      if (attachToReqUser) req.user = req.user || payload;
 
       return next();
-    } catch {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    } catch (e) {
+      if (!required) return next();
+      return res.status(401).json({ ok: false, error: errorMessage });
     }
   };
 }
 
-// ✅ compat si en algún lado hacen `import makeAuthMw from ...`
+// ✅ compat default (para imports antiguos)
 export default makeAuthMw;
+
+// ✅ si en otros módulos importabas getBearer desde aquí, re-export para no romper
+export { getBearer };

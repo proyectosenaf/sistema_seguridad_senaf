@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ShieldCheck,
   ChevronDown,
+  Copy,
 } from "lucide-react";
 
 /**
@@ -73,6 +74,7 @@ export default function RolesPage() {
 
   useEffect(() => {
     loadPermsForRole(roleId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
   const selected = roles.find((r) => r._id === roleId) || null;
@@ -138,6 +140,7 @@ export default function RolesPage() {
         .replace(/\s+/g, "_")
         .replace(/[^a-z0-9_]/g, "");
 
+      setWorking(true);
       await iamApi.createRole({
         code: code || undefined,
         key: code || undefined, // para backends que piden "key"
@@ -151,6 +154,8 @@ export default function RolesPage() {
     } catch (e) {
       setMsg(e?.message || "No se pudo crear el rol");
       setTimeout(() => setMsg(""), 2200);
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -162,6 +167,7 @@ export default function RolesPage() {
       const newDesc =
         window.prompt("Nueva descripción:", selected.description || newName) ?? selected.description;
 
+      setWorking(true);
       await iamApi.updateRole(selected._id, {
         name: newName,
         description: newDesc,
@@ -173,6 +179,8 @@ export default function RolesPage() {
     } catch (e) {
       setMsg(e?.message || "No se pudo editar el rol");
       setTimeout(() => setMsg(""), 2200);
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -180,13 +188,18 @@ export default function RolesPage() {
     if (!selected) return;
     try {
       if (!window.confirm(`¿Eliminar el rol "${roleLabel(selected)}"?`)) return;
+
+      setWorking(true);
       await iamApi.deleteRole(selected._id);
+
       await loadAll();
       setMsg("Rol eliminado.");
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
       setMsg(e?.message || "No se pudo eliminar el rol");
       setTimeout(() => setMsg(""), 2200);
+    } finally {
+      setWorking(false);
     }
   }
 
@@ -247,10 +260,21 @@ export default function RolesPage() {
               <button
                 onClick={createRole}
                 title="Crear nuevo rol"
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 active:scale-[.99]"
+                disabled={working}
+                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
               >
                 <PlusCircle className="h-4 w-4" />
                 <span className="text-sm font-medium">Crear</span>
+              </button>
+
+              <button
+                onClick={() => setCloneOpen(true)}
+                title="Clonar rol"
+                disabled={!selected || working}
+                className="inline-flex items-center gap-2 rounded-full bg-sky-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
+              >
+                <Copy className="h-4 w-4" />
+                <span className="text-sm font-medium">Clonar</span>
               </button>
 
               <button

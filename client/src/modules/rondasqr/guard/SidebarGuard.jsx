@@ -1,239 +1,144 @@
 // client/src/modules/rondasqr/guard/SidebarGuard.jsx
 import React from "react";
-import { NavLink, useNavigate, useLocation } from "react-router-dom";
-import {
-  Home,
-  AlertTriangle,
-  QrCode,
-  MessageSquare,
-  Settings,
-  LogOut,
-  FileBarChart,
-} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AlertTriangle, MessageSquare, LogOut } from "lucide-react";
+
 import { rondasqrApi } from "../api/rondasqrApi.js";
 import { emitLocalPanic } from "../utils/panicBus.js";
-import { useAccess } from "../../../iam/hooks/useAccess.js";
 import iamApi from "../../../iam/api/iamApi.js";
+import { clearToken } from "../../../lib/api.js";
 
+const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+
+/**
+ * SidebarGuard (refactor):
+ * - Ya NO compite con el Sidebar global.
+ * - Es un "Action Panel" del módulo de rondas.
+ *
+ * Reglas:
+ * - Si asGlobal=true => no renderiza (porque ya existe Layout+Sidebar global)
+ * - Si asGlobal=false => muestra acciones del módulo
+ */
 export default function SidebarGuard({
-  variant = "desktop",
-  collapsed = false,
+  variant = "desktop", // "desktop" | "mobile"
   onCloseMobile,
   onSendAlert,
-  onDumpDb,
   asGlobal = false,
 }) {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
 
-  // ✅ viene del módulo IAM, no se calcula aquí
-  const { user, roles, perms, canReports, canAdmin, canScan } = useAccess();
+  // ✅ Si el módulo está dentro del Layout global, NO mostrar este panel
+  if (asGlobal) return null;
 
-  // UI classes
-  const itemBase =
-    "group relative block rounded-xl transition-colors focus-visible:outline-none " +
-    "focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
-  const itemHover = "hover:bg-black/5 dark:hover:bg-white/10";
-  const itemActive =
-    "bg-black/5 dark:bg-white/15 ring-1 ring-black/10 dark:ring-white/20";
-
-  const navItemsAll = [
-    { key: "home", label: "Hogar", icon: Home, to: "/rondasqr/scan", end: true, show: true },
-    { key: "scan", label: "Registrador Punto Control", icon: QrCode, to: "/rondasqr/scan/qr", show: canScan },
-    { key: "reports", label: "Informes", icon: FileBarChart, to: "/rondasqr/reports", show: canReports },
-    { key: "admin", label: "Administración de Rondas", icon: Settings, to: "/rondasqr/admin", show: canAdmin },
-  ];
-
-  const navItems = navItemsAll.filter((x) => x.show);
-
-  const actionItems = [
-    { key: "alert", label: "Enviar Alerta", icon: AlertTriangle },
-    { key: "msg", label: "Mensaje Incidente", icon: MessageSquare },
-  ];
-
-  async function handleAction(key) {
+  async function doLogout() {
+    // 1) backend logout (si existe)
     try {
-      switch (key) {
-        case "alert": {
-          if (typeof onSendAlert === "function") {
-            await onSendAlert();
-            break;
-          }
-
-          let gps;
-          if (typeof navigator !== "undefined" && "geolocation" in navigator) {
-            await new Promise((resolve) => {
-              navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                  gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-                  resolve();
-                },
-                () => resolve(),
-                { enableHighAccuracy: true, timeout: 5000 }
-              );
-            });
-          }
-
-          await rondasqrApi.panic(gps || null);
-          emitLocalPanic({
-            source: "sidebar",
-            user: user?.email || user?.name || "",
-          });
-
-          window.alert("🚨 Alerta de pánico enviada.");
-          navigate("/rondasqr/scan");
-          break;
-        }
-
-        case "msg":
-          navigate("/incidentes/nuevo?from=ronda");
-          break;
-
-        case "dumpdb": {
-          if (typeof onDumpDb === "function") {
-            await onDumpDb();
-            break;
-          }
-
-          const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-          const payload = {
-            at: new Date().toISOString(),
-            device: {
-              ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
-              online: typeof navigator !== "undefined" ? navigator.onLine : false,
-            },
-            user: user ? { id: user._id || user.id || null, email: user.email || null, name: user.name || null } : null,
-          };
-
-          const resp = await fetch(`${apiBase}/api/rondasqr/v1/offline/dump`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify(payload),
-          });
-
-          const data = await resp.json().catch(() => null);
-
-          if (resp.ok && data?.ok) {
-            window.alert(
-              "📤 Base enviada.\n" +
-                `marks: ${data.saved?.marks ?? 0}, incidents: ${data.saved?.incidents ?? 0}, device: ${data.saved?.device ?? 0}` +
-                (Array.isArray(data.errors) && data.errors.length ? `\ncon errores: ${data.errors.length}` : "")
-            );
-          } else {
-            window.alert(
-              "No se pudo enviar la base de datos.\n" +
-                `HTTP ${resp.status} ${resp.statusText}\n` +
-                (data ? "Respuesta: " + JSON.stringify(data) : "")
-            );
-          }
-          break;
-        }
-
-        case "logout": {
-          await iamApi.logout();
-
-          // limpieza defensiva
-          try {
-            localStorage.removeItem("token");
-            localStorage.removeItem("iamDevEmail");
-            localStorage.removeItem("iamDevRoles");
-            localStorage.removeItem("iamDevPerms");
-          } catch {}
-
-          navigate("/login", { replace: true });
-          break;
-        }
-
-        default:
-          break;
-      }
-
-      if (variant === "mobile" && onCloseMobile) onCloseMobile();
-    } catch (err) {
-      console.error("[SidebarGuard] error en acción", err);
-      window.alert("Ocurrió un error: " + (err?.message || String(err)));
+      await iamApi.logout();
+    } catch {
+      // no bloquea
     }
+
+    // 2) limpia token canónico + legacy + dev flags si existen
+    try {
+      clearToken();
+      localStorage.removeItem("token");
+      localStorage.removeItem("iamDevEmail");
+      localStorage.removeItem("iamDevRoles");
+      localStorage.removeItem("iamDevPerms");
+    } catch {}
+
+    navigate(ROUTE_LOGIN, { replace: true });
   }
 
-  const widthClass = variant === "mobile" ? "w-72" : collapsed ? "w-16" : "w-64";
+  async function handleAlert() {
+    // Si te pasan handler externo, úsalo
+    if (typeof onSendAlert === "function") {
+      await onSendAlert();
+      if (variant === "mobile" && onCloseMobile) onCloseMobile();
+      return;
+    }
+
+    // fallback: toma gps si se puede y manda panic
+    let gps = null;
+    try {
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+        await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+              resolve();
+            },
+            () => resolve(),
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    await rondasqrApi.panic(gps);
+
+    emitLocalPanic({
+      source: "rondas_action_panel",
+      user: "",
+    });
+
+    window.alert("🚨 Alerta de pánico enviada.");
+    navigate("/rondasqr/scan");
+
+    if (variant === "mobile" && onCloseMobile) onCloseMobile();
+  }
+
+  function handleMsg() {
+    navigate("/incidentes/nuevo?from=ronda");
+    if (variant === "mobile" && onCloseMobile) onCloseMobile();
+  }
 
   const containerBase =
     variant === "mobile"
       ? "fixed inset-y-0 left-0 z-50 p-4 border-r overflow-y-auto overscroll-contain md:hidden " +
-        "backdrop-blur bg-white/80 dark:bg-black/40 border-black/10 dark:border-white/10 text-slate-900 dark:text-white"
-      : "flex p-4 border-r overflow-y-auto overscroll-contain " +
-        "backdrop-blur bg-white/60 dark:bg-black/20 border-black/10 dark:border-white/10 text-slate-900 dark:text-white";
+        "backdrop-blur bg-white/80 dark:bg-black/40 border-black/10 dark:border-white/10 text-slate-900 dark:text-white w-72"
+      : "flex flex-col p-4 border-r overflow-y-auto overscroll-contain " +
+        "backdrop-blur bg-white/60 dark:bg-black/20 border-black/10 dark:border-white/10 text-slate-900 dark:text-white w-64";
 
-  const labelClass = collapsed ? "hidden" : "block";
-  const itemPadding = collapsed ? "px-3 py-3" : "px-4 py-3";
+  const itemBase =
+    "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition " +
+    "border border-neutral-200/60 dark:border-white/10 " +
+    "bg-white/55 dark:bg-neutral-950/35 backdrop-blur-xl shadow-sm " +
+    "hover:bg-white/70 dark:hover:bg-neutral-900/45";
 
   return (
-    <aside className={`${containerBase} ${widthClass} flex-col`} aria-label="Navegación del módulo de rondas">
-      <div className={`${collapsed ? "text-center" : ""} mb-5`}>
-        <div className={`font-extrabold tracking-tight ${collapsed ? "text-base" : "text-2xl"}`}>SENAF</div>
-        {!collapsed && <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>}
+    <aside className={containerBase} aria-label="Acciones del módulo de rondas">
+      <div className="mb-5">
+        <div className="font-extrabold tracking-tight text-2xl">SENAF</div>
+        <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>
       </div>
 
-      <nav className="flex-1 flex flex-col gap-1">
-        {navItems.map((it) => {
-          const Icon = it.icon;
-          return (
-            <NavLink
-              key={it.key}
-              to={it.to}
-              end={it.end}
-              onClick={variant === "mobile" ? onCloseMobile : undefined}
-              className={({ isActive }) => [itemBase, isActive ? itemActive : itemHover].join(" ")}
-            >
-              <div className={`flex items-center gap-3 ${itemPadding}`}>
-                <Icon size={18} aria-hidden />
-                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
-              </div>
-            </NavLink>
-          );
-        })}
+      <div className="flex flex-col gap-2">
+        <button type="button" onClick={handleAlert} className={itemBase}>
+          <AlertTriangle size={18} aria-hidden />
+          <span className="text-[15px] leading-none">Enviar Alerta</span>
+        </button>
 
-        {actionItems.map((it) => {
-          const Icon = it.icon;
-          return (
-            <button
-              key={it.key}
-              type="button"
-              onClick={() => handleAction(it.key)}
-              className={[itemBase, itemHover, "text-left"].join(" ")}
-            >
-              <div className={`flex items-center gap-3 ${itemPadding}`}>
-                <Icon size={18} aria-hidden />
-                <span className={`text-[15px] leading-none ${labelClass}`}>{it.label}</span>
-              </div>
-            </button>
-          );
-        })}
+        <button type="button" onClick={handleMsg} className={itemBase}>
+          <MessageSquare size={18} aria-hidden />
+          <span className="text-[15px] leading-none">Mensaje Incidente</span>
+        </button>
+      </div>
 
-        <div className="mt-auto pt-3 border-t border-white/10">
-          <button
-            type="button"
-            onClick={() => handleAction("logout")}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left
-                       bg-red-600/10 hover:bg-red-600/20 text-red-400 font-medium
-                       transition-colors duration-150"
-          >
-            <LogOut size={18} aria-hidden />
-            <span className={`text-[15px] leading-none ${labelClass}`}>Aplicación Salir</span>
-          </button>
-
-          {import.meta.env.DEV && !collapsed && (
-            <div className="mt-3 text-[11px] opacity-70 leading-snug">
-              <div className="font-semibold">IAM roles/perms</div>
-              <div>roles: {roles.join(", ") || "-"}</div>
-              <div>perms: {perms.join(", ") || "-"}</div>
-              <div>path: {pathname}</div>
-              <div>asGlobal: {String(asGlobal)}</div>
-            </div>
-          )}
-        </div>
-      </nav>
+      <div className="mt-auto pt-4">
+        <button
+          type="button"
+          onClick={doLogout}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left
+                     bg-red-600/10 hover:bg-red-600/20 text-red-400 font-medium
+                     transition-colors duration-150"
+        >
+          <LogOut size={18} aria-hidden />
+          <span className="text-[15px] leading-none">Salir</span>
+        </button>
+      </div>
     </aside>
   );
 }

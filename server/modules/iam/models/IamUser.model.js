@@ -1,3 +1,4 @@
+// server/modules/iam/models/IamUser.model.js
 import mongoose from "mongoose";
 
 const IamUserSchema = new mongoose.Schema(
@@ -11,6 +12,7 @@ const IamUserSchema = new mongoose.Schema(
       required: true,
       lowercase: true,
       trim: true,
+      set: (v) => String(v || "").trim().toLowerCase(),
     },
 
     name: {
@@ -46,7 +48,7 @@ const IamUserSchema = new mongoose.Schema(
 
     provider: {
       type: String,
-      enum: ["local"],
+      enum: ["local"], // si luego metes auth0, aquí lo amplías
       default: "local",
       index: true,
     },
@@ -121,7 +123,7 @@ const IamUserSchema = new mongoose.Schema(
    ÍNDICES
 ========================= */
 
-// Email único
 IamUserSchema.index({ email: 1 }, { unique: true });
+IamUserSchema.index({ createdAt: -1 }); // útil para listados recientes
 
 export default mongoose.model("IamUser", IamUserSchema);

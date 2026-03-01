@@ -1,7 +1,7 @@
 // client/src/components/Footer.jsx
 import React from "react";
 import { Link } from "react-router-dom";
-import api from "../lib/api.js"; // ✅ import relativo (default export)
+import api from "../lib/api.js"; // axios instance (default export)
 import {
   MessageCircle,
   Mail,
@@ -20,22 +20,26 @@ export default function Footer() {
   const version = import.meta.env.VITE_APP_VERSION || "1.0.0";
 
   // ✅ baseURL REAL de axios (normalmente ya termina en /api)
-  const apiBaseUrl = (
-    api?.defaults?.baseURL || "http://localhost:4000/api"
-  ).replace(/\/$/, "");
+  const apiBaseUrl = String(api?.defaults?.baseURL || "http://localhost:4000/api").replace(
+    /\/$/,
+    ""
+  );
 
   // ✅ mostrar exactamente la base que usa axios, sin agregar otro /api
   const apiShown = apiBaseUrl;
 
   React.useEffect(() => {
     let cancel = false;
+
     const pingApi = async () => {
       try {
         const t0 = performance.now();
         // ✅ Como baseURL ya es .../api, aquí solo pedimos /health
         const r = await api.get("/health", { timeout: 5000 });
         const t1 = performance.now();
+
         if (cancel) return;
+
         setPing(Math.round(t1 - t0));
         setApiUp(r?.data?.ok === true);
       } catch {
@@ -45,8 +49,10 @@ export default function Footer() {
         }
       }
     };
+
     pingApi();
     const id = setInterval(pingApi, 30000);
+
     return () => {
       cancel = true;
       clearInterval(id);
@@ -59,8 +65,7 @@ export default function Footer() {
       <div
         className="h-[2px] mx-4 md:mx-6 opacity-80"
         style={{
-          background:
-            "linear-gradient(90deg, var(--fx1), var(--fx2), var(--fx3))",
+          background: "linear-gradient(90deg, var(--fx1), var(--fx2), var(--fx3))",
         }}
         aria-hidden
       />
@@ -72,15 +77,13 @@ export default function Footer() {
           <div
             className="absolute w-[28rem] h-[28rem] left-[-10%] bottom-[-35%] rounded-full blur-3xl opacity-25"
             style={{
-              background:
-                "radial-gradient(closest-side, var(--fx1), transparent 70%)",
+              background: "radial-gradient(closest-side, var(--fx1), transparent 70%)",
             }}
           />
           <div
             className="absolute w-[24rem] h-[24rem] right-[-10%] top-[-30%] rounded-full blur-3xl opacity-20"
             style={{
-              background:
-                "radial-gradient(closest-side, var(--fx2), transparent 70%)",
+              background: "radial-gradient(closest-side, var(--fx2), transparent 70%)",
             }}
           />
         </div>
@@ -90,12 +93,10 @@ export default function Footer() {
           <div>
             <div className="text-2xl font-bold fx-title">SENAF</div>
             <p className="mt-2 text-sm opacity-70">
-              Plataforma integral de seguridad: accesos, rondas, incidentes,
-              visitas y más.
+              Plataforma integral de seguridad: accesos, rondas, incidentes, visitas y más.
             </p>
             <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
-              <ShieldCheck className="w-4 h-4" /> Datos protegidos · Roles ·
-              Auditoría
+              <ShieldCheck className="w-4 h-4" /> Datos protegidos · Roles · Auditoría
             </div>
           </div>
 
@@ -109,7 +110,7 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
-                <Link className="hover:underline" to="/rondas">
+                <Link className="hover:underline" to="/rondasqr/scan">
                   Rondas de Vigilancia
                 </Link>
               </li>
@@ -144,9 +145,7 @@ export default function Footer() {
                 <MessageCircle className="w-4 h-4 opacity-70" />
                 <button
                   type="button"
-                  onClick={() =>
-                    window.dispatchEvent(new CustomEvent("chat:open"))
-                  }
+                  onClick={() => window.dispatchEvent(new CustomEvent("chat:open"))}
                   className="hover:underline"
                 >
                   Abrir chat
@@ -154,10 +153,7 @@ export default function Footer() {
               </li>
               <li className="flex items-center gap-2">
                 <Mail className="w-4 h-4 opacity-70" />
-                <a
-                  className="hover:underline"
-                  href="mailto:soporte@senaf.local"
-                >
+                <a className="hover:underline" href="mailto:soporte@senaf.local">
                   soporte@senaf.local
                 </a>
               </li>
@@ -181,25 +177,21 @@ export default function Footer() {
               <div className="flex items-center gap-2">
                 <span
                   className={`inline-block w-2.5 h-2.5 rounded-full ${
-                    apiUp === null
-                      ? "bg-neutral-400"
-                      : apiUp
-                      ? "bg-emerald-500"
-                      : "bg-rose-500"
+                    apiUp === null ? "bg-neutral-400" : apiUp ? "bg-emerald-500" : "bg-rose-500"
                   }`}
                 />
                 <span className="opacity-80">API</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-70 break-all">{apiShown}</span>
               </div>
+
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 opacity-70" />
                 <span className="opacity-80">Ping</span>
                 <span className="opacity-60">·</span>
-                <span className="opacity-80">
-                  {ping != null ? `${ping} ms` : "—"}
-                </span>
+                <span className="opacity-80">{ping != null ? `${ping} ms` : "—"}</span>
               </div>
+
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 opacity-70" />
                 <span className="opacity-80">Versión</span>
@@ -212,22 +204,12 @@ export default function Footer() {
 
         {/* Línea inferior */}
         <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs opacity-70">
-          <div>
-            © {new Date().getFullYear()} SENAF · Todos los derechos reservados
-          </div>
+          <div>© {new Date().getFullYear()} SENAF · Todos los derechos reservados</div>
           <div className="flex items-center gap-4">
-            <a
-              className="hover:underline"
-              href="#"
-              onClick={(e) => e.preventDefault()}
-            >
+            <a className="hover:underline" href="#" onClick={(e) => e.preventDefault()}>
               Privacidad
             </a>
-            <a
-              className="hover:underline"
-              href="#"
-              onClick={(e) => e.preventDefault()}
-            >
+            <a className="hover:underline" href="#" onClick={(e) => e.preventDefault()}>
               Términos
             </a>
             <a

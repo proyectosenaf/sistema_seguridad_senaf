@@ -7,8 +7,7 @@ import IamUser from "../models/IamUser.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 import { getSecuritySettings } from "../services/settings.service.js";
 
-// Si ya tienes un mailer en otra parte, luego lo conectas.
-// Por ahora: enviamos por SMTP usando nodemailer (simple y estándar).
+// SMTP simple (si no hay MAIL_* configurado, log en consola en DEV)
 import nodemailer from "nodemailer";
 
 const r = Router();
@@ -31,14 +30,28 @@ function ensureEnv(name) {
   return v || null;
 }
 
+function getOtpSettings() {
+  const s = getSecuritySettings?.() || {};
+  const otp = s.otp || {};
+  return {
+    ttlSeconds: Number.isFinite(Number(otp.ttlSeconds)) ? Number(otp.ttlSeconds) : 300,
+    maxAttempts: Number.isFinite(Number(otp.maxAttempts)) ? Number(otp.maxAttempts) : 5,
+    resendCooldownSeconds: Number.isFinite(Number(otp.resendCooldownSeconds))
+      ? Number(otp.resendCooldownSeconds)
+      : 30,
+    features: s.features || {},
+    password: s.password || {},
+  };
+}
+
 function signLocalJwt(payload) {
   const secret = ensureEnv("JWT_SECRET") || "dev_secret";
   const expiresIn = String(process.env.JWT_EXPIRES_IN || "12h");
-  return jwt.sign(payload, secret, { expiresIn });
+  // ✅ fija HS256 explícitamente
+  return jwt.sign(payload, secret, { expiresIn, algorithm: "HS256" });
 }
 
 function randomOtp6() {
-  // 000000 - 999999
   const n = crypto.randomInt(0, 1000000);
   return String(n).padStart(6, "0");
 }
@@ -47,8 +60,12 @@ function sha256(s) {
   return crypto.createHash("sha256").update(String(s)).digest("hex");
 }
 
-/* ---------------------- mailer ---------------------- */
+/* ---------------------- mailer (cache) ---------------------- */
+let MAIL_TRANSPORT = null;
+
 function makeMailer() {
+  if (MAIL_TRANSPORT) return MAIL_TRANSPORT;
+
   const host = ensureEnv("MAIL_HOST");
   const port = Number(process.env.MAIL_PORT || 587);
   const secure = String(process.env.MAIL_SECURE || "0") === "1";
@@ -57,18 +74,22 @@ function makeMailer() {
 
   if (!host || !user || !pass) return null;
 
-  return nodemailer.createTransport({
+  const rejectUnauthorized = String(process.env.MAIL_TLS_REJECT_UNAUTHORIZED || "1") !== "0";
+
+  MAIL_TRANSPORT = nodemailer.createTransport({
     host,
     port,
     secure,
     auth: { user, pass },
+    tls: { rejectUnauthorized },
   });
+
+  return MAIL_TRANSPORT;
 }
 
 async function sendOtpEmail({ to, code }) {
   const transport = makeMailer();
   if (!transport) {
-    // No romper: si no hay SMTP configurado, loguea en consola (DEV)
     console.warn("[otp] MAIL_* no configurado. OTP para", to, "=>", code);
     return { ok: true, dev: true };
   }
@@ -76,38 +97,35 @@ async function sendOtpEmail({ to, code }) {
   const from = ensureEnv("MAIL_FROM") || ensureEnv("MAIL_USER");
   const appName = ensureEnv("APP_NAME") || "SENAF";
 
-  await transport.sendMail({
-    from,
-    to,
-    subject: `${appName} — Código de verificación`,
-    text: `Tu código de verificación es: ${code}\n\nEste código vence pronto.`,
-    html: `
-      <div style="font-family:Arial,sans-serif">
-        <h2>${appName}</h2>
-        <p>Tu código de verificación es:</p>
-        <div style="font-size:28px;font-weight:bold;letter-spacing:4px">${code}</div>
-        <p>Este código vence pronto.</p>
-      </div>
-    `,
-  });
+  try {
+    await transport.sendMail({
+      from,
+      to,
+      subject: `${appName} — Código de verificación`,
+      text: `Tu código de verificación es: ${code}\n\nEste código vence pronto.`,
+      html: `
+        <div style="font-family:Arial,sans-serif">
+          <h2>${appName}</h2>
+          <p>Tu código de verificación es:</p>
+          <div style="font-size:28px;font-weight:bold;letter-spacing:4px">${code}</div>
+          <p>Este código vence pronto.</p>
+        </div>
+      `,
+    });
 
-  return { ok: true };
+    return { ok: true };
+  } catch (e) {
+    // ✅ no “revienta” el login, pero sí te deja el error claro
+    console.error("[otp] sendMail failed:", e?.message || e);
+    return { ok: false, error: "mail_send_failed", message: e?.message || String(e) };
+  }
 }
 
-/* ---------------------- simple in-memory OTP store ----------------------
-   Profesionalmente esto va a Mongo o Redis.
-   Para que tu server ARRANQUE y funcione ya, lo dejamos en memoria.
-   En producción con 1 instancia funciona; si escalas, se migra a DB/Redis.
-------------------------------------------------------------------------- */
+/* ---------------------- OTP store (memoria) ---------------------- */
 const OTP_STORE = new Map();
 /**
  * key: email
- * value: {
- *   codeHash,
- *   exp,
- *   attempts,
- *   lastSentAt,
- * }
+ * value: { codeHash, exp, attempts, lastSentAt }
  */
 
 function canResend(entry, cooldownSeconds) {
@@ -119,15 +137,12 @@ function isExpired(entry) {
   return !entry?.exp || Date.now() > entry.exp;
 }
 
-/* =========================================================
-   POST /auth/login-otp
-   body: { email, password }
-   - valida credenciales del empleado (local)
-   - manda OTP por correo
-========================================================= */
-r.post("/login-otp", async (req, res) => {
-  const settings = getSecuritySettings();
-  if (!settings.features.enableEmployeeOtp) {
+/* =========================
+   Handlers reutilizables
+   ========================= */
+async function loginOtpHandler(req, res) {
+  const settings = getOtpSettings();
+  if (!settings?.features?.enableEmployeeOtp) {
     return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
   }
 
@@ -138,63 +153,57 @@ r.post("/login-otp", async (req, res) => {
     return res.status(400).json({ ok: false, error: "email_and_password_required" });
   }
 
-  // Empleados deben existir en IAM y ser provider=local
   const user = await IamUser.findOne({ email }).select("+passwordHash").lean();
-  if (!user) {
-    return res.status(401).json({ ok: false, error: "invalid_credentials" });
-  }
-  if (!user.active) {
-    return res.status(403).json({ ok: false, error: "user_inactive" });
-  }
+  if (!user) return res.status(401).json({ ok: false, error: "invalid_credentials" });
+  if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
   const okPwd = await verifyPassword(password, user.passwordHash);
-  if (!okPwd) {
-    return res.status(401).json({ ok: false, error: "invalid_credentials" });
-  }
+  if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
-  // OTP entry
   const existing = OTP_STORE.get(email);
   if (existing && !isExpired(existing)) {
-    if (!canResend(existing, settings.otp.resendCooldownSeconds)) {
+    if (!canResend(existing, settings.resendCooldownSeconds)) {
       return res.status(429).json({
         ok: false,
         error: "otp_resend_cooldown",
-        message: `Espera ${settings.otp.resendCooldownSeconds}s para reenviar.`,
+        cooldownSeconds: settings.resendCooldownSeconds, // ✅ útil para UI
+        message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
       });
     }
   }
 
   const code = randomOtp6();
-  const codeHash = sha256(code);
-  const exp = Date.now() + settings.otp.ttlSeconds * 1000;
-
   OTP_STORE.set(email, {
-    codeHash,
-    exp,
+    codeHash: sha256(code),
+    exp: Date.now() + settings.ttlSeconds * 1000,
     attempts: 0,
     lastSentAt: Date.now(),
   });
 
-  await sendOtpEmail({ to: email, code });
+  const mail = await sendOtpEmail({ to: email, code });
+  if (mail?.ok === false) {
+    // ✅ si falla correo, te lo digo explícito
+    return res.status(502).json({
+      ok: false,
+      error: "mail_send_failed",
+      message: mail?.message || "No se pudo enviar el correo OTP.",
+    });
+  }
 
   return res.json({
     ok: true,
     sentTo: maskEmail(email),
-    ttlSeconds: settings.otp.ttlSeconds,
+    ttlSeconds: settings.ttlSeconds,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
   });
-});
+}
 
-/* =========================================================
-   POST /auth/verify-otp
-   body: { email, otp }
-   - valida OTP y devuelve JWT local
-========================================================= */
-r.post("/verify-otp", async (req, res) => {
-  const settings = getSecuritySettings();
-  if (!settings.features.enableEmployeeOtp) {
+async function verifyOtpHandler(req, res) {
+  const settings = getOtpSettings();
+  if (!settings?.features?.enableEmployeeOtp) {
     return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
   }
 
@@ -206,15 +215,14 @@ r.post("/verify-otp", async (req, res) => {
   }
 
   const entry = OTP_STORE.get(email);
-  if (!entry) {
-    return res.status(400).json({ ok: false, error: "otp_not_found" });
-  }
+  if (!entry) return res.status(400).json({ ok: false, error: "otp_not_found" });
+
   if (isExpired(entry)) {
     OTP_STORE.delete(email);
     return res.status(400).json({ ok: false, error: "otp_expired" });
   }
 
-  if (entry.attempts >= settings.otp.maxAttempts) {
+  if (entry.attempts >= settings.maxAttempts) {
     OTP_STORE.delete(email);
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
@@ -222,20 +230,19 @@ r.post("/verify-otp", async (req, res) => {
   entry.attempts += 1;
   OTP_STORE.set(email, entry);
 
-  const ok = sha256(otp) === entry.codeHash;
-  if (!ok) {
+  if (sha256(otp) !== entry.codeHash) {
     return res.status(401).json({ ok: false, error: "otp_invalid" });
   }
 
-  // OTP OK => borrar
   OTP_STORE.delete(email);
 
   const user = await IamUser.findOne({ email }).lean();
-  if (!user) {
-    return res.status(404).json({ ok: false, error: "user_not_found" });
-  }
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  // Construir payload mínimo (tu buildContextFrom luego expande roles/perms desde Mongo)
+  // mustChangePassword si está marcado o si expiró
+  let mustChange = !!user.mustChangePassword;
+  if (user.passwordExpiresAt && new Date() > new Date(user.passwordExpiresAt)) mustChange = true;
+
   const token = signLocalJwt({
     sub: `local|${user._id}`,
     email: user.email,
@@ -246,16 +253,17 @@ r.post("/verify-otp", async (req, res) => {
   return res.json({
     ok: true,
     token,
-    mustChangePassword: !!user.mustChangePassword,
+    mustChangePassword: mustChange,
   });
-});
+}
 
-/* =========================================================
-   POST /auth/change-password
-   body: { email, newPassword }
-   - solo para empleados locales (y normalmente mustChangePassword=true)
-========================================================= */
-r.post("/change-password", async (req, res) => {
+/**
+ * ✅ Nota: este endpoint NO debe estar abierto públicamente en producción.
+ * Lo dejo porque lo traías, pero lo recomendado es:
+ * - reset por link (request-password-reset + reset-password) o
+ * - change-password autenticado (Bearer)
+ */
+async function changePasswordHandler(req, res) {
   const email = normEmail(req.body?.email);
   const newPassword = String(req.body?.newPassword || "");
 
@@ -263,12 +271,16 @@ r.post("/change-password", async (req, res) => {
     return res.status(400).json({ ok: false, error: "email_and_newPassword_required" });
   }
 
-  const settings = getSecuritySettings();
-  if (newPassword.length < settings.password.minLength) {
+  const s = getSecuritySettings?.() || {};
+  const minLength = Number.isFinite(Number(s?.password?.minLength))
+    ? Number(s.password.minLength)
+    : 8;
+
+  if (newPassword.length < minLength) {
     return res.status(400).json({
       ok: false,
       error: "password_too_short",
-      minLength: settings.password.minLength,
+      minLength,
     });
   }
 
@@ -282,12 +294,31 @@ r.post("/change-password", async (req, res) => {
   user.mustChangePassword = false;
   user.passwordChangedAt = new Date();
 
-  const expiresDays = Number(settings.password.expiresDays || 0);
-  user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : undefined;
+  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays))
+    ? Number(s.password.expiresDays)
+    : 0;
+
+  user.passwordExpiresAt =
+    expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : undefined;
 
   await user.save();
 
   return res.json({ ok: true });
-});
+}
+
+/* =========================================================
+   Rutas principales
+========================================================= */
+r.post("/login-otp", loginOtpHandler);
+r.post("/verify-otp", verifyOtpHandler);
+r.post("/change-password", changePasswordHandler);
+
+/* =========================================================
+   ✅ ALIASES de compatibilidad (por si lo montas en /auth o no)
+   Esto te salva de 404 según dónde montes el router.
+========================================================= */
+r.post("/auth/login-otp", loginOtpHandler);
+r.post("/auth/verify-otp", verifyOtpHandler);
+r.post("/auth/change-password", changePasswordHandler);
 
 export default r;

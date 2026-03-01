@@ -1,10 +1,28 @@
 // server/modules/iam/routes/users.routes.js
 import { Router } from "express";
+import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
+import { devOr, requirePerm } from "../utils/rbac.util.js";
+import { writeAudit } from "../utils/audit.util.js";
+import { hashPassword } from "../utils/password.util.js";
 
 const r = Router();
 
-/* ===================== Helpers ===================== */
+/* ===================== Centralized helpers ===================== */
+
+const MW_USERS_MANAGE = devOr(requirePerm("iam.users.manage"));
+const MW_USERS_VIEW = devOr(requirePerm("iam.users.view")); // si no lo tienes en catálogo, usa iam.users.manage en ambos
+
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(String(id || ""));
+}
+
+function auditSafe(req, payload, label) {
+  return writeAudit(req, payload).catch((e) => {
+    console.warn(`[IAM][AUDIT ${label}] error (no bloquea):`, e?.message || e);
+  });
+}
+
 function normEmail(e) {
   return String(e || "").trim().toLowerCase();
 }
@@ -15,8 +33,18 @@ function toStringArray(v) {
   return [];
 }
 
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escapeRegex(s = "") {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseBool(v, def = false) {
+  if (v === undefined || v === null) return def;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v === 1;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return def;
 }
 
 function pickUser(u) {
@@ -39,7 +67,7 @@ function pickUser(u) {
     createdAt: u.createdAt,
     updatedAt: u.updatedAt,
 
-    // compat UI (por si tu tabla espera nombreCompleto/correoPersona)
+    // compat UI
     nombreCompleto: u.name || "",
     correoPersona: u.email || "",
   };
@@ -47,9 +75,6 @@ function pickUser(u) {
 
 /**
  * Input del UsersPage (form) -> schema real
- * - correoPersona -> email
- * - nombreCompleto -> name
- * - roles, active -> direct
  */
 function mapBodyToIamUser(body = {}) {
   const email = normEmail(body.email || body.correoPersona);
@@ -58,21 +83,22 @@ function mapBodyToIamUser(body = {}) {
   const roles = toStringArray(body.roles);
   const active = body.active === false ? false : true;
 
-  // flags opcionales
-  const mustChangePassword =
-    body.mustChangePassword === true ||
-    String(body.mustChangePassword || "").toLowerCase() === "true" ||
-    String(body.mustChangePassword || "") === "1";
+  // ✅ soporta mustChangePassword y el checkbox del UI (forcePwChange)
+  const mustChangePassword = parseBool(body.mustChangePassword ?? body.forcePwChange, false);
 
-  return { email, name, roles, active, mustChangePassword };
+  // ✅ password sanitizado (evita "   ")
+  const password = body.password != null ? String(body.password).trim() : "";
+
+  return { email, name, roles, active, mustChangePassword, password };
 }
 
 /* ===================== Routes ===================== */
 
 /**
  * GET /api/iam/v1/users?q=
+ * ✅ protegido (view)
  */
-r.get("/", async (req, res, next) => {
+r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
     const query = {};
@@ -83,7 +109,7 @@ r.get("/", async (req, res, next) => {
     }
 
     const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(500).lean();
-    res.json({ ok: true, items: items.map(pickUser) });
+    return res.json({ ok: true, items: items.map(pickUser) });
   } catch (e) {
     next(e);
   }
@@ -91,16 +117,14 @@ r.get("/", async (req, res, next) => {
 
 /**
  * GET /api/iam/v1/users/guards?active=1&q=
+ * ✅ protegido (view)
  */
-r.get("/guards", async (req, res, next) => {
+r.get("/guards", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
     const onlyActive = String(req.query.active || "") === "1";
 
-    const query = {
-      roles: { $in: ["guardia", "guard", "security_guard"] },
-    };
-
+    const query = { roles: { $in: ["guardia", "guard", "security_guard"] } };
     if (onlyActive) query.active = { $ne: false };
 
     if (q) {
@@ -109,7 +133,7 @@ r.get("/guards", async (req, res, next) => {
     }
 
     const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(500).lean();
-    res.json({ ok: true, items: items.map(pickUser) });
+    return res.json({ ok: true, items: items.map(pickUser) });
   } catch (e) {
     next(e);
   }
@@ -117,13 +141,17 @@ r.get("/guards", async (req, res, next) => {
 
 /**
  * GET /api/iam/v1/users/:id
+ * ✅ protegido (view)
  */
-r.get("/:id", async (req, res, next) => {
+r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
+
     const u = await IamUser.findById(id).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
-    res.json({ ok: true, item: pickUser(u) });
+
+    return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
   }
@@ -131,13 +159,11 @@ r.get("/:id", async (req, res, next) => {
 
 /**
  * POST /api/iam/v1/users
- * Crea usuario (NO setea passwordHash aquí)
- * Body: { correoPersona/email, nombreCompleto/name, roles[], active }
+ * ✅ protegido (manage)
  */
-r.post("/", async (req, res, next) => {
+r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const { email, name, roles, active, mustChangePassword } = mapBodyToIamUser(body);
+    const { email, name, roles, active, mustChangePassword, password } = mapBodyToIamUser(req.body || {});
 
     if (!email) return res.status(400).json({ ok: false, message: "email/correoPersona requerido" });
     if (!name) return res.status(400).json({ ok: false, message: "name/nombreCompleto requerido" });
@@ -146,63 +172,156 @@ r.post("/", async (req, res, next) => {
     const exists = await IamUser.findOne({ email }).lean();
     if (exists) return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
 
+    // ✅ si viene password, la guardamos; si no, queda vacío (y no podrá loguear por local)
+    const passwordHash = password ? await hashPassword(password) : "";
+
     const doc = await IamUser.create({
       email,
       name,
       roles,
       active,
       mustChangePassword: !!mustChangePassword,
-      // passwordHash se gestiona en /auth (login/crear temp password) en tu flujo real
+      passwordHash,
+      passwordChangedAt: password ? new Date() : null,
+      // limpia temporales por seguridad al crear con contraseña fija
+      tempPassHash: "",
+      tempPassExpiresAt: null,
+      tempPassUsedAt: null,
+      tempPassAttempts: 0,
     });
 
-    res.status(201).json({ ok: true, item: pickUser(doc.toObject ? doc.toObject() : doc) });
+    await auditSafe(
+      req,
+      {
+        action: "create",
+        entity: "user",
+        entityId: doc._id.toString(),
+        before: null,
+        after: {
+          email: doc.email,
+          name: doc.name,
+          roles: doc.roles || [],
+          active: doc.active !== false,
+          mustChangePassword: !!doc.mustChangePassword,
+        },
+      },
+      "create user"
+    );
+
+    return res.status(201).json({ ok: true, item: pickUser(doc.toObject ? doc.toObject() : doc) });
   } catch (e) {
-    // error típico por índice unique email
-    if (e?.code === 11000) {
-      return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
-    }
+    if (e?.code === 11000) return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
     next(e);
   }
 });
 
 /**
  * PATCH /api/iam/v1/users/:id
- * Actualiza usuario (name/email/roles/active/mustChangePassword)
+ * ✅ protegido (manage)
  */
-r.patch("/:id", async (req, res, next) => {
+r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
+
     const body = req.body || {};
-
     const update = {};
-    if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
-    if (body.name != null || body.nombreCompleto != null)
-      update.name = String(body.name || body.nombreCompleto || "").trim();
-    if (body.roles != null) update.roles = toStringArray(body.roles);
-    if (body.active != null) update.active = body.active === false ? false : true;
-    if (body.mustChangePassword != null) update.mustChangePassword = !!body.mustChangePassword;
 
-    const u = await IamUser.findByIdAndUpdate(id, update, { new: true }).lean();
+    if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
+    if (body.name != null || body.nombreCompleto != null) update.name = String(body.name || body.nombreCompleto || "").trim();
+
+    if (body.roles != null) {
+      const roles = toStringArray(body.roles);
+      // ✅ evita dejar usuario sin roles por accidente
+      if (!roles.length) return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
+      update.roles = roles;
+    }
+
+    if (body.active != null) update.active = body.active === false ? false : true;
+
+    if (body.mustChangePassword != null || body.forcePwChange != null) {
+      update.mustChangePassword = parseBool(body.mustChangePassword ?? body.forcePwChange, false);
+    }
+
+    // ✅ cambio de contraseña (trim)
+    if (body.password != null) {
+      const pwd = String(body.password).trim();
+      if (pwd.length > 0) {
+        update.passwordHash = await hashPassword(pwd);
+        update.passwordChangedAt = new Date();
+
+        // por seguridad, si había tempPass, la invalidamos
+        update.tempPassHash = "";
+        update.tempPassExpiresAt = null;
+        update.tempPassUsedAt = null;
+        update.tempPassAttempts = 0;
+      }
+    }
+
+    const before = await IamUser.findById(id).lean();
+    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    const u = await IamUser.findByIdAndUpdate(
+      id,
+      { $set: update },
+      { new: true, runValidators: true }
+    ).lean();
+
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    res.json({ ok: true, item: pickUser(u) });
+    await auditSafe(
+      req,
+      {
+        action: "update",
+        entity: "user",
+        entityId: id,
+        before: {
+          email: before.email,
+          name: before.name,
+          roles: before.roles || [],
+          active: before.active !== false,
+          mustChangePassword: !!before.mustChangePassword,
+        },
+        after: {
+          email: u.email,
+          name: u.name,
+          roles: u.roles || [],
+          active: u.active !== false,
+          mustChangePassword: !!u.mustChangePassword,
+        },
+      },
+      "update user"
+    );
+
+    return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
-    if (e?.code === 11000) {
-      return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
-    }
+    if (e?.code === 11000) return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
     next(e);
   }
 });
 
 /**
  * POST /api/iam/v1/users/:id/enable
+ * ✅ protegido (manage)
  */
-r.post("/:id/enable", async (req, res, next) => {
+r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
-    const u = await IamUser.findByIdAndUpdate(id, { active: true }, { new: true }).lean();
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
+
+    const before = await IamUser.findById(id).lean();
+    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    const u = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
-    res.json({ ok: true, item: pickUser(u) });
+
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } },
+      "enable user"
+    );
+
+    return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
   }
@@ -210,13 +329,26 @@ r.post("/:id/enable", async (req, res, next) => {
 
 /**
  * POST /api/iam/v1/users/:id/disable
+ * ✅ protegido (manage)
  */
-r.post("/:id/disable", async (req, res, next) => {
+r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
-    const u = await IamUser.findByIdAndUpdate(id, { active: false }, { new: true }).lean();
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
+
+    const before = await IamUser.findById(id).lean();
+    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    const u = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
-    res.json({ ok: true, item: pickUser(u) });
+
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } },
+      "disable user"
+    );
+
+    return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
   }
@@ -224,13 +356,31 @@ r.post("/:id/disable", async (req, res, next) => {
 
 /**
  * DELETE /api/iam/v1/users/:id
+ * ✅ protegido (manage)
  */
-r.delete("/:id", async (req, res, next) => {
+r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
   try {
     const id = String(req.params.id || "").trim();
-    const u = await IamUser.findByIdAndDelete(id).lean();
-    if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
-    res.json({ ok: true });
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
+
+    const before = await IamUser.findById(id).lean();
+    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    await IamUser.deleteOne({ _id: id });
+
+    await auditSafe(
+      req,
+      {
+        action: "delete",
+        entity: "user",
+        entityId: id,
+        before: { email: before.email, name: before.name, roles: before.roles || [], active: before.active !== false },
+        after: null,
+      },
+      "delete user"
+    );
+
+    return res.json({ ok: true });
   } catch (e) {
     next(e);
   }

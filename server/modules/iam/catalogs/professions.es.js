@@ -131,4 +131,5 @@ export const PROFESIONES_OFICIOS = [
   "Desempleado/a",
   "Otro",
 ];
+
 export default PROFESIONES_OFICIOS;

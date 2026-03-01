@@ -1,21 +1,90 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+// client/src/pages/auth/VerifyOtp.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import api, { setToken } from "../../lib/api.js";
+import { useAuth } from "./AuthProvider.jsx";
 
-const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-const API_ROOT = String(RAW).replace(/\/$/, "");
+function safeInternalPath(p) {
+  return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
+}
+
+function readReturnTo(locationSearch) {
+  const qs = new URLSearchParams(locationSearch || "");
+  const fromQuery = qs.get("to");
+
+  const fromSession = (() => {
+    try {
+      return sessionStorage.getItem("auth:returnTo");
+    } catch {
+      return null;
+    }
+  })();
+
+  const picked =
+    (safeInternalPath(fromQuery) && fromQuery) ||
+    (safeInternalPath(fromSession) && fromSession) ||
+    null;
+
+  return picked;
+}
+
+function consumeReturnTo(locationSearch) {
+  const picked = readReturnTo(locationSearch);
+  try {
+    sessionStorage.removeItem("auth:returnTo");
+  } catch {}
+  return picked;
+}
+
+function getOtpEmail() {
+  try {
+    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function clearOtpContext() {
+  try {
+    localStorage.removeItem("senaf_otp_email");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+}
+
+function humanOtpError(codeOrMsg) {
+  const s = String(codeOrMsg || "").toLowerCase();
+
+  if (s.includes("otp_expired")) return "El código venció. Reenvía el código e intenta de nuevo.";
+  if (s.includes("otp_not_found")) return "No hay un código activo. Reenvía el código.";
+  if (s.includes("otp_invalid")) return "Código incorrecto. Revisa e intenta de nuevo.";
+  if (s.includes("otp_max_attempts")) return "Demasiados intentos. Reenvía el código.";
+  if (s.includes("otp_resend_cooldown")) return "Espera unos segundos antes de reenviar el código.";
+  if (s.includes("employee_otp_disabled")) return "OTP deshabilitado por configuración.";
+  if (s.includes("email_and_otp_required")) return "Faltan datos (correo/código).";
+
+  return codeOrMsg || "Error validando OTP";
+}
 
 export default function VerifyOtp() {
   const navigate = useNavigate();
+  const loc = useLocation();
+  const auth = useAuth();
 
-  const [code, setCode] = useState("");
   const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [otp, setOtp] = useState("");
+
+  const [submitting, setSubmitting] = useState(false);
+  const [resending, setResending] = useState(false);
   const [info, setInfo] = useState("");
+  const [error, setError] = useState("");
+
+  const emailNorm = useMemo(() => String(email || "").trim().toLowerCase(), [email]);
 
   useEffect(() => {
-    const savedEmail = localStorage.getItem("senaf_otp_email");
-    if (savedEmail) setEmail(savedEmail);
+    const e = getOtpEmail();
+    if (e) setEmail(e);
   }, []);
 
   async function handleVerify(e) {
@@ -23,38 +92,58 @@ export default function VerifyOtp() {
     setError("");
     setInfo("");
 
-    if (!code || code.length < 4) {
-      setError("Ingresa un código válido.");
-      return;
-    }
+    if (!emailNorm) return setError("Falta el correo.");
+    if (!otp || String(otp).trim().length < 4) return setError("Ingresa el código.");
 
     try {
-      setLoading(true);
+      setSubmitting(true);
 
-      const res = await fetch(`${API_ROOT}/iam/v1/otp/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
+      const res = await api.post("/iam/v1/auth/verify-otp", {
+        email: emailNorm,
+        otp: String(otp || "").trim(),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = res?.data || {};
 
-      if (!res.ok) {
-        throw new Error(data?.error || "Código inválido.");
+      if (data?.ok === false) {
+        setError(humanOtpError(data?.error || data?.message || "Código inválido."));
+        return;
       }
 
-      // Guardar token si backend lo devuelve
-      if (data?.token) {
-        localStorage.setItem("senaf_token", data.token);
+      const token = data?.token;
+      if (!token) {
+        setError("El servidor no devolvió token tras validar OTP.");
+        return;
       }
 
-      localStorage.removeItem("senaf_otp_email");
+      clearOtpContext();
+
+      setToken(token);
+      await auth.login({ email: emailNorm }, token);
+
+      if (data?.mustChangePassword) {
+        navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
+          replace: true,
+        });
+        return;
+      }
+
+      const returnTo = consumeReturnTo(loc.search);
+      if (returnTo) {
+        navigate(returnTo, { replace: true });
+        return;
+      }
 
       navigate("/start", { replace: true });
     } catch (err) {
-      setError(err.message || "Error verificando código.");
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Error validando OTP";
+      setError(humanOtpError(msg));
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
@@ -62,83 +151,88 @@ export default function VerifyOtp() {
     setError("");
     setInfo("");
 
-    if (!email) {
-      setError("No se encontró el correo.");
+    if (!emailNorm) {
+      setError("Falta el correo.");
       return;
     }
 
     try {
-      setLoading(true);
+      setResending(true);
 
-      const res = await fetch(`${API_ROOT}/iam/v1/otp/resend`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+      // ✅ Nuevo endpoint: no requiere password
+      const res = await api.post("/iam/v1/auth/resend-otp", { email: emailNorm });
+      const data = res?.data || {};
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data?.error || "No se pudo reenviar el código.");
+      if (data?.ok === false) {
+        setError(humanOtpError(data?.error || data?.message || "No se pudo reenviar."));
+        return;
       }
 
-      setInfo("Código reenviado correctamente.");
+      setInfo("Listo. Te reenviamos un nuevo código. Revisa bandeja y spam.");
     } catch (err) {
-      setError(err.message || "Error reenviando código.");
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Error reenviando OTP";
+      setError(humanOtpError(msg));
     } finally {
-      setLoading(false);
+      setResending(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white px-4">
-      <div className="w-full max-w-md bg-slate-800 p-8 rounded-xl shadow-xl">
-        <h2 className="text-2xl font-bold mb-2 text-center">Verificación OTP</h2>
-
-        <p className="text-sm text-slate-400 text-center mb-6">
-          Ingresa el código enviado a tu correo.
-        </p>
-
-        <form onSubmit={handleVerify} className="space-y-4">
-          <div>
-            <label className="block text-sm mb-1">Código</label>
-            <input
-              type="text"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              maxLength={6}
-              className="w-full px-3 py-2 rounded bg-slate-700 border border-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500 text-center tracking-widest text-lg"
-              placeholder="000000"
-            />
-          </div>
-
-          {error && (
-            <div className="text-red-400 text-sm text-center">{error}</div>
-          )}
-
-          {info && (
-            <div className="text-green-400 text-sm text-center">{info}</div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2 rounded bg-purple-600 hover:bg-purple-700 transition disabled:opacity-50"
-          >
-            {loading ? "Verificando..." : "Verificar"}
-          </button>
-        </form>
-
-        <div className="mt-4 text-center">
-          <button
-            onClick={handleResend}
-            disabled={loading}
-            className="text-sm text-purple-400 hover:underline disabled:opacity-50"
-          >
-            Reenviar código
-          </button>
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <form onSubmit={handleVerify} className="p-6 border rounded w-96 bg-white shadow-sm">
+        <h2 className="text-lg mb-1 font-bold">Verificar código</h2>
+        <div className="text-xs text-slate-500 mb-4">
+          Ingresa el código que enviamos a tu correo
         </div>
-      </div>
+
+        <input
+          className="border w-full mb-3 p-2"
+          type="email"
+          placeholder="Correo"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
+          inputMode="email"
+        />
+
+        <input
+          className="border w-full mb-3 p-2 tracking-widest text-center"
+          type="text"
+          placeholder="Código OTP"
+          value={otp}
+          onChange={(e) => setOtp(e.target.value)}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+        />
+
+        {info && <div className="text-emerald-700 mb-2 text-sm">{info}</div>}
+        {error && <div className="text-red-600 mb-2 text-sm">{error}</div>}
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
+        >
+          {submitting ? "Validando..." : "Confirmar"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resending || submitting || !emailNorm}
+          className="mt-3 w-full p-2 rounded border text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-60"
+        >
+          {resending ? "Reenviando..." : "Reenviar código"}
+        </button>
+
+        <div className="mt-3 text-xs text-slate-500">
+          Si no te llega, revisa SPAM. El código puede tardar 1–2 minutos.
+        </div>
+      </form>
     </div>
   );
 }

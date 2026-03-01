@@ -2,6 +2,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { iamApi } from "../../api/iamApi.js";
 
+// ✅ Token canónico central (senaf_token -> token)
+import { getToken as getTokenCanonical } from "../../../lib/api.js";
+
+const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
+
 /* ========================= Helpers ========================= */
 
 function toDateInputSafe(raw) {
@@ -71,6 +76,33 @@ function normalizeCatalogResponse(r) {
   return [];
 }
 
+function requireTokenOrNull() {
+  if (DISABLE_AUTH) return null;
+  const t = getTokenCanonical();
+  return t || null;
+}
+
+/**
+ * Fetch catálogo desde backend sin depender de iamApi helpers
+ * (porque tu iamApi.js todavía no tiene listCivilStatus/getCatalogs)
+ */
+async function fetchCatalog(path, token) {
+  const headers = {
+    "Cache-Control": "no-store",
+    Pragma: "no-cache",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const r = await fetch(path, { headers, cache: "no-store" });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    const err = new Error(`${r.status} ${r.statusText}${text ? ` - ${text}` : ""}`);
+    err.status = r.status;
+    throw err;
+  }
+  return await r.json().catch(() => null);
+}
+
 /* ========================= Component ========================= */
 
 export default function UserEditor({ value, onClose, onSaved }) {
@@ -81,33 +113,48 @@ export default function UserEditor({ value, onClose, onSaved }) {
   const [rolesCatalog, setRolesCatalog] = useState([]); // [{code,name}]
   const [civilCatalog, setCivilCatalog] = useState([]); // ["Soltero/a", ...]
 
+  const [catalogErr, setCatalogErr] = useState("");
+
   useEffect(() => {
     setForm(mapUserToForm(value || {}));
   }, [value]);
 
   useEffect(() => {
     (async () => {
-      // Roles reales
-      const rr = await iamApi.listRoles();
+      setCatalogErr("");
+      const token = requireTokenOrNull();
+
+      // ✅ Roles reales (con token si aplica)
+      const rr = await iamApi.listRoles(token);
       const items = rr?.items || rr?.roles || [];
       setRolesCatalog(
-        items
+        (items || [])
           .map((r) => ({
-            code: String(r?.code || "").trim().toLowerCase(),
-            name: String(r?.name || r?.code || "").trim(),
+            code: String(r?.code || r?.key || r?.name || "").trim().toLowerCase(),
+            name: String(r?.name || r?.label || r?.code || "").trim(),
           }))
           .filter((x) => x.code)
       );
 
-      // Estado civil (catálogo backend)
-      // ✅ Requiere endpoint en backend (recomendado)
-      const rc = await iamApi.listCivilStatus?.();
-      const civ = normalizeCatalogResponse(rc).map((x) => String(x).trim()).filter(Boolean);
+      // ✅ Estado civil: usar endpoint real del server
+      // /api/iam/v1/catalogos/estado-civil  (ES)
+      // /api/iam/v1/catalogos/civil-status  (EN compat)
+      let rc = null;
+      try {
+        rc = await fetchCatalog("/api/iam/v1/catalogos/estado-civil", token);
+      } catch {
+        rc = await fetchCatalog("/api/iam/v1/catalogos/civil-status", token);
+      }
+
+      const civ = normalizeCatalogResponse(rc)
+        .map((x) => String(x).trim())
+        .filter(Boolean);
+
       setCivilCatalog(civ);
-    })().catch(() => {
-      // si falla, se deja vacío; NO hacemos fallback "quemado"
+    })().catch((e) => {
       setRolesCatalog([]);
       setCivilCatalog([]);
+      setCatalogErr(e?.message || "No se pudieron cargar catálogos (roles/estado civil).");
     });
   }, []);
 
@@ -123,6 +170,12 @@ export default function UserEditor({ value, onClose, onSaved }) {
     try {
       setSaving(true);
 
+      const token = requireTokenOrNull();
+      if (!DISABLE_AUTH && !token) {
+        alert("No hay token de sesión. Inicia sesión nuevamente.");
+        return;
+      }
+
       const payload = {
         ...form,
         email: String(form.email || "").trim().toLowerCase(),
@@ -136,8 +189,8 @@ export default function UserEditor({ value, onClose, onSaved }) {
         if (!ok) payload.estadoCivil = "";
       }
 
-      if (value?._id) await iamApi.updateUser(value._id, payload);
-      else await iamApi.createUser(payload);
+      if (value?._id) await iamApi.updateUser(value._id, payload, token);
+      else await iamApi.createUser(payload, token);
 
       onSaved?.();
       onClose?.();
@@ -155,10 +208,24 @@ export default function UserEditor({ value, onClose, onSaved }) {
           {value?._id ? "Editar usuario" : "Nuevo usuario"}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Nombre completo" value={form.nombreCompleto} onChange={(v) => setField("nombreCompleto", v)} />
+        {catalogErr ? (
+          <div className="text-sm text-amber-600 dark:text-amber-300 bg-amber-100/50 dark:bg-amber-500/10 border border-amber-400/30 rounded-xl px-3 py-2">
+            ⚠️ {catalogErr}
+          </div>
+        ) : null}
 
-          <Field label="Correo electrónico" value={form.email} onChange={(v) => setField("email", v)} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field
+            label="Nombre completo"
+            value={form.nombreCompleto}
+            onChange={(v) => setField("nombreCompleto", v)}
+          />
+
+          <Field
+            label="Correo electrónico"
+            value={form.email}
+            onChange={(v) => setField("email", v)}
+          />
 
           <Select
             label="Estado civil"
@@ -169,7 +236,11 @@ export default function UserEditor({ value, onClose, onSaved }) {
             disabled={!civilOptions.length}
           />
 
-          <Field label="Teléfono" value={form.telefono} onChange={(v) => setField("telefono", v)} />
+          <Field
+            label="Teléfono"
+            value={form.telefono}
+            onChange={(v) => setField("telefono", v)}
+          />
 
           {/* Roles dinámicos (sin quemar) */}
           <div className="md:col-span-2">

@@ -16,7 +16,7 @@ export function LayoutUIProvider({ children }) {
   return <LayoutUIContext.Provider value={value}>{children}</LayoutUIContext.Provider>;
 }
 
-// ✅ Seguro: si no hay provider, devuelve defaults (no rompe)
+// ✅ Seguro: si no hay provider, devuelve defaults
 export function useLayoutUI() {
   const ctx = React.useContext(LayoutUIContext);
   if (ctx) return ctx;
@@ -33,19 +33,19 @@ export function useLayoutUI() {
  * - Ocultar la barra lateral
  * - Mostrar botón "Regresar" con destino configurable
  */
-export function ModuleFullPage({ backTo = "/", backLabel = "Regresar", children }) {
+export function ModuleFullPage({ backTo = "/", backLabel = "Regresar", replace = false, children }) {
   const { setHideSidebar, setBack } = useLayoutUI();
   const nav = useNavigate();
 
   React.useEffect(() => {
     setHideSidebar(true);
-    setBack({ label: backLabel, onClick: () => nav(backTo) });
+    setBack({ label: backLabel, onClick: () => nav(backTo, { replace }) });
 
     return () => {
       setHideSidebar(false);
       setBack(null);
     };
-  }, [setHideSidebar, setBack, backLabel, backTo, nav]);
+  }, [setHideSidebar, setBack, backLabel, backTo, nav, replace]);
 
   return <>{children}</>;
 }

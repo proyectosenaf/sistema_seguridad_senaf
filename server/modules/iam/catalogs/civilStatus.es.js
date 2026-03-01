@@ -5,5 +5,5 @@ export const ESTADOS_CIVILES = [
   "Divorciado/a",
   "Viudo/a",
   "Unión libre",
-];
+]; 
 export default ESTADOS_CIVILES;

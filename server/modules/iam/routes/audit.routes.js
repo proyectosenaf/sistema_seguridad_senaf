@@ -5,27 +5,47 @@ import IamAudit from "../models/IamAudit.model.js";
 
 const r = Router();
 
-/** Convierte "YYYY-MM-DD" a Date inicio de día */
-function startOfDay(s) {
-  if (!s) return null;
-  // si viene con hora, respeta
-  if (String(s).includes("T")) return new Date(s);
-  return new Date(`${s}T00:00:00.000Z`);
+/** Escapa regex para evitar inyección */
+function escapeRegex(s = "") {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Convierte "YYYY-MM-DD" a Date fin de día */
+/**
+ * Convierte "YYYY-MM-DD" a Date inicio de día (LOCAL).
+ * Si viene con hora (T...), respeta lo que viene.
+ */
+function startOfDay(s) {
+  if (!s) return null;
+  const raw = String(s);
+  if (raw.includes("T")) {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(`${raw}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Convierte "YYYY-MM-DD" a Date fin de día (LOCAL) */
 function endOfDay(s) {
   if (!s) return null;
-  if (String(s).includes("T")) return new Date(s);
-  return new Date(`${s}T23:59:59.999Z`);
+  const raw = String(s);
+  if (raw.includes("T")) {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(`${raw}T23:59:59.999`);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 /**
  * GET /api/iam/v1/audit
  * Filtros:
  *  ?action=&entity=&actor=&from=&to=&limit=&skip=
+ *
+ * ✅ CENTRALIZADO:
+ * - para ver auditoría: iam.audit.view
  */
-r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
+r.get("/", devOr(requirePerm("iam.audit.view")), async (req, res) => {
   try {
     const action = String(req.query.action || "").trim();
     const entity = String(req.query.entity || "").trim();
@@ -45,30 +65,40 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     if (entity) find.entity = entity;
 
     if (actor) {
-      find.actorEmail = { $regex: new RegExp(actor, "i") };
+      find.actorEmail = { $regex: new RegExp(escapeRegex(actor), "i") };
     }
 
     if (from || to) {
-      find.createdAt = {};
       const dFrom = startOfDay(from);
       const dTo = endOfDay(to);
-      if (dFrom && !isNaN(dFrom.getTime())) find.createdAt.$gte = dFrom;
-      if (dTo && !isNaN(dTo.getTime())) find.createdAt.$lte = dTo;
 
-      // si quedó vacío por fechas inválidas
-      if (Object.keys(find.createdAt).length === 0) delete find.createdAt;
+      // rango inválido => 400
+      if ((from && !dFrom) || (to && !dTo)) {
+        return res.status(400).json({
+          ok: false,
+          error: "invalid_date",
+          message: "from/to inválido. Usa YYYY-MM-DD o ISO con hora.",
+        });
+      }
+      if (dFrom && dTo && dFrom > dTo) {
+        return res.status(400).json({
+          ok: false,
+          error: "invalid_range",
+          message: "from no puede ser mayor que to.",
+        });
+      }
+
+      find.createdAt = {};
+      if (dFrom) find.createdAt.$gte = dFrom;
+      if (dTo) find.createdAt.$lte = dTo;
     }
 
     const [items, total] = await Promise.all([
-      IamAudit.find(find)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      IamAudit.find(find).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       IamAudit.countDocuments(find),
     ]);
 
-    res.json({
+    return res.json({
       ok: true,
       total,
       count: items.length,
@@ -78,7 +108,7 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
     });
   } catch (err) {
     console.error("[audit] Error al obtener auditorías:", err);
-    res.status(500).json({
+    return res.status(500).json({
       ok: false,
       error: err?.message || "Error al obtener el historial de auditoría",
     });
@@ -88,6 +118,10 @@ r.get("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 /**
  * POST /api/iam/v1/audit
  * Crea un registro (útil para registrar desde otros módulos)
+ *
+ * ⚠️ Esto NO debería ser “público”.
+ * Lo dejo como: iam.roles.manage (más fuerte) para evitar abuso.
+ * Si quieres lo correcto: crea permiso "iam.audit.manage" y cámbialo aquí.
  */
 r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
@@ -103,10 +137,10 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
       after: body.after ?? null,
     });
 
-    res.status(201).json({ ok: true, item: doc });
+    return res.status(201).json({ ok: true, item: doc });
   } catch (err) {
     console.error("[audit] Error creando auditoría:", err);
-    res.status(400).json({
+    return res.status(400).json({
       ok: false,
       error: err?.message || "Error al crear registro",
     });
@@ -116,6 +150,8 @@ r.post("/", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
 /**
  * DELETE /api/iam/v1/audit/cleanup?days=30
  * Elimina registros antiguos
+ *
+ * ⚠️ Esto es administración => permiso fuerte.
  */
 r.delete("/cleanup", devOr(requirePerm("iam.roles.manage")), async (req, res) => {
   try {
@@ -126,14 +162,14 @@ r.delete("/cleanup", devOr(requirePerm("iam.roles.manage")), async (req, res) =>
 
     const result = await IamAudit.deleteMany({ createdAt: { $lt: cutoff } });
 
-    res.json({
+    return res.json({
       ok: true,
       removed: result.deletedCount,
       olderThanDays: days,
     });
   } catch (err) {
     console.error("[audit] Error limpiando auditoría:", err);
-    res.status(500).json({ ok: false, error: "Error al limpiar registros antiguos" });
+    return res.status(500).json({ ok: false, error: "Error al limpiar registros antiguos" });
   }
 });
 

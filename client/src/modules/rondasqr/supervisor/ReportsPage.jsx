@@ -1,1333 +1,1064 @@
-// client/src/modules/rondasqr/supervisor/ReportsPage.jsx
-import React, { useEffect, useState } from "react";
-import { rondasqrApi } from "../api/rondasqrApi";
-import ReportSummary from "./ReportSummary";
-import OmissionsTable from "./OmissionsTable";
-import MessagesTable from "./MessagesTable";
-import DetailedMarks from "./DetailedMarks";
-import MapView from "./MapView";
+// client/src/modules/rondasqr/pages/ScanPage.jsx
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import QrScanner from "./QrScanner.jsx";
+import { rondasqrApi } from "../api/rondasqrApi.js";
 
+import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
+import { getOutbox, queueCheckin, transmitOutbox, countOutbox } from "../utils/outbox.js";
+
+// ✅ IAM API (central)
 import iamApi from "../../../iam/api/iamApi.js";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+// ✅ token canónico (central)
+import { getToken } from "../../../lib/api.js";
 
-const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000").replace(
-  /\/$/,
-  ""
-);
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
+/* ===== helpers pequeños ===== */
+function toArr(v) {
+  return !v ? [] : Array.isArray(v) ? v : [v];
+}
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      toArr(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+function readJsonLS(key, fallback) {
+  try {
+    if (typeof localStorage === "undefined") return fallback;
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed == null ? fallback : parsed;
+  } catch {
+    return fallback;
+  }
+}
+function buildAssignmentKey(a) {
+  return (
+    a.id ||
+    a._id ||
+    [
+      a.date || a.day || a.assignmentDate || "",
+      a.roundId || a.roundName || "",
+      a.guardId || a.guard?.id || a.guard?._id || "",
+    ].join("|")
+  );
 }
 
-/* =============== helpers para banner suave ================= */
-function hexToRgba(hex, a = 0.16) {
-  if (!hex) return `rgba(0,0,0,${a})`;
-  const c = hex.replace("#", "");
-  const n = c.length === 3 ? c.split("").map((x) => x + x).join("") : c.slice(0, 6);
-  const r = parseInt(n.slice(0, 2), 16);
-  const g = parseInt(n.slice(2, 4), 16);
-  const b = parseInt(n.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
-function readVar(name, fallback) {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
+/* ===== fetch con JWT header (si hay token) ===== */
+async function authFetch(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  headers.set("Content-Type", headers.get("Content-Type") || "application/json");
 
-/* fecha/hora segura para evitar "Invalid Date" en exportaciones */
-function formatDateTime(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
-}
-/* =========================================================== */
+  const t = getToken?.();
+  if (t) headers.set("Authorization", `Bearer ${t}`);
 
-export default function ReportsPage() {
-  // Filtros (el backend espera la clave 'officer')
-  const [f, setF] = useState({
-    from: today(),
-    to: today(),
-    siteId: "",
-    roundId: "",
-    officer: "", // aquí guardamos el opId del guardia
-    // tipo de reporte
-    reportType: "all", // all | rounds | omissions | messages | detail | map
-    // qué secciones incluir
-    includeSummary: true,
-    includeOmissions: true,
-    includeMessages: true,
-    includeDetail: true,
-    includeMap: true,
+  // ✅ NO cookies; si algún endpoint requiere cookies, cámbialo a "include" puntualmente
+  const res = await fetch(url, {
+    ...opts,
+    headers,
+    credentials: "omit",
+    cache: "no-store",
   });
+  return res;
+}
 
-  const [data, setData] = useState({
-    stats: [],
-    omissions: [],
-    messages: [],
-    detailed: [],
-  });
+function pickUserFromMePayload(data) {
+  if (!data) return null;
+  const user = data?.user || data?.me || data?.profile || data || null;
+  if (!user || typeof user !== "object") return null;
+  return {
+    ...user,
+    _id: user?._id || user?.id || null,
+    email: user?.email || null,
+    name: user?.name || user?.fullName || user?.nombreCompleto || null,
+  };
+}
 
-  const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+export default function ScanPage() {
+  const nav = useNavigate();
+  const { pathname, hash } = useLocation();
 
-  // Catálogos para selects
-  const [sites, setSites] = useState([]);
-  const [rounds, setRounds] = useState([]);
+  // ✅ Identidad real desde IAM
+  const [me, setMe] = useState(null); // { _id, email, name, roles, perms, ... }
+  const [iamMe, setIamMe] = useState({ roles: [], perms: [] });
 
-  // Guardias (igual que en AssignmentsPage)
-  const [guards, setGuards] = useState([]); // [{_id, name, email, opId, active}]
+  const safeUser = me || {};
 
-  // Cargar sitios al montar
+  /* ===== cargar identidad/roles/permisos desde IAM ===== */
   useEffect(() => {
-    (async () => {
+    let alive = true;
+
+    async function loadMe() {
       try {
-        const s = await rondasqrApi.listSites();
-        setSites(s?.items || []);
-      } catch (e) {
-        console.warn("[ReportsPage] listSites error:", e);
+        // 1) preferir iamApi.me() si existe
+        if (iamApi && typeof iamApi.me === "function") {
+          const data = await iamApi.me();
+          if (!alive) return;
+
+          const user = pickUserFromMePayload(data);
+          const roles =
+            data?.roles || data?.user?.roles || user?.roles || data?.user?.perms?.roles || [];
+          const perms =
+            data?.permissions ||
+            data?.perms ||
+            data?.user?.perms ||
+            user?.perms ||
+            user?.permissions ||
+            [];
+
+          setMe(user);
+          setIamMe({ roles, perms });
+          return;
+        }
+
+        // 2) fallback: endpoint canónico único
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/iam/v1/me`; // porque VITE_API_BASE_URL ya incluye /api
+
+        const res = await authFetch(url, { method: "GET" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+
+        const data = (await res.json().catch(() => ({}))) || {};
+        if (!alive) return;
+
+        const user = pickUserFromMePayload(data);
+        const roles = data?.roles || data?.user?.roles || user?.roles || [];
+        const perms =
+          data?.permissions || data?.perms || data?.user?.perms || user?.perms || user?.permissions || [];
+
+        setMe(user);
+        setIamMe({ roles, perms });
+      } catch {
+        if (!alive) return;
+        setMe(null);
+        setIamMe({ roles: [], perms: [] });
       }
-    })();
+    }
+
+    loadMe();
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // Cargar rondas cuando cambia siteId
+  /* ===== notificaciones ===== */
   useEffect(() => {
-    (async () => {
-      if (!f.siteId) {
-        setRounds([]);
-        setF((prev) => ({ ...prev, roundId: "" }));
-        return;
-      }
-      try {
-        const r = await rondasqrApi.listRounds(f.siteId);
-        setRounds(r?.items || []);
-      } catch (e) {
-        console.warn("[ReportsPage] listRounds error:", e);
-      }
-    })();
-  }, [f.siteId]);
-
-  /* ─────────────── Cargar guardias (IAM) ─────────────── */
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        let items = [];
-        if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards("", true);
-          items = r.items || [];
-        } else {
-          // fallback si no hay listGuards()
-          const r = await iamApi.listUsers("");
-          const NS = "https://senaf.local/roles";
-          items = (r.items || [])
-            .filter((u) => {
-              const roles = [
-                ...(Array.isArray(u.roles) ? u.roles : []),
-                ...(Array.isArray(u[NS]) ? u[NS] : []),
-              ].map((x) => String(x).toLowerCase());
-              return (
-                roles.includes("guardia") ||
-                roles.includes("guard") ||
-                roles.includes("rondasqr.guard")
-              );
-            })
-            .map((u) => ({
-              _id: u._id,
-              name: u.name,
-              email: u.email,
-              opId: u.opId || u.sub || u.legacyId || String(u._id),
-              active: u.active !== false,
-            }));
+    try {
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
         }
-        const normalized = (items || []).map((u) => ({
-          _id: u._id,
-          name: u.name,
-          email: u.email,
-          opId: u.opId || u.sub || u.legacyId || String(u._id),
-          active: u.active !== false,
-        }));
-        if (mounted) setGuards(normalized);
+      }
+    } catch {}
+  }, []);
+
+  /* ===== audio de alerta ===== */
+  const alertAudioRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const [lastPanic, setLastPanic] = useState(null);
+
+  function playAlarmTone() {
+    try {
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtxRef.current = new Ctx();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      osc.frequency.setValueAtTime(500, now);
+      osc.frequency.linearRampToValueAtTime(900, now + 0.4);
+      osc.frequency.linearRampToValueAtTime(500, now + 0.8);
+      osc.frequency.linearRampToValueAtTime(900, now + 1.2);
+      osc.frequency.linearRampToValueAtTime(500, now + 1.6);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.4, now + 0.05);
+      gain.gain.linearRampToValueAtTime(0.4, now + 1.6);
+      gain.gain.linearRampToValueAtTime(0.0001, now + 1.9);
+
+      osc.start(now);
+      osc.stop(now + 2.0);
+    } catch {
+      if (alertAudioRef.current) {
+        alertAudioRef.current.currentTime = 0;
+        alertAudioRef.current.play().catch(() => {});
+      }
+    }
+  }
+
+  function handleIncomingPanic(payload) {
+    setLastPanic({ at: new Date().toLocaleTimeString(), ...payload });
+    playAlarmTone();
+  }
+
+  /* ===== bus local: alertas desde otra pestaña ===== */
+  useEffect(() => {
+    const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
+    return () => unsub?.();
+  }, []);
+
+  /* ===== roles/permisos SOLO desde IAM ===== */
+  const roles = uniqLower(iamMe?.roles);
+  const perms = uniqLower(iamMe?.perms);
+
+  const isAdminLike =
+    perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
+
+  const isSupervisorLike =
+    roles.includes("supervisor") || perms.includes("rondasqr.view") || perms.includes("rondasqr.reports");
+
+  /* ===== qué pestaña ===== */
+  const tab = useMemo(() => {
+    if (pathname.endsWith("/qr")) return "qr";
+    if (pathname.endsWith("/msg")) return "msg";
+    if (pathname.endsWith("/fotos")) return "fotos";
+    if (pathname.endsWith("/outbox") || pathname.endsWith("/sync")) return "outbox";
+    if (pathname.endsWith("/dump") || pathname.endsWith("/offline")) return "dump";
+    return "home";
+  }, [pathname]);
+
+  // redirección de pestaña msg al módulo global de incidentes
+  useEffect(() => {
+    if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
+  }, [tab, nav]);
+
+  /* ===== estados ===== */
+  const [msg, setMsg] = useState("");
+  const [photos, setPhotos] = useState([null, null, null, null, null]);
+  const [sendingAlert, setSendingAlert] = useState(false);
+  const [sendingMsg, setSendingMsg] = useState(false);
+  const [sendingPhotos, setSendingPhotos] = useState(false);
+
+  /* ===== puntos de ronda ===== */
+  const [points, setPoints] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const plans = await rondasqrApi.listPlans();
+        const plan = plans?.items?.[0] || null;
+        if (!alive || !plan) return;
+
+        const pts = await rondasqrApi.listPoints({
+          siteId: plan.siteId,
+          roundId: plan.roundId,
+        });
+        if (!alive) return;
+        setPoints(pts?.items || []);
       } catch (e) {
-        console.error("[ReportsPage] listGuards error:", e);
-        if (mounted) setGuards([]);
+        console.warn("[ScanPage] No se pudieron cargar puntos", e);
       }
     })();
     return () => {
-      mounted = false;
+      alive = false;
     };
   }, []);
 
-  /* ───────── helpers de guardias ───────── */
+  /* ===== progreso local ===== */
+  const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
 
-  function getGuardLabel(g) {
-    if (!g) return "";
-    return g.email
-      ? `${g.name || "(Sin nombre)"} — ${g.email}`
-      : g.name || "(Sin nombre)";
+  function loadLocalProgress() {
+    const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
+    const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
+    const pct = Math.max(0, Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0)));
+    setProgress({ lastPoint, nextPoint, pct });
   }
 
-  function findGuardForRecord(rec) {
-    if (!rec) return null;
+  useEffect(() => {
+    loadLocalProgress();
+  }, []);
 
-    const possibleIds = [
-      rec.guardId,
-      rec.officerId,
-      rec.officer,
-      rec.userId,
-      rec.opId,
-    ]
-      .filter(Boolean)
-      .map((x) => String(x).toLowerCase());
+  /* ===== RONDAS ASIGNADAS ===== */
+  const [myAssignments, setMyAssignments] = useState([]);
+  const [assignmentStates, setAssignmentStates] = useState({});
+  const [currentAssignmentKey, setCurrentAssignmentKey] = useState(null);
 
-    const possibleEmails = [rec.officerEmail, rec.email]
-      .filter(Boolean)
-      .map((x) => String(x).toLowerCase());
-
-    return (
-      guards.find((g) => {
-        const opId = String(g.opId || "").toLowerCase();
-        const id = String(g._id || "").toLowerCase();
-        const email = String(g.email || "").toLowerCase();
-        return (
-          possibleIds.includes(opId) ||
-          possibleIds.includes(id) ||
-          possibleEmails.includes(email)
-        );
-      }) || null
-    );
-  }
-
-  function resolveOfficerLabel(rec) {
-    const g = findGuardForRecord(rec);
-    if (g) return getGuardLabel(g);
-
-    // fallback a lo que venga en el registro
-    return (
-      rec.officerName ||
-      rec.officerEmail ||
-      rec.guardId ||
-      rec.officerId ||
-      rec.officer ||
-      rec.userId ||
-      "—"
-    );
-  }
-
-  /* ─────────────── Cargar datos de reporte ─────────────── */
-  async function load() {
-    setLoading(true);
+  function loadAssignmentStates() {
     try {
-      const s = await rondasqrApi.getSummary(f);
-      const d = await rondasqrApi.getDetailed(f);
-      setData({
-        stats: s?.stats || [],
-        omissions: s?.omissions || [],
-        messages: s?.messages || [],
-        detailed: d?.items || [],
-      });
-    } catch (e) {
-      console.warn("[ReportsPage] load error:", e);
+      const raw = localStorage.getItem("rondasqr:assignmentStates");
+      const keyRaw = localStorage.getItem("rondasqr:currentAssignmentKey");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setAssignmentStates(parsed && typeof parsed === "object" ? parsed : {});
+      } else {
+        setAssignmentStates({});
+      }
+      if (keyRaw) setCurrentAssignmentKey(keyRaw);
+    } catch {
+      setAssignmentStates({});
+      setCurrentAssignmentKey(null);
+    }
+  }
+
+  function saveAssignmentStates(next) {
+    setAssignmentStates(next);
+    try {
+      localStorage.setItem("rondasqr:assignmentStates", JSON.stringify(next));
+    } catch {}
+  }
+
+  function setActiveAssignment(a) {
+    const key = buildAssignmentKey(a);
+    if (!key) return;
+    setCurrentAssignmentKey(key);
+    try {
+      localStorage.setItem("rondasqr:currentAssignmentKey", key);
+      localStorage.setItem("rondasqr:currentAssignment", JSON.stringify(a));
+    } catch {}
+  }
+
+  function clearActiveAssignment() {
+    setCurrentAssignmentKey(null);
+    try {
+      localStorage.removeItem("rondasqr:currentAssignmentKey");
+      localStorage.removeItem("rondasqr:currentAssignment");
+    } catch {}
+  }
+
+  function updateAssignmentStatus(a, status, extra = {}) {
+    const key = buildAssignmentKey(a);
+    if (!key) return;
+    const nowIso = new Date().toISOString();
+    const next = {
+      ...assignmentStates,
+      [key]: {
+        ...(assignmentStates[key] || {}),
+        status,
+        updatedAt: nowIso,
+        ...extra,
+      },
+    };
+    saveAssignmentStates(next);
+  }
+
+  function getAssignmentState(a) {
+    const key = buildAssignmentKey(a);
+    return key ? assignmentStates[key] || {} : {};
+  }
+
+  function handleStartRound(a) {
+    setActiveAssignment(a);
+    updateAssignmentStatus(a, "en_progreso", { startedAt: new Date().toISOString() });
+    nav("/rondasqr/scan/qr");
+  }
+
+  function handleFinishRound(a) {
+    updateAssignmentStatus(a, "terminada", {
+      finishedAt: new Date().toISOString(),
+      progressPct: progress.pct,
+    });
+    clearActiveAssignment();
+  }
+
+  function handleCancelRound(a) {
+    updateAssignmentStatus(a, "cancelada");
+    clearActiveAssignment();
+  }
+
+  function loadAssignmentsForGuard() {
+    const all = readJsonLS("rondasqr:assignments", []);
+    if (!Array.isArray(all)) {
+      setMyAssignments([]);
+      return;
+    }
+
+    const myId = String(safeUser?._id || safeUser?.id || "").trim();
+    const myEmail = String(safeUser?.email || "").toLowerCase().trim();
+    const myName = String(safeUser?.name || "").toLowerCase().trim();
+
+    const mine = all.filter((a) => {
+      const gId = String(a.guardId || a.guard?._id || a.guard?.id || "").trim();
+      const gEmail = String(a.guardEmail || a.guard?.email || "").toLowerCase().trim();
+      const gName = String(a.guardName || a.guard?.name || "").toLowerCase().trim();
+
+      if (myId && gId) return gId === myId;
+      if (myEmail && gEmail) return gEmail === myEmail;
+      if (myName && gName) return gName === myName;
+      return false;
+    });
+
+    setMyAssignments(mine);
+  }
+
+  useEffect(() => {
+    const hasIdentity = !!(safeUser?._id || safeUser?.email || safeUser?.name);
+    if (!hasIdentity) return;
+
+    loadAssignmentsForGuard();
+    loadAssignmentStates();
+
+    function handleStorage(e) {
+      if (!e) return;
+      if (e.key === "rondasqr:assignments") loadAssignmentsForGuard();
+      if (e.key === "rondasqr:assignmentStates" || e.key === "rondasqr:currentAssignmentKey") {
+        loadAssignmentStates();
+      }
+    }
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [safeUser?._id, safeUser?.email, safeUser?.name]);
+
+  /* ===== alerta rápida por hash #alert ===== */
+  useEffect(() => {
+    if (hash === "#alert") {
+      (async () => {
+        await sendAlert();
+        nav("/rondasqr/scan", { replace: true });
+      })();
+    }
+  }, [hash, nav]);
+
+  /* ===== enviar alerta de pánico ===== */
+  async function sendAlert() {
+    if (sendingAlert) return false;
+    setSendingAlert(true);
+    try {
+      let gps;
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+        await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+              resolve();
+            },
+            () => resolve(),
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        });
+      }
+      await rondasqrApi.panic(gps || null);
+      emitLocalPanic({ source: "home-button", user: safeUser?.name || safeUser?.email });
+      playAlarmTone();
+      alert("🚨 Alerta de pánico enviada.");
+      return true;
+    } catch (err) {
+      console.error("[ScanPage] error al enviar alerta", err);
+      alert("No se pudo enviar la alerta.");
+      return false;
     } finally {
-      setLoading(false);
+      setSendingAlert(false);
+    }
+  }
+
+  /* ===== manejar QR ESCANEADO ===== */
+  async function handleScan(result) {
+    const qr = typeof result === "string" ? result : result?.text;
+    if (!qr) return;
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      queueCheckin({ qr, gps: null });
+      alert("📦 Sin conexión. QR guardado para transmitir más tarde.");
+      nav("/rondasqr/scan", { replace: true });
+      return;
+    }
+
+    try {
+      let gps = null;
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+        await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+              resolve();
+            },
+            () => resolve(),
+            { enableHighAccuracy: true, timeout: 3000 }
+          );
+        });
+      }
+
+      if (typeof rondasqrApi.checkinScan === "function") {
+        await rondasqrApi.checkinScan({ qr, gps });
+      } else if (typeof rondasqrApi.scan === "function") {
+        await rondasqrApi.scan({ qr, gps });
+      } else {
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
+
+        const res = await authFetch(url, {
+          method: "POST",
+          body: JSON.stringify({ qr, gps }),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+      }
+
+      localStorage.setItem("rondasqr:lastPointName", qr);
+      localStorage.setItem("rondasqr:progressPct", "100");
+      setProgress((prev) => ({ ...prev, lastPoint: qr, pct: 100 }));
+
+      alert("✅ Punto registrado: " + qr);
+      window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+      nav("/rondasqr/scan", { replace: true });
+    } catch (err) {
+      console.error("[ScanPage] error al registrar punto (se guarda en pendientes)", err);
+      queueCheckin({ qr, gps: null });
+      alert("📦 No se pudo enviar. Guardado para transmitir más tarde.");
+      nav("/rondasqr/scan/outbox", { replace: true });
+    }
+  }
+
+  /* ===== mensaje legacy ===== */
+  async function sendMessage() {
+    if (sendingMsg) return;
+    if (!msg.trim()) {
+      alert("Escribe un mensaje.");
+      return;
+    }
+    setSendingMsg(true);
+    try {
+      await rondasqrApi.postIncident({ text: msg.trim() });
+      alert("✅ Mensaje enviado.");
+      setMsg("");
+      nav("/rondasqr/scan");
+    } catch {
+      alert("No se pudo enviar el mensaje.");
+    } finally {
+      setSendingMsg(false);
+    }
+  }
+
+  /* ===== fotos ===== */
+  async function sendPhotos() {
+    if (sendingPhotos) return;
+    const base64s = photos.filter(Boolean);
+    if (!base64s.length) {
+      alert("Selecciona al menos una foto.");
+      return;
+    }
+    setSendingPhotos(true);
+    try {
+      await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
+      alert("📤 Fotos enviadas.");
+      setPhotos([null, null, null, null, null]);
+      nav("/rondasqr/scan");
+    } catch {
+      alert("No se pudieron enviar las fotos.");
+    } finally {
+      setSendingPhotos(false);
+    }
+  }
+
+  /* ===== OUTBOX ===== */
+  const [outbox, setOutbox] = useState(getOutbox());
+  const [syncing, setSyncing] = useState(false);
+  const refreshOutbox = () => setOutbox(getOutbox());
+
+  async function sendCheckinViaApi(it) {
+    if (typeof rondasqrApi.checkinScan === "function") {
+      await rondasqrApi.checkinScan({ qr: it.qr, gps: it.gps || null });
+      return;
+    }
+    if (typeof rondasqrApi.scan === "function") {
+      await rondasqrApi.scan({ qr: it.qr, gps: it.gps || null });
+      return;
+    }
+
+    const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+    const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+    const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
+
+    const res = await authFetch(url, {
+      method: "POST",
+      body: JSON.stringify({ qr: it.qr, gps: it.gps || null }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+  }
+
+  async function transmitNow() {
+    if (!outbox.length) {
+      alert("No hay rondas pendientes.");
+      return;
+    }
+    setSyncing(true);
+    try {
+      const res = await transmitOutbox(sendCheckinViaApi);
+      refreshOutbox();
+      alert(`Transmitidas: ${res.ok}  •  Fallidas: ${res.fail}`);
+    } catch (e) {
+      console.error("transmitNow error", e);
+      alert("Ocurrió un error al transmitir.");
+    } finally {
+      setSyncing(false);
     }
   }
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const setField = (k) => (e) =>
-    setF((prev) => ({ ...prev, [k]: e.target.value }));
-
-  function resetOptionalFilters() {
-    setF((prev) => ({
-      ...prev,
-      siteId: "",
-      roundId: "",
-      officer: "",
-    }));
-    setRounds([]);
-  }
-
-  function handleToggleInclude(key) {
-    setF((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
-
-  function handleReportTypeChange(type) {
-    // Ajusta automáticamente qué secciones se incluyen según el tipo
-    setF((prev) => {
-      if (type === "all") {
-        return {
-          ...prev,
-          reportType: type,
-          includeSummary: true,
-          includeOmissions: true,
-          includeMessages: true,
-          includeDetail: true,
-          includeMap: true,
-        };
-      }
-      if (type === "omissions") {
-        return {
-          ...prev,
-          reportType: type,
-          includeSummary: false,
-          includeOmissions: true,
-          includeMessages: false,
-          includeDetail: false,
-          includeMap: false,
-        };
-      }
-      if (type === "messages") {
-        return {
-          ...prev,
-          reportType: type,
-          includeSummary: false,
-          includeOmissions: false,
-          includeMessages: true,
-          includeDetail: false,
-          includeMap: false,
-        };
-      }
-      if (type === "detail") {
-        return {
-          ...prev,
-          reportType: type,
-          includeSummary: false,
-          includeOmissions: false,
-          includeMessages: false,
-          includeDetail: true,
-          includeMap: false,
-        };
-      }
-      if (type === "map") {
-        return {
-          ...prev,
-          reportType: type,
-          includeSummary: false,
-          includeOmissions: false,
-          includeMessages: false,
-          includeDetail: false,
-          includeMap: true,
-        };
-      }
-      // "rounds" u otros: resumen + detalle (y mapa opcional)
-      return {
-        ...prev,
-        reportType: type,
-        includeSummary: true,
-        includeOmissions: false,
-        includeMessages: false,
-        includeDetail: true,
-        includeMap: true,
-      };
-    });
-  }
-
-  /* ---------- Encabezados comunes ---------- */
-
-  const siteLabel =
-    f.siteId && sites.length
-      ? sites.find((s) => String(s._id) === String(f.siteId))?.name ||
-        "Sitio seleccionado"
-      : "Todos";
-
-  const roundLabel =
-    f.roundId && rounds.length
-      ? rounds.find((r) => String(r._id) === String(f.roundId))?.name ||
-        "Ronda seleccionada"
-      : "Todas";
-
-  const selectedGuard = guards.find((g) => g.opId === f.officer);
-  const officerFilterLabel = selectedGuard
-    ? getGuardLabel(selectedGuard)
-    : f.officer || "Todos";
-
-  const omissionsToExport = data.omissions || [];
-
-  /* ===================== PDF helpers ===================== */
-  function finalizePdf(doc, filename, mode) {
-    if (mode === "print") {
-      doc.autoPrint();
-      const blobUrl = doc.output("bloburl");
-      window.open(blobUrl, "_blank");
-    } else {
-      doc.save(filename);
-    }
-  }
-
-  /* ===================== PDF: OMISIONES ===================== */
-  function exportOmissionsPdf(mode = "download") {
-    const rows = omissionsToExport || [];
-    if (!rows.length) {
-      alert("No hay omisiones para exportar con los filtros actuales.");
-      return;
-    }
-
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
-
-    const fechaHora = new Date();
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("SEGURIDAD SENAF", 14, 14);
-
-    doc.setFontSize(16);
-    doc.text("Informe de Omisiones de Rondas", 14, 22);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text("Rondas omitidas dentro del rango seleccionado", 14, 28);
-
-    const metaLines = [
-      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
-      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${officerFilterLabel}`,
-      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
-      `Total omisiones: ${rows.length}`,
-    ];
-
-    let y = 34;
-    doc.setFontSize(9);
-    metaLines.forEach((line) => {
-      doc.text(line, 14, y);
-      y += 4;
-    });
-
-    const tableBody = rows.map((o, i) => {
-      const fecha = formatDateTime(
-        o.expectedAt || o.expectedTime || o.date || o.ts
-      );
-      const ronda = o.roundName || o.roundId || "—";
-      const punto = o.pointName || o.point || o.pointId || "—";
-      const oficial = resolveOfficerLabel(o);
-
-      return [i + 1, ronda, fecha, punto, oficial, "Omitido"];
-    });
-
-    autoTable(doc, {
-      startY: y + 2,
-      head: [["#", "Ronda", "Fecha/Hora esperada", "Punto", "Oficial", "Estado"]],
-      body: tableBody,
-      styles: {
-        fontSize: 8,
-        cellPadding: 1.5,
-      },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: 255,
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      didDrawPage: (data) => {
-        const pageHeight =
-          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
-        const pageWidth =
-          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
-
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(
-          "Generado por el módulo de Rondas QR — Seguridad SENAF",
-          data.settings.margin.left,
-          pageHeight - 8
-        );
-        const pageNumber = doc.internal.getNumberOfPages();
-        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
-      },
-    });
-
-    const filename = `omisiones-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
-    finalizePdf(doc, filename, mode);
-  }
-
-  /* ==================== PDF: RONDAS ==================== */
-  function exportRoundsPdf(mode = "download") {
-    const rows = data.stats || [];
-    if (!rows.length) {
-      alert("No hay datos de rondas para exportar con los filtros actuales.");
-      return;
-    }
-
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
-
-    const fechaHora = new Date();
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("SEGURIDAD SENAF", 14, 14);
-
-    doc.setFontSize(16);
-    doc.text("Informe de Rondas", 14, 22);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(
-      "Resumen de rondas ejecutadas dentro del rango seleccionado",
-      14,
-      28
-    );
-
-    const metaLines = [
-      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
-      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${officerFilterLabel}`,
-      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
-      `Total filas: ${rows.length}`,
-    ];
-
-    let y = 34;
-    doc.setFontSize(9);
-    metaLines.forEach((line) => {
-      doc.text(line, 14, y);
-      y += 4;
-    });
-
-    // Usar campos reales del backend: siteName, roundName, puntosRegistrados, pasos, primeraMarca, ultimaMarca, duracionText
-    const tableBody = rows.map((r, i) => {
-      const guardLabel = resolveOfficerLabel(r);
-      const site = r.siteName || r.site || "—";
-      const round = r.roundName || r.round || r.roundId || "—";
-      const puntos = r.puntosRegistrados ?? r.totalRounds ?? r.total ?? 0;
-      const pasos = r.pasos ?? 0;
-      const primera = formatDateTime(r.primeraMarca || r.firstAt);
-      const ultima = formatDateTime(r.ultimaMarca || r.lastAt);
-      const duracion = r.duracionText || r.duration || "—";
-
-      return [
-        i + 1,
-        guardLabel,
-        site,
-        round,
-        puntos,
-        pasos,
-        primera,
-        ultima,
-        duracion,
-      ];
-    });
-
-    autoTable(doc, {
-      startY: y + 2,
-      head: [
-        [
-          "#",
-          "Oficial",
-          "Sitio",
-          "Ronda",
-          "Puntos",
-          "Pasos",
-          "Primera marca",
-          "Última marca",
-          "Duración",
-        ],
-      ],
-      body: tableBody,
-      styles: {
-        fontSize: 8,
-        cellPadding: 1.5,
-      },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: 255,
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      didDrawPage: (data) => {
-        const pageHeight =
-          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
-        const pageWidth =
-          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
-
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(
-          "Generado por el módulo de Rondas QR — Seguridad SENAF",
-          data.settings.margin.left,
-          pageHeight - 8
-        );
-        const pageNumber = doc.internal.getNumberOfPages();
-        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
-      },
-    });
-
-    const filename = `rondas-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
-    finalizePdf(doc, filename, mode);
-  }
-
-  /* ==================== PDF: ALERTAS DE PÁNICO (messages) ==================== */
-  function exportMessagesPdf(mode = "download") {
-    const rows = data.messages || [];
-    if (!rows.length) {
-      alert("No hay alertas de pánico para exportar con los filtros actuales.");
-      return;
-    }
-
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
-
-    const fechaHora = new Date();
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("SEGURIDAD SENAF", 14, 14);
-
-    doc.setFontSize(16);
-    doc.text("Informe de Alertas de pánico", 14, 22);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(
-      "Eventos de botón de pánico generados dentro del rango seleccionado",
-      14,
-      28
-    );
-
-    const metaLines = [
-      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
-      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${officerFilterLabel}`,
-      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
-      `Total alertas: ${rows.length}`,
-    ];
-
-    let y = 34;
-    doc.setFontSize(9);
-    metaLines.forEach((line) => {
-      doc.text(line, 14, y);
-      y += 4;
-    });
-
-    const tableBody = rows.map((m, i) => {
-      const tipo = m.type || m.kind || m.level || "—";
-      const fecha = formatDateTime(m.at || m.ts || m.date || m.createdAt);
-      const sitio = m.siteName || m.site || "—";
-      const ronda = m.roundName || m.round || "—";
-      const oficial = resolveOfficerLabel(m);
-
-      const baseText = m.text || m.message || m.description || m.detail || "—";
-      const extras = [];
-      if (typeof m.durationMin === "number") {
-        extras.push(`Inactividad: ${m.durationMin} min`);
-      }
-      if (typeof m.stepsAtAlert === "number") {
-        extras.push(`Pasos: ${m.stepsAtAlert}`);
-      }
-      if (m.fallDetected) {
-        extras.push("Caída detectada");
-      }
-      const detalle =
-        extras.length > 0 ? `${baseText} (${extras.join(" · ")})` : baseText;
-
-      let gps = "—";
-      if (
-        m.gps &&
-        typeof m.gps.lat === "number" &&
-        typeof m.gps.lon === "number"
-      ) {
-        gps = `${m.gps.lat}, ${m.gps.lon}`;
-      } else if (m.coordinates) {
-        gps = String(m.coordinates);
-      } else if (m.location) {
-        gps = String(m.location);
-      }
-
-      return [i + 1, tipo, fecha, sitio, ronda, oficial, detalle, gps];
-    });
-
-    autoTable(doc, {
-      startY: y + 2,
-      head: [
-        [
-          "#",
-          "Tipo",
-          "Fecha / Hora",
-          "Sitio",
-          "Ronda",
-          "Oficial",
-          "Detalle",
-          "GPS",
-        ],
-      ],
-      body: tableBody,
-      styles: {
-        fontSize: 7,
-        cellPadding: 1.5,
-      },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: 255,
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      columnStyles: {
-        0: { cellWidth: 7 },
-        1: { cellWidth: 18 },
-        2: { cellWidth: 28 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 22 },
-        5: { cellWidth: 30 },
-        6: { cellWidth: 40 },
-        7: { cellWidth: 25 },
-      },
-      didDrawPage: (data) => {
-        const pageHeight =
-          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
-        const pageWidth =
-          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
-
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(
-          "Generado por el módulo de Rondas QR — Seguridad SENAF",
-          data.settings.margin.left,
-          pageHeight - 8
-        );
-        const pageNumber = doc.internal.getNumberOfPages();
-        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
-      },
-    });
-
-    const filename = `alertas-panico-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
-    finalizePdf(doc, filename, mode);
-  }
-
-  /* ==================== PDF: DETALLE DE MARCAS ==================== */
-  function exportDetailPdf(mode = "download") {
-    const rows = data.detailed || [];
-    if (!rows.length) {
-      alert("No hay detalle de marcas para exportar con los filtros actuales.");
-      return;
-    }
-
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
-    });
-
-    const fechaHora = new Date();
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("SEGURIDAD SENAF", 14, 14);
-
-    doc.setFontSize(16);
-    doc.text("Detalle de Rondas y Marcas", 14, 22);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(
-      "Marcas realizadas por los guardias dentro del rango seleccionado",
-      14,
-      28
-    );
-
-    const metaLines = [
-      `Rango: ${f.from || "—"}  —  ${f.to || "—"}`,
-      `Sitio: ${siteLabel}   ·   Ronda: ${roundLabel}`,
-      `Oficial: ${officerFilterLabel}`,
-      `Generado: ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}`,
-      `Total registros: ${rows.length}`,
-    ];
-
-    let y = 34;
-    doc.setFontSize(9);
-    metaLines.forEach((line) => {
-      doc.text(line, 14, y);
-      y += 4;
-    });
-
-    const tableBody = rows.map((r, i) => {
-      const fecha = formatDateTime(r.at || r.ts || r.date || r.createdAt);
-      const sitio = r.siteName || r.site || "—";
-      const ronda = r.roundName || r.round || "—";
-      const punto = r.pointName || r.point || r.pointId || "—";
-      const oficial = resolveOfficerLabel(r);
-      const enVentana =
-        typeof r.onWindow === "boolean"
-          ? r.onWindow
-            ? "Sí"
-            : "No"
-          : "—";
-      const mensaje = r.message || "—";
-
-      return [i + 1, fecha, sitio, ronda, punto, oficial, enVentana, mensaje];
-    });
-
-    autoTable(doc, {
-      startY: y + 2,
-      head: [
-        [
-          "#",
-          "Fecha / Hora",
-          "Sitio",
-          "Ronda",
-          "Punto",
-          "Oficial",
-          "En ventana",
-          "Mensaje",
-        ],
-      ],
-      body: tableBody,
-      styles: {
-        fontSize: 7,
-        cellPadding: 1.5,
-      },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: 255,
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      didDrawPage: (data) => {
-        const pageHeight =
-          doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
-        const pageWidth =
-          doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
-
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(
-          "Generado por el módulo de Rondas QR — Seguridad SENAF",
-          data.settings.margin.left,
-          pageHeight - 8
-        );
-        const pageNumber = doc.internal.getNumberOfPages();
-        doc.text(String(pageNumber), pageWidth - 10, pageHeight - 8);
-      },
-    });
-
-    const filename = `detalle-${f.from || "desde"}_${f.to || "hasta"}.pdf`;
-    finalizePdf(doc, filename, mode);
-  }
-
-  /* ================= EXCEL: OMISIONES ================= */
-  function exportOmissionsExcel() {
-    const rows = omissionsToExport;
-    const fechaHora = new Date();
-
-    const style = `
-      <style>
-        html, body {
-          font-family: Calibri, "Segoe UI", Arial, sans-serif;
-          font-size: 12pt;
-        }
-        .brand {
-          font-size:20pt;
-          font-weight:800;
-          margin:4px 0 2px 0;
-          text-transform:uppercase;
-          letter-spacing:.12em;
-        }
-        .subtitle {
-          font-size:14pt;
-          font-weight:700;
-          margin:0 0 6px 0;
-        }
-        .meta {
-          margin:4px 0 8px 0;
-          font-size:11pt;
-        }
-        table {
-          width:100%;
-          border-collapse:collapse;
-          font-size:10pt;
-        }
-        thead th{
-          background:#0f172a; color:#fff; text-align:left; padding:6px;
-          border:1px solid #0f172a; font-weight:700;
-        }
-        tbody td{ padding:5px; border:1px solid #e5e7eb; }
-        tbody tr:nth-child(even){ background:#f9fafb; }
-      </style>
-    `;
-
-    const excelXml = `
-      <!--[if gte mso 9]><xml>
-      <ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel">
-        <ExcelWorksheets>
-          <ExcelWorksheet>
-            <Name>Omisiones</Name>
-            <WorksheetOptions>
-              <Selected/>
-              <ProtectObjects>False</ProtectObjects>
-              <ProtectScenarios>False</ProtectScenarios>
-              <Zoom>120</Zoom>
-            </WorksheetOptions>
-          </ExcelWorksheet>
-        </ExcelWorksheets>
-      </ExcelWorkbook>
-      </xml><![endif]-->
-    `;
-
-    const resumenHtml = `
-      <div class="meta">
-        <div><b>Rango:</b> ${f.from || "—"} — ${f.to || "—"}</div>
-        <div><b>Sitio:</b> ${siteLabel} · <b>Ronda:</b> ${roundLabel}</div>
-        <div><b>Oficial:</b> ${officerFilterLabel}</div>
-        <div><b>Generado:</b> ${fechaHora.toLocaleDateString()} ${fechaHora.toLocaleTimeString()}</div>
-        <div><b>Total omisiones:</b> ${rows.length}</div>
-      </div>
-    `;
-
-    const header = ["#", "Ronda", "Fecha/Hora esperada", "Punto", "Oficial", "Estado"];
-
-    const body = rows
-      .map((o, i) => {
-        const fecha = formatDateTime(
-          o.expectedAt || o.expectedTime || o.date || o.ts
-        );
-        const ronda = o.roundName || o.roundId || "—";
-        const punto = o.pointName || o.point || o.pointId || "—";
-        const oficial = resolveOfficerLabel(o);
-        return `
-          <tr>
-            <td>${i + 1}</td>
-            <td>${ronda}</td>
-            <td>${fecha}</td>
-            <td>${punto}</td>
-            <td>${oficial}</td>
-            <td>Omitido</td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    const table = `
-      <table>
-        <thead><tr>${header.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
-        <tbody>${body}</tbody>
-      </table>
-    `;
-
-    const html = `
-      <!DOCTYPE html>
-      <html xmlns:x="urn:schemas-microsoft-com:office:excel">
-        <head>
-          <meta charset="utf-8"/>
-          ${style}
-          ${excelXml}
-        </head>
-        <body>
-          <div class="brand">SEGURIDAD SENAF</div>
-          <div class="subtitle">Informe de Omisiones de Rondas</div>
-          ${resumenHtml}
-          ${table}
-        </body>
-      </html>
-    `;
-
-    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `omisiones-${f.from || "desde"}_${f.to || "hasta"}.xls`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  /* ---------- Exportar (backend + overrides) ---------- */
-  async function openFirstOk(urls) {
-    for (const url of urls) {
-      try {
-        const ok = await rondasqrApi.ping(url);
-        if (ok) {
-          window.open(url, "_blank", "noreferrer");
-          return true;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return false;
-  }
-
-  async function doExcel() {
-    if (f.reportType === "omissions") {
-      exportOmissionsExcel();
-      return;
-    }
-
-    try {
-      setDownloading(true);
-      const qs = new URLSearchParams(f).toString();
-      const candidates = [
-        rondasqrApi.xlsxUrl?.(f),
-        // 👇 ruta real del backend
-        `${ROOT}/api/rondasqr/v1/reports/export/excel?${qs}`,
-        // rutas alternativas por compatibilidad
-        `${ROOT}/api/rondasqr/v1/reports/excel?${qs}`,
-        `${ROOT}/api/rondasqr/v1/reports/export/xlsx?${qs}`,
-        `${ROOT}/api/rondasqr/v1/reports/xlsx?${qs}`,
-      ].filter(Boolean);
-      const ok = await openFirstOk(candidates);
-      if (!ok)
-        alert(
-          "HTTP 404 - No se encontró endpoint de Excel. Verifica la ruta en el servidor."
-        );
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  async function doPdf() {
-    try {
-      setDownloading(true);
-
-      if (f.reportType === "omissions") {
-        exportOmissionsPdf("download");
-        return;
-      }
-      if (f.reportType === "rounds") {
-        exportRoundsPdf("download");
-        return;
-      }
-      if (f.reportType === "messages") {
-        exportMessagesPdf("download");
-        return;
-      }
-      if (f.reportType === "detail") {
-        exportDetailPdf("download");
-        return;
-      }
-
-      const qs = new URLSearchParams(f).toString();
-      const candidates = [
-        rondasqrApi.pdfUrl?.(f),
-        // 👇 ruta real del backend
-        `${ROOT}/api/rondasqr/v1/reports/export/pdf?${qs}`,
-        // rutas alternativas por compatibilidad
-        `${ROOT}/api/rondasqr/v1/reports/pdf?${qs}`,
-        `${ROOT}/api/rondasqr/v1/reports/export/report.pdf?${qs}`,
-      ].filter(Boolean);
-      const ok = await openFirstOk(candidates);
-      if (!ok)
-        alert(
-          "HTTP 404 - No se encontró endpoint de PDF. Verifica la ruta en el servidor."
-        );
-    } finally {
-      setDownloading(false);
-    }
-  }
-
-  function doPrint() {
-    if (f.reportType === "omissions") {
-      exportOmissionsPdf("print");
-      return;
-    }
-    if (f.reportType === "rounds") {
-      exportRoundsPdf("print");
-      return;
-    }
-    if (f.reportType === "messages") {
-      exportMessagesPdf("print");
-      return;
-    }
-    if (f.reportType === "detail") {
-      exportDetailPdf("print");
-      return;
-    }
-
-    const qs = new URLSearchParams(f).toString();
-    const url =
-      rondasqrApi.pdfUrl?.(f) ||
-      `${ROOT}/api/rondasqr/v1/reports/export/pdf?${qs}`;
-    window.open(url, "_blank");
-  }
-
-  // Banner suave
-  const fromVar = readVar("--accent-from", "#38bdf8");
-  const toVar = readVar("--accent-to", "#22d3ee");
-  const alphaVar = parseFloat(readVar("--accent-alpha", "0.16")) || 0.16;
-  const bannerStyle = {
-    background: `linear-gradient(90deg, ${hexToRgba(
-      fromVar,
-      alphaVar
-    )} 0%, ${hexToRgba(toVar, alphaVar)} 100%)`,
-  };
-
-  // Omisiones con nombre de oficial ya resuelto
-  const decoratedOmissions = (data.omissions || []).map((o) => {
-    const label = resolveOfficerLabel(o);
-    return {
-      ...o,
-      officerName: label,
-      officerLabel: label,
+    if (tab === "outbox") refreshOutbox();
+  }, [tab]);
+
+  /* ===== payload offline ===== */
+  function buildOfflinePayload(currentUser) {
+    const outboxData = getOutbox();
+    const progressData = {
+      lastPoint: localStorage.getItem("rondasqr:lastPointName") || null,
+      nextPoint: localStorage.getItem("rondasqr:nextPointName") || null,
+      pct: Number(localStorage.getItem("rondasqr:progressPct") || 0),
     };
-  });
+
+    const device = {
+      ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      online: typeof navigator !== "undefined" ? navigator.onLine : false,
+      connection:
+        typeof navigator !== "undefined" && navigator.connection
+          ? {
+              type: navigator.connection.effectiveType,
+              downlink: navigator.connection.downlink,
+            }
+          : null,
+    };
+
+    const userInfo = currentUser
+      ? {
+          id: currentUser._id || currentUser.id || null,
+          email: currentUser.email || null,
+          name: currentUser.name || null,
+        }
+      : null;
+
+    const assignments = readJsonLS("rondasqr:assignments", []);
+    const logs = readJsonLS("rondasqr:logs", []);
+
+    return {
+      outbox: outboxData,
+      progress: progressData,
+      device,
+      user: userInfo,
+      assignments: Array.isArray(assignments) ? assignments : [],
+      logs: Array.isArray(logs) ? logs : [],
+      at: new Date().toISOString(),
+    };
+  }
+
+  async function sendOfflineDump() {
+    try {
+      const payload = buildOfflinePayload(safeUser);
+      const pending = payload.outbox;
+      if (!pending || !pending.length) {
+        alert("No hay información offline para enviar.");
+        return;
+      }
+
+      const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+      const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+      const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
+
+      const res = await authFetch(url, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+
+      const json = await res.json().catch(() => ({ ok: true }));
+      alert("📤 Base de datos local enviada.\n" + (json?.message || ""));
+    } catch (err) {
+      console.error("[ScanPage] dump offline error", err);
+      alert("No se pudo enviar la base de datos.");
+    }
+  }
+
+  /* ===== AUTO-SYNC ===== */
+  useEffect(() => {
+    let stop = false;
+
+    async function autoSync() {
+      try {
+        if (stop) return;
+        if (typeof navigator !== "undefined" && !navigator.onLine) return;
+
+        const pendingOutbox = getOutbox();
+        const hasOutbox = Array.isArray(pendingOutbox) && pendingOutbox.length > 0;
+
+        if (hasOutbox) {
+          try {
+            await transmitOutbox(sendCheckinViaApi);
+            refreshOutbox();
+          } catch (e) {
+            console.error("[autoSync] error transmitiendo outbox", e);
+          }
+        }
+
+        const payload = buildOfflinePayload(safeUser);
+        const hasDumpOutbox = Array.isArray(payload.outbox) && payload.outbox.length > 0;
+        const hasAssignments = Array.isArray(payload.assignments) && payload.assignments.length > 0;
+        const hasLogs = Array.isArray(payload.logs) && payload.logs.length > 0;
+
+        if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
+
+        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
+        const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
+
+        try {
+          const res = await authFetch(url, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            throw new Error(txt || `HTTP ${res.status}`);
+          }
+        } catch (e) {
+          console.error("[autoSync] error enviando dump offline", e);
+        }
+      } catch (err) {
+        console.error("[autoSync] error inesperado", err);
+      }
+    }
+
+    autoSync();
+
+    function handleOnline() {
+      autoSync();
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      return () => {
+        stop = true;
+        window.removeEventListener("online", handleOnline);
+      };
+    }
+  }, [safeUser?._id]); // ✅ evita loop por referencia de objeto
+
+  /* ===== estilos ===== */
+  const pageClass = "space-y-6 layer-content";
+  const headerClass = "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
+  const cardClass = "fx-card rounded-2xl p-4 sm:p-6";
+  const headerFallback =
+    "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
+  const cardFallback =
+    "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
+
+  const neonStyles = `
+    .btn-neon {
+      padding:.5rem 1rem;
+      border-radius:.75rem;
+      font-weight:700;
+      color:#fff;
+      background-image:linear-gradient(90deg,#8b5cf6,#06b6d4);
+      box-shadow:0 10px 28px rgba(99,102,241,.18),0 6px 20px rgba(6,182,212,.12);
+      transition:filter .2s ease, transform .2s ease;
+    }
+    .btn-neon:hover { filter:brightness(1.04); transform:translateY(-1px); }
+    .btn-neon:active { transform:translateY(0); }
+    .btn-neon-green  { background-image:linear-gradient(90deg,#22c55e,#06b6d4); }
+    .btn-neon-rose   { background-image:linear-gradient(90deg,#f43f5e,#fb7185); }
+    .btn-neon-amber  { background-image:linear-gradient(90deg,#f59e0b,#ef4444); }
+    .btn-neon-purple { background-image:linear-gradient(90deg,#a855f7,#6366f1); }
+    .dark .btn-neon {
+      box-shadow:0 14px 36px rgba(99,102,241,.38),0 10px 28px rgba(6,182,212,.28);
+    }
+    @keyframes panic-blink {
+      0%, 100% { opacity: 1; box-shadow: 0 0 25px rgba(248,113,113,.8); }
+      50% { opacity: .55; box-shadow: 0 0 6px rgba(248,113,113,.2); }
+    }
+    .panic-indicator { animation: panic-blink 1s ease-in-out infinite; }
+  `;
+
+  const homeCols = isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
+
+  const BEEP_SRC =
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+
+  const activeAssignment = useMemo(() => {
+    if (!currentAssignmentKey) return null;
+    const raw = readJsonLS("rondasqr:currentAssignment", null);
+    return raw || null;
+  }, [currentAssignmentKey]);
+
+  function finishActiveIfAny() {
+    if (activeAssignment) handleFinishRound(activeAssignment);
+    nav("/rondasqr/scan", { replace: true });
+  }
 
   return (
-    <div className="px-4 py-5 space-y-5">
-      {/* Encabezado */}
-      <div className="rounded-xl px-4 py-3 md:px-5 md:py-4" style={bannerStyle}>
-        <p className="text-[11px] md:text-xs font-semibold tracking-[0.18em] uppercase text-white/70">
-          Seguridad SENAF
-        </p>
-        <h1 className="text-2xl md:text-3xl font-bold leading-tight tracking-tight">
-          Informes
-        </h1>
-        <p className="opacity-90 text-sm md:text-base">
-          Resumen de rondas, omisiones e incidentes
-        </p>
+    <div className={pageClass}>
+      <style>{neonStyles}</style>
+      <audio ref={alertAudioRef} src={BEEP_SRC} preload="auto" />
+
+      {lastPanic && (
+        <button
+          onClick={() => setLastPanic(null)}
+          className="fixed top-20 right-6 z-[120] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white panic-indicator shadow-lg"
+          title={`Alerta recibida ${lastPanic.at}`}
+        >
+          <span className="text-[10px] leading-none font-bold">ALERTA</span>
+          <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
+        </button>
+      )}
+
+      <div className={[headerClass, headerFallback].join(" ")}>
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
+            Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás tus rondas y alertas de hoy.
+          </p>
+          <p className="text-[10px] mt-1 opacity-60">
+            roles={roles.join(",") || "—"} · perms={perms.join(",") || "—"}
+          </p>
+        </div>
+        <div className="text-right text-xs sm:text-sm">
+          <div className="opacity-70">Rondas pendientes por enviar</div>
+          <div className="font-semibold text-lg sm:text-xl">{countOutbox()}</div>
+        </div>
       </div>
 
-      {/* Filtros */}
-      <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg space-y-3">
-        {/* Fila 1: Tipo de reporte + acciones */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-white/70 uppercase tracking-wide">
-              Tipo de reporte
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                { id: "all", label: "Todos" },
-                { id: "rounds", label: "Rondas" },
-                { id: "omissions", label: "Omisiones" },
-                { id: "messages", label: "Alertas de pánico" },
-                { id: "detail", label: "Detalle" },
-                { id: "map", label: "Mapa" },
-              ].map((opt) => {
-                const active = f.reportType === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => handleReportTypeChange(opt.id)}
-                    className={[
-                      "px-3 py-1.5 rounded-full text-[11px] border transition",
-                      active
-                        ? "bg-emerald-500 text-black border-emerald-400 shadow"
-                        : "bg-black/30 border-white/15 text-white/80 hover:border-emerald-400/70 hover:text-emerald-200",
-                    ].join(" ")}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
+      {/* HOME */}
+      {tab === "home" && (
+        <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
+          <section className={[cardClass, cardFallback, "text-center"].join(" ")}>
+            <div className="flex flex-col items-center">
+              <button
+                onClick={async () => {
+                  const ok = await sendAlert();
+                  if (ok) nav("/rondasqr/scan", { replace: true });
+                }}
+                disabled={sendingAlert}
+                className={[
+                  "rounded-full font-extrabold text-white",
+                  "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
+                  "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
+                  sendingAlert ? "cursor-not-allowed opacity-80" : "",
+                ].join(" ")}
+              >
+                {sendingAlert ? "ENVIANDO..." : "ALERTA"}
+              </button>
+              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">Oprima en caso de emergencia</p>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={load}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm shadow disabled:opacity-70"
-              disabled={loading}
-            >
-              {loading ? "Consultando…" : "Consultar"}
-            </button>
+            <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
+              <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
+                Registrador Punto Control
+              </button>
+              <button onClick={() => nav("/incidentes/nuevo?from=ronda")} className="w-full btn-neon btn-neon-purple">
+                Mensaje Incidente
+              </button>
+            </div>
+          </section>
 
-            <button
-              type="button"
-              onClick={resetOptionalFilters}
-              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white/80 text-xs hover:bg-white/10"
-            >
-              Limpiar filtros
-            </button>
+          {/* progreso */}
+          <section className={[cardClass, cardFallback].join(" ")}>
+            <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
-            <button
-              type="button"
-              onClick={doPdf}
-              disabled={downloading}
-              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10 disabled:opacity-70"
-            >
-              {downloading ? "PDF…" : "PDF"}
-            </button>
+            {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
+              <>
+                <div className="text-sm space-y-1 mb-3">
+                  {progress.lastPoint && (
+                    <div>
+                      <span className="opacity-70">Último punto: </span>
+                      <span className="font-medium">{progress.lastPoint}</span>
+                    </div>
+                  )}
+                  {progress.nextPoint && (
+                    <div>
+                      <span className="opacity-70">Siguiente: </span>
+                      <span className="font-medium">{progress.nextPoint}</span>
+                    </div>
+                  )}
+                </div>
 
-            <button
-              type="button"
-              onClick={doExcel}
-              disabled={downloading}
-              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10 disabled:opacity-70"
-            >
-              {downloading ? "Excel…" : "Excel"}
-            </button>
+                <div className="w-full h-3 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
+                    style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
+                  />
+                </div>
 
-            <button
-              type="button"
-              onClick={doPrint}
-              className="px-3 py-1.5 rounded-lg border border-white/20 bg-black/30 text-white text-xs hover:bg-white/10"
-            >
-              Imprimir
-            </button>
-          </div>
+                <div className="mt-1 text-right text-xs opacity-70">
+                  {Math.max(0, Math.min(100, progress.pct))}% completado
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
+                    Continuar ronda
+                  </button>
+                  <button onClick={finishActiveIfAny} className="btn-neon btn-neon-amber">
+                    Finalizar ronda
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-600 dark:text-white/80">
+                Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el primer punto asignado.
+              </p>
+            )}
+          </section>
+
+          {(isAdminLike || isSupervisorLike) && (
+            <section className={[cardClass, cardFallback].join(" ")}>
+              <h3 className="font-semibold text-lg mb-3">Acciones</h3>
+              <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
+                Acciones avanzadas disponibles para supervisores o administradores.
+              </p>
+              <div className="grid gap-3 max-w-sm">
+                <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
+                  📊 Abrir informes
+                </button>
+                {isAdminLike && (
+                  <button onClick={() => nav("/rondasqr/admin")} className="btn-neon btn-neon-purple">
+                    ⚙️ Administración de rondas
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* rondas asignadas (deja tu tabla aquí) */}
+          <section className={[cardClass, cardFallback, "md:col-span-2 xl:col-span-3"].join(" ")}>
+            {/* Tu UI de asignaciones puede ir aquí sin cambios. */}
+            {/* Si quieres que te la complete tal cual la tenías, pégame esa parte que omitiste. */}
+            <div className="text-sm opacity-70">
+              Asignaciones cargadas: <b>{myAssignments.length}</b>
+            </div>
+          </section>
         </div>
-
-        {/* Fila 2: filtros principales */}
-        <div className="grid md:grid-cols-5 gap-2 items-end">
-          <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">Desde</label>
-            <input
-              type="date"
-              value={f.from}
-              onChange={setField("from")}
-              className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
-            />
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">Hasta</label>
-            <input
-              type="date"
-              value={f.to}
-              onChange={setField("to")}
-              className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
-            />
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">
-              Sitio (opcional)
-            </label>
-            <select
-              value={f.siteId}
-              onChange={setField("siteId")}
-              className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
-            >
-              <option value="">Todos</option>
-              {sites.map((s) => (
-                <option key={s._id} value={s._id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">
-              Ronda (opcional)
-            </label>
-            <select
-              value={f.roundId}
-              onChange={setField("roundId")}
-              disabled={!f.siteId}
-              className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm disabled:opacity-50"
-            >
-              <option value="">Todas</option>
-              {rounds.map((r) => (
-                <option key={r._id} value={r._id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Oficial: SELECT de guardias, como en AssignmentsPage */}
-          <div className="flex flex-col">
-            <label className="text-[11px] text-white/70 mb-1">
-              Oficial (opcional)
-            </label>
-            <select
-              value={f.officer}
-              onChange={setField("officer")}
-              className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm"
-            >
-              <option value="">Todos</option>
-              {guards.map((g) => (
-                <option key={g._id} value={g.opId}>
-                  {getGuardLabel(g)}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Fila 3: qué secciones incluir */}
-        <div className="flex flex-wrap gap-3 pt-2 border-t border-white/10">
-          <span className="text-[11px] text-white/60 uppercase tracking-wide pt-1">
-            Incluir en el reporte:
-          </span>
-
-          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={f.includeSummary}
-              onChange={() => handleToggleInclude("includeSummary")}
-              className="rounded border-white/20 bg-black/60"
-            />
-            Resumen
-          </label>
-
-          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={f.includeOmissions}
-              onChange={() => handleToggleInclude("includeOmissions")}
-              className="rounded border-white/20 bg-black/60"
-            />
-            Omisiones
-          </label>
-
-          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={f.includeMessages}
-              onChange={() => handleToggleInclude("includeMessages")}
-              className="rounded border-white/20 bg-black/60"
-            />
-            Alertas de pánico
-          </label>
-
-          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={f.includeDetail}
-              onChange={() => handleToggleInclude("includeDetail")}
-              className="rounded border-white/20 bg-black/60"
-            />
-            Detalle
-          </label>
-
-          <label className="inline-flex items-center gap-1 text-xs text-white/80 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={f.includeMap}
-              onChange={() => handleToggleInclude("includeMap")}
-              className="rounded border-white/20 bg-black/60"
-            />
-            Mapa
-          </label>
-        </div>
-      </div>
-
-      {/* Secciones de reporte (controladas por flags) */}
-      {f.includeSummary && <ReportSummary stats={data.stats} />}
-
-      {f.includeOmissions && (
-        <OmissionsTable items={decoratedOmissions} />
       )}
 
-      {f.includeMessages && (
-        <MessagesTable items={data.messages} title="Alertas de pánico" />
+      {/* QR */}
+      {tab === "qr" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
+          <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-black/5 dark:bg-black/40">
+            <QrScanner
+              facingMode="environment"
+              once={true}
+              enableTorch
+              enableFlip
+              onResult={handleScan}
+              onError={(e) => console.warn("QR error", e)}
+            />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                nav("/rondasqr/scan");
+              }}
+              className="btn-neon btn-neon-amber"
+            >
+              Finalizar
+            </button>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                nav("/rondasqr/scan/qr");
+              }}
+              className="btn-neon btn-neon-green"
+            >
+              Reintentar
+            </button>
+          </div>
+        </section>
       )}
 
-      {f.includeDetail && <DetailedMarks items={data.detailed} />}
+      {/* OUTBOX */}
+      {tab === "outbox" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h3 className="font-semibold text-lg">Pendientes por enviar</h3>
+            <button disabled={syncing} onClick={transmitNow} className="btn-neon btn-neon-green">
+              {syncing ? "Enviando..." : "Transmitir ahora"}
+            </button>
+          </div>
 
-      {f.includeMap && (
-        <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 shadow-lg">
-          <h3 className="font-semibold text-base mb-2">Mapa</h3>
-          <MapView items={data.detailed} />
-        </div>
+          <div className="text-sm opacity-80">Pendientes: {outbox.length}</div>
+        </section>
+      )}
+
+      {/* DUMP */}
+      {tab === "dump" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Enviar base offline</h3>
+          <button onClick={sendOfflineDump} className="btn-neon">
+            Enviar
+          </button>
+        </section>
+      )}
+
+      {/* FOTOS */}
+      {tab === "fotos" && (
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="font-semibold text-lg mb-3">Fotos</h3>
+          <PhotoPicker photos={photos} setPhotos={setPhotos} />
+          <div className="mt-4">
+            <button disabled={sendingPhotos} onClick={sendPhotos} className="btn-neon btn-neon-green">
+              {sendingPhotos ? "Enviando..." : "Enviar fotos"}
+            </button>
+          </div>
+        </section>
       )}
     </div>
   );
+}
+
+/* ========== subcomponentes ========== */
+function PhotoPicker({ photos, setPhotos }) {
+  return (
+    <>
+      {photos.map((f, i) => (
+        <div key={i} className="flex items-center justify-between mb-2">
+          <span className="text-sm text-slate-700 dark:text-white/90">Toma foto {i + 1}</span>
+          <div className="flex gap-2">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const base64 = await fileToBase64(file);
+                setPhotos((p) => {
+                  const n = [...p];
+                  n[i] = base64;
+                  return n;
+                });
+              }}
+              className="hidden"
+              id={`foto-${i}`}
+            />
+            <label
+              htmlFor={`foto-${i}`}
+              className="px-3 py-1 rounded-md text-white bg-indigo-600 hover:bg-indigo-500 cursor-pointer"
+            >
+              Seleccionar
+            </label>
+            <button
+              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
+              className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
+            >
+              Eliminar
+            </button>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
 }

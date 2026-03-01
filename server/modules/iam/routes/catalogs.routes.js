@@ -14,12 +14,20 @@ const r = Router();
  * Si querés protegerlo con tu RBAC, aquí es donde meterías requireAuth/requirePerm.
  */
 
-// individuales
+/* =========================
+ * Español (para tu frontend)
+ * ========================= */
+r.get("/estado-civil", getCivilStatus);
+r.get("/paises", getCountries);
+r.get("/profesiones", getProfessions);
+r.get("/todos", getAllCatalogs);
+
+/* =========================
+ * Inglés (compatibilidad)
+ * ========================= */
 r.get("/civil-status", getCivilStatus);
 r.get("/countries", getCountries);
 r.get("/professions", getProfessions);
-
-// todo junto
 r.get("/all", getAllCatalogs);
 
 export default r;

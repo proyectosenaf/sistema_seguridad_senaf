@@ -5,8 +5,12 @@ export const permisosKeys = {
   // ======================
   // IAM
   // ======================
+  "iam.users.view": "Usuarios y Roles • Ver usuarios",
   "iam.users.manage": "Usuarios y Roles • Gestionar usuarios",
   "iam.roles.manage": "Usuarios y Roles • Gestionar roles",
+
+  // (opcional pero recomendado si tienes AuditPage)
+  "iam.audit.view": "Usuarios y Roles • Ver historial (audit)",
 
   // ======================
   // RONDAS QR (LEGACY - mantener temporalmente)
@@ -101,7 +105,6 @@ export const permisosKeys = {
   "supervision.reports": "Supervisión • Ver reportes",
   "supervision.export": "Supervisión • Exportar (PDF/Excel/CSV)",
 
-
   // ======================
   // Reportes generales
   // ======================
@@ -109,13 +112,27 @@ export const permisosKeys = {
   "reportes.export": "Reportes • Exportar (PDF/Excel/CSV)",
 };
 
-// ✅ Asignación de permisos por rol (keys)
-// Nota: si eliminas Visitas, también elimina sus keys aquí.
+/**
+ * Helper: todas las keys (para rol admin sin wildcard)
+ */
+const ALL_PERMISSION_KEYS = Object.keys(permisosKeys);
+
+/**
+ * ✅ Asignación de permisos por rol (keys)
+ * Nota: si eliminas Visitas, también elimina sus keys aquí.
+ */
 export const rolesKeys = {
-  // Admin total (tu backend debe tratar "*" como wildcard)
-  administrador: ["*"],
+  /**
+   * ✅ Admin total SIN wildcard (recomendado PROD)
+   * Si quieres mantener wildcard, reemplaza por: ["*"]
+   */
+  administrador: [...ALL_PERMISSION_KEYS],
 
   supervisor: [
+    // IAM (solo vista si quieres que vea usuarios, NO gestione)
+    "iam.users.view",
+    "iam.audit.view",
+
     // Legacy rondasqr (temporal)
     "rondasqr.view",
     "rondasqr.create",
@@ -164,7 +181,7 @@ export const rolesKeys = {
     "accesos.write",
     "accesos.export",
 
-    // Visitas (si aplica)
+    // Visitas
     "visitas.read",
     "visitas.write",
     "visitas.close",
@@ -183,19 +200,19 @@ export const rolesKeys = {
     "supervision.reports",
     "supervision.export",
 
-
     // Reportes
     "reportes.read",
     "reportes.export",
   ],
 
   guardia: [
+    // IAM (normalmente nada; si quieres que vea su perfil audit, agrega iam.audit.view)
     // Legacy mínimo (temporal)
     "rondasqr.view",
     "rondasqr.create",
     "rondasqr.edit",
 
-    // Operación normalizada (sin administración)
+    // Operación normalizada
     "rondasqr.scan.qr",
     "rondasqr.scan.manual",
     "rondasqr.checks.create",
@@ -215,11 +232,18 @@ export const rolesKeys = {
     // Bitácora
     "bitacora.read",
     "bitacora.write",
-
   ],
 
+  /**
+   * ✅ Este rol es el que típicamente usas para TI.
+   * Si TI debe poder crear usuarios => necesita iam.users.manage
+   * Si NO debe poder crear usuarios => deja solo iam.users.view
+   */
   administrador_it: [
+    // IAM
+    "iam.users.manage",
     "iam.roles.manage",
+    "iam.audit.view",
 
     // Rondas: lectura + reportes/export
     "rondasqr.view",
@@ -253,7 +277,6 @@ export const rolesKeys = {
     "supervision.reports",
     "supervision.export",
 
-
     // Reportes generales
     "reportes.read",
     "reportes.export",
@@ -278,4 +301,4 @@ export function agruparPorModulo(mapaPermisos = permisosKeys) {
 }
 
 // ✅ default export por compatibilidad
-export default { permisosKeys, rolesKeys, agruparPorModulo };
+export default { permisosKeys, rolesKeys, agruparPorModulo }; 
