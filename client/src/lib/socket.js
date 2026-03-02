@@ -10,40 +10,40 @@ function normalizeSocketBase(v) {
 }
 
 const BASE = normalizeSocketBase(SOCKET_BASE);
+const FALLBACK = typeof window !== "undefined" ? window.location.origin : "";
 
-// Fallback seguro si BASE quedó vacío
-const FALLBACK =
-  typeof window !== "undefined" ? window.location.origin : "";
+// ✅ Single instance global (evita duplicados por HMR/StrictMode)
+const G = typeof window !== "undefined" ? window : globalThis;
 
-export const socket =
-  typeof window !== "undefined"
-    ? io(BASE || FALLBACK, {
-        path: "/socket.io",
-        transports: ["websocket", "polling"],
+if (!G.__SENAF_SOCKET__) {
+  G.__SENAF_SOCKET__ = io(BASE || FALLBACK, {
+    path: "/socket.io",
 
-        // Si tu backend usa cookies/sesión, pon true.
-        // Si no usas autenticación basada en cookies, déjalo false.
-        withCredentials: false,
+    // ✅ POLLING primero (evita “websocket error” si tu entorno bloquea WS)
+    transports: ["polling", "websocket"],
+    upgrade: true,
 
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 800,
-        reconnectionDelayMax: 5000,
-        timeout: 20000,
-      })
-    : null;
+    withCredentials: false,
 
-// Debug opcional
-if (socket) {
-  socket.on("connect", () => {
-    console.log("[socket] connected:", socket.id);
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 800,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
   });
 
-  socket.on("connect_error", (e) => {
+  // Debug
+  G.__SENAF_SOCKET__.on("connect", () => {
+    console.log("[socket] connected:", G.__SENAF_SOCKET__.id, "transport:", G.__SENAF_SOCKET__.io.engine.transport.name);
+  });
+
+  G.__SENAF_SOCKET__.on("connect_error", (e) => {
     console.warn("[socket] connect_error:", e?.message || e);
   });
 
-  socket.on("disconnect", (reason) => {
+  G.__SENAF_SOCKET__.on("disconnect", (reason) => {
     console.warn("[socket] disconnected:", reason);
   });
 }
+
+export const socket = G.__SENAF_SOCKET__;

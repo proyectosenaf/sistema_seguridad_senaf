@@ -2,13 +2,12 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 
 import IamUser from "../models/IamUser.model.js";
 import AuthOtp from "../models/AuthOtp.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 import { getSecuritySettings } from "../services/settings.service.js";
-
-// ✅ Mail OTP centralizado (usa server/src/core/mailer/mailer.js)
 import { sendOtpEmail } from "../services/otp.mailer.js";
 
 const r = Router();
@@ -40,15 +39,39 @@ function envNum(name, def) {
 function getOtpSettings() {
   const s = getSecuritySettings?.() || {};
   const otp = s.otp || {};
+
+  const ttlEnv = envNum("OTP_TTL_SECONDS", NaN);
+  const maxEnv = envNum("OTP_MAX_ATTEMPTS", NaN);
+  const resendEnv = envNum("OTP_RESEND_COOLDOWN_SECONDS", NaN);
+
   return {
-    ttlSeconds: Number.isFinite(Number(otp.ttlSeconds)) ? Number(otp.ttlSeconds) : 300,
-    maxAttempts: Number.isFinite(Number(otp.maxAttempts)) ? Number(otp.maxAttempts) : 5,
-    resendCooldownSeconds: Number.isFinite(Number(otp.resendCooldownSeconds))
+    ttlSeconds: Number.isFinite(ttlEnv)
+      ? ttlEnv
+      : Number.isFinite(Number(otp.ttlSeconds))
+      ? Number(otp.ttlSeconds)
+      : 300,
+
+    maxAttempts: Number.isFinite(maxEnv)
+      ? maxEnv
+      : Number.isFinite(Number(otp.maxAttempts))
+      ? Number(otp.maxAttempts)
+      : 5,
+
+    resendCooldownSeconds: Number.isFinite(resendEnv)
+      ? resendEnv
+      : Number.isFinite(Number(otp.resendCooldownSeconds))
       ? Number(otp.resendCooldownSeconds)
       : 30,
+
     features: s.features || {},
     password: s.password || {},
   };
+}
+
+/** ✅ FIX CRÍTICO: provider faltante => "local" */
+function normProvider(p) {
+  const v = String(p ?? "local").trim().toLowerCase();
+  return v || "local";
 }
 
 function jwtSecret() {
@@ -90,11 +113,7 @@ function isPasswordExpired(user) {
 /* ---------------------- Reset token (pwreset) ---------------------- */
 function signPwResetToken({ email, userId }) {
   const secret = jwtSecret();
-  const payload = {
-    typ: "pwreset",
-    email: normEmail(email),
-    uid: String(userId),
-  };
+  const payload = { typ: "pwreset", email: normEmail(email), uid: String(userId) };
   const expMinutes = envNum("PWRESET_TOKEN_TTL_MINUTES", 10);
   return jwt.sign(payload, secret, { expiresIn: `${expMinutes}m`, algorithm: "HS256" });
 }
@@ -107,17 +126,11 @@ function verifyPwResetToken(token) {
 }
 
 /* =========================================================
-  ✅ OTP en Mongo (AuthOtp)
+   OTP en Mongo (AuthOtp)
 ========================================================= */
 
 async function getActiveOtp(email, purpose) {
-  return AuthOtp.findOne({
-    email,
-    purpose,
-    consumedAt: null,
-  })
-    .sort({ createdAt: -1 })
-    .exec();
+  return AuthOtp.findOne({ email, purpose, consumedAt: null }).sort({ createdAt: -1 }).exec();
 }
 
 function isExpiredDoc(doc) {
@@ -134,10 +147,14 @@ function canResendDoc(doc) {
   return new Date() >= ra;
 }
 
-/**
- * Crea o reemplaza OTP activo de forma ATÓMICA.
- * - Evita carreras (concurrencia) y E11000 por índice único parcial.
- */
+function secondsRemaining(dateObj) {
+  if (!dateObj) return 0;
+  const t = new Date(dateObj).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const diffMs = t - Date.now();
+  return diffMs > 0 ? Math.ceil(diffMs / 1000) : 0;
+}
+
 async function createOrReplaceActiveOtpDoc({
   email,
   purpose,
@@ -163,25 +180,19 @@ async function createOrReplaceActiveOtpDoc({
       consumedAt: null,
       meta: { userId: metaUserId || null },
     },
-    $setOnInsert: {
-      email,
-      purpose,
-    },
+    $setOnInsert: { email, purpose },
   };
 
   try {
-    await AuthOtp.findOneAndUpdate(
-      { email, purpose, consumedAt: null },
-      update,
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    ).exec();
+    await AuthOtp.findOneAndUpdate({ email, purpose, consumedAt: null }, update, {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+    }).exec();
   } catch (e) {
     const msg = String(e?.message || "");
     if (e?.code === 11000 || msg.includes("E11000")) {
-      await AuthOtp.updateMany(
-        { email, purpose, consumedAt: null },
-        { $set: { consumedAt: new Date() } }
-      ).exec();
+      await AuthOtp.updateMany({ email, purpose, consumedAt: null }, { $set: { consumedAt: new Date() } }).exec();
 
       await AuthOtp.create({
         email,
@@ -202,9 +213,9 @@ async function createOrReplaceActiveOtpDoc({
   return { code, expiresAt, resendAfter };
 }
 
-/* =========================
-  Handlers reutilizables
-========================= */
+/* =========================================================
+   Handlers
+========================================================= */
 
 async function loginOtpHandler(req, res) {
   const settings = getOtpSettings();
@@ -220,20 +231,24 @@ async function loginOtpHandler(req, res) {
     .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email")
     .exec();
 
+  // Debug fuerte (opcional, pero recomendado hasta cerrar el bug)
+  // Ojo: no loguees passwordHash.
+  if (process.env.DEBUG_AUTH === "1") {
+    console.log("[login-otp] mongo.db:", mongoose.connection?.name);
+    console.log("[login-otp] iamUser.collection:", IamUser.collection?.name);
+    console.log("[login-otp] email:", email, "provider:", user?.provider);
+  }
+
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-  if (String(user.provider || "").toLowerCase() !== "local") {
+  /** ✅ FIX: provider null/undefined cuenta como local */
+  const provider = normProvider(user.provider);
+  if (provider !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  if (!user.passwordHash) {
-    return res.status(403).json({
-      ok: false,
-      error: "password_not_set",
-      message: "Este usuario no tiene contraseña configurada. Contacta al administrador o restablece.",
-    });
-  }
+  if (!user.passwordHash) return res.status(403).json({ ok: false, error: "password_not_set" });
 
   const okPwd = await verifyPassword(password, user.passwordHash);
   if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
@@ -252,15 +267,10 @@ async function loginOtpHandler(req, res) {
       name: user.name || user.email,
       provider: "local",
     });
-
-    return res.json({
-      ok: true,
-      otpRequired: false,
-      token,
-      mustChangePassword: mustChange,
-    });
+    return res.json({ ok: true, otpRequired: false, token, mustChangePassword: mustChange });
   }
 
+  // Con OTP ON:
   const otpRequired = isVisitor ? firstTimeOtp : (firstTimeOtp || mustChange);
 
   if (!otpRequired) {
@@ -270,13 +280,7 @@ async function loginOtpHandler(req, res) {
       name: user.name || user.email,
       provider: "local",
     });
-
-    return res.json({
-      ok: true,
-      otpRequired: false,
-      token,
-      mustChangePassword: false,
-    });
+    return res.json({ ok: true, otpRequired: false, token, mustChangePassword: false });
   }
 
   const purpose = isVisitor ? "visitor-login" : "employee-login";
@@ -286,8 +290,7 @@ async function loginOtpHandler(req, res) {
     return res.status(429).json({
       ok: false,
       error: "otp_resend_cooldown",
-      cooldownSeconds: settings.resendCooldownSeconds,
-      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+      cooldownSecondsRemaining: secondsRemaining(existing.resendAfter),
     });
   }
 
@@ -300,13 +303,12 @@ async function loginOtpHandler(req, res) {
     metaUserId: user._id,
   });
 
-  // ✅ Envío centralizado
   const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
     return res.status(502).json({
       ok: false,
       error: mail.error || "mail_send_failed",
-      message: mail?.message || "No se pudo enviar el correo OTP.",
+      message: mail.message,
     });
   }
 
@@ -322,6 +324,7 @@ async function loginOtpHandler(req, res) {
 
 async function resendOtpHandler(req, res) {
   const settings = getOtpSettings();
+
   if (!settings?.features?.enableEmployeeOtp) {
     return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
   }
@@ -329,13 +332,15 @@ async function resendOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-  const user = await IamUser.findOne({ email })
-    .select("_id email roles +active +provider name")
-    .exec();
+  const user = await IamUser.findOne({ email }).select("_id email roles +active +provider name").exec();
 
-  if (!user || user.active === false || String(user.provider || "").toLowerCase() !== "local") {
-    return res.json({ ok: true }); // no revelar
-  }
+  // No revelar existencia => ok:true
+  if (!user) return res.json({ ok: true });
+
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+
+  const provider = normProvider(user.provider);
+  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
 
   const isVisitor = hasRole(user, "visita");
   const purpose = isVisitor ? "visitor-login" : "employee-login";
@@ -345,8 +350,7 @@ async function resendOtpHandler(req, res) {
     return res.status(429).json({
       ok: false,
       error: "otp_resend_cooldown",
-      cooldownSeconds: settings.resendCooldownSeconds,
-      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+      cooldownSecondsRemaining: secondsRemaining(existing.resendAfter),
     });
   }
 
@@ -359,26 +363,21 @@ async function resendOtpHandler(req, res) {
     metaUserId: user._id,
   });
 
-  // ✅ Envío centralizado
   const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
     return res.status(502).json({
       ok: false,
       error: mail.error || "mail_send_failed",
-      message: mail?.message || "No se pudo enviar el correo OTP.",
+      message: mail.message,
     });
   }
 
-  return res.json({
-    ok: true,
-    sentTo: maskEmail(email),
-    ttlSeconds: settings.ttlSeconds,
-    resendCooldownSeconds: settings.resendCooldownSeconds,
-  });
+  return res.json({ ok: true, sentTo: maskEmail(email) });
 }
 
 async function verifyOtpHandler(req, res) {
   const settings = getOtpSettings();
+
   if (!settings?.features?.enableEmployeeOtp) {
     return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
   }
@@ -390,24 +389,23 @@ async function verifyOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
   }
 
-  let doc = await getActiveOtp(email, "visitor-login");
-  if (!doc) doc = await getActiveOtp(email, "employee-login");
+  // Busca último OTP activo en ambos purposes (orden estable)
+  let doc = await getActiveOtp(email, "employee-login");
+  if (!doc) doc = await getActiveOtp(email, "visitor-login");
   if (!doc) return res.status(400).json({ ok: false, error: "otp_not_found" });
 
   if (isExpiredDoc(doc)) {
-    await doc.consume().catch(() => {});
+    await doc.consume?.().catch(() => {});
     return res.status(400).json({ ok: false, error: "otp_expired" });
   }
 
-  const maxAttempts = Number.isFinite(Number(doc.maxAttempts))
-    ? Number(doc.maxAttempts)
-    : settings.maxAttempts;
-
+  const maxAttempts = Number.isFinite(Number(doc.maxAttempts)) ? Number(doc.maxAttempts) : settings.maxAttempts;
   if (Number(doc.attempts || 0) >= maxAttempts) {
-    await doc.consume().catch(() => {});
+    await doc.consume?.().catch(() => {});
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
 
+  // incrementa intento
   doc.attempts = Number(doc.attempts || 0) + 1;
   await doc.save();
 
@@ -415,18 +413,21 @@ async function verifyOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "otp_invalid" });
   }
 
-  await doc.consume().catch(() => {});
+  await doc.consume?.().catch(() => {});
 
-  const user = await IamUser.findOne({ email }).exec();
+  const user = await IamUser.findOne({ email })
+    .select("email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt")
+    .exec();
+
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+
+  const provider = normProvider(user.provider);
+  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
 
   if (!user.otpVerifiedAt) {
     user.otpVerifiedAt = new Date();
-    try {
-      await user.save();
-    } catch (e) {
-      console.warn("[otp] could not persist otpVerifiedAt:", e?.message || e);
-    }
+    await user.save().catch(() => {});
   }
 
   const isVisitor = hasRole(user, "visita");
@@ -434,11 +435,7 @@ async function verifyOtpHandler(req, res) {
 
   if (mustChange) {
     const resetToken = signPwResetToken({ email: user.email, userId: user._id });
-    return res.json({
-      ok: true,
-      mustChangePassword: true,
-      resetToken,
-    });
+    return res.json({ ok: true, mustChangePassword: true, resetToken });
   }
 
   const token = signLocalJwt({
@@ -448,11 +445,7 @@ async function verifyOtpHandler(req, res) {
     provider: "local",
   });
 
-  return res.json({
-    ok: true,
-    token,
-    mustChangePassword: false,
-  });
+  return res.json({ ok: true, token, mustChangePassword: false });
 }
 
 async function resetPasswordOtpHandler(req, res) {
@@ -466,7 +459,6 @@ async function resetPasswordOtpHandler(req, res) {
 
   const s = getSecuritySettings?.() || {};
   const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
-
   if (newPassword.length < minLength) {
     return res.status(400).json({ ok: false, error: "password_too_short", minLength });
   }
@@ -487,16 +479,11 @@ async function resetPasswordOtpHandler(req, res) {
     .exec();
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-
-  if (hasRole(user, "visita")) {
-    return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
-  }
-
+  if (hasRole(user, "visita")) return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-  if (String(user.provider || "").toLowerCase() !== "local") {
-    return res.status(403).json({ ok: false, error: "not_local_user" });
-  }
+  const provider = normProvider(user.provider);
+  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
 
   if (String(user._id) !== String(decoded?.uid)) {
     return res.status(401).json({ ok: false, error: "reset_token_user_mismatch" });
@@ -531,23 +518,17 @@ async function changePasswordHandler(req, res) {
 
   const s = getSecuritySettings?.() || {};
   const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
-
   if (newPassword.length < minLength) {
     return res.status(400).json({ ok: false, error: "password_too_short", minLength });
   }
 
   const user = await IamUser.findOne({ email }).select("+passwordHash roles +active +provider").exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-
-  if (hasRole(user, "visita")) {
-    return res.status(403).json({ ok: false, error: "visitor_change_not_allowed" });
-  }
-
+  if (hasRole(user, "visita")) return res.status(403).json({ ok: false, error: "visitor_change_not_allowed" });
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-  if (String(user.provider || "").toLowerCase() !== "local") {
-    return res.status(403).json({ ok: false, error: "not_local_user" });
-  }
+  const provider = normProvider(user.provider);
+  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
 
   user.passwordHash = await hashPassword(newPassword);
   user.mustChangePassword = false;
@@ -557,12 +538,11 @@ async function changePasswordHandler(req, res) {
   user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : null;
 
   await user.save();
-
   return res.json({ ok: true });
 }
 
 /* =========================================================
-  Rutas principales
+   Rutas
 ========================================================= */
 r.post("/login-otp", loginOtpHandler);
 r.post("/verify-otp", verifyOtpHandler);
@@ -570,9 +550,7 @@ r.post("/resend-otp", resendOtpHandler);
 r.post("/reset-password-otp", resetPasswordOtpHandler);
 r.post("/change-password", changePasswordHandler);
 
-/* =========================================================
-  Aliases
-========================================================= */
+// Aliases
 r.post("/auth/login-otp", loginOtpHandler);
 r.post("/auth/verify-otp", verifyOtpHandler);
 r.post("/auth/resend-otp", resendOtpHandler);

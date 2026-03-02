@@ -1,3 +1,4 @@
+// server/modules/iam/models/IamUser.model.js
 import mongoose from "mongoose";
 
 const IamUserSchema = new mongoose.Schema(
@@ -5,7 +6,6 @@ const IamUserSchema = new mongoose.Schema(
     /* =========================
        IDENTIDAD
     ========================= */
-
     email: {
       type: String,
       required: true,
@@ -14,22 +14,43 @@ const IamUserSchema = new mongoose.Schema(
       set: (v) => String(v || "").trim().toLowerCase(),
     },
 
-    name: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+    name: { type: String, trim: true, default: "" },
 
-    active: {
-      type: Boolean,
-      default: true,
+    active: { type: Boolean, default: true, index: true },
+
+    /* =========================
+       AUTENTICACIÓN
+    ========================= */
+    provider: {
+      type: String,
+      enum: ["local", "external"],
+      default: "local",
       index: true,
     },
+
+    passwordHash: { type: String, select: false, default: "" },
+
+    mustChangePassword: { type: Boolean, default: false, index: true },
+
+    passwordChangedAt: { type: Date, default: null },
+    passwordExpiresAt: { type: Date, default: null, index: true },
+
+    /* =========================
+       OTP
+    ========================= */
+    otpVerifiedAt: { type: Date, default: null, index: true },
+
+    /* =========================
+       CLAVE TEMPORAL / RESET
+    ========================= */
+    tempPassHash: { type: String, select: false, default: "" },
+    tempPassExpiresAt: { type: Date, default: null, index: true },
+    tempPassUsedAt: { type: Date, default: null },
+    tempPassAttempts: { type: Number, default: 0 },
 
     /* =========================
        RBAC
     ========================= */
-
     roles: {
       type: [String],
       default: [],
@@ -50,94 +71,18 @@ const IamUserSchema = new mongoose.Schema(
     },
 
     /* =========================
-       AUTENTICACIÓN LOCAL
+       LEGACY (solo si lo ocupas)
     ========================= */
-
-    provider: {
-      type: String,
-      enum: ["local"],
-      default: "local",
-      index: true,
-    },
-
-    // ✅ OJO: select:false => debes usar .select("+passwordHash") para leerlo
-    passwordHash: {
-      type: String,
-      select: false,
-      default: "",
-    },
-
-    // ✅ Solo para usuarios internos creados por admin (no visitantes)
-    mustChangePassword: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-
-    passwordChangedAt: {
-      type: Date,
-      default: null,
-    },
-
-    passwordExpiresAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-
-    /* =========================
-       OTP (PRIMER LOGIN)
-    ========================= */
-    otpVerifiedAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-
-    /* =========================
-       CLAVE TEMPORAL (RESET)
-    ========================= */
-
-    tempPassHash: {
-      type: String,
-      select: false,
-      default: "",
-    },
-
-    tempPassExpiresAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-
-    tempPassUsedAt: {
-      type: Date,
-      default: null,
-    },
-
-    tempPassAttempts: {
-      type: Number,
-      default: 0,
-    },
+    externalId: { type: String, trim: true, default: null },
+    legacySub: { type: String, trim: true, default: null },
 
     /* =========================
        AUDITORÍA
     ========================= */
-
-    lastLoginAt: {
-      type: Date,
-      default: null,
-    },
-
-    lastLoginIp: {
-      type: String,
-      default: "",
-    },
+    lastLoginAt: { type: Date, default: null },
+    lastLoginIp: { type: String, default: "" },
   },
-  {
-    timestamps: true,
-    collection: "iamusers",
-  }
+  { timestamps: true, collection: "iamusers" }
 );
 
 /* =========================
@@ -146,4 +91,8 @@ const IamUserSchema = new mongoose.Schema(
 IamUserSchema.index({ email: 1 }, { unique: true });
 IamUserSchema.index({ createdAt: -1 });
 
-export default mongoose.model("IamUser", IamUserSchema);
+// únicos pero sparse (permiten nulls repetidos)
+IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
+IamUserSchema.index({ legacySub: 1 }, { unique: true, sparse: true });
+
+export default mongoose.models.IamUser || mongoose.model("IamUser", IamUserSchema);

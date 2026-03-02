@@ -1,8 +1,8 @@
 // client/src/pages/auth/LoginLocal.jsx
-// Login local (email/password) + Registro visitante - SENAF
 import React, { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import api, { getToken, clearToken, setToken } from "../../lib/api.js";
+import axios from "axios";
+import api, { API as API_BASE, getToken, clearToken, setToken } from "../../lib/api.js";
 import { useAuth } from "./AuthProvider.jsx";
 
 function safeInternalPath(p) {
@@ -21,12 +21,7 @@ function readReturnTo(locationSearch) {
     }
   })();
 
-  const picked =
-    (safeInternalPath(fromQuery) && fromQuery) ||
-    (safeInternalPath(fromSession) && fromSession) ||
-    null;
-
-  return picked;
+  return (safeInternalPath(fromQuery) && fromQuery) || (safeInternalPath(fromSession) && fromSession) || null;
 }
 
 function consumeReturnTo(locationSearch) {
@@ -47,12 +42,9 @@ function stashReturnTo(returnTo) {
 function humanLoginError(codeOrMsg) {
   const s = String(codeOrMsg || "").toLowerCase();
 
-  if (s.includes("user_not_found"))
-    return "No existe una cuenta con ese correo. Regístrate en la pestaña de registro.";
-  if (s.includes("invalid_credentials"))
-    return "Credenciales inválidas. Revisa correo y contraseña.";
-  if (s.includes("password_not_set"))
-    return "Tu usuario no tiene contraseña configurada. Contacta al administrador.";
+  if (s.includes("user_not_found")) return "No existe una cuenta con ese correo. Regístrate en la pestaña de registro.";
+  if (s.includes("invalid_credentials")) return "Credenciales inválidas. Revisa correo y contraseña.";
+  if (s.includes("password_not_set")) return "Tu usuario no tiene contraseña configurada. Contacta al administrador.";
   if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
   if (s.includes("not_local_user")) return "Usuario no permitido para login local.";
   if (s.includes("employee_otp_disabled")) return "OTP deshabilitado por configuración.";
@@ -70,8 +62,7 @@ function humanRegisterError(codeOrMsg) {
   if (s.includes("password_required")) return "Ingresa una contraseña.";
   if (s.includes("password_too_short")) return "La contraseña debe tener al menos 8 caracteres.";
   if (s.includes("email_invalid")) return "Correo inválido. Revisa el formato.";
-  if (s.includes("email_taken")) return "Ya existe una cuenta con ese correo. Inicia sesión.";
-  if (s.includes("user_exists")) return "Ya existe una cuenta con ese correo. Inicia sesión.";
+  if (s.includes("email_taken") || s.includes("user_exists")) return "Ya existe una cuenta con ese correo. Inicia sesión.";
   if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
 
   return codeOrMsg || "No se pudo completar el registro.";
@@ -82,20 +73,16 @@ export default function LoginLocal() {
   const loc = useLocation();
   const auth = useAuth();
 
-  // mode: "internal" | "visitor"
   const [mode, setMode] = useState("internal");
 
-  // interno
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
 
-  // visitante registro
   const [fullName, setFullName] = useState("");
   const [vEmail, setVEmail] = useState("");
   const [vPassword, setVPassword] = useState("");
   const [vPassword2, setVPassword2] = useState("");
 
-  // UI state
   const [showPassInternal, setShowPassInternal] = useState(false);
   const [showPassVisitor, setShowPassVisitor] = useState(false);
 
@@ -111,22 +98,33 @@ export default function LoginLocal() {
       localStorage.setItem("senaf_otp_email", String(email || ""));
     } catch {}
     try {
-      sessionStorage.setItem("senaf_otp_flow", String(flow || "login")); // login | register
+      sessionStorage.setItem("senaf_otp_flow", String(flow || "login"));
     } catch {}
     if (returnTo) {
       try {
         sessionStorage.setItem("auth:returnTo", returnTo);
       } catch {}
     }
-    // ✅ Guardamos flag por si tu pantalla /otp quiere mostrar mensaje
     try {
       sessionStorage.setItem("senaf_otp_mustChange", mustChangePassword ? "1" : "0");
     } catch {}
   }
 
+  // Axios limpio SOLO para OTP Public (sin interceptores)
+  const publicAuth = useMemo(() => {
+    const base = String(API_BASE || "http://localhost:4000/api").trim().replace(/\/$/, "");
+    return axios.create({
+      baseURL: base,
+      withCredentials: false,
+      timeout: 30000,
+      headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+    });
+  }, []);
+
   async function submitInternal(e) {
     e.preventDefault();
     if (submitting) return;
+
     setError("");
     setInfo("");
 
@@ -137,64 +135,48 @@ export default function LoginLocal() {
 
     try {
       setSubmitting(true);
+
+      // evita Bearer viejo
       clearToken();
 
-      // ✅ CORRECCIÓN:
-      // Tu server OTP router está montado aquí:
-      //   app.use("/api/public/v1/auth", iamOtpAuthRoutes);
-      // Y tu axios "api" usualmente ya apunta a ".../api"
-      // Entonces debes llamar:
-      //   POST /public/v1/auth/login-otp
-      const res = await api.post("/public/v1/auth/login-otp", {
+      // pega SIEMPRE a http://localhost:4000/api/public/v1/auth/login-otp
+      const res = await publicAuth.post("/public/v1/auth/login-otp", {
         email: emailNorm,
         password: String(password || ""),
       });
 
       const data = res?.data || {};
+      if (data?.ok === false) return setError(humanLoginError(data?.error || data?.message));
 
-      if (data?.ok === false) {
-        setError(humanLoginError(data?.error || data?.message));
-        return;
-      }
-
-      // ✅ Caso A: NO requiere OTP => token directo
       if (data?.otpRequired === false && data?.token) {
         const tkn = String(data.token || "").trim();
         setToken(tkn);
         await auth.login({ email: emailNorm }, tkn);
 
-        // Si el server dice mustChangePassword, entonces lo llevas a forzar reset
         if (data?.mustChangePassword) {
-          navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
-            replace: true,
-          });
+          navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, { replace: true });
           return;
         }
 
-        if (returnTo) {
-          navigate(returnTo, { replace: true });
-          return;
-        }
-
-        navigate("/start", { replace: true });
+        navigate(returnTo || "/start", { replace: true });
         return;
       }
 
-      // ✅ Caso B: requiere OTP => ir a /otp
-      stashOtpContext({
-        email: emailNorm,
-        flow: "login",
-        returnTo,
-        mustChangePassword: !!data?.mustChangePassword,
-      });
-      navigate("/otp", { replace: true });
-    } catch (err) {
-      const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
-        err?.message ||
-        "Error de conexión";
+      if (data?.otpRequired) {
+        stashOtpContext({
+          email: emailNorm,
+          flow: "login",
+          returnTo,
+          mustChangePassword: !!data?.mustChangePassword,
+        });
+        navigate("/otp", { replace: true });
+        return;
+      }
 
+      setError("Respuesta inesperada del servidor (sin token/otpRequired).");
+    } catch (err) {
+      const d = err?.response?.data;
+      const msg = (d && typeof d === "object" && (d.error || d.message)) || err?.message || "Error de conexión";
       setError(humanLoginError(msg));
 
       const st = err?.response?.status || err?.status;
@@ -207,6 +189,7 @@ export default function LoginLocal() {
   async function submitVisitor(e) {
     e.preventDefault();
     if (submitting) return;
+
     setError("");
     setInfo("");
 
@@ -217,7 +200,6 @@ export default function LoginLocal() {
     if (String(vPassword).length < 8) return setError("La contraseña debe tener al menos 8 caracteres.");
     if (String(vPassword) !== String(vPassword2)) return setError("Las contraseñas no coinciden.");
 
-    // Mantener returnTo si venía desde una ruta protegida
     const returnTo = readReturnTo(loc.search);
     stashReturnTo(returnTo);
 
@@ -225,9 +207,6 @@ export default function LoginLocal() {
       setSubmitting(true);
       clearToken();
 
-      // ✅ Registro visitante (endpoint nuevo)
-      // Esperado: POST /api/iam/v1/auth/register-visitor
-      // body: { name, email, password }
       const res = await api.post("/iam/v1/auth/register-visitor", {
         name,
         email: visitorEmailNorm,
@@ -235,13 +214,8 @@ export default function LoginLocal() {
       });
 
       const data = res?.data || {};
+      if (data?.ok === false) return setError(humanRegisterError(data?.error || data?.message));
 
-      if (data?.ok === false) {
-        setError(humanRegisterError(data?.error || data?.message));
-        return;
-      }
-
-      // Puede devolver token directo (si backend decide loguear) o pedir OTP
       if (data?.token) {
         const tkn = String(data.token || "").trim();
         setToken(tkn);
@@ -253,17 +227,11 @@ export default function LoginLocal() {
       }
 
       if (data?.otpRequired) {
-        stashOtpContext({
-          email: visitorEmailNorm,
-          flow: "register",
-          returnTo,
-          mustChangePassword: false,
-        });
+        stashOtpContext({ email: visitorEmailNorm, flow: "register", returnTo, mustChangePassword: false });
         navigate("/otp", { replace: true });
         return;
       }
 
-      // Fallback UX si backend respondió ok pero no devolvió token/otpRequired
       setInfo("Registro completado. Ahora puedes iniciar sesión en la pestaña de acceso.");
       setMode("internal");
       setIdentifier(visitorEmailNorm);
@@ -271,11 +239,8 @@ export default function LoginLocal() {
       setVPassword("");
       setVPassword2("");
     } catch (err) {
-      const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
-        err?.message ||
-        "Error registrando visitante";
+      const d = err?.response?.data;
+      const msg = (d && typeof d === "object" && (d.error || d.message)) || err?.message || "Error registrando visitante";
       setError(humanRegisterError(msg));
     } finally {
       setSubmitting(false);
@@ -293,9 +258,7 @@ export default function LoginLocal() {
               setError("");
               setInfo("");
             }}
-            className={`flex-1 p-3 text-sm font-semibold ${
-              mode === "internal" ? "bg-white" : "bg-slate-50 text-slate-600"
-            }`}
+            className={`flex-1 p-3 text-sm font-semibold ${mode === "internal" ? "bg-white" : "bg-slate-50 text-slate-600"}`}
           >
             Si Tienes cuenta creada Ingresar a SENAF
           </button>
@@ -307,18 +270,14 @@ export default function LoginLocal() {
               setError("");
               setInfo("");
             }}
-            className={`flex-1 p-3 text-sm font-semibold ${
-              mode === "visitor" ? "bg-white" : "bg-slate-50 text-slate-600"
-            }`}
+            className={`flex-1 p-3 text-sm font-semibold ${mode === "visitor" ? "bg-white" : "bg-slate-50 text-slate-600"}`}
           >
             Si aun no Tienes cuenta Registrate
           </button>
         </div>
 
         <div className="p-6">
-          <h2 className="text-lg mb-4 font-bold">
-            {mode === "internal" ? "Acceso" : "Registro de visita"}
-          </h2>
+          <h2 className="text-lg mb-4 font-bold">{mode === "internal" ? "Acceso" : "Registro de visita"}</h2>
 
           {mode === "internal" ? (
             <form onSubmit={submitInternal}>
@@ -373,7 +332,7 @@ export default function LoginLocal() {
               </button>
 
               <div className="mt-3 text-xs text-gray-500">
-                API: <span className="font-mono">{api?.defaults?.baseURL || "—"}</span>
+                API: <span className="font-mono">{API_BASE || "—"}</span>
                 {getToken() ? <span className="ml-2 text-emerald-700">(token)</span> : null}
               </div>
             </form>
@@ -455,7 +414,7 @@ export default function LoginLocal() {
               </button>
 
               <div className="mt-3 text-xs text-gray-500">
-                API: <span className="font-mono">{api?.defaults?.baseURL || "—"}</span>
+                API: <span className="font-mono">{API_BASE || "—"}</span>
               </div>
 
               <div className="mt-2 text-[11px] text-gray-400">

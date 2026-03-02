@@ -20,20 +20,15 @@ function envNum(name, def) {
 }
 
 /**
- * Mailer SMTP robusto
- * Vars esperadas:
+ * Mailer SMTP robusto (centralizado)
+ * Vars:
  * - MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS
  * - MAIL_FROM (opcional; si no, usa MAIL_USER)
  * - MAIL_SECURE (opcional: 1/0; si no, infiere por puerto 465)
  * - MAIL_TLS_REJECT_UNAUTHORIZED (opcional, default true)
- * - MAIL_DEV_FALLBACK (opcional: en dev permite "simular" si falta config)
- *
- * Recomendación Gmail:
- * - Puerto 465 => MAIL_SECURE=1
- * - Puerto 587 => MAIL_SECURE=0 (STARTTLS) y opcional MAIL_REQUIRE_TLS=1
- *
- * Debug:
- * - MAIL_DEBUG=1 para logs de nodemailer (útil para ver handshake/fallo auth)
+ * - MAIL_REQUIRE_TLS (opcional; default true si puerto 587)
+ * - MAIL_DEV_FALLBACK (opcional; default true en dev, false en prod)
+ * - MAIL_DEBUG (opcional; logs nodemailer)
  */
 export function makeMailer() {
   const host = envStr("MAIL_HOST");
@@ -44,20 +39,17 @@ export function makeMailer() {
 
   const user = envStr("MAIL_USER");
   const pass = envStr("MAIL_PASS");
-
   const from = envStr("MAIL_FROM") || user;
 
-  // TLS
   const rejectUnauthorized = envBool("MAIL_TLS_REJECT_UNAUTHORIZED", true);
 
-  // Para 587 muchas veces conviene forzar STARTTLS
+  // En 587 muchas veces conviene forzar STARTTLS
   const requireTLS =
     process.env.MAIL_REQUIRE_TLS === undefined ? port === 587 : envBool("MAIL_REQUIRE_TLS", false);
 
-  // En dev, si falta SMTP, permite simular envío. En prod, NO.
+  // En dev simula si falta config; en prod NO.
   const DEV_FALLBACK = envBool("MAIL_DEV_FALLBACK", !IS_PROD);
 
-  // Debug opcional
   const DEBUG = envBool("MAIL_DEBUG", false);
 
   // Si falta config SMTP
@@ -77,7 +69,7 @@ export function makeMailer() {
           ok: false,
           error: "mail_not_configured",
           message:
-            "SMTP no configurado. Define MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS y MAIL_FROM (opcional).",
+            "SMTP no configurado. Define MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS (y opcional MAIL_FROM).",
         };
       },
     };
@@ -89,21 +81,17 @@ export function makeMailer() {
     secure,
     auth: { user, pass },
 
-    // TLS
     requireTLS,
     tls: { rejectUnauthorized },
 
-    // timeouts para evitar cuelgues
     connectionTimeout: envNum("MAIL_CONNECTION_TIMEOUT_MS", 15000),
     greetingTimeout: envNum("MAIL_GREETING_TIMEOUT_MS", 15000),
     socketTimeout: envNum("MAIL_SOCKET_TIMEOUT_MS", 20000),
 
-    // pool
     pool: envBool("MAIL_POOL", true),
     maxConnections: envNum("MAIL_MAX_CONNECTIONS", 3),
     maxMessages: envNum("MAIL_MAX_MESSAGES", 100),
 
-    // debug/log
     logger: DEBUG,
     debug: DEBUG,
   });
@@ -112,13 +100,11 @@ export function makeMailer() {
 
   async function verifyOnce() {
     if (verified) return;
-
     try {
       await transport.verify();
       verified = true;
       console.log("[mailer] SMTP verify OK:", { host, port, secure, requireTLS, user });
     } catch (e) {
-      // Importante: deja evidencia clara
       console.error("[mailer] SMTP verify FAILED:", e?.message || e, {
         host,
         port,
@@ -126,7 +112,7 @@ export function makeMailer() {
         requireTLS,
         user,
       });
-      // No matamos el proceso: sendMail también dará error con detalle.
+      // No matamos el proceso; sendMail también fallará con detalle.
     }
   }
 
@@ -135,22 +121,13 @@ export function makeMailer() {
       await verifyOnce();
 
       try {
-        const info = await transport.sendMail({
-          from,
-          to,
-          subject,
-          text,
-          html,
-        });
+        const info = await transport.sendMail({ from, to, subject, text, html });
 
         const accepted = Array.isArray(info.accepted) ? info.accepted : [];
         const rejected = Array.isArray(info.rejected) ? info.rejected : [];
 
         if (rejected.length > 0 && accepted.length === 0) {
-          console.error("[mailer] rejected by provider:", {
-            rejected,
-            response: info.response,
-          });
+          console.error("[mailer] rejected by provider:", { rejected, response: info.response });
           return {
             ok: false,
             error: "mail_rejected",

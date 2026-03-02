@@ -4,9 +4,9 @@ import { API, getToken, setToken, clearToken } from "../../lib/api.js";
 const API_ROOT = String(API || "").replace(/\/$/, "");
 const V1 = `${API_ROOT}/iam/v1`;
 
-// ✅ NEW: base para endpoints públicos (OTP)
-// Tu server monta: /api/public/v1/auth  y también /public/v1/auth
-// Como API_ROOT normalmente termina en "/api", construimos PUBLIC_AUTH_BASE desde ahí.
+// ✅ Base para endpoints públicos (OTP)
+// Server monta: /api/public/v1/auth  y también /public/v1/auth
+// Si API_ROOT = http://localhost:4000/api  => PUBLIC_AUTH_BASE = http://localhost:4000/api/public/v1/auth
 const PUBLIC_AUTH_BASE = `${API_ROOT.replace(/\/api\/?$/, "")}/api/public/v1/auth`;
 
 /* =========================
@@ -44,7 +44,7 @@ function buildUrl(path) {
   return `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-// ✅ NEW: construir URL para rutas públicas (OTP)
+// ✅ construir URL para rutas públicas (OTP)
 function buildPublicAuthUrl(path) {
   return `${PUBLIC_AUTH_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
@@ -70,7 +70,6 @@ function makeError(r, payload, fallbackText = "") {
  * - si body es FormData/Blob/ArrayBuffer: no setear Content-Type
  * - timeoutMs: abort fetch si excede
  *
- * ✅ NEW:
  * - isPublicAuth=true => llama a /api/public/v1/auth (OTP)
  */
 async function req(
@@ -82,20 +81,20 @@ async function req(
     token,
     credentials = "omit",
     timeoutMs = 30000,
-    isPublicAuth = false, // ✅ NEW
+    isPublicAuth = false,
   } = {}
 ) {
-  const urlBase = isPublicAuth ? buildPublicAuthUrl(path) : buildUrl(path); // ✅ NEW
+  const urlBase = isPublicAuth ? buildPublicAuthUrl(path) : buildUrl(path);
 
   const headers = {};
   headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
   headers["Pragma"] = "no-cache";
 
-  // ✅ Token: param > storage
+  // Token: param > storage
   const bearer = token || getToken() || null;
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
-  // ✅ Content-Type solo si es JSON y body es “json serializable”
+  // Content-Type solo si es JSON y body es serializable
   const sendingForm = isFormData(body);
   const sendingBinary = isBlob(body) || isArrayBuffer(body);
   const shouldJson = json && !sendingForm && !sendingBinary && body !== undefined && body !== null;
@@ -195,14 +194,12 @@ function buildQueryString(params = {}) {
   return s ? `?${s}` : "";
 }
 
-/** Normaliza enteros seguros (para limit/skip) */
 function toInt(v, def = 0) {
   const n = Number(v);
   if (!Number.isFinite(n)) return def;
   return Math.trunc(n);
 }
 
-/** Normaliza booleano a 0/1 */
 function to01(v, def = 0) {
   if (v === undefined || v === null) return def;
   if (typeof v === "boolean") return v ? 1 : 0;
@@ -221,7 +218,7 @@ export const iamApi = {
     return req("/me", { token, method: "GET", credentials: "omit" });
   },
 
-  // Login local: guarda token automáticamente
+  // Login local clásico IAM: /api/iam/v1/auth/login
   async loginLocal({ email, password }) {
     const data = await req("/auth/login", {
       method: "POST",
@@ -236,25 +233,34 @@ export const iamApi = {
     return data;
   },
 
-  // ✅ NEW: OTP request (primer login para TODOS)
-  // Server: POST /api/public/v1/auth/otp/request
-  requestOtp(email) {
-    return req("/otp/request", {
+  /* =========================
+     ✅ OTP PUBLIC AUTH (REAL, según tu backend)
+     Server:
+       POST /api/public/v1/auth/login-otp
+       POST /api/public/v1/auth/verify-otp   (body: { email, otp })
+       POST /api/public/v1/auth/resend-otp
+  ========================= */
+
+  // 1) Login con password -> si requiere OTP, envía correo y responde otpRequired:true
+  loginOtp(email, password) {
+    return req("/login-otp", {
       method: "POST",
-      body: { email: String(email || "").trim().toLowerCase() },
+      body: {
+        email: String(email || "").trim().toLowerCase(),
+        password: String(password || ""),
+      },
       credentials: "omit",
       isPublicAuth: true,
     });
   },
 
-  // ✅ NEW: OTP verify (devuelve token y lo guardamos)
-  // Server: POST /api/public/v1/auth/otp/verify
-  async verifyOtp(email, code) {
-    const data = await req("/otp/verify", {
+  // 2) Verificar OTP -> devuelve token (y lo guardamos)
+  async verifyOtp(email, otp) {
+    const data = await req("/verify-otp", {
       method: "POST",
       body: {
         email: String(email || "").trim().toLowerCase(),
-        code: String(code || "").trim(),
+        otp: String(otp || "").trim(), // ✅ backend espera "otp"
       },
       credentials: "omit",
       isPublicAuth: true,
@@ -264,9 +270,47 @@ export const iamApi = {
     return data;
   },
 
-  // ✅ NEW: set password para usuarios internos (no-visita)
-  // Endpoint típico: POST /api/iam/v1/auth/set-password
-  // (Si tu ruta se llama distinto, dime el path real y lo ajusto)
+  // 3) Reenviar OTP
+  resendOtp(email) {
+    return req("/resend-otp", {
+      method: "POST",
+      body: { email: String(email || "").trim().toLowerCase() },
+      credentials: "omit",
+      isPublicAuth: true,
+    });
+  },
+
+  // (Opcional) Reset password OTP flow (si tu UI lo usa)
+  async resetPasswordOtp({ email, resetToken, newPassword }) {
+    const data = await req("/reset-password-otp", {
+      method: "POST",
+      body: {
+        email: String(email || "").trim().toLowerCase(),
+        resetToken: String(resetToken || "").trim(),
+        newPassword: String(newPassword || ""),
+      },
+      credentials: "omit",
+      isPublicAuth: true,
+    });
+
+    if (data?.token) setToken(data.token);
+    return data;
+  },
+
+  // (Opcional) Change password OTP flow (si tu UI lo usa)
+  changePasswordOtp({ email, newPassword }) {
+    return req("/change-password", {
+      method: "POST",
+      body: {
+        email: String(email || "").trim().toLowerCase(),
+        newPassword: String(newPassword || ""),
+      },
+      credentials: "omit",
+      isPublicAuth: true,
+    });
+  },
+
+  // set password (IAM private) - si existe en tu backend
   setPassword(newPassword, token) {
     return req("/auth/set-password", {
       method: "POST",
@@ -399,25 +443,13 @@ export const iamApi = {
   // =========================
   // Usuarios
   // =========================
-
-  /**
-   * listUsers()
-   * ✅ Backward compatible:
-   *  - listUsers("texto", token) -> usa q=texto, default onlyActive=1, limit=5, skip=0
-   * ✅ Nuevo:
-   *  - listUsers({ q, onlyActive, limit, skip, createdFrom, createdTo }, token)
-   */
   listUsers(qOrParams = "", token) {
-    // defaults seguros (para evitar "me trae todo")
     const DEFAULT_ONLY_ACTIVE = 1;
     const DEFAULT_LIMIT = 5;
     const DEFAULT_SKIP = 0;
 
-    // modo viejo: string => q
     if (typeof qOrParams === "string") {
       const q = String(qOrParams || "").trim();
-
-      // por compat: si buscas algo, por default amplía el limit a 2000
       const limit = q ? 2000 : DEFAULT_LIMIT;
 
       const params = {
@@ -430,7 +462,6 @@ export const iamApi = {
       return req(`/users${buildQueryString(params)}`, { token });
     }
 
-    // modo nuevo: params object (normalizado)
     const p = qOrParams && typeof qOrParams === "object" ? qOrParams : {};
 
     const params = {
@@ -448,10 +479,7 @@ export const iamApi = {
   listGuards(q = "", active = true, token) {
     const qs = new URLSearchParams();
     if (q) qs.set("q", String(q).trim());
-
-    // ✅ si active=true manda active=1, si active=false no manda nada
     if (active) qs.set("active", "1");
-
     const s = qs.toString();
     return req(`/users/guards${s ? `?${s}` : ""}`, { token });
   },

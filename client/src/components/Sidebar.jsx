@@ -1,5 +1,5 @@
 // client/src/components/Sidebar.jsx
-import React from "react";
+import React, { useMemo } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut } from "lucide-react";
 
@@ -9,8 +9,8 @@ import { useAuth } from "../pages/auth/AuthProvider.jsx";
 // ✅ Token canónico (centralizado)
 import { clearToken } from "../lib/api.js";
 
-// ✅ Config central de navegación
-import { NAV_SECTIONS } from "../config/navConfig.js";
+// ✅ Config central de navegación + filtro por sesión
+import { getNavSectionsForMe } from "../config/navConfig.js";
 
 const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
@@ -44,7 +44,9 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={[base, active ? activeCls : inactive, emphasizeCls].filter(Boolean).join(" ")}
+      className={[base, active ? activeCls : inactive, emphasizeCls]
+        .filter(Boolean)
+        .join(" ")}
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
@@ -53,24 +55,36 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
         ) : (
           <span className="w-6 h-6 shrink-0" />
         )}
-        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">{label}</span>
+        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
+          {label}
+        </span>
       </div>
     </NavLink>
   );
 }
 
+function isVisitorUser(user) {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  const isRoleVisitor = roles.some((r) => {
+    const x = String(r || "").toLowerCase();
+    return x === "visita" || x === "visitor";
+  });
+
+  return !!user?.visitor || !!user?.isVisitor || isRoleVisitor;
+}
+
 export default function Sidebar({ onNavigate, variant }) {
   const nav = useNavigate();
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, isLoading, user, logout } = useAuth();
 
   const handleLogoutClick = async () => {
     onNavigate?.();
 
-    // 1) logout del provider (tu AuthProvider lo soporta)
+    // 1) logout del provider
     try {
       await logout?.();
     } catch {
-      // no bloquea
+      // ignore
     }
 
     // 2) limpia token canónico + legacy
@@ -82,35 +96,60 @@ export default function Sidebar({ onNavigate, variant }) {
       // ignore
     }
 
-    // 3) manda a login (parametrizado)
+    // 3) manda a login
     nav(ROUTE_LOGIN, { replace: true });
   };
 
-  // Home + secciones centralizadas
-  const homeItem = {
-    key: "home",
-    label: "Director del panel",
-    path: "/",
-    icon: Home,
-    emphasizeDark: true,
-  };
+  const isVisitor = isVisitorUser(user);
 
-  const sections = Array.isArray(NAV_SECTIONS) ? NAV_SECTIONS : [];
-  const filteredSections =
-    NAV_KEYS_ALLOWLIST.length > 0
-      ? sections.filter((x) => NAV_KEYS_ALLOWLIST.includes(String(x.key || "").trim()))
-      : sections;
+  // ✅ Secciones filtradas por sesión (deny-by-default en navConfig)
+  const sessionSections = useMemo(() => {
+    const secs = getNavSectionsForMe(user);
 
-  const items = [
-    homeItem,
-    ...filteredSections.map((s) => ({
-      key: s.key,
-      label: s.label,
-      path: s.path,
-      icon: s.icon, // debe ser componente (ej: DoorOpen), no string
-      emphasizeDark: false,
-    })),
-  ];
+    // allowlist opcional por env (se aplica al final)
+    const filtered =
+      NAV_KEYS_ALLOWLIST.length > 0
+        ? secs.filter((x) => NAV_KEYS_ALLOWLIST.includes(String(x.key || "").trim()))
+        : secs;
+
+    return Array.isArray(filtered) ? filtered : [];
+  }, [user]);
+
+  // Home solo para NO visitantes
+  const homeItem = useMemo(() => {
+    if (isVisitor) return null;
+    return {
+      key: "home",
+      label: "Director del panel",
+      path: "/",
+      icon: Home,
+      emphasizeDark: true,
+    };
+  }, [isVisitor]);
+
+  const items = useMemo(() => {
+    const base = [];
+    if (homeItem) base.push(homeItem);
+
+    base.push(
+      ...sessionSections.map((s) => ({
+        key: s.key,
+        label: s.label,
+        path: s.path,
+        icon: s.icon,
+        emphasizeDark: false,
+      }))
+    );
+
+    return base;
+  }, [homeItem, sessionSections]);
+
+  /**
+   * ✅ Anti-flash:
+   * - Mientras está cargando / rehidratando => NO renderizar menú completo.
+   * - Si está autenticado pero aún no hay user => no muestres secciones (items quedará [] o mínimo).
+   */
+  const showNav = !isLoading && (!isAuthenticated || (user && typeof user === "object"));
 
   return (
     <div
@@ -123,18 +162,25 @@ export default function Sidebar({ onNavigate, variant }) {
     >
       <div className="text-2xl font-extrabold mb-6 tracking-tight">SENAF</div>
 
-      <nav className="flex flex-col gap-1 text-[15px]">
-        {items.map(({ key, path, label, icon: Icon, emphasizeDark }) => (
-          <NavItem
-            key={key || path}
-            to={path}
-            label={label}
-            Icon={Icon}
-            onClick={onNavigate}
-            emphasizeDark={emphasizeDark}
-          />
-        ))}
-      </nav>
+      {showNav ? (
+        <nav className="flex flex-col gap-1 text-[15px]">
+          {items.map(({ key, path, label, icon: Icon, emphasizeDark }) => (
+            <NavItem
+              key={key || path}
+              to={path}
+              label={label}
+              Icon={Icon}
+              onClick={onNavigate}
+              emphasizeDark={emphasizeDark}
+            />
+          ))}
+        </nav>
+      ) : (
+        // loader minimal para evitar “mostrar todo” durante refresh
+        <div className="text-sm text-neutral-600 dark:text-neutral-300 px-2">
+          Cargando sesión…
+        </div>
+      )}
 
       <div className="mt-auto pt-6">
         <div className="border-t border-white/10 mb-3" />

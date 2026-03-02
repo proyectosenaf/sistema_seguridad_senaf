@@ -19,13 +19,34 @@ export const NAV_SECTIONS = [
   { key: "iam", label: "Usuarios y Permisos", path: "/iam/admin", icon: ShieldCheck },
 ];
 
+function hasRole(me, role) {
+  const roles = Array.isArray(me?.roles) ? me.roles : [];
+  const r = String(role || "").toLowerCase();
+  return roles.some((x) => String(x || "").toLowerCase() === r);
+}
+
 /**
- * Filtra secciones según sesión (sin hardcode de permisos, usa routeRules/can del backend)
+ * getNavSectionsForMe(me)
+ *
+ * ✅ Objetivo:
+ * - Visitor => SOLO "visitas"
+ * - Si hay "can" (ACL del backend) => filtra por can
+ * - Si no hay info aún (me null) => DENY BY DEFAULT ([])
+ *
+ * Esto evita que al refrescar se vea todo el menú "por defecto".
  */
 export function getNavSectionsForMe(me) {
-  const isVisitor = !!me?.visitor || !!me?.isVisitor;
+  // ✅ deny-by-default: si todavía no hay sesión/me, NO muestres el menú completo
+  if (!me || typeof me !== "object") return [];
 
-  // visitante: solo visitas (y si quieres, agenda)
+  // Detecta visitante por flags o por rol
+  const isVisitor =
+    !!me?.visitor ||
+    !!me?.isVisitor ||
+    hasRole(me, "visita") ||
+    hasRole(me, "visitor");
+
+  // visitante: solo visitas
   if (isVisitor) {
     return NAV_SECTIONS.filter((s) => s.key === "visitas");
   }
@@ -33,7 +54,7 @@ export function getNavSectionsForMe(me) {
   // si backend manda "can", filtra por eso (parametrizado por routeKey)
   const can = me?.can || null;
   if (can && typeof can === "object") {
-    // mapa simple key -> routeKey (si quieres, muévelo a APP_CONFIG también)
+    // mapa simple key -> routeKey
     const map = {
       accesos: "accesos",
       rondas: "rondasqr.admin",
@@ -46,10 +67,11 @@ export function getNavSectionsForMe(me) {
 
     return NAV_SECTIONS.filter((s) => {
       const rk = map[s.key];
-      if (!rk) return true;
-      return can[rk] !== false; // si no existe, no lo mates
+      if (!rk) return false; // deny-by-default si no está mapeado
+      return can[rk] === true; // ✅ solo true habilita
     });
   }
 
+  // Si no hay "can", cae a todo (solo para usuarios NO visitantes)
   return NAV_SECTIONS;
 }

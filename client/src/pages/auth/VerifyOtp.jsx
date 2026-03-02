@@ -1,7 +1,8 @@
 // client/src/pages/auth/VerifyOtp.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import api, { setToken } from "../../lib/api.js";
+import axios from "axios";
+import { setToken } from "../../lib/api.js";
 import { useAuth } from "./AuthProvider.jsx";
 
 function safeInternalPath(p) {
@@ -38,13 +39,14 @@ function consumeReturnTo(locationSearch) {
 
 function getOtpEmail() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "")
+      .trim()
+      .toLowerCase();
   } catch {
     return "";
   }
 }
 
-// Limpieza "suave": no borra email (por UX).
 function clearOtpFlowOnly() {
   try {
     sessionStorage.removeItem("senaf_otp_flow");
@@ -102,19 +104,43 @@ export default function VerifyOtp() {
   const [info, setInfo] = useState("");
   const [error, setError] = useState("");
 
-  const emailNorm = useMemo(() => String(email || "").trim().toLowerCase(), [email]);
+  const emailNorm = useMemo(
+    () => String(email || "").trim().toLowerCase(),
+    [email]
+  );
+
+  // ✅ BaseURL estable (evita pegarle a endpoints raros y respuestas basura)
+  // Ajusta el nombre si tu env es diferente: VITE_API_URL, VITE_API, etc.
+  const publicAuth = useMemo(() => {
+    const base = String(import.meta.env.VITE_API_URL || "http://localhost:4000/api").trim();
+    return axios.create({
+      baseURL: base,
+      headers: {
+        "Cache-Control": "no-store",
+        Pragma: "no-cache",
+      },
+      withCredentials: false,
+    });
+  }, []);
 
   useEffect(() => {
     const e = getOtpEmail();
     if (e) setEmail(e);
   }, []);
 
+  // Debug útil (déjalo unos minutos y luego lo quitas)
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[VerifyOtp] publicAuth baseURL =", publicAuth.defaults.baseURL);
+  }, [publicAuth]);
+
   async function handleVerify(e) {
     e.preventDefault();
     setError("");
     setInfo("");
 
-    const otpNorm = String(otp || "").trim();
+    // ✅ OTP solo dígitos, sin espacios/guiones
+    const otpNorm = String(otp || "").replace(/\D/g, "");
 
     if (!emailNorm) return setError("Falta el correo.");
     if (!otpNorm || otpNorm.length < 4) return setError("Ingresa el código.");
@@ -122,11 +148,11 @@ export default function VerifyOtp() {
     try {
       setSubmitting(true);
 
-      // ✅ OTP router: /api/public/v1/auth  y tu axios baseURL suele ser ".../api"
-      // => aquí debe ser "/public/v1/auth/verify-otp"
-      const res = await api.post("/public/v1/auth/verify-otp", {
+      // ✅ Compat: manda otp y code (por si el backend espera 'code')
+      const res = await publicAuth.post("/public/v1/auth/verify-otp", {
         email: emailNorm,
         otp: otpNorm,
+        code: otpNorm,
       });
 
       const data = res?.data || {};
@@ -169,28 +195,29 @@ export default function VerifyOtp() {
       setToken(token);
       await auth.login({ email: emailNorm }, token);
 
-      // ✅ NUEVO: redirección controlada por backend
       const nextPath = typeof data?.next === "string" ? data.next : null;
       if (safeInternalPath(nextPath)) {
         navigate(nextPath, { replace: true });
         return;
       }
 
-      // Si backend no mandó next, usa returnTo (si existía)
       const returnTo = consumeReturnTo(loc.search);
       if (returnTo) {
         navigate(returnTo, { replace: true });
         return;
       }
 
-      // Fallback final
       navigate("/start", { replace: true });
     } catch (err) {
+      const d = err?.response?.data;
+
+      // ✅ Evita mostrar basura si el servidor devuelve algo raro
       const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
+        (d && typeof d === "object" && (d.error || d.message)) ||
+        (typeof d === "string" ? d : null) ||
         err?.message ||
         "Error validando OTP";
+
       setError(humanOtpError(msg));
     } finally {
       setSubmitting(false);
@@ -209,7 +236,10 @@ export default function VerifyOtp() {
     try {
       setResending(true);
 
-      const res = await api.post("/public/v1/auth/resend-otp", { email: emailNorm });
+      const res = await publicAuth.post("/public/v1/auth/resend-otp", {
+        email: emailNorm,
+      });
+
       const data = res?.data || {};
 
       if (data?.ok === false) {
@@ -219,11 +249,14 @@ export default function VerifyOtp() {
 
       setInfo("Listo. Te reenviamos un nuevo código. Revisa bandeja y spam.");
     } catch (err) {
+      const d = err?.response?.data;
+
       const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
+        (d && typeof d === "object" && (d.error || d.message)) ||
+        (typeof d === "string" ? d : null) ||
         err?.message ||
         "Error reenviando OTP";
+
       setError(humanOtpError(msg));
     } finally {
       setResending(false);
