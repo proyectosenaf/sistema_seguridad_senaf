@@ -1,3 +1,4 @@
+// server/src/server.js  ✅ SIN DUPLICADOS (OTP solo PUBLIC) + registerIAMModule arreglado
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -20,11 +21,8 @@ import { makeAuthMw } from "../modules/iam/utils/auth.util.js";
 // IAM context builder
 import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 
-// ✅ Auth OTP (visitantes) desde IAM (sin módulo public)
+// ✅ Auth OTP PÚBLICO (visitantes / empleados) desde IAM
 import iamOtpAuthRoutes from "../modules/iam/routes/auth.otp.routes.js";
-
-// ✅ NUEVO: Registro de visitantes (self-register)
-import registerVisitorRoutes from "../modules/iam/routes/auth.register.visitor.routes.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -174,19 +172,16 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── ✅ AUTH OTP PÚBLICO ✅ ───────────────────── */
 /**
- * ✅ IMPORTANTE:
- * Montamos OTP en:
- * - /api/public/v1/auth  (tu ruta “public”)
- * - /api/iam/v1/auth     (compatibilidad: si el frontend le pega aquí, NO debe dar 401)
+ * ✅ SIN DUPLICADOS:
+ * OTP PÚBLICO SOLO vive aquí:
+ * - /api/public/v1/auth
+ * - /public/v1/auth
  *
- * Lo montamos ANTES del optionalAuth para que nunca lo bloquee requireAuth.
+ * IMPORTANTE: NO lo montes también en /api/iam/v1/auth
+ * porque ESO YA lo expone el IAM module en /api/iam/v1/auth/*.
  */
 app.use("/api/public/v1/auth", iamOtpAuthRoutes);
 app.use("/public/v1/auth", iamOtpAuthRoutes);
-
-// ✅ FIX: compatibilidad (tu frontend estaba pegando a /api/iam/v1/auth/verify-otp)
-app.use("/api/iam/v1/auth", iamOtpAuthRoutes);
-app.use("/iam/v1/auth", iamOtpAuthRoutes);
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
 
@@ -293,32 +288,20 @@ app.use(async (req, _res, next) => {
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
 /**
- * IMPORTANTE:
- * Esto solo funciona si registerIAMModule monta /users.
- * Si no, tendrás 404 en /api/iam/v1/users.
+ * ✅ FIX: tu parámetro era enableDoAlias (NO existe).
+ * El nombre correcto es enableLegacyRedirects.
  */
-await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
-
-/* ───────────────────── ✅ REGISTRO VISITANTES ✅ ───────────────────── */
-/**
- * ✅ NUEVO:
- * POST /api/iam/v1/auth/register-visitor
- * - crea usuario con roles:["visita"] y passwordHash
- * - NO requiere token
- *
- * Lo montamos DESPUÉS del optionalAuth (optionalAuth no bloquea si no hay bearer),
- * y DESPUÉS de registerIAMModule para no interferir con cómo montas otros routers internos.
- */
-app.use("/api/iam/v1/auth", registerVisitorRoutes);
-// alias opcional sin /api (por si llamas desde otros lados)
-app.use("/iam/v1/auth", registerVisitorRoutes);
+await registerIAMModule({
+  app,
+  basePath: "/api/iam/v1",
+  enableLegacyRedirects: true,
+});
 
 /* ───────────────────── ✅ IAM CATALOGS REGISTER ✅ ───────────────────── */
 /**
  * ✅ Monta los catálogos (estado civil, países, profesiones)
  */
 app.use("/api/iam/v1/catalogs", catalogsRoutes);
-// ✅ FIX: alias correcto sin /api (antes lo tenías duplicado igual)
 app.use("/iam/v1/catalogs", catalogsRoutes);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
@@ -471,4 +454,4 @@ function shutdown(sig) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));   
+process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));

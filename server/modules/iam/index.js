@@ -1,3 +1,4 @@
+// modules/iam/index.js  (registerIAMModule)  ✅ SIN DUPLICADOS + REGISTRO VISITANTES DENTRO DEL MÓDULO
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -7,6 +8,7 @@ import { devOr } from "./utils/rbac.util.js";
 
 import authRoutes from "./routes/auth.routes.js";
 import authOtpRoutes from "./routes/auth.otp.routes.js";
+import registerVisitorRoutes from "./routes/auth.register.visitor.routes.js";
 
 import meRoutes from "./routes/me.routes.js";
 import usersRoutes from "./routes/users.routes.js";
@@ -67,8 +69,10 @@ export async function registerIAMModule({
   );
 
   /* ───────────────────────── AUTH (LOCAL) ───────────────────────── */
+  // ✅ Todo lo de auth vive aquí (SIN necesidad de montarlo en server.js bajo /api/iam/v1/auth)
   router.use("/auth", authRoutes);
   router.use("/auth", authOtpRoutes);
+  router.use("/auth", registerVisitorRoutes);
 
   /* ───────────────────────── ME (auth opcional) ───────────────────────── */
   router.use("/me", authOptional, meRoutes);

@@ -1,9 +1,11 @@
 // server/src/middleware/auth.js
 import jwt from "jsonwebtoken";
-import { env } from "../config/env.js"; // opcional; si no lo necesitas, elimínalo
+import { env } from "../config/env.js"; // si no lo usas en tu proyecto, elimina este import
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
+
+/* ===================== Helpers ===================== */
 
 function getBearer(req) {
   const h = String(req?.headers?.authorization || "");
@@ -12,8 +14,21 @@ function getBearer(req) {
   return token || null;
 }
 
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET || env?.jwtSecret || "";
+  if (!secret) {
+    // En prod NO permitimos funcionar sin secret
+    if (IS_PROD) {
+      throw new Error("JWT_SECRET is required in production");
+    }
+    // En dev permitimos fallback explícito (pero mejor define JWT_SECRET)
+    return "dev_secret";
+  }
+  return secret;
+}
+
 function verifyLocalJwt(token) {
-  const secret = process.env.JWT_SECRET || env?.jwtSecret || "dev_secret";
+  const secret = getJwtSecret();
   return jwt.verify(token, secret, { algorithms: ["HS256"] });
 }
 
@@ -43,7 +58,10 @@ export const requireAuth = DISABLE_AUTH
         };
 
         return next();
-      } catch {
+      } catch (err) {
+        if (!IS_PROD) {
+          console.error("[auth] JWT verify failed:", err?.message || err);
+        }
         return res.status(401).json({ ok: false, error: "Unauthorized" });
       }
     };
@@ -54,19 +72,39 @@ export { requireAuth as checkJwt };
 /**
  * optionalAuth:
  * - Si NO hay Bearer => pasa (visitor)
- * - Si hay Bearer => valida
+ * - Si hay Bearer => valida y adjunta req.user
  */
 export function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
+
   const token = getBearer(req);
   if (!token) return next();
-  return requireAuth(req, res, next);
+
+  try {
+    const payload = verifyLocalJwt(token);
+
+    req.auth = req.auth || {};
+    req.auth.payload = payload;
+
+    req.user = req.user || {
+      sub: payload.sub || payload._id || null,
+      email: payload.email ? String(payload.email).toLowerCase().trim() : null,
+      name: payload.name || null,
+    };
+
+    return next();
+  } catch (err) {
+    if (!IS_PROD) {
+      console.error("[auth] optionalAuth invalid token:", err?.message || err);
+    }
+    // Si trae token inválido, se rechaza (esto es lo correcto)
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
 }
 
 /**
  * attachAuthUser:
- * - Si ya hay req.auth.payload (porque requireAuth corrió) deja req.user listo
- * - No parsea roles/perms
+ * - Si ya hay req.auth.payload, deja req.user listo
  */
 export function attachAuthUser(req, _res, next) {
   const p = req?.auth?.payload;
@@ -82,16 +120,13 @@ export function attachAuthUser(req, _res, next) {
 
 /**
  * requireAdmin:
- * - En tu nueva arquitectura, esto debería ser requirePerm("admin") o similar.
- * - Aquí lo dejamos por compatibilidad:
- *   1) si existe req.iam => usa roles/perms resueltos centralmente
- *   2) fallback: bloquea (porque req.user ya no trae roles/perms)
+ * - Preferido: req.iam (roles/perms resueltos por IAM centralizado)
+ * - fallback: 403 (evita huecos)
  */
 export function requireAdmin(req, res, next) {
   const DEV_OPEN = String(process.env.DEV_OPEN || "0") === "1";
   if (!IS_PROD && (DISABLE_AUTH || DEV_OPEN)) return next();
 
-  // ✅ Preferido: IAM centralizado
   if (req.iam) {
     const roles = (req.iam.roles || []).map((r) => String(r).toLowerCase());
     const perms = Array.isArray(req.iam.permissions) ? req.iam.permissions : [];
@@ -105,7 +140,6 @@ export function requireAdmin(req, res, next) {
     });
   }
 
-  // Fallback estricto (para no abrir huecos)
   return res.status(403).json({
     ok: false,
     message:

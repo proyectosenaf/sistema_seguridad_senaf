@@ -2,13 +2,17 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
 
 import IamUser from "../models/IamUser.model.js";
+import AuthOtp from "../models/AuthOtp.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 import { getSecuritySettings } from "../services/settings.service.js";
 
+// ✅ Mail OTP centralizado (usa server/src/core/mailer/mailer.js)
+import { sendOtpEmail } from "../services/otp.mailer.js";
+
 const r = Router();
+const IS_PROD = process.env.NODE_ENV === "production";
 
 /* ---------------------- helpers ---------------------- */
 function normEmail(e) {
@@ -23,9 +27,14 @@ function maskEmail(email) {
   return `${uu}@${d}`;
 }
 
-function ensureEnv(name) {
+function envStr(name) {
   const v = String(process.env[name] || "").trim();
   return v || null;
+}
+
+function envNum(name, def) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) ? v : def;
 }
 
 function getOtpSettings() {
@@ -43,7 +52,12 @@ function getOtpSettings() {
 }
 
 function jwtSecret() {
-  return ensureEnv("JWT_SECRET") || "dev_secret";
+  const s = envStr("JWT_SECRET");
+  if (!s) {
+    if (IS_PROD) throw new Error("JWT_SECRET is required in production");
+    return "dev_secret";
+  }
+  return s;
 }
 
 function signLocalJwt(payload) {
@@ -73,82 +87,6 @@ function isPasswordExpired(user) {
   return new Date() > d;
 }
 
-/* ---------------------- mailer (cache) ---------------------- */
-let MAIL_TRANSPORT = null;
-
-function makeMailer() {
-  if (MAIL_TRANSPORT) return MAIL_TRANSPORT;
-
-  const host = ensureEnv("MAIL_HOST");
-  const port = Number(process.env.MAIL_PORT || 587);
-  const secure = String(process.env.MAIL_SECURE || "0") === "1";
-  const user = ensureEnv("MAIL_USER");
-  const pass = ensureEnv("MAIL_PASS");
-
-  if (!host || !user || !pass) return null;
-
-  const rejectUnauthorized = String(process.env.MAIL_TLS_REJECT_UNAUTHORIZED || "1") !== "0";
-
-  MAIL_TRANSPORT = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-    tls: { rejectUnauthorized },
-  });
-
-  return MAIL_TRANSPORT;
-}
-
-async function sendOtpEmail({ to, code }) {
-  const transport = makeMailer();
-  if (!transport) {
-    console.warn("[otp] MAIL_* no configurado. OTP para", to, "=>", code);
-    return { ok: true, dev: true };
-  }
-
-  const from = ensureEnv("MAIL_FROM") || ensureEnv("MAIL_USER");
-  const appName = ensureEnv("APP_NAME") || "SENAF";
-
-  try {
-    await transport.sendMail({
-      from,
-      to,
-      subject: `${appName} — Código de verificación`,
-      text: `Tu código de verificación es: ${code}\n\nEste código vence pronto.`,
-      html: `
-        <div style="font-family:Arial,sans-serif">
-          <h2>${appName}</h2>
-          <p>Tu código de verificación es:</p>
-          <div style="font-size:28px;font-weight:bold;letter-spacing:4px">${code}</div>
-          <p>Este código vence pronto.</p>
-        </div>
-      `,
-    });
-
-    return { ok: true };
-  } catch (e) {
-    console.error("[otp] sendMail failed:", e?.message || e);
-    return { ok: false, error: "mail_send_failed", message: e?.message || String(e) };
-  }
-}
-
-/* ---------------------- OTP store (memoria) ---------------------- */
-const OTP_STORE = new Map();
-/**
- * key: email
- * value: { codeHash, exp, attempts, lastSentAt }
- */
-
-function canResend(entry, cooldownSeconds) {
-  if (!entry?.lastSentAt) return true;
-  return Date.now() - entry.lastSentAt >= cooldownSeconds * 1000;
-}
-
-function isExpired(entry) {
-  return !entry?.exp || Date.now() > entry.exp;
-}
-
 /* ---------------------- Reset token (pwreset) ---------------------- */
 function signPwResetToken({ email, userId }) {
   const secret = jwtSecret();
@@ -157,7 +95,7 @@ function signPwResetToken({ email, userId }) {
     email: normEmail(email),
     uid: String(userId),
   };
-  const expMinutes = Number(process.env.PWRESET_TOKEN_TTL_MINUTES || 10);
+  const expMinutes = envNum("PWRESET_TOKEN_TTL_MINUTES", 10);
   return jwt.sign(payload, secret, { expiresIn: `${expMinutes}m`, algorithm: "HS256" });
 }
 
@@ -166,6 +104,102 @@ function verifyPwResetToken(token) {
   const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
   if (!decoded || decoded.typ !== "pwreset") throw new Error("invalid_pwreset_token");
   return decoded;
+}
+
+/* =========================================================
+  ✅ OTP en Mongo (AuthOtp)
+========================================================= */
+
+async function getActiveOtp(email, purpose) {
+  return AuthOtp.findOne({
+    email,
+    purpose,
+    consumedAt: null,
+  })
+    .sort({ createdAt: -1 })
+    .exec();
+}
+
+function isExpiredDoc(doc) {
+  if (!doc?.expiresAt) return true;
+  const exp = new Date(doc.expiresAt);
+  if (Number.isNaN(exp.getTime())) return true;
+  return new Date() > exp;
+}
+
+function canResendDoc(doc) {
+  if (!doc?.resendAfter) return true;
+  const ra = new Date(doc.resendAfter);
+  if (Number.isNaN(ra.getTime())) return true;
+  return new Date() >= ra;
+}
+
+/**
+ * Crea o reemplaza OTP activo de forma ATÓMICA.
+ * - Evita carreras (concurrencia) y E11000 por índice único parcial.
+ */
+async function createOrReplaceActiveOtpDoc({
+  email,
+  purpose,
+  ttlSeconds,
+  maxAttempts,
+  resendCooldownSeconds,
+  metaUserId,
+}) {
+  const code = randomOtp6();
+  const codeHash = sha256(code);
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + Number(ttlSeconds || 300) * 1000);
+  const resendAfter = new Date(now.getTime() + Number(resendCooldownSeconds || 30) * 1000);
+
+  const update = {
+    $set: {
+      codeHash,
+      expiresAt,
+      resendAfter,
+      attempts: 0,
+      maxAttempts: Number(maxAttempts || 5),
+      consumedAt: null,
+      meta: { userId: metaUserId || null },
+    },
+    $setOnInsert: {
+      email,
+      purpose,
+    },
+  };
+
+  try {
+    await AuthOtp.findOneAndUpdate(
+      { email, purpose, consumedAt: null },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).exec();
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (e?.code === 11000 || msg.includes("E11000")) {
+      await AuthOtp.updateMany(
+        { email, purpose, consumedAt: null },
+        { $set: { consumedAt: new Date() } }
+      ).exec();
+
+      await AuthOtp.create({
+        email,
+        purpose,
+        codeHash,
+        expiresAt,
+        resendAfter,
+        attempts: 0,
+        maxAttempts: Number(maxAttempts || 5),
+        consumedAt: null,
+        meta: { userId: metaUserId || null },
+      });
+    } else {
+      throw e;
+    }
+  }
+
+  return { code, expiresAt, resendAfter };
 }
 
 /* =========================
@@ -182,14 +216,11 @@ async function loginOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_password_required" });
   }
 
-  // ✅ FIX: forzar +active +provider (por si están select:false)
   const user = await IamUser.findOne({ email })
-    .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt")
+    .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email")
     .exec();
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-
-  // ✅ FIX: check estricto
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
   if (String(user.provider || "").toLowerCase() !== "local") {
@@ -213,6 +244,7 @@ async function loginOtpHandler(req, res) {
   const firstTimeOtp = !user.otpVerifiedAt;
   const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
 
+  // OTP OFF => token directo
   if (!otpEnabled) {
     const token = signLocalJwt({
       sub: `local|${user._id}`,
@@ -247,31 +279,33 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  const existing = OTP_STORE.get(email);
-  if (existing && !isExpired(existing)) {
-    if (!canResend(existing, settings.resendCooldownSeconds)) {
-      return res.status(429).json({
-        ok: false,
-        error: "otp_resend_cooldown",
-        cooldownSeconds: settings.resendCooldownSeconds,
-        message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
-      });
-    }
+  const purpose = isVisitor ? "visitor-login" : "employee-login";
+
+  const existing = await getActiveOtp(email, purpose);
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSeconds: settings.resendCooldownSeconds,
+      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+    });
   }
 
-  const code = randomOtp6();
-  OTP_STORE.set(email, {
-    codeHash: sha256(code),
-    exp: Date.now() + settings.ttlSeconds * 1000,
-    attempts: 0,
-    lastSentAt: Date.now(),
+  const { code } = await createOrReplaceActiveOtpDoc({
+    email,
+    purpose,
+    ttlSeconds: settings.ttlSeconds,
+    maxAttempts: settings.maxAttempts,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+    metaUserId: user._id,
   });
 
-  const mail = await sendOtpEmail({ to: email, code });
+  // ✅ Envío centralizado
+  const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
     return res.status(502).json({
       ok: false,
-      error: "mail_send_failed",
+      error: mail.error || "mail_send_failed",
       message: mail?.message || "No se pudo enviar el correo OTP.",
     });
   }
@@ -295,37 +329,42 @@ async function resendOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-  // ✅ FIX: +active +provider
-  const user = await IamUser.findOne({ email }).select("_id email roles +active +provider").lean();
+  const user = await IamUser.findOne({ email })
+    .select("_id email roles +active +provider name")
+    .exec();
+
   if (!user || user.active === false || String(user.provider || "").toLowerCase() !== "local") {
     return res.json({ ok: true }); // no revelar
   }
 
-  const existing = OTP_STORE.get(email);
-  if (existing && !isExpired(existing)) {
-    if (!canResend(existing, settings.resendCooldownSeconds)) {
-      return res.status(429).json({
-        ok: false,
-        error: "otp_resend_cooldown",
-        cooldownSeconds: settings.resendCooldownSeconds,
-        message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
-      });
-    }
+  const isVisitor = hasRole(user, "visita");
+  const purpose = isVisitor ? "visitor-login" : "employee-login";
+
+  const existing = await getActiveOtp(email, purpose);
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSeconds: settings.resendCooldownSeconds,
+      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+    });
   }
 
-  const code = randomOtp6();
-  OTP_STORE.set(email, {
-    codeHash: sha256(code),
-    exp: Date.now() + settings.ttlSeconds * 1000,
-    attempts: 0,
-    lastSentAt: Date.now(),
+  const { code } = await createOrReplaceActiveOtpDoc({
+    email,
+    purpose,
+    ttlSeconds: settings.ttlSeconds,
+    maxAttempts: settings.maxAttempts,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+    metaUserId: user._id,
   });
 
-  const mail = await sendOtpEmail({ to: email, code });
+  // ✅ Envío centralizado
+  const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
     return res.status(502).json({
       ok: false,
-      error: "mail_send_failed",
+      error: mail.error || "mail_send_failed",
       message: mail?.message || "No se pudo enviar el correo OTP.",
     });
   }
@@ -351,27 +390,32 @@ async function verifyOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
   }
 
-  const entry = OTP_STORE.get(email);
-  if (!entry) return res.status(400).json({ ok: false, error: "otp_not_found" });
+  let doc = await getActiveOtp(email, "visitor-login");
+  if (!doc) doc = await getActiveOtp(email, "employee-login");
+  if (!doc) return res.status(400).json({ ok: false, error: "otp_not_found" });
 
-  if (isExpired(entry)) {
-    OTP_STORE.delete(email);
+  if (isExpiredDoc(doc)) {
+    await doc.consume().catch(() => {});
     return res.status(400).json({ ok: false, error: "otp_expired" });
   }
 
-  if (entry.attempts >= settings.maxAttempts) {
-    OTP_STORE.delete(email);
+  const maxAttempts = Number.isFinite(Number(doc.maxAttempts))
+    ? Number(doc.maxAttempts)
+    : settings.maxAttempts;
+
+  if (Number(doc.attempts || 0) >= maxAttempts) {
+    await doc.consume().catch(() => {});
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
 
-  entry.attempts += 1;
-  OTP_STORE.set(email, entry);
+  doc.attempts = Number(doc.attempts || 0) + 1;
+  await doc.save();
 
-  if (sha256(otp) !== entry.codeHash) {
+  if (sha256(otp) !== String(doc.codeHash || "")) {
     return res.status(401).json({ ok: false, error: "otp_invalid" });
   }
 
-  OTP_STORE.delete(email);
+  await doc.consume().catch(() => {});
 
   const user = await IamUser.findOne({ email }).exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
@@ -438,9 +482,8 @@ async function resetPasswordOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "reset_token_email_mismatch" });
   }
 
-  // ✅ FIX: +active +provider (por si select:false)
   const user = await IamUser.findOne({ email })
-    .select("+passwordHash roles +active +provider mustChangePassword passwordExpiresAt")
+    .select("+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email")
     .exec();
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
@@ -449,7 +492,6 @@ async function resetPasswordOtpHandler(req, res) {
     return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
   }
 
-  // ✅ FIX: check estricto
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
   if (String(user.provider || "").toLowerCase() !== "local") {
@@ -494,7 +536,6 @@ async function changePasswordHandler(req, res) {
     return res.status(400).json({ ok: false, error: "password_too_short", minLength });
   }
 
-  // ✅ FIX: +active +provider
   const user = await IamUser.findOne({ email }).select("+passwordHash roles +active +provider").exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 

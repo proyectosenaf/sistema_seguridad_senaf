@@ -61,6 +61,9 @@ function clearOtpAll() {
   try {
     sessionStorage.removeItem("senaf_pwreset_token");
   } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_mustChange");
+  } catch {}
 }
 
 function humanOtpError(codeOrMsg) {
@@ -78,6 +81,10 @@ function humanOtpError(codeOrMsg) {
     return "Tu sesión de restablecimiento venció. Repite el OTP.";
   if (s.includes("reset_token"))
     return "No se pudo iniciar el restablecimiento. Repite el OTP.";
+
+  if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
+  if (s.includes("user_not_found")) return "No se encontró el usuario. Repite el proceso.";
+  if (s.includes("email_required")) return "Falta el correo.";
 
   return codeOrMsg || "Error validando OTP";
 }
@@ -107,20 +114,19 @@ export default function VerifyOtp() {
     setError("");
     setInfo("");
 
+    const otpNorm = String(otp || "").trim();
+
     if (!emailNorm) return setError("Falta el correo.");
-    if (!otp || String(otp).trim().length < 4) return setError("Ingresa el código.");
+    if (!otpNorm || otpNorm.length < 4) return setError("Ingresa el código.");
 
     try {
       setSubmitting(true);
 
-      // ✅ CORRECCIÓN MÍNIMA:
-      // En tu server.js el OTP router está montado como PUBLIC:
-      //   /api/public/v1/auth  (y también /public/v1/auth)
-      // Tu axios api ya suele tener baseURL ".../api"
+      // ✅ OTP router: /api/public/v1/auth  y tu axios baseURL suele ser ".../api"
       // => aquí debe ser "/public/v1/auth/verify-otp"
       const res = await api.post("/public/v1/auth/verify-otp", {
         email: emailNorm,
-        otp: String(otp || "").trim(),
+        otp: otpNorm,
       });
 
       const data = res?.data || {};
@@ -151,8 +157,8 @@ export default function VerifyOtp() {
         return;
       }
 
-      // ✅ Caso normal: devuelve token de login
-      const token = data?.token;
+      // ✅ Caso normal: token
+      const token = String(data?.token || "").trim();
       if (!token) {
         setError("El servidor no devolvió token tras validar OTP.");
         return;
@@ -163,12 +169,21 @@ export default function VerifyOtp() {
       setToken(token);
       await auth.login({ email: emailNorm }, token);
 
+      // ✅ NUEVO: redirección controlada por backend
+      const nextPath = typeof data?.next === "string" ? data.next : null;
+      if (safeInternalPath(nextPath)) {
+        navigate(nextPath, { replace: true });
+        return;
+      }
+
+      // Si backend no mandó next, usa returnTo (si existía)
       const returnTo = consumeReturnTo(loc.search);
       if (returnTo) {
         navigate(returnTo, { replace: true });
         return;
       }
 
+      // Fallback final
       navigate("/start", { replace: true });
     } catch (err) {
       const msg =
@@ -194,7 +209,6 @@ export default function VerifyOtp() {
     try {
       setResending(true);
 
-      // ✅ CORRECCIÓN MÍNIMA: misma base "/public/v1/auth"
       const res = await api.post("/public/v1/auth/resend-otp", { email: emailNorm });
       const data = res?.data || {};
 

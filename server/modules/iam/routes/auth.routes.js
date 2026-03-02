@@ -1,427 +1,560 @@
-// server/modules/iam/routes/auth.routes.js
+// server/modules/iam/routes/auth.otp.routes.js
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
 
 import IamUser from "../models/IamUser.model.js";
+import AuthOtp from "../models/AuthOtp.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
-import { signToken, verifyToken, getBearer } from "../utils/jwt.util.js";
+import { getSecuritySettings } from "../services/settings.service.js";
+
+// ✅ Envío centralizado
+import { sendOtpEmail } from "../services/otp.mailer.js";
 
 const r = Router();
+const IS_PROD = process.env.NODE_ENV === "production";
 
-/* ===================== helpers ===================== */
-function normEmail(v) {
-  return String(v || "").trim().toLowerCase();
+/* ---------------------- helpers ---------------------- */
+function normEmail(e) {
+  return String(e || "").trim().toLowerCase();
 }
 
-function getClientIp(req) {
-  const xf = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return xf || req.ip || req.connection?.remoteAddress || "";
+function maskEmail(email) {
+  const e = normEmail(email);
+  const [u, d] = e.split("@");
+  if (!u || !d) return e;
+  const uu = u.length <= 2 ? `${u[0] || ""}*` : `${u.slice(0, 2)}***`;
+  return `${uu}@${d}`;
 }
 
-function ensureEnv(name) {
+function envStr(name) {
   const v = String(process.env[name] || "").trim();
   return v || null;
+}
+
+function envNum(name, def) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) ? v : def;
+}
+
+function getOtpSettings() {
+  const s = getSecuritySettings?.() || {};
+  const otp = s.otp || {};
+  return {
+    ttlSeconds: Number.isFinite(Number(otp.ttlSeconds)) ? Number(otp.ttlSeconds) : 300,
+    maxAttempts: Number.isFinite(Number(otp.maxAttempts)) ? Number(otp.maxAttempts) : 5,
+    resendCooldownSeconds: Number.isFinite(Number(otp.resendCooldownSeconds))
+      ? Number(otp.resendCooldownSeconds)
+      : 30,
+    features: s.features || {},
+    password: s.password || {},
+  };
+}
+
+function jwtSecret() {
+  const s = envStr("JWT_SECRET");
+  if (!s) {
+    if (IS_PROD) throw new Error("JWT_SECRET is required in production");
+    return "dev_secret";
+  }
+  return s;
+}
+
+function signLocalJwt(payload) {
+  const secret = jwtSecret();
+  const expiresIn = String(process.env.JWT_EXPIRES_IN || "12h");
+  return jwt.sign(payload, secret, { expiresIn, algorithm: "HS256" });
+}
+
+function randomOtp6() {
+  const n = crypto.randomInt(0, 1000000);
+  return String(n).padStart(6, "0");
 }
 
 function sha256(s) {
   return crypto.createHash("sha256").update(String(s)).digest("hex");
 }
 
-function signUserToken(user) {
-  // ⚠️ Compat: roles/perms en token. Fuente canónica: DB via buildContextFrom(/me)
+function hasRole(user, role) {
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  return roles.map((x) => String(x).toLowerCase()).includes(String(role).toLowerCase());
+}
+
+function isPasswordExpired(user) {
+  if (!user?.passwordExpiresAt) return false;
+  const d = new Date(user.passwordExpiresAt);
+  if (Number.isNaN(d.getTime())) return false;
+  return new Date() > d;
+}
+
+/* ---------------------- Reset token (pwreset) ---------------------- */
+function signPwResetToken({ email, userId }) {
+  const secret = jwtSecret();
   const payload = {
-    sub: String(user._id),
-    email: user.email,
-    roles: Array.isArray(user.roles) ? user.roles : [],
-    permissions: Array.isArray(user.perms) ? user.perms : [],
-    provider: "local",
+    typ: "pwreset",
+    email: normEmail(email),
+    uid: String(userId),
+  };
+  const expMinutes = envNum("PWRESET_TOKEN_TTL_MINUTES", 10);
+  return jwt.sign(payload, secret, { expiresIn: `${expMinutes}m`, algorithm: "HS256" });
+}
+
+function verifyPwResetToken(token) {
+  const secret = jwtSecret();
+  const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
+  if (!decoded || decoded.typ !== "pwreset") throw new Error("invalid_pwreset_token");
+  return decoded;
+}
+
+/* =========================================================
+  ✅ OTP en Mongo (AuthOtp)
+========================================================= */
+
+async function getActiveOtp(email, purpose) {
+  return AuthOtp.findOne({
+    email,
+    purpose,
+    consumedAt: null,
+  })
+    .sort({ createdAt: -1 })
+    .exec();
+}
+
+function isExpiredDoc(doc) {
+  if (!doc?.expiresAt) return true;
+  const exp = new Date(doc.expiresAt);
+  if (Number.isNaN(exp.getTime())) return true;
+  return new Date() > exp;
+}
+
+function canResendDoc(doc) {
+  if (!doc?.resendAfter) return true;
+  const ra = new Date(doc.resendAfter);
+  if (Number.isNaN(ra.getTime())) return true;
+  return new Date() >= ra;
+}
+
+/**
+ * Crea o reemplaza OTP activo de forma ATÓMICA.
+ * - Evita carreras (concurrencia) y E11000 por índice único parcial.
+ */
+async function createOrReplaceActiveOtpDoc({
+  email,
+  purpose,
+  ttlSeconds,
+  maxAttempts,
+  resendCooldownSeconds,
+  metaUserId,
+}) {
+  const code = randomOtp6();
+  const codeHash = sha256(code);
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + Number(ttlSeconds || 300) * 1000);
+  const resendAfter = new Date(now.getTime() + Number(resendCooldownSeconds || 30) * 1000);
+
+  const update = {
+    $set: {
+      codeHash,
+      expiresAt,
+      resendAfter,
+      attempts: 0,
+      maxAttempts: Number(maxAttempts || 5),
+      consumedAt: null,
+      meta: { userId: metaUserId || null },
+    },
+    $setOnInsert: {
+      email,
+      purpose,
+    },
   };
 
-  return signToken(payload, { expiresIn: "8h" });
-}
-
-/** Expira password por regla: 2 meses desde passwordChangedAt, o por passwordExpiresAt si ya viene */
-function computePasswordExpired(user) {
-  const now = new Date();
-
-  if (user?.passwordExpiresAt && now > user.passwordExpiresAt) return true;
-
-  // fallback: 2 meses desde passwordChangedAt (si existe)
-  const changedAt = user?.passwordChangedAt ? new Date(user.passwordChangedAt) : null;
-  if (changedAt && !Number.isNaN(changedAt.getTime())) {
-    const exp = new Date(changedAt);
-    exp.setMonth(exp.getMonth() + 2);
-    if (now > exp) return true;
-  }
-
-  return false;
-}
-
-/* ===================== mailer ===================== */
-function makeMailer() {
-  const host = ensureEnv("MAIL_HOST");
-  const port = Number(process.env.MAIL_PORT || 587);
-  const secure = String(process.env.MAIL_SECURE || "0") === "1";
-  const user = ensureEnv("MAIL_USER");
-  const pass = ensureEnv("MAIL_PASS");
-
-  if (!host || !user || !pass) return null;
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-  });
-}
-
-async function sendResetEmail({ to, link, token }) {
-  const transport = makeMailer();
-  const from = ensureEnv("MAIL_FROM") || ensureEnv("MAIL_USER");
-  const appName = ensureEnv("APP_NAME") || "SENAF";
-
-  if (!transport) {
-    console.warn("[reset] MAIL_* no configurado. RESET para", to);
-    console.warn("[reset] link:", link);
-    console.warn("[reset] token:", token);
-    return { ok: true, dev: true };
-  }
-
-  await transport.sendMail({
-    from,
-    to,
-    subject: `${appName} — Restablecer contraseña`,
-    text:
-      `Solicitaste restablecer tu contraseña.\n\n` +
-      `Abre este enlace:\n${link}\n\n` +
-      `Si no fuiste tú, ignora este mensaje.`,
-    html: `
-      <div style="font-family:Arial,sans-serif">
-        <h2>${appName}</h2>
-        <p>Solicitaste restablecer tu contraseña.</p>
-        <p><a href="${link}">Restablecer contraseña</a></p>
-        <p style="color:#666;font-size:12px">Si no fuiste tú, ignora este mensaje.</p>
-      </div>
-    `,
-  });
-
-  return { ok: true };
-}
-
-/* ===================== Password reset tokens (in-memory) =====================
-   En producción ideal: Mongo/Redis.
-   Para arrancar ya: memoria.
-================================================================================ */
-const RESET_STORE = new Map();
-/**
- * key: email
- * value: { tokenHash, exp, attempts, lastSentAt }
- */
-
-function isExpired(entry) {
-  return !entry?.exp || Date.now() > entry.exp;
-}
-
-function canResend(entry, cooldownSeconds) {
-  if (!entry?.lastSentAt) return true;
-  return Date.now() - entry.lastSentAt >= cooldownSeconds * 1000;
-}
-
-/* ===================== LOGIN (LOCAL) ===================== */
-r.post("/login", async (req, res, next) => {
   try {
-    const email = normEmail(req.body?.email);
-    const password = String(req.body?.password || "");
-
-    if (!email || !password) {
-      return res.status(400).json({ ok: false, error: "email_password_required" });
-    }
-
-    const user = await IamUser.findOne({ email }).select("+passwordHash");
-    if (!user) return res.status(401).json({ ok: false, error: "invalid_credentials" });
-
-    if (user.provider !== "local") {
-      return res.status(400).json({
-        ok: false,
-        error: "user_not_local",
-        message: "Este usuario no es local (provider != local).",
-      });
-    }
-
-    if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
-
-    const valid = await verifyPassword(password, user.passwordHash);
-    if (!valid) return res.status(401).json({ ok: false, error: "invalid_credentials" });
-
-    // expiración password
-    let mustChange = !!user.mustChangePassword;
-    if (!mustChange && computePasswordExpired(user)) mustChange = true;
-
-    // auditoría (no bloquea login si falla)
-    try {
-      user.lastLoginAt = new Date();
-      user.lastLoginIp = getClientIp(req);
-      await user.save();
-    } catch {
-      // ignore
-    }
-
-    const token = signUserToken(user);
-
-    return res.json({ ok: true, token, mustChangePassword: mustChange });
+    await AuthOtp.findOneAndUpdate(
+      { email, purpose, consumedAt: null },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).exec();
   } catch (e) {
-    next(e);
+    const msg = String(e?.message || "");
+    if (e?.code === 11000 || msg.includes("E11000")) {
+      await AuthOtp.updateMany(
+        { email, purpose, consumedAt: null },
+        { $set: { consumedAt: new Date() } }
+      ).exec();
+
+      await AuthOtp.create({
+        email,
+        purpose,
+        codeHash,
+        expiresAt,
+        resendAfter,
+        attempts: 0,
+        maxAttempts: Number(maxAttempts || 5),
+        consumedAt: null,
+        meta: { userId: metaUserId || null },
+      });
+    } else {
+      throw e;
+    }
   }
-});
 
-/* ===================== LOGOUT (LOCAL) ===================== */
-r.post("/logout", async (_req, res) => {
-  return res.json({ ok: true });
-});
+  return { code, expiresAt, resendAfter };
+}
 
-/* ===================== CHANGE PASSWORD (LOCAL) ===================== */
-r.post("/change-password", async (req, res, next) => {
-  try {
-    const token = getBearer(req);
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "token_required" });
-    }
+/* =========================
+  Handlers
+========================= */
 
-    let decoded;
-    try {
-      decoded = verifyToken(token);
-    } catch {
-      return res.status(401).json({ ok: false, error: "token_invalid_or_expired" });
-    }
+async function loginOtpHandler(req, res) {
+  const settings = getOtpSettings();
 
-    const userId = decoded?.sub ? String(decoded.sub) : null;
-    if (!userId) return res.status(401).json({ ok: false, error: "token_invalid" });
+  const email = normEmail(req.body?.email);
+  const password = String(req.body?.password || "");
 
-    const passwordActual = String(req.body?.passwordActual || "");
-    const passwordNueva = String(req.body?.passwordNueva || "");
+  if (!email || !password) {
+    return res.status(400).json({ ok: false, error: "email_and_password_required" });
+  }
 
-    if (!passwordActual || !passwordNueva) {
-      return res.status(400).json({ ok: false, error: "missing_fields" });
-    }
-    if (passwordNueva.length < 8) {
-      return res.status(400).json({ ok: false, error: "password_too_short" });
-    }
+  const user = await IamUser.findOne({ email })
+    .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email")
+    .exec();
 
-    const user = await IamUser.findById(userId).select("+passwordHash");
-    if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-    if (user.provider !== "local") {
-      return res.status(400).json({ ok: false, error: "user_not_local" });
-    }
-    if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
+  if (String(user.provider || "").toLowerCase() !== "local") {
+    return res.status(403).json({ ok: false, error: "not_local_user" });
+  }
 
-    const match = await verifyPassword(passwordActual, user.passwordHash);
-    if (!match) {
-      return res.status(400).json({ ok: false, error: "current_password_wrong" });
-    }
+  if (!user.passwordHash) {
+    return res.status(403).json({
+      ok: false,
+      error: "password_not_set",
+      message: "Este usuario no tiene contraseña configurada. Contacta al administrador o restablece.",
+    });
+  }
 
-    const newHash = await hashPassword(passwordNueva);
+  const okPwd = await verifyPassword(password, user.passwordHash);
+  if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
-    const now = new Date();
-    const expires = new Date();
-    expires.setMonth(expires.getMonth() + 2);
+  const isVisitor = hasRole(user, "visita");
+  const otpEnabled = !!settings?.features?.enableEmployeeOtp;
 
-    user.passwordHash = newHash;
-    user.mustChangePassword = false;
-    user.passwordChangedAt = now;
-    user.passwordExpiresAt = expires;
-    await user.save();
+  const firstTimeOtp = !user.otpVerifiedAt;
+  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
 
-    const newToken = signUserToken(user);
+  if (!otpEnabled) {
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    });
 
     return res.json({
       ok: true,
-      message: "Contraseña actualizada correctamente",
-      token: newToken,
+      otpRequired: false,
+      token,
+      mustChangePassword: mustChange,
     });
-  } catch (e) {
-    next(e);
   }
-});
 
-/* ===================== REQUEST PASSWORD RESET ===================== */
-/**
- * POST /auth/request-password-reset
- * body: { email }
- * - genera token de reset (TTL corto) y manda link por correo
- * - no revela si existe o no (para evitar enumeración)
- */
-r.post("/request-password-reset", async (req, res, next) => {
-  try {
-    const email = normEmail(req.body?.email);
-    if (!email) return res.status(400).json({ ok: false, error: "email_required" });
+  const otpRequired = isVisitor ? firstTimeOtp : (firstTimeOtp || mustChange);
 
-    // Ajustes básicos
-    const ttlMinutes = Number(process.env.RESET_TTL_MINUTES || 15);
-    const resendCooldownSeconds = Number(process.env.RESET_RESEND_COOLDOWN_SECONDS || 30);
-
-    const existing = RESET_STORE.get(email);
-    if (existing && !isExpired(existing) && !canResend(existing, resendCooldownSeconds)) {
-      return res.status(429).json({
-        ok: false,
-        error: "reset_resend_cooldown",
-        message: `Espera ${resendCooldownSeconds}s para reenviar.`,
-      });
-    }
-
-    // buscamos usuario, pero respondemos OK siempre
-    const user = await IamUser.findOne({ email }).select("_id email active provider").lean();
-
-    if (!user || !user.active || String(user.provider || "").toLowerCase() !== "local") {
-      // respuesta uniforme
-      return res.json({ ok: true });
-    }
-
-    const token = crypto.randomBytes(32).toString("hex");
-    const tokenHash = sha256(token);
-    const exp = Date.now() + ttlMinutes * 60 * 1000;
-
-    RESET_STORE.set(email, {
-      tokenHash,
-      exp,
-      attempts: 0,
-      lastSentAt: Date.now(),
-    });
-
-    const appUrl =
-      ensureEnv("APP_URL") || ensureEnv("PUBLIC_APP_URL") || "http://localhost:5173";
-
-    // link al frontend (tú decides ruta final de reset)
-    // Si aún no tienes página /reset-password, igual puedes usar /force-change-password y luego construir la UI.
-    const link = `${String(appUrl).replace(/\/$/, "")}/reset-password?email=${encodeURIComponent(
-      email
-    )}&token=${encodeURIComponent(token)}`;
-
-    await sendResetEmail({ to: email, link, token });
-
-    return res.json({ ok: true });
-  } catch (e) {
-    next(e);
-  }
-});
-
-/* ===================== RESET PASSWORD ===================== */
-/**
- * POST /auth/reset-password
- * body: { email, token, newPassword }
- * - valida token (in-memory) y establece nueva contraseña
- */
-r.post("/reset-password", async (req, res, next) => {
-  try {
-    const email = normEmail(req.body?.email);
-    const token = String(req.body?.token || "").trim();
-    const newPassword = String(req.body?.newPassword || "");
-
-    if (!email || !token || !newPassword) {
-      return res.status(400).json({ ok: false, error: "missing_fields" });
-    }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ ok: false, error: "password_too_short" });
-    }
-
-    const entry = RESET_STORE.get(email);
-    if (!entry) return res.status(400).json({ ok: false, error: "reset_not_found" });
-    if (isExpired(entry)) {
-      RESET_STORE.delete(email);
-      return res.status(400).json({ ok: false, error: "reset_expired" });
-    }
-
-    // máximo intentos
-    const maxAttempts = Number(process.env.RESET_MAX_ATTEMPTS || 5);
-    if (entry.attempts >= maxAttempts) {
-      RESET_STORE.delete(email);
-      return res.status(429).json({ ok: false, error: "reset_max_attempts" });
-    }
-
-    entry.attempts += 1;
-    RESET_STORE.set(email, entry);
-
-    const ok = sha256(token) === entry.tokenHash;
-    if (!ok) return res.status(401).json({ ok: false, error: "reset_invalid" });
-
-    // ok => consumimos
-    RESET_STORE.delete(email);
-
-    const user = await IamUser.findOne({ email }).select("+passwordHash").exec();
-    if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-    if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
-    if (String(user.provider || "").toLowerCase() !== "local") {
-      return res.status(403).json({ ok: false, error: "not_local_user" });
-    }
-
-    user.passwordHash = await hashPassword(newPassword);
-    user.mustChangePassword = false;
-    user.passwordChangedAt = new Date();
-
-    // vence en 2 meses
-    const exp2m = new Date();
-    exp2m.setMonth(exp2m.getMonth() + 2);
-    user.passwordExpiresAt = exp2m;
-
-    await user.save();
-
-    return res.json({ ok: true });
-  } catch (e) {
-    next(e);
-  }
-});
-
-/* ===================== BOOTSTRAP ADMIN (LOCAL) ===================== */
-r.post("/bootstrap", async (req, res, next) => {
-  try {
-    const email = normEmail(req.body?.email);
-    const password = String(req.body?.password || "").trim();
-    const name = String(req.body?.name || "").trim();
-
-    if (!email || !password) {
-      return res.status(400).json({ ok: false, error: "email_password_required" });
-    }
-
-    const count = await IamUser.countDocuments({});
-    if (count > 0) {
-      return res.status(409).json({ ok: false, error: "bootstrap_not_available" });
-    }
-
-    const rootAdmins = String(process.env.ROOT_ADMINS || "")
-      .split(/[,\s]+/)
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
-
-    const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
-    const allowed = (superEmail && email === superEmail) || rootAdmins.includes(email);
-
-    if (!allowed) {
-      return res.status(403).json({ ok: false, error: "bootstrap_email_not_allowed" });
-    }
-
-    const passwordHash = await hashPassword(password);
-
-    const user = await IamUser.create({
-      email,
-      name: name || email.split("@")[0],
+  if (!otpRequired) {
+    const token = signLocalJwt({
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
       provider: "local",
-      passwordHash,
-      active: true,
-      roles: ["admin"],
-      perms: ["*"],
+    });
+
+    return res.json({
+      ok: true,
+      otpRequired: false,
+      token,
       mustChangePassword: false,
     });
-
-    return res.status(201).json({
-      ok: true,
-      created: { id: String(user._id), email: user.email },
-      message: "Admin bootstrap creado. Ya puedes usar /auth/login",
-    });
-  } catch (e) {
-    next(e);
   }
-});
+
+  const purpose = isVisitor ? "visitor-login" : "employee-login";
+
+  const existing = await getActiveOtp(email, purpose);
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSeconds: settings.resendCooldownSeconds,
+      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+    });
+  }
+
+  const { code } = await createOrReplaceActiveOtpDoc({
+    email,
+    purpose,
+    ttlSeconds: settings.ttlSeconds,
+    maxAttempts: settings.maxAttempts,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+    metaUserId: user._id,
+  });
+
+  const mail = await sendOtpEmail({ to: email, code, purpose });
+  if (mail?.ok === false) {
+    return res.status(502).json({
+      ok: false,
+      error: mail.error || "mail_send_failed",
+      message: mail?.message || "No se pudo enviar el correo OTP.",
+    });
+  }
+
+  return res.json({
+    ok: true,
+    otpRequired: true,
+    sentTo: maskEmail(email),
+    ttlSeconds: settings.ttlSeconds,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+    mustChangePassword: mustChange,
+  });
+}
+
+async function resendOtpHandler(req, res) {
+  const settings = getOtpSettings();
+  if (!settings?.features?.enableEmployeeOtp) {
+    return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
+  }
+
+  const email = normEmail(req.body?.email);
+  if (!email) return res.status(400).json({ ok: false, error: "email_required" });
+
+  const user = await IamUser.findOne({ email })
+    .select("_id email roles +active +provider name")
+    .exec();
+
+  if (!user || user.active === false || String(user.provider || "").toLowerCase() !== "local") {
+    return res.json({ ok: true });
+  }
+
+  const isVisitor = hasRole(user, "visita");
+  const purpose = isVisitor ? "visitor-login" : "employee-login";
+
+  const existing = await getActiveOtp(email, purpose);
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSeconds: settings.resendCooldownSeconds,
+      message: `Espera ${settings.resendCooldownSeconds}s para reenviar.`,
+    });
+  }
+
+  const { code } = await createOrReplaceActiveOtpDoc({
+    email,
+    purpose,
+    ttlSeconds: settings.ttlSeconds,
+    maxAttempts: settings.maxAttempts,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+    metaUserId: user._id,
+  });
+
+  const mail = await sendOtpEmail({ to: email, code, purpose });
+  if (mail?.ok === false) {
+    return res.status(502).json({
+      ok: false,
+      error: mail.error || "mail_send_failed",
+      message: mail?.message || "No se pudo enviar el correo OTP.",
+    });
+  }
+
+  return res.json({
+    ok: true,
+    sentTo: maskEmail(email),
+    ttlSeconds: settings.ttlSeconds,
+    resendCooldownSeconds: settings.resendCooldownSeconds,
+  });
+}
+
+async function verifyOtpHandler(req, res) {
+  const settings = getOtpSettings();
+  if (!settings?.features?.enableEmployeeOtp) {
+    return res.status(403).json({ ok: false, error: "employee_otp_disabled" });
+  }
+
+  const email = normEmail(req.body?.email);
+  const otp = String(req.body?.otp || "").trim();
+
+  if (!email || !otp) {
+    return res.status(400).json({ ok: false, error: "email_and_otp_required" });
+  }
+
+  let doc = await getActiveOtp(email, "visitor-login");
+  if (!doc) doc = await getActiveOtp(email, "employee-login");
+  if (!doc) return res.status(400).json({ ok: false, error: "otp_not_found" });
+
+  if (isExpiredDoc(doc)) {
+    await doc.consume().catch(() => {});
+    return res.status(400).json({ ok: false, error: "otp_expired" });
+  }
+
+  const maxAttempts = Number.isFinite(Number(doc.maxAttempts))
+    ? Number(doc.maxAttempts)
+    : settings.maxAttempts;
+
+  if (Number(doc.attempts || 0) >= maxAttempts) {
+    await doc.consume().catch(() => {});
+    return res.status(429).json({ ok: false, error: "otp_max_attempts" });
+  }
+
+  doc.attempts = Number(doc.attempts || 0) + 1;
+  await doc.save();
+
+  if (sha256(otp) !== String(doc.codeHash || "")) {
+    return res.status(401).json({ ok: false, error: "otp_invalid" });
+  }
+
+  await doc.consume().catch(() => {});
+
+  const user = await IamUser.findOne({ email }).exec();
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+
+  if (!user.otpVerifiedAt) {
+    user.otpVerifiedAt = new Date();
+    try {
+      await user.save();
+    } catch (e) {
+      console.warn("[otp] could not persist otpVerifiedAt:", e?.message || e);
+    }
+  }
+
+  const isVisitor = hasRole(user, "visita");
+  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
+
+  if (mustChange) {
+    const resetToken = signPwResetToken({ email: user.email, userId: user._id });
+    return res.json({ ok: true, mustChangePassword: true, resetToken });
+  }
+
+  const token = signLocalJwt({
+    sub: `local|${user._id}`,
+    email: user.email,
+    name: user.name || user.email,
+    provider: "local",
+  });
+
+  return res.json({ ok: true, token, mustChangePassword: false });
+}
+
+async function resetPasswordOtpHandler(req, res) {
+  const email = normEmail(req.body?.email);
+  const resetToken = String(req.body?.resetToken || "").trim();
+  const newPassword = String(req.body?.newPassword || "");
+
+  if (!email || !resetToken || !newPassword) {
+    return res.status(400).json({ ok: false, error: "missing_fields" });
+  }
+
+  const s = getSecuritySettings?.() || {};
+  const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
+
+  if (newPassword.length < minLength) {
+    return res.status(400).json({ ok: false, error: "password_too_short", minLength });
+  }
+
+  let decoded;
+  try {
+    decoded = verifyPwResetToken(resetToken);
+  } catch {
+    return res.status(401).json({ ok: false, error: "reset_token_invalid_or_expired" });
+  }
+
+  if (normEmail(decoded?.email) !== email) {
+    return res.status(401).json({ ok: false, error: "reset_token_email_mismatch" });
+  }
+
+  const user = await IamUser.findOne({ email })
+    .select("+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email")
+    .exec();
+
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (hasRole(user, "visita")) return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+  if (String(user.provider || "").toLowerCase() !== "local") {
+    return res.status(403).json({ ok: false, error: "not_local_user" });
+  }
+  if (String(user._id) !== String(decoded?.uid)) {
+    return res.status(401).json({ ok: false, error: "reset_token_user_mismatch" });
+  }
+
+  user.passwordHash = await hashPassword(newPassword);
+  user.mustChangePassword = false;
+  user.passwordChangedAt = new Date();
+
+  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays)) ? Number(s.password.expiresDays) : 0;
+  user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : null;
+
+  await user.save();
+
+  const token = signLocalJwt({
+    sub: `local|${user._id}`,
+    email: user.email,
+    name: user.name || user.email,
+    provider: "local",
+  });
+
+  return res.json({ ok: true, token, mustChangePassword: false });
+}
+
+async function changePasswordHandler(req, res) {
+  const email = normEmail(req.body?.email);
+  const newPassword = String(req.body?.newPassword || "");
+
+  if (!email || !newPassword) {
+    return res.status(400).json({ ok: false, error: "email_and_newPassword_required" });
+  }
+
+  const s = getSecuritySettings?.() || {};
+  const minLength = Number.isFinite(Number(s?.password?.minLength)) ? Number(s.password.minLength) : 8;
+
+  if (newPassword.length < minLength) {
+    return res.status(400).json({ ok: false, error: "password_too_short", minLength });
+  }
+
+  const user = await IamUser.findOne({ email }).select("+passwordHash roles +active +provider").exec();
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (hasRole(user, "visita")) return res.status(403).json({ ok: false, error: "visitor_change_not_allowed" });
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+  if (String(user.provider || "").toLowerCase() !== "local") {
+    return res.status(403).json({ ok: false, error: "not_local_user" });
+  }
+
+  user.passwordHash = await hashPassword(newPassword);
+  user.mustChangePassword = false;
+  user.passwordChangedAt = new Date();
+
+  const expiresDays = Number.isFinite(Number(s?.password?.expiresDays)) ? Number(s.password.expiresDays) : 0;
+  user.passwordExpiresAt = expiresDays > 0 ? new Date(Date.now() + expiresDays * 86400000) : null;
+
+  await user.save();
+
+  return res.json({ ok: true });
+}
+
+/* =========================================================
+  Rutas principales
+========================================================= */
+r.post("/login-otp", loginOtpHandler);
+r.post("/verify-otp", verifyOtpHandler);
+r.post("/resend-otp", resendOtpHandler);
+r.post("/reset-password-otp", resetPasswordOtpHandler);
+r.post("/change-password", changePasswordHandler);
+
+/* =========================================================
+  Aliases
+========================================================= */
+r.post("/auth/login-otp", loginOtpHandler);
+r.post("/auth/verify-otp", verifyOtpHandler);
+r.post("/auth/resend-otp", resendOtpHandler);
+r.post("/auth/reset-password-otp", resetPasswordOtpHandler);
+r.post("/auth/change-password", changePasswordHandler);
 
 export default r;
