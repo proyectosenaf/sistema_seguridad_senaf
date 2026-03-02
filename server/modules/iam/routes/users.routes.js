@@ -1,3 +1,4 @@
+// server/modules/iam/routes/users.routes.js
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
@@ -7,10 +8,12 @@ import { hashPassword } from "../utils/password.util.js";
 
 const r = Router();
 
-/* ===================== Centralized helpers ===================== */
+/* ===================== Middlewares ===================== */
 
 const MW_USERS_MANAGE = devOr(requirePerm("iam.users.manage"));
 const MW_USERS_VIEW = devOr(requirePerm("iam.users.view")); // si no lo tienes, usa manage en ambos
+
+/* ===================== Helpers ===================== */
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
@@ -96,26 +99,77 @@ function mapBodyToIamUser(body = {}) {
   return { email, name, roles, active, mustChangePasswordRaw, password };
 }
 
+/**
+ * Fechas desde inputs type="date" (YYYY-MM-DD):
+ * - from => inicio del día (incluyente)
+ * - to   => fin del rango (EXCLUSIVO) = inicio del día siguiente
+ *
+ * Esto arregla el bug donde "Hasta 2026-03-01" se convertía a 2026-03-01T00:00Z
+ * y excluía todo lo creado durante ese día.
+ */
+function isDateOnlyString(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "").trim());
+}
+
+function parseDateFromStart(s) {
+  const raw = String(s || "").trim();
+  if (!raw) return null;
+
+  if (isDateOnlyString(raw)) {
+    // interpretamos como "inicio del día" en UTC (lo importante es consistencia)
+    // 2026-03-01 => 2026-03-01T00:00:00.000Z
+    const d = new Date(`${raw}T00:00:00.000Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseDateToExclusive(s) {
+  const raw = String(s || "").trim();
+  if (!raw) return null;
+
+  if (isDateOnlyString(raw)) {
+    // "hasta" inclusivo por día => usamos límite exclusivo del día siguiente
+    const base = new Date(`${raw}T00:00:00.000Z`);
+    if (Number.isNaN(base.getTime())) return null;
+    const next = new Date(base.getTime() + 24 * 60 * 60 * 1000);
+    return next;
+  }
+
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /* ===================== Routes ===================== */
 
 /**
  * GET /api/iam/v1/users
- * - Vista normal (sin q y sin fechas) => últimos 5 (default), aunque soloActive esté activo
- * - Con filtros (q o fechas) => devuelve coincidencias (hasta limit, default 2000)
+ *
+ * Query params:
+ * - q
+ * - onlyActive=1|0  (default: true)
+ * - createdFrom=YYYY-MM-DD
+ * - createdTo=YYYY-MM-DD   (incluye todo el día)
+ * - limit (default: 5 sin filtros; 2000 con filtros)
+ * - skip (default: 0)
+ *
+ * Response:
+ * { ok, items, meta: { total, limit, skip, hasMore, hasFilters, onlyActive } }
  */
 r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
 
-    // ✅ Default recomendado: solo activos
-    // (si UI manda onlyActive=1, ok; si no manda, queda true)
+    // default recomendado: solo activos
     const onlyActive = parseBool(req.query.onlyActive, true) || String(req.query.active || "") === "1";
 
     const createdFromRaw = String(req.query.createdFrom || req.query.from || "").trim();
     const createdToRaw = String(req.query.createdTo || req.query.to || "").trim();
 
-    const createdFrom = createdFromRaw ? new Date(createdFromRaw) : null;
-    const createdTo = createdToRaw ? new Date(createdToRaw) : null;
+    const createdFrom = parseDateFromStart(createdFromRaw);      // incluyente
+    const createdToExcl = parseDateToExclusive(createdToRaw);    // EXCLUSIVO (si es date-only)
 
     const query = {};
 
@@ -126,21 +180,21 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
       query.$or = [{ name: rx }, { email: rx }];
     }
 
-    const fromOk = createdFrom && !Number.isNaN(createdFrom.getTime());
-    const toOk = createdTo && !Number.isNaN(createdTo.getTime());
-
-    if (fromOk || toOk) {
+    if (createdFrom || createdToExcl) {
       query.createdAt = {};
-      if (fromOk) query.createdAt.$gte = createdFrom;
-      if (toOk) query.createdAt.$lte = createdTo;
+      if (createdFrom) query.createdAt.$gte = createdFrom;
+      if (createdToExcl) {
+        // si era date-only => usamos $lt nextDay
+        // si era datetime => usamos $lte exacto
+        query.createdAt[isDateOnlyString(createdToRaw) ? "$lt" : "$lte"] = createdToExcl;
+      }
     }
 
-    // ✅ CAMBIO CLAVE:
-    // "hasFilters" SOLO cuando hay búsqueda por texto o fechas.
-    // onlyActive NO debe disparar "2000", porque es el default de la pantalla.
+    // hasFilters SOLO cuando hay q o fechas (onlyActive es default)
     const hasFilters = !!q || !!query.createdAt;
 
     const limitParam = Number(req.query.limit || 0);
+    const skipParam = Number(req.query.skip || 0);
 
     const limit =
       Number.isFinite(limitParam) && limitParam > 0
@@ -149,9 +203,20 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
         ? 2000
         : 5;
 
-    const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    const skip = Number.isFinite(skipParam) && skipParam > 0 ? Math.max(0, skipParam) : 0;
 
-    return res.json({ ok: true, items: items.map(pickUser), meta: { hasFilters, limit, onlyActive } });
+    const [total, items] = await Promise.all([
+      IamUser.countDocuments(query),
+      IamUser.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    ]);
+
+    const hasMore = skip + items.length < total;
+
+    return res.json({
+      ok: true,
+      items: items.map(pickUser),
+      meta: { total, limit, skip, hasMore, hasFilters, onlyActive },
+    });
   } catch (e) {
     next(e);
   }
@@ -232,7 +297,7 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       tempPassUsedAt: null,
       tempPassAttempts: 0,
 
-      otpVerifiedAt: isVisitor ? new Date() : null,
+      otpVerifiedAt: null,
     });
 
     await auditSafe(
@@ -269,8 +334,7 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     const update = {};
 
     if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
-    if (body.name != null || body.nombreCompleto != null)
-      update.name = String(body.name || body.nombreCompleto || "").trim();
+    if (body.name != null || body.nombreCompleto != null) update.name = String(body.name || body.nombreCompleto || "").trim();
 
     let newRoles = null;
     if (body.roles != null) {
@@ -351,11 +415,7 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(
-      req,
-      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } },
-      "enable user"
-    );
+    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } }, "enable user");
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
@@ -373,11 +433,7 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(
-      req,
-      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } },
-      "disable user"
-    );
+    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } }, "disable user");
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);

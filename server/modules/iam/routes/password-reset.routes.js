@@ -109,7 +109,12 @@ r.post("/reset-password", async (req, res) => {
       return res.status(400).json({ ok: false, error: "password_too_short" });
     }
 
-    const user = await IamUser.findOne({ email }).select("+tempPassHash roles active provider").exec();
+    // ✅ FIX: selecciona explícitamente todo lo que vas a leer/usar (por si el schema tiene select:false)
+    const user = await IamUser.findOne({ email })
+      .select(
+        "+tempPassHash +passwordHash tempPassExpiresAt tempPassUsedAt tempPassAttempts roles active provider mustChangePassword passwordChangedAt passwordExpiresAt"
+      )
+      .exec();
 
     if (!user || String(user.provider || "").toLowerCase() !== "local" || user.active === false) {
       return res.status(400).json({ ok: false, error: "invalid_reset" });

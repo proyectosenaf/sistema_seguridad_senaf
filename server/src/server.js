@@ -172,13 +172,21 @@ app.get("/api/health", (_req, res) =>
 );
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-/* ───────────────────── ✅ PUBLIC AUTH (VISITANTES) ✅ ───────────────────── */
+/* ───────────────────── ✅ AUTH OTP PÚBLICO ✅ ───────────────────── */
 /**
- * Visitantes: OTP por email
- * ✅ SIN módulo public duplicado: usamos el router OTP de IAM como “public”
+ * ✅ IMPORTANTE:
+ * Montamos OTP en:
+ * - /api/public/v1/auth  (tu ruta “public”)
+ * - /api/iam/v1/auth     (compatibilidad: si el frontend le pega aquí, NO debe dar 401)
+ *
+ * Lo montamos ANTES del optionalAuth para que nunca lo bloquee requireAuth.
  */
 app.use("/api/public/v1/auth", iamOtpAuthRoutes);
 app.use("/public/v1/auth", iamOtpAuthRoutes);
+
+// ✅ FIX: compatibilidad (tu frontend estaba pegando a /api/iam/v1/auth/verify-otp)
+app.use("/api/iam/v1/auth", iamOtpAuthRoutes);
+app.use("/iam/v1/auth", iamOtpAuthRoutes);
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
 
@@ -298,7 +306,7 @@ await registerIAMModule({ app, basePath: "/api/iam/v1", enableDoAlias: true });
  * - crea usuario con roles:["visita"] y passwordHash
  * - NO requiere token
  *
- * Lo montamos DESPUÉS del optionalAuth (opcionalAuth no bloquea si no hay bearer),
+ * Lo montamos DESPUÉS del optionalAuth (optionalAuth no bloquea si no hay bearer),
  * y DESPUÉS de registerIAMModule para no interferir con cómo montas otros routers internos.
  */
 app.use("/api/iam/v1/auth", registerVisitorRoutes);
@@ -307,12 +315,11 @@ app.use("/iam/v1/auth", registerVisitorRoutes);
 
 /* ───────────────────── ✅ IAM CATALOGS REGISTER ✅ ───────────────────── */
 /**
- * ✅ Esto era lo que te faltaba.
- * Monta los catálogos (estado civil, países, profesiones)
+ * ✅ Monta los catálogos (estado civil, países, profesiones)
  */
 app.use("/api/iam/v1/catalogs", catalogsRoutes);
-// alias opcional
-app.use("/api/iam/v1/catalogs", catalogsRoutes);
+// ✅ FIX: alias correcto sin /api (antes lo tenías duplicado igual)
+app.use("/iam/v1/catalogs", catalogsRoutes);
 
 /* ─────────────────── Notificaciones globales ──────────────────── */
 
@@ -464,4 +471,4 @@ function shutdown(sig) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));
+process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));   

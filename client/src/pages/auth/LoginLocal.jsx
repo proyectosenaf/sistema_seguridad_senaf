@@ -106,7 +106,7 @@ export default function LoginLocal() {
   const emailNorm = useMemo(() => String(identifier || "").trim().toLowerCase(), [identifier]);
   const visitorEmailNorm = useMemo(() => String(vEmail || "").trim().toLowerCase(), [vEmail]);
 
-  function stashOtpContext({ email, flow, returnTo }) {
+  function stashOtpContext({ email, flow, returnTo, mustChangePassword } = {}) {
     try {
       localStorage.setItem("senaf_otp_email", String(email || ""));
     } catch {}
@@ -118,6 +118,10 @@ export default function LoginLocal() {
         sessionStorage.setItem("auth:returnTo", returnTo);
       } catch {}
     }
+    // ✅ Guardamos flag por si tu pantalla /otp quiere mostrar mensaje
+    try {
+      sessionStorage.setItem("senaf_otp_mustChange", mustChangePassword ? "1" : "0");
+    } catch {}
   }
 
   async function submitInternal(e) {
@@ -135,7 +139,13 @@ export default function LoginLocal() {
       setSubmitting(true);
       clearToken();
 
-      const res = await api.post("/iam/v1/auth/login-otp", {
+      // ✅ CORRECCIÓN:
+      // Tu server OTP router está montado aquí:
+      //   app.use("/api/public/v1/auth", iamOtpAuthRoutes);
+      // Y tu axios "api" usualmente ya apunta a ".../api"
+      // Entonces debes llamar:
+      //   POST /public/v1/auth/login-otp
+      const res = await api.post("/public/v1/auth/login-otp", {
         email: emailNorm,
         password: String(password || ""),
       });
@@ -144,7 +154,6 @@ export default function LoginLocal() {
 
       if (data?.ok === false) {
         setError(humanLoginError(data?.error || data?.message));
-        // si el server devolvió "user_not_found" => sugerimos cambiar a pestaña registro
         return;
       }
 
@@ -172,7 +181,12 @@ export default function LoginLocal() {
       }
 
       // ✅ Caso B: requiere OTP => ir a /otp
-      stashOtpContext({ email: emailNorm, flow: "login", returnTo });
+      stashOtpContext({
+        email: emailNorm,
+        flow: "login",
+        returnTo,
+        mustChangePassword: !!data?.mustChangePassword,
+      });
       navigate("/otp", { replace: true });
     } catch (err) {
       const msg =
@@ -227,10 +241,7 @@ export default function LoginLocal() {
         return;
       }
 
-      // Diseño recomendado del backend:
-      // - Puede devolver token directo (sin OTP) -> login inmediato
-      // - O puede devolver otpRequired true (si decides confirmar email)
-      // En tu requerimiento: visitante NO debe ir a reset; y debería poder entrar normalmente luego.
+      // Puede devolver token directo (si backend decide loguear) o pedir OTP
       if (data?.token) {
         const tkn = String(data.token || "").trim();
         setToken(tkn);
@@ -242,7 +253,12 @@ export default function LoginLocal() {
       }
 
       if (data?.otpRequired) {
-        stashOtpContext({ email: visitorEmailNorm, flow: "register", returnTo });
+        stashOtpContext({
+          email: visitorEmailNorm,
+          flow: "register",
+          returnTo,
+          mustChangePassword: false,
+        });
         navigate("/otp", { replace: true });
         return;
       }

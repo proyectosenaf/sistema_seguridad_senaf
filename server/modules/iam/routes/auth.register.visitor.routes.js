@@ -27,12 +27,12 @@ function hasRole(user, role) {
  *
  * Reglas:
  * - Si ya existe usuario:
- *   - si es visita => 409 user_exists (para que el frontend diga "ya existe, inicia sesión")
- *   - si NO es visita => 403 email_reserved (correo pertenece a un interno)
+ *   - si es visita => 409 user_exists
+ *   - si NO es visita => 403 email_reserved
  * - Si no existe:
  *   - crea usuario local con roles:["visita"]
  *   - mustChangePassword:false
- *   - otpVerifiedAt: fecha (para que nunca pida OTP)
+ *   - otpVerifiedAt: null (para que pida OTP en primer login)
  */
 r.post("/register-visitor", async (req, res, next) => {
   try {
@@ -51,7 +51,6 @@ r.post("/register-visitor", async (req, res, next) => {
     const existing = await IamUser.findOne({ email }).lean();
 
     if (existing) {
-      // Si el correo pertenece a un interno, no dejes que se "registre" como visita
       const isVisitor = Array.isArray(existing.roles)
         ? existing.roles.map((x) => String(x).toLowerCase()).includes("visita")
         : false;
@@ -89,10 +88,9 @@ r.post("/register-visitor", async (req, res, next) => {
       passwordChangedAt: now,
       passwordExpiresAt: expires,
 
-      // ✅ para que el flujo interno NO pida OTP a visitas
-      otpVerifiedAt: now,
+      // 🔴 CORREGIDO: ahora sí pedirá OTP en primer login
+      otpVerifiedAt: null,
 
-      // limpia reset temporal por seguridad
       tempPassHash: "",
       tempPassExpiresAt: null,
       tempPassUsedAt: null,

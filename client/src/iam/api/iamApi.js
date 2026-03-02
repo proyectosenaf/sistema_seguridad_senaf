@@ -4,6 +4,11 @@ import { API, getToken, setToken, clearToken } from "../../lib/api.js";
 const API_ROOT = String(API || "").replace(/\/$/, "");
 const V1 = `${API_ROOT}/iam/v1`;
 
+// ✅ NEW: base para endpoints públicos (OTP)
+// Tu server monta: /api/public/v1/auth  y también /public/v1/auth
+// Como API_ROOT normalmente termina en "/api", construimos PUBLIC_AUTH_BASE desde ahí.
+const PUBLIC_AUTH_BASE = `${API_ROOT.replace(/\/api\/?$/, "")}/api/public/v1/auth`;
+
 /* =========================
    Helpers
 ========================= */
@@ -39,6 +44,11 @@ function buildUrl(path) {
   return `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+// ✅ NEW: construir URL para rutas públicas (OTP)
+function buildPublicAuthUrl(path) {
+  return `${PUBLIC_AUTH_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 function makeError(r, payload, fallbackText = "") {
   const msg =
     payload?.message ||
@@ -59,12 +69,23 @@ function makeError(r, payload, fallbackText = "") {
  * - json=true: set Content-Type + stringify
  * - si body es FormData/Blob/ArrayBuffer: no setear Content-Type
  * - timeoutMs: abort fetch si excede
+ *
+ * ✅ NEW:
+ * - isPublicAuth=true => llama a /api/public/v1/auth (OTP)
  */
 async function req(
   path,
-  { method = "GET", body, json = true, token, credentials = "omit", timeoutMs = 30000 } = {}
+  {
+    method = "GET",
+    body,
+    json = true,
+    token,
+    credentials = "omit",
+    timeoutMs = 30000,
+    isPublicAuth = false, // ✅ NEW
+  } = {}
 ) {
-  const urlBase = buildUrl(path);
+  const urlBase = isPublicAuth ? buildPublicAuthUrl(path) : buildUrl(path); // ✅ NEW
 
   const headers = {};
   headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
@@ -215,6 +236,46 @@ export const iamApi = {
     return data;
   },
 
+  // ✅ NEW: OTP request (primer login para TODOS)
+  // Server: POST /api/public/v1/auth/otp/request
+  requestOtp(email) {
+    return req("/otp/request", {
+      method: "POST",
+      body: { email: String(email || "").trim().toLowerCase() },
+      credentials: "omit",
+      isPublicAuth: true,
+    });
+  },
+
+  // ✅ NEW: OTP verify (devuelve token y lo guardamos)
+  // Server: POST /api/public/v1/auth/otp/verify
+  async verifyOtp(email, code) {
+    const data = await req("/otp/verify", {
+      method: "POST",
+      body: {
+        email: String(email || "").trim().toLowerCase(),
+        code: String(code || "").trim(),
+      },
+      credentials: "omit",
+      isPublicAuth: true,
+    });
+
+    if (data?.token) setToken(data.token);
+    return data;
+  },
+
+  // ✅ NEW: set password para usuarios internos (no-visita)
+  // Endpoint típico: POST /api/iam/v1/auth/set-password
+  // (Si tu ruta se llama distinto, dime el path real y lo ajusto)
+  setPassword(newPassword, token) {
+    return req("/auth/set-password", {
+      method: "POST",
+      body: { password: String(newPassword || "") },
+      token,
+      credentials: "omit",
+    });
+  },
+
   // Logout
   async logout() {
     const out = await req("/auth/logout", {
@@ -325,7 +386,11 @@ export const iamApi = {
     return req("/permissions", { method: "POST", body: body || {}, token });
   },
   updatePerm(id, body, token) {
-    return req(`/permissions/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/permissions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
   deletePerm(id, token) {
     return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });

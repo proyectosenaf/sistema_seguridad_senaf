@@ -1,3 +1,4 @@
+// server/modules/iam/routes/auth.otp.routes.js
 import { Router } from "express";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
@@ -168,7 +169,7 @@ function verifyPwResetToken(token) {
 }
 
 /* =========================
-   Handlers reutilizables
+  Handlers reutilizables
 ========================= */
 
 async function loginOtpHandler(req, res) {
@@ -181,18 +182,20 @@ async function loginOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_password_required" });
   }
 
-  // necesitamos passwordHash para verificar
-  const user = await IamUser.findOne({ email }).select("+passwordHash roles active provider mustChangePassword otpVerifiedAt passwordExpiresAt").exec();
+  // ✅ FIX: forzar +active +provider (por si están select:false)
+  const user = await IamUser.findOne({ email })
+    .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt")
+    .exec();
 
-  // Si no existe: esto es lo que tu UI debe usar para decir "Regístrate"
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
+  // ✅ FIX: check estricto
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  // Si no hay hash => nunca va a validar; esto evita confusión de "credenciales"
   if (!user.passwordHash) {
     return res.status(403).json({
       ok: false,
@@ -205,29 +208,12 @@ async function loginOtpHandler(req, res) {
   if (!okPwd) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
   const isVisitor = hasRole(user, "visita");
+  const otpEnabled = !!settings?.features?.enableEmployeeOtp;
 
-  // ✅ VISITAS: NUNCA OTP, NUNCA force reset
-  if (isVisitor) {
-    const token = signLocalJwt({
-      sub: `local|${user._id}`,
-      email: user.email,
-      name: user.name || user.email,
-      provider: "local",
-    });
+  const firstTimeOtp = !user.otpVerifiedAt;
+  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
 
-    return res.json({
-      ok: true,
-      otpRequired: false,
-      token,
-      mustChangePassword: false,
-    });
-  }
-
-  // ✅ INTERNOS: OTP solo si está habilitado
-  if (!settings?.features?.enableEmployeeOtp) {
-    // si no hay OTP habilitado, igual dejamos entrar con token
-    const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
-
+  if (!otpEnabled) {
     const token = signLocalJwt({
       sub: `local|${user._id}`,
       email: user.email,
@@ -243,11 +229,8 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
-  const firstTimeOtp = !user.otpVerifiedAt;
-  const otpRequired = firstTimeOtp || mustChange;
+  const otpRequired = isVisitor ? firstTimeOtp : (firstTimeOtp || mustChange);
 
-  // ✅ Si NO requiere OTP => token directo
   if (!otpRequired) {
     const token = signLocalJwt({
       sub: `local|${user._id}`,
@@ -264,7 +247,6 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  // ✅ Requiere OTP => cooldown + enviar OTP
   const existing = OTP_STORE.get(email);
   if (existing && !isExpired(existing)) {
     if (!canResend(existing, settings.resendCooldownSeconds)) {
@@ -313,15 +295,11 @@ async function resendOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-  const user = await IamUser.findOne({ email }).select("_id email active provider roles").lean();
-  if (!user || !user.active || String(user.provider || "").toLowerCase() !== "local") {
-    return res.json({ ok: true });
+  // ✅ FIX: +active +provider
+  const user = await IamUser.findOne({ email }).select("_id email roles +active +provider").lean();
+  if (!user || user.active === false || String(user.provider || "").toLowerCase() !== "local") {
+    return res.json({ ok: true }); // no revelar
   }
-
-  // no OTP a visitas
-  const roles = Array.isArray(user.roles) ? user.roles : [];
-  const isVisitor = roles.map((x) => String(x).toLowerCase()).includes("visita");
-  if (isVisitor) return res.json({ ok: true });
 
   const existing = OTP_STORE.get(email);
   if (existing && !isExpired(existing)) {
@@ -398,17 +376,6 @@ async function verifyOtpHandler(req, res) {
   const user = await IamUser.findOne({ email }).exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  // visitas no usan OTP; si llegaron aquí por error, igual devolvemos token normal
-  if (hasRole(user, "visita")) {
-    const token = signLocalJwt({
-      sub: `local|${user._id}`,
-      email: user.email,
-      name: user.name || user.email,
-      provider: "local",
-    });
-    return res.json({ ok: true, token, mustChangePassword: false });
-  }
-
   if (!user.otpVerifiedAt) {
     user.otpVerifiedAt = new Date();
     try {
@@ -418,7 +385,8 @@ async function verifyOtpHandler(req, res) {
     }
   }
 
-  const mustChange = !!user.mustChangePassword || isPasswordExpired(user);
+  const isVisitor = hasRole(user, "visita");
+  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
 
   if (mustChange) {
     const resetToken = signPwResetToken({ email: user.email, userId: user._id });
@@ -470,15 +438,20 @@ async function resetPasswordOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "reset_token_email_mismatch" });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash roles").exec();
+  // ✅ FIX: +active +provider (por si select:false)
+  const user = await IamUser.findOne({ email })
+    .select("+passwordHash roles +active +provider mustChangePassword passwordExpiresAt")
+    .exec();
+
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-  // ✅ visitantes nunca deberían resetear por este flujo
   if (hasRole(user, "visita")) {
     return res.status(403).json({ ok: false, error: "visitor_reset_not_allowed" });
   }
 
-  if (!user.active) return res.status(403).json({ ok: false, error: "user_inactive" });
+  // ✅ FIX: check estricto
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
@@ -521,12 +494,15 @@ async function changePasswordHandler(req, res) {
     return res.status(400).json({ ok: false, error: "password_too_short", minLength });
   }
 
-  const user = await IamUser.findOne({ email }).select("+passwordHash roles").exec();
+  // ✅ FIX: +active +provider
+  const user = await IamUser.findOne({ email }).select("+passwordHash roles +active +provider").exec();
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
 
   if (hasRole(user, "visita")) {
     return res.status(403).json({ ok: false, error: "visitor_change_not_allowed" });
   }
+
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
   if (String(user.provider || "").toLowerCase() !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
@@ -545,7 +521,7 @@ async function changePasswordHandler(req, res) {
 }
 
 /* =========================================================
-   Rutas principales
+  Rutas principales
 ========================================================= */
 r.post("/login-otp", loginOtpHandler);
 r.post("/verify-otp", verifyOtpHandler);
@@ -554,7 +530,7 @@ r.post("/reset-password-otp", resetPasswordOtpHandler);
 r.post("/change-password", changePasswordHandler);
 
 /* =========================================================
-   Aliases
+  Aliases
 ========================================================= */
 r.post("/auth/login-otp", loginOtpHandler);
 r.post("/auth/verify-otp", verifyOtpHandler);

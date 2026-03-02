@@ -38,16 +38,13 @@ function consumeReturnTo(locationSearch) {
 
 function getOtpEmail() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "")
-      .trim()
-      .toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
   } catch {
     return "";
   }
 }
 
-// Limpieza "suave": no borra email (por seguridad de UX)
-// El email lo puedes borrar definitivamente hasta que reset termine.
+// Limpieza "suave": no borra email (por UX).
 function clearOtpFlowOnly() {
   try {
     sessionStorage.removeItem("senaf_otp_flow");
@@ -116,7 +113,12 @@ export default function VerifyOtp() {
     try {
       setSubmitting(true);
 
-      const res = await api.post("/iam/v1/auth/verify-otp", {
+      // ✅ CORRECCIÓN MÍNIMA:
+      // En tu server.js el OTP router está montado como PUBLIC:
+      //   /api/public/v1/auth  (y también /public/v1/auth)
+      // Tu axios api ya suele tener baseURL ".../api"
+      // => aquí debe ser "/public/v1/auth/verify-otp"
+      const res = await api.post("/public/v1/auth/verify-otp", {
         email: emailNorm,
         otp: String(otp || "").trim(),
       });
@@ -128,7 +130,7 @@ export default function VerifyOtp() {
         return;
       }
 
-      // ✅ Nuevo flujo: OTP válido pero debe resetear password
+      // ✅ OTP válido pero debe resetear password
       if (data?.mustChangePassword) {
         const rt = String(data?.resetToken || "").trim();
         if (!rt) {
@@ -136,12 +138,10 @@ export default function VerifyOtp() {
           return;
         }
 
-        // Guardar por si refresca la pantalla de reset
         try {
           sessionStorage.setItem("senaf_pwreset_token", rt);
         } catch {}
 
-        // Limpia solo el flag del flow, pero conserva el email por si la query falla
         clearOtpFlowOnly();
 
         navigate(
@@ -158,7 +158,6 @@ export default function VerifyOtp() {
         return;
       }
 
-      // Ya entró: limpieza total
       clearOtpAll();
 
       setToken(token);
@@ -195,7 +194,8 @@ export default function VerifyOtp() {
     try {
       setResending(true);
 
-      const res = await api.post("/iam/v1/auth/resend-otp", { email: emailNorm });
+      // ✅ CORRECCIÓN MÍNIMA: misma base "/public/v1/auth"
+      const res = await api.post("/public/v1/auth/resend-otp", { email: emailNorm });
       const data = res?.data || {};
 
       if (data?.ok === false) {

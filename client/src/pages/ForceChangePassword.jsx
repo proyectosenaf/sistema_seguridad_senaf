@@ -1,8 +1,10 @@
 // client/src/pages/ForceChangePassword.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
+
 import { APP_CONFIG } from "../config/app.config.js";
-import api, { setToken } from "../lib/api.js";
+import api, { API, setToken } from "../lib/api.js";
 import { useAuth } from "./auth/AuthProvider.jsx";
 
 function getParam(name) {
@@ -12,9 +14,7 @@ function getParam(name) {
 
 function getOtpEmailFallback() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "")
-      .trim()
-      .toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
   } catch {
     return "";
   }
@@ -42,12 +42,26 @@ function humanResetError(codeOrMsg) {
 
   if (s.includes("missing_fields")) return "Faltan datos para restablecer contraseña.";
   if (s.includes("password_too_short")) return "La contraseña es muy corta.";
-  if (s.includes("reset_token_invalid_or_expired")) return "La sesión de restablecimiento venció. Inicia sesión de nuevo.";
-  if (s.includes("reset_token_email_mismatch")) return "El token no corresponde a este correo. Inicia sesión de nuevo.";
-  if (s.includes("reset_token_user_mismatch")) return "Token inválido. Inicia sesión de nuevo.";
+
+  if (s.includes("reset_token_invalid_or_expired"))
+    return "La sesión de restablecimiento venció. Vuelve a iniciar sesión y valida el OTP otra vez.";
+  if (s.includes("reset_token_email_mismatch"))
+    return "El token no corresponde a este correo. Vuelve a iniciar sesión y valida el OTP otra vez.";
+  if (s.includes("reset_token_user_mismatch"))
+    return "Token inválido. Vuelve a iniciar sesión y valida el OTP otra vez.";
+
   if (s.includes("user_not_found")) return "Usuario no encontrado.";
   if (s.includes("user_inactive")) return "Usuario inactivo. Contacta al administrador.";
   if (s.includes("not_local_user")) return "Este usuario no es local. No se puede restablecer aquí.";
+  if (s.includes("visitor_reset_not_allowed"))
+    return "Los usuarios 'visita' no restablecen contraseña por este flujo.";
+
+  // Si tu backend devuelve otp_* en algún punto
+  if (s.includes("otp")) return "Debes validar OTP otra vez (código vencido o inválido).";
+
+  // Errores HTTP genéricos
+  if (s.includes("forbidden") || s === "403") return "Acceso denegado (403). Repite el OTP e intenta de nuevo.";
+  if (s.includes("unauthorized") || s === "401") return "No autorizado (401). Repite el OTP e intenta de nuevo.";
 
   return codeOrMsg || "No se pudo restablecer la contraseña.";
 }
@@ -62,7 +76,7 @@ export default function ForceChangePassword() {
   const emailFromQuery = (getParam("email") || "").trim().toLowerCase();
   const email = emailFromQuery || getOtpEmailFallback();
 
-  // resetToken debe venir del verify-otp (ideal por query) o sessionStorage
+  // resetToken por query o fallback
   const resetTokenFromQuery = (getParam("rt") || "").trim();
   const resetToken = resetTokenFromQuery || getResetTokenFallback();
 
@@ -89,6 +103,7 @@ export default function ForceChangePassword() {
       setMsg("No se recibió el email. Vuelve a iniciar sesión.");
       return;
     }
+
     if (!resetToken) {
       setStatus("error");
       setMsg("No hay sesión de restablecimiento. Vuelve a iniciar sesión y valida el OTP otra vez.");
@@ -103,6 +118,7 @@ export default function ForceChangePassword() {
       setMsg("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
+
     if (pwd !== cpwd) {
       setStatus("error");
       setMsg("Las contraseñas no coinciden.");
@@ -112,11 +128,22 @@ export default function ForceChangePassword() {
     try {
       setStatus("saving");
 
-      const res = await api.post("/iam/v1/auth/reset-password-otp", {
-        email,
-        resetToken,
-        newPassword: pwd,
-      });
+      /**
+       * ✅ CLAVE:
+       * Usar axios "limpio" para NO mandar Authorization automático.
+       *
+       * API (desde lib/api.js) ya incluye /api
+       * Ej: http://localhost:4000/api
+       * entonces aquí pegamos:
+       * POST {API}/public/v1/auth/reset-password-otp
+       */
+      const url = `${String(API).replace(/\/$/, "")}/public/v1/auth/reset-password-otp`;
+
+      const res = await axios.post(
+        url,
+        { email, resetToken, newPassword: pwd },
+        { headers: { "Content-Type": "application/json" } }
+      );
 
       const data = res?.data || {};
 
@@ -135,7 +162,11 @@ export default function ForceChangePassword() {
 
       // limpiar contexto y loguear
       clearOtpResetContext();
+
+      // guarda token en tu capa global (api.js)
       setToken(token);
+
+      // si tu auth local necesita setear estado interno
       await auth.login({ email }, token);
 
       setStatus("ok");
@@ -143,13 +174,14 @@ export default function ForceChangePassword() {
 
       navigate("/start", { replace: true });
     } catch (err) {
-      const msg =
+      const errorMsg =
         err?.response?.data?.error ||
         err?.response?.data?.message ||
         err?.message ||
-        "Error de red.";
+        String(err);
+
       setStatus("error");
-      setMsg(humanResetError(msg));
+      setMsg(humanResetError(errorMsg));
     }
   }
 
@@ -167,7 +199,6 @@ export default function ForceChangePassword() {
           <div className="text-sm font-medium">{email || "(sin email)"}</div>
         </div>
 
-        {/* Si no hay resetToken, el usuario no puede avanzar */}
         {!resetToken && (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
             No hay sesión de restablecimiento (resetToken). Vuelve a iniciar sesión y valida el OTP otra vez.
@@ -225,9 +256,7 @@ export default function ForceChangePassword() {
           </a>
         </div>
 
-        <p className="mt-4 text-xs text-neutral-500">
-          Tip: usa una contraseña fuerte y no la compartas.
-        </p>
+        <p className="mt-4 text-xs text-neutral-500">Tip: usa una contraseña fuerte y no la compartas.</p>
       </div>
     </div>
   );
