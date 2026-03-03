@@ -14,6 +14,11 @@ import { getNavSectionsForMe } from "../config/navConfig.js";
 
 const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
+// Keys de storage (mantener consistencia)
+const USER_KEY = "senaf_user";
+const RETURN_TO_KEY = "auth:returnTo";
+const VISITOR_HINT_KEY = "senaf_is_visitor";
+
 // Opcional: limitar qué secciones se muestran sin hardcode
 // Ej: VITE_NAV_KEYS_ALLOWLIST="accesos,rondas,visitas"
 const NAV_KEYS_ALLOWLIST = String(import.meta.env.VITE_NAV_KEYS_ALLOWLIST || "")
@@ -44,9 +49,7 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={[base, active ? activeCls : inactive, emphasizeCls]
-        .filter(Boolean)
-        .join(" ")}
+      className={[base, active ? activeCls : inactive, emphasizeCls].filter(Boolean).join(" ")}
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
@@ -55,22 +58,32 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
         ) : (
           <span className="w-6 h-6 shrink-0" />
         )}
-        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">
-          {label}
-        </span>
+        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">{label}</span>
       </div>
     </NavLink>
   );
 }
 
+function readVisitorHint() {
+  try {
+    return localStorage.getItem(VISITOR_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function isVisitorUser(user) {
+  // 1) si user existe, lo detectamos por flags/roles
   const roles = Array.isArray(user?.roles) ? user.roles : [];
   const isRoleVisitor = roles.some((r) => {
     const x = String(r || "").toLowerCase();
     return x === "visita" || x === "visitor";
   });
 
-  return !!user?.visitor || !!user?.isVisitor || isRoleVisitor;
+  if (!!user?.visitor || !!user?.isVisitor || isRoleVisitor) return true;
+
+  // 2) fallback: hint persistido para refresh (cuando /me todavía no llegó)
+  return readVisitorHint();
 }
 
 export default function Sidebar({ onNavigate, variant }) {
@@ -87,11 +100,16 @@ export default function Sidebar({ onNavigate, variant }) {
       // ignore
     }
 
-    // 2) limpia token canónico + legacy
+    // 2) limpia token canónico + legacy + sesión usuario/hints
     try {
       clearToken(); // senaf_token (canónico)
       localStorage.removeItem("token"); // legacy por compat
       localStorage.removeItem("access_token"); // por si quedó algo viejo
+
+      // ✅ limpia estado de sesión persistido
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(VISITOR_HINT_KEY);
+      sessionStorage.removeItem(RETURN_TO_KEY);
     } catch {
       // ignore
     }
@@ -100,20 +118,19 @@ export default function Sidebar({ onNavigate, variant }) {
     nav(ROUTE_LOGIN, { replace: true });
   };
 
-  const isVisitor = isVisitorUser(user);
+  const isVisitor = useMemo(() => isVisitorUser(user), [user]);
 
   // ✅ Secciones filtradas por sesión (deny-by-default en navConfig)
   const sessionSections = useMemo(() => {
     const secs = getNavSectionsForMe(user);
 
-    // allowlist opcional por env (se aplica al final)
     const filtered =
       NAV_KEYS_ALLOWLIST.length > 0
         ? secs.filter((x) => NAV_KEYS_ALLOWLIST.includes(String(x.key || "").trim()))
         : secs;
 
     return Array.isArray(filtered) ? filtered : [];
-  }, [user]);
+  }, [user, NAV_KEYS_ALLOWLIST.join(",")]);
 
   // Home solo para NO visitantes
   const homeItem = useMemo(() => {
@@ -145,9 +162,10 @@ export default function Sidebar({ onNavigate, variant }) {
   }, [homeItem, sessionSections]);
 
   /**
-   * ✅ Anti-flash:
-   * - Mientras está cargando / rehidratando => NO renderizar menú completo.
-   * - Si está autenticado pero aún no hay user => no muestres secciones (items quedará [] o mínimo).
+   * ✅ Anti-flash más estricto:
+   * - Mientras isLoading => NO renderizar items.
+   * - Si hay sesión (isAuthenticated) pero aún no hay user => NO renderizar items.
+   *   (porque ahí es donde “se destapa” el menú por defaults en otros componentes)
    */
   const showNav = !isLoading && (!isAuthenticated || (user && typeof user === "object"));
 
@@ -176,7 +194,6 @@ export default function Sidebar({ onNavigate, variant }) {
           ))}
         </nav>
       ) : (
-        // loader minimal para evitar “mostrar todo” durante refresh
         <div className="text-sm text-neutral-600 dark:text-neutral-300 px-2">
           Cargando sesión…
         </div>

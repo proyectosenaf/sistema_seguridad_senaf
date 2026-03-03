@@ -9,12 +9,12 @@ import { useLayoutUI } from "./layout-ui.jsx";
 import GlobalPanicListener from "./GlobalPanicListener.jsx";
 
 /**
- * Layout modes (parametrizable):
+ * Layout modes:
  * - "app": normal (sidebar + footer + chat)
  * - "full": sin sidebar (ej: pantallas tipo módulo full)
- * - "visitor": experiencia “kiosk” (sin sidebar, sin footer, sin chat; topbar opcional)
+ * - "visitor": experiencia “kiosk”
  */
-const DEFAULT_LOGIN_PATH = String(import.meta.env.VITE_ROUTE_LOGIN || "/login");
+const DEFAULT_LOGIN_PATH = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
 function parseBool(v, def = false) {
   if (v === undefined || v === null) return def;
@@ -22,6 +22,18 @@ function parseBool(v, def = false) {
   if (["1", "true", "yes", "y", "on"].includes(s)) return true;
   if (["0", "false", "no", "n", "off"].includes(s)) return false;
   return def;
+}
+
+// ✅ hint local para no “destapar” el sidebar mientras llega /me
+// Se setea en el flujo OTP/visitor (te explico abajo qué setear).
+const VISITOR_HINT_KEY = "senaf_is_visitor";
+
+function getVisitorHint() {
+  try {
+    return localStorage.getItem(VISITOR_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export default function Layout({
@@ -55,16 +67,18 @@ export default function Layout({
   const ENV_HIDE_TOPBAR_FOR_VISITOR = parseBool(import.meta.env.VITE_HIDE_TOPBAR_FOR_VISITOR, false);
   const ENV_HIDE_FOOTER_FOR_VISITOR = parseBool(import.meta.env.VITE_HIDE_FOOTER_FOR_VISITOR, true);
 
-  // ✅ Reglas por modo (sin hardcode de rutas)
+  // ✅ Reglas por modo
   const modeHideSidebar = layoutMode === "full" || layoutMode === "visitor";
   const modeHideFooter = layoutMode === "visitor" ? ENV_HIDE_FOOTER_FOR_VISITOR : false;
   const modeHideChatDock = layoutMode === "visitor" ? ENV_HIDE_CHAT_FOR_VISITOR : false;
   const modeHideTopbar = layoutMode === "visitor" ? ENV_HIDE_TOPBAR_FOR_VISITOR : false;
 
-  // ✅ merge final (prop > ctx > modo)
-  const hideSidebar = Boolean(
-    hideSidebarProp || hideSidebarCtx || modeHideSidebar
-  );
+  // ✅ Fallback: si la ruta es /visitas/** y hay hint de visitante, oculta sidebar
+  const visitorHint = getVisitorHint();
+  const hintHideSidebar = visitorHint && String(pathname || "").startsWith("/visitas");
+
+  // ✅ merge final (prop > ctx > hint > modo)
+  const hideSidebar = Boolean(hideSidebarProp || hideSidebarCtx || hintHideSidebar || modeHideSidebar);
 
   const hideFooter =
     hideFooterProp !== undefined
@@ -97,7 +111,7 @@ export default function Layout({
       back.onClick();
       return;
     }
-    const ref = document.referrer || "";
+    const ref = String(document.referrer || "");
     const cameFromLogin = ref.includes(DEFAULT_LOGIN_PATH);
     const shallowHistory = window.history.length <= 2;
 
@@ -145,11 +159,7 @@ export default function Layout({
             border-b border-neutral-200/60 dark:border-white/10
           "
         >
-          <Topbar
-            onToggleMenu={() => setMobileOpen(true)}
-            showBack={showBack}
-            back={backProp}
-          />
+          <Topbar onToggleMenu={() => setMobileOpen(true)} showBack={showBack} back={backProp} />
         </header>
       )}
 

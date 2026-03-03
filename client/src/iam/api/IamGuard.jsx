@@ -1,5 +1,5 @@
 // client/src/iam/api/IamGuard.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 /**
  * IamGuard (post-refactor / centralizado):
@@ -66,6 +66,12 @@ function pickPermsFromMe(me) {
   );
 }
 
+function isVisitorFromMe(me, roles = []) {
+  const visitorFlag = !!me?.visitor || !!me?.isVisitor;
+  const R = new Set((roles || []).map((r) => String(r || "").toLowerCase()));
+  return visitorFlag || R.has("visita") || R.has("visitor");
+}
+
 /**
  * Props:
  * - me: objeto /me ya resuelto (desde App.jsx)
@@ -105,7 +111,7 @@ export default function IamGuard({
       const roles = normalizeTokens(pickRolesFromMe(me));
       const perms = normalizeTokens(pickPermsFromMe(me));
       const email = pickEmailFromMe(me);
-      const visitor = !!me?.visitor || !!me?.isVisitor;
+      const visitor = isVisitorFromMe(me, roles);
 
       setState({ loading: false, roles, perms, email, visitor });
       return;
@@ -115,19 +121,11 @@ export default function IamGuard({
     setState({ loading: false, roles: [], perms: [], email: "", visitor: false });
   }, [me, meLoading]);
 
-  if (state.loading) return fallback || <div className="p-6">Cargando…</div>;
-
-  const roleSet = useMemo(() => {
-    return new Set((state.roles || []).map((r) => String(r).toLowerCase()));
-  }, [state.roles]);
-
-  const permSet = useMemo(() => {
-    return new Set((state.perms || []).map((p) => String(p)));
-  }, [state.perms]);
-
-  const permSetLower = useMemo(() => {
-    return new Set((state.perms || []).map((p) => String(p).toLowerCase()));
-  }, [state.perms]);
+  // ✅ IMPORTANTÍSIMO: NO hooks después de un return condicional.
+  // Por eso aquí NO usamos useMemo: sets simples y listo.
+  const roleSet = new Set((state.roles || []).map((r) => String(r).toLowerCase()));
+  const permSet = new Set((state.perms || []).map((p) => String(p)));
+  const permSetLower = new Set((state.perms || []).map((p) => String(p).toLowerCase()));
 
   // Wildcard SOLO si backend lo envía (o si SKIP_IAM en dev)
   const hasWildcard =
@@ -171,6 +169,9 @@ export default function IamGuard({
     if (!A.length) return true;
     return A.every(tokenMatches);
   };
+
+  // ✅ Render controlado (ya sin romper hooks)
+  if (state.loading) return fallback || <div className="p-6">Cargando…</div>;
 
   // Evaluación final
   let ok = true;

@@ -2,9 +2,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
+
 import { setToken } from "../../lib/api.js";
 import { useAuth } from "./AuthProvider.jsx";
 
+/* ───────────────── constants ───────────────── */
+const USER_KEY = "senaf_user";
+const RETURN_TO_KEY = "auth:returnTo";
+const VISITOR_HINT_KEY = "senaf_is_visitor"; // ✅ hint para ocultar sidebar en refresh
+
+const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+  .trim()
+  .toLowerCase();
+
+/* ───────────────── helpers ───────────────── */
 function safeInternalPath(p) {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
 }
@@ -15,7 +26,7 @@ function readReturnTo(locationSearch) {
 
   const fromSession = (() => {
     try {
-      return sessionStorage.getItem("auth:returnTo");
+      return sessionStorage.getItem(RETURN_TO_KEY);
     } catch {
       return null;
     }
@@ -32,7 +43,7 @@ function readReturnTo(locationSearch) {
 function consumeReturnTo(locationSearch) {
   const picked = readReturnTo(locationSearch);
   try {
-    sessionStorage.removeItem("auth:returnTo");
+    sessionStorage.removeItem(RETURN_TO_KEY);
   } catch {}
   return picked;
 }
@@ -91,6 +102,57 @@ function humanOtpError(codeOrMsg) {
   return codeOrMsg || "Error validando OTP";
 }
 
+function isVisitorPayload(data, emailNorm) {
+  // Respeta flags explícitos del backend
+  const me = data?.me || data?.user || null;
+  const roles = Array.isArray(me?.roles) ? me.roles : Array.isArray(data?.roles) ? data.roles : [];
+
+  const roleSet = new Set((roles || []).map((r) => String(r || "").toLowerCase()));
+
+  const flag =
+    !!data?.visitor ||
+    !!data?.isVisitor ||
+    !!me?.visitor ||
+    !!me?.isVisitor;
+
+  const byRole = roleSet.has("visita") || roleSet.has("visitor");
+
+  // ✅ superadmin NUNCA se trata como visitor
+  if (SUPERADMIN_EMAIL && emailNorm === SUPERADMIN_EMAIL) return false;
+
+  return flag || byRole;
+}
+
+function persistMeForAuthProvider(data, emailNorm) {
+  // Preferir objeto "me" si backend lo manda
+  const me = data?.me || data?.user || null;
+
+  const stored = {
+    ...(me && typeof me === "object" ? me : {}),
+    email: String((me?.email || data?.email || emailNorm || "")).trim().toLowerCase(),
+    roles:
+      Array.isArray(me?.roles) ? me.roles :
+      Array.isArray(data?.roles) ? data.roles :
+      Array.isArray(me?.user?.roles) ? me.user.roles :
+      [],
+    visitor: !!(me?.visitor || me?.isVisitor || data?.visitor || data?.isVisitor),
+    isVisitor: !!(me?.isVisitor || data?.isVisitor),
+    can: (me?.can && typeof me.can === "object") ? me.can : (data?.can && typeof data.can === "object") ? data.can : undefined,
+    routeRules:
+      (me?.routeRules && typeof me.routeRules === "object") ? me.routeRules :
+      (data?.routeRules && typeof data.routeRules === "object") ? data.routeRules :
+      undefined,
+    defaultRoute: me?.defaultRoute || data?.defaultRoute || undefined,
+  };
+
+  try {
+    localStorage.setItem(USER_KEY, JSON.stringify(stored));
+  } catch {}
+
+  return stored;
+}
+
+/* ───────────────── component ───────────────── */
 export default function VerifyOtp() {
   const navigate = useNavigate();
   const loc = useLocation();
@@ -104,22 +166,20 @@ export default function VerifyOtp() {
   const [info, setInfo] = useState("");
   const [error, setError] = useState("");
 
-  const emailNorm = useMemo(
-    () => String(email || "").trim().toLowerCase(),
-    [email]
-  );
+  const emailNorm = useMemo(() => String(email || "").trim().toLowerCase(), [email]);
 
-  // ✅ BaseURL estable (evita pegarle a endpoints raros y respuestas basura)
-  // Ajusta el nombre si tu env es diferente: VITE_API_URL, VITE_API, etc.
+  // ✅ Usa la misma convención que tu lib/api.js
+  // VITE_API_BASE_URL debe incluir /api
   const publicAuth = useMemo(() => {
-    const base = String(import.meta.env.VITE_API_URL || "http://localhost:4000/api").trim();
+    const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").trim();
     return axios.create({
-      baseURL: base,
+      baseURL: base.replace(/\/$/, ""),
       headers: {
         "Cache-Control": "no-store",
         Pragma: "no-cache",
       },
       withCredentials: false,
+      timeout: 30000,
     });
   }, []);
 
@@ -128,18 +188,11 @@ export default function VerifyOtp() {
     if (e) setEmail(e);
   }, []);
 
-  // Debug útil (déjalo unos minutos y luego lo quitas)
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[VerifyOtp] publicAuth baseURL =", publicAuth.defaults.baseURL);
-  }, [publicAuth]);
-
   async function handleVerify(e) {
     e.preventDefault();
     setError("");
     setInfo("");
 
-    // ✅ OTP solo dígitos, sin espacios/guiones
     const otpNorm = String(otp || "").replace(/\D/g, "");
 
     if (!emailNorm) return setError("Falta el correo.");
@@ -148,11 +201,10 @@ export default function VerifyOtp() {
     try {
       setSubmitting(true);
 
-      // ✅ Compat: manda otp y code (por si el backend espera 'code')
       const res = await publicAuth.post("/public/v1/auth/verify-otp", {
         email: emailNorm,
         otp: otpNorm,
-        code: otpNorm,
+        code: otpNorm, // compat
       });
 
       const data = res?.data || {};
@@ -162,7 +214,7 @@ export default function VerifyOtp() {
         return;
       }
 
-      // ✅ OTP válido pero debe resetear password
+      // OTP válido pero debe resetear password
       if (data?.mustChangePassword) {
         const rt = String(data?.resetToken || "").trim();
         if (!rt) {
@@ -176,6 +228,11 @@ export default function VerifyOtp() {
 
         clearOtpFlowOnly();
 
+        // En reset todavía NO definimos visitor hint (aún no hay sesión normal)
+        try {
+          localStorage.removeItem(VISITOR_HINT_KEY);
+        } catch {}
+
         navigate(
           `/force-change-password?email=${encodeURIComponent(emailNorm)}&rt=${encodeURIComponent(rt)}`,
           { replace: true }
@@ -183,27 +240,52 @@ export default function VerifyOtp() {
         return;
       }
 
-      // ✅ Caso normal: token
+      // Caso normal: token
       const token = String(data?.token || "").trim();
       if (!token) {
         setError("El servidor no devolvió token tras validar OTP.");
         return;
       }
 
+      // ✅ Persistencias
       clearOtpAll();
 
       setToken(token);
-      await auth.login({ email: emailNorm }, token);
 
+      // ✅ Persistir "me" / user para que AuthProvider y navConfig tengan estado estable
+      const storedMe = persistMeForAuthProvider(data, emailNorm);
+
+      // ✅ Visitor hint (para ocultar sidebar en refresh)
+      const isVisitor = isVisitorPayload(data, emailNorm);
+      try {
+        if (isVisitor) localStorage.setItem(VISITOR_HINT_KEY, "1");
+        else localStorage.removeItem(VISITOR_HINT_KEY);
+      } catch {}
+
+      // ✅ AuthProvider: guarda token + user en contexto
+      await auth.login(storedMe, token);
+
+      // 1) si backend manda next, respétalo
       const nextPath = typeof data?.next === "string" ? data.next : null;
       if (safeInternalPath(nextPath)) {
         navigate(nextPath, { replace: true });
         return;
       }
 
+      // 2) si hay returnTo, úsalo (pero si es visitor, fuerza a visitas)
       const returnTo = consumeReturnTo(loc.search);
       if (returnTo) {
-        navigate(returnTo, { replace: true });
+        if (isVisitor && !returnTo.startsWith("/visitas")) {
+          navigate("/visitas/agenda", { replace: true });
+        } else {
+          navigate(returnTo, { replace: true });
+        }
+        return;
+      }
+
+      // 3) default
+      if (isVisitor) {
+        navigate("/visitas/agenda", { replace: true });
         return;
       }
 
@@ -211,7 +293,6 @@ export default function VerifyOtp() {
     } catch (err) {
       const d = err?.response?.data;
 
-      // ✅ Evita mostrar basura si el servidor devuelve algo raro
       const msg =
         (d && typeof d === "object" && (d.error || d.message)) ||
         (typeof d === "string" ? d : null) ||

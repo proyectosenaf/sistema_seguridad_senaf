@@ -5,17 +5,17 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-
 // ✅ auth local
 import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
+// Layout
 import Layout from "./components/Layout.jsx";
 
 // ✅ Un solo cliente HTTP + token canónico
 import api, { getToken, clearToken } from "./lib/api.js";
 
-// ✅ Config central (sin rutas quemadas)
+// ✅ Config central
 import { APP_CONFIG } from "./config/app.config.js";
 
 // Login local
 import LoginLocal from "./pages/auth/LoginLocal.jsx";
-
 
 // ✅ Pantalla para forzar cambio de contraseña
 const ForceChangePassword = React.lazy(() => import("./pages/ForceChangePassword.jsx"));
@@ -71,7 +71,7 @@ function isPublicPath(pathname) {
   const login = normalizePath(APP_CONFIG?.routes?.login || "/login");
   if (startsWithPath(p, login)) return true;
 
-  // ✅ NUEVO: permitir OTP y reset como públicas (para no romper el flujo)
+  // públicas mínimas para flujo
   if (startsWithPath(p, "/otp")) return true;
   if (startsWithPath(p, "/force-change-password")) return true;
 
@@ -81,8 +81,18 @@ function isPublicPath(pathname) {
   return allow.some((x) => startsWithPath(p, x));
 }
 
+/* ───────────────── Visitor hint (anti-flash al refrescar) ───────────────── */
+const VISITOR_HINT_KEY = "senaf_is_visitor";
+function readVisitorHint() {
+  try {
+    return localStorage.getItem(VISITOR_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /* ───────────────── Session bootstrap: 1 sola llamada /me ───────────────── */
-function useMeSession() {
+function useMeSession(currentPathname) {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -92,7 +102,6 @@ function useMeSession() {
     setError(null);
 
     try {
-      // ✅ Un solo cliente HTTP (axios) y token ya lo adjunta interceptor si existe
       const res = await api.get("/iam/v1/me", {
         headers: {
           "Cache-Control": "no-store, no-cache",
@@ -100,9 +109,12 @@ function useMeSession() {
         },
       });
 
+      // backend puede devolver { ok, me } o directamente el objeto
       const payload = res?.data || null;
-      setMe(payload);
-      return payload;
+      const normalized = payload?.me || payload?.user || payload;
+
+      setMe(normalized || null);
+      return normalized || null;
     } catch (e) {
       setMe(null);
       setError(e);
@@ -114,22 +126,32 @@ function useMeSession() {
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
+      const hardToken = getToken() || "";
+
+      // ✅ si estoy en ruta pública Y no hay token, no llamo /me
+      if (isPublicPath(currentPathname) && !hardToken) {
+        if (!alive) return;
+        setMe(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
       if (!alive) return;
       await refresh();
     })();
+
     return () => {
       alive = false;
     };
-  }, [refresh]);
+  }, [refresh, currentPathname]);
 
-  // ✅ token canónico
-  const token = useMemo(() => getToken() || "", [me]);
-
-  return { me, loading, error, refresh, token };
+  return { me, loading, error, refresh };
 }
 
-/* ───────────────── HOME PICKER (preferir backend) ───────────────── */
+/* ───────────────── HOME PICKER ───────────────── */
 function pickHomeFromMe(me) {
   const def = me?.defaultRoute || me?.home || me?.redirectTo;
   if (def) return String(def);
@@ -144,7 +166,6 @@ function pickHomeFromMe(me) {
   const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
   const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
-  // ⚠️ estos destinos “default” son fallback, pero NO dependen de login route
   if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
   if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
   if (R.has("guardia")) return "/rondasqr/scan";
@@ -153,7 +174,7 @@ function pickHomeFromMe(me) {
   return "/";
 }
 
-/* ───────────────── NUEVO: visitor helpers ───────────────── */
+/* ───────────────── visitor helpers ───────────────── */
 function isVisitorMe(me) {
   const roles = me?.roles || me?.user?.roles || [];
   const visitor = !!me?.visitor || !!me?.isVisitor;
@@ -161,12 +182,20 @@ function isVisitorMe(me) {
   return visitor || R.has("visita") || R.has("visitor");
 }
 
-function AppShell({ me, children }) {
+/**
+ * ✅ AppShell:
+ * - Visitante => NO Layout
+ * - Sin me (todavía cargando / aún no llegó) => NO Layout (deny-by-default visual)
+ * - Interno => Layout
+ */
+function AppShell({ me, meLoading, children }) {
+  if (meLoading) return <>{children}</>;
+  if (!me) return <>{children}</>;
   if (isVisitorMe(me)) return <>{children}</>;
   return <Layout>{children}</Layout>;
 }
 
-/* ───────────────── Evaluador local de reglas (SIN llamar /me otra vez) ───────────────── */
+/* ───────────────── Evaluador local de reglas ───────────────── */
 function asArr(v) {
   if (!v) return [];
   return Array.isArray(v) ? v : [v];
@@ -174,6 +203,9 @@ function asArr(v) {
 
 function canAccess(me, rules) {
   if (!rules) return true;
+
+  // superadmin hard-pass si backend lo manda
+  if (me?.superadmin === true) return true;
 
   const roles = me?.roles || me?.user?.roles || [];
   const perms = me?.permissions || me?.perms || [];
@@ -214,14 +246,12 @@ function canAccess(me, rules) {
   return ok;
 }
 
-/* ───────────────── ProtectedRoute (local) ───────────────── */
+/* ───────────────── ProtectedRoute ───────────────── */
 function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading, token } = useAuth();
   const loc = useLocation();
 
   const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
-
-  // ✅ token canónico (si provider aún no lo refleja por timing)
   const hardToken = token || getToken() || "";
 
   if (isLoading) return <div className="p-6">Cargando…</div>;
@@ -233,20 +263,58 @@ function ProtectedRoute({ children }) {
   return <>{children}</>;
 }
 
-/* ───────────────── Guard por ruta usando routeRules del backend ───────────────── */
+/**
+ * ✅ SessionGate (CRÍTICO):
+ * - Evita que, al refrescar, se rendericen módulos protegidos con me=null.
+ * - Si es visitante (hint), permite SOLO /visitas/** mientras carga /me.
+ */
+function SessionGate({ me, meLoading, children }) {
+  const location = useLocation();
+  const path = location?.pathname || "/";
+  const hardToken = getToken() || "";
+
+  // Si no hay token, no bloqueamos aquí (ProtectedRoute lo maneja)
+  if (!hardToken) return <>{children}</>;
+
+  // Si está cargando /me: solo deja pasar visitas si hint visitante
+  if (meLoading) {
+    const hintVisitor = readVisitorHint();
+    if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
+    return <div className="p-6">Cargando sesión…</div>;
+  }
+
+  // Si ya terminó de cargar, pero no hay me: bloquear por seguridad
+  if (!me) {
+    const hintVisitor = readVisitorHint();
+    if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
+    return <div className="p-6">Cargando sesión…</div>;
+  }
+
+  return <>{children}</>;
+}
+
+/* ───────────────── Guard por ruta usando routeRules ───────────────── */
 function RouteAccess({ me, meLoading, routeKey, children }) {
+  // ✅ deny-by-default total mientras no haya me listo (evita “se destapa”)
   if (meLoading) return <div className="p-6">Cargando…</div>;
+  if (!me) return <div className="p-6">Cargando sesión…</div>;
+
+  // deny-by-default en visitante: si no es ruta de visitas, bloquea
+  if (isVisitorMe(me)) {
+    const allowed = String(routeKey || "").startsWith("visitas");
+    if (!allowed) return <div className="p-6">No autorizado</div>;
+  }
 
   const rules = me?.routeRules?.[routeKey] || null;
 
-  // transición: si backend aún no manda reglas, NO bloqueamos aquí
+  // transición: si backend aún no manda reglas, NO bloqueamos aquí (para NO visitantes)
   if (!rules) return <>{children}</>;
 
   const ok = canAccess(me, rules);
   return ok ? <>{children}</> : <div className="p-6">No autorizado</div>;
 }
 
-/* ───────────────── Redirección tras login (usa refresh result, no me stale) ───────────────── */
+/* ───────────────── Redirección tras login ───────────────── */
 function RoleRedirectInline({ me, meLoading, refresh }) {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, token } = useAuth();
@@ -262,10 +330,8 @@ function RoleRedirectInline({ me, meLoading, refresh }) {
       ranRef.current = true;
 
       const hasToken = !!(token || getToken());
-
       let currentMe = me;
 
-      // si hay auth/token y aún no hay me, fuerza refresh y usa su retorno
       if ((isAuthenticated || hasToken) && !currentMe && !meLoading) {
         currentMe = await refresh();
       }
@@ -282,7 +348,7 @@ function RoleRedirectInline({ me, meLoading, refresh }) {
   return <div className="p-6">Redirigiendo…</div>;
 }
 
-/* ───────────────── Solo bloqueo duro en PROD ───────────────── */
+/* ───────────────── Bloqueo duro en PROD ───────────────── */
 function AuthTokenBridge({ children }) {
   const { isAuthenticated, isLoading, token } = useAuth();
   const location = useLocation();
@@ -291,8 +357,6 @@ function AuthTokenBridge({ children }) {
   const hardToken = token || getToken() || "";
 
   const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
-
-  // ✅ público parametrizado
   const isPublicRoute = isPublicPath(path);
 
   if (IS_PROD && !isLoading && !isAuthenticated && !hardToken && !isPublicRoute) {
@@ -315,10 +379,14 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ✅ ÚNICO lugar donde se llama /me
-  const { me, loading: meLoading, error: meError, refresh } = useMeSession();
+  const currentPath = location?.pathname || "/";
 
-  // ✅ Force login on boot (parametrizado)
+  // ✅ ÚNICO lugar donde se llama /me
+  const { me, loading: meLoading, error: meError, refresh } = useMeSession(currentPath);
+
+  const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
+
+  // ✅ Force login on boot (SIN romper sesión en prod)
   const bootRef = useRef(false);
   useEffect(() => {
     if (!APP_CONFIG?.auth?.forceLoginOnBoot) return;
@@ -328,9 +396,16 @@ export default function App() {
     const path = location?.pathname || "/";
     if (isPublicPath(path)) return;
 
-    if (APP_CONFIG?.auth?.clearTokenOnBoot) clearToken();
+    const hardToken = getToken() || "";
 
-    const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
+    // ✅ NO limpies token si ya existe
+    if (!hardToken && APP_CONFIG?.auth?.clearTokenOnBoot) {
+      clearToken();
+    }
+
+    // si ya hay token, NO fuerces login
+    if (hardToken) return;
+
     navigate(loginRoute, {
       replace: true,
       state: { from: path + (location?.search || "") },
@@ -338,16 +413,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
-
-  // ✅ NUEVO: bloqueo duro para VISITA (solo puede navegar en /visitas/**)
+  // ✅ Bloqueo duro para VISITA (solo /visitas/**) cuando YA existe me
   useEffect(() => {
     if (meLoading) return;
     if (!me) return;
     if (!isVisitorMe(me)) return;
 
     const path = location?.pathname || "/";
-    const allow = [
+
+    const allowBases = [
       "/visitas",
       "/visitas/control",
       "/visitas/agenda",
@@ -356,11 +430,11 @@ export default function App() {
       loginRoute,
     ];
 
-    const ok = allow.some((base) => startsWithPath(path, base));
+    const ok = allowBases.some((base) => startsWithPath(path, base));
     if (!ok) {
       navigate("/visitas/agenda", { replace: true });
     }
-  }, [me, meLoading, location?.pathname]);
+  }, [me, meLoading, location?.pathname, loginRoute, navigate]);
 
   return (
     <AuthTokenBridge>
@@ -384,9 +458,11 @@ export default function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <Home />
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <Home />
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -396,15 +472,16 @@ export default function App() {
             path="/start"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RoleRedirectInline me={me} meLoading={meLoading} refresh={refresh} />
-                  {/* opcional debug */}
-                  {meError && !IS_PROD ? (
-                    <div className="p-3 text-sm text-red-600">
-                      /me error: {String(meError?.message || meError)}
-                    </div>
-                  ) : null}
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RoleRedirectInline me={me} meLoading={meLoading} refresh={refresh} />
+                    {meError && !IS_PROD ? (
+                      <div className="p-3 text-sm text-red-600">
+                        /me error: {String(meError?.message || meError)}
+                      </div>
+                    ) : null}
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -414,11 +491,13 @@ export default function App() {
             path="/incidentes"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
-                    <IncidentesList />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
+                      <IncidentesList />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -426,11 +505,13 @@ export default function App() {
             path="/incidentes/lista"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
-                    <IncidentesList />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
+                      <IncidentesList />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -438,11 +519,13 @@ export default function App() {
             path="/incidentes/nuevo"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes.create">
-                    <IncidenteForm />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes.create">
+                      <IncidenteForm />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -460,11 +543,13 @@ export default function App() {
             path="/iam/admin"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="iam.admin">
-                    <IamAdminPage me={me} meLoading={meLoading} />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="iam.admin">
+                      <IamAdminPage me={me} meLoading={meLoading} />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -482,11 +567,13 @@ export default function App() {
             path="/rondasqr/scan/*"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.scan">
-                    <RondasScan />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.scan">
+                      <RondasScan />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -494,11 +581,13 @@ export default function App() {
             path="/rondasqr/reports"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.reports">
-                    <RondasDashboard />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.reports">
+                      <RondasDashboard />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -506,11 +595,13 @@ export default function App() {
             path="/rondasqr/admin"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.admin">
-                    <AdminHub />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.admin">
+                      <AdminHub />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -526,25 +617,29 @@ export default function App() {
             path="/accesos"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="accesos">
-                    <Accesos />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="accesos">
+                      <Accesos />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
 
-          {/* ✅ VISITAS: sin Layout SOLO si es visitante */}
+          {/* ✅ VISITAS */}
           <Route
             path="/visitas"
             element={
               <ProtectedRoute>
-                <AppShell me={me}>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
-                    <VisitsPageCore />
-                  </RouteAccess>
-                </AppShell>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                      <VisitsPageCore />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -552,11 +647,13 @@ export default function App() {
             path="/visitas/control"
             element={
               <ProtectedRoute>
-                <AppShell me={me}>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
-                    <VisitsPageCore />
-                  </RouteAccess>
-                </AppShell>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                      <VisitsPageCore />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -564,9 +661,11 @@ export default function App() {
             path="/visitas/agenda"
             element={
               <ProtectedRoute>
-                <AppShell me={me}>
-                  <AgendaPageCore />
-                </AppShell>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <AgendaPageCore />
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -575,11 +674,13 @@ export default function App() {
             path="/bitacora"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="bitacora">
-                    <Bitacora />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="bitacora">
+                      <Bitacora />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -588,11 +689,13 @@ export default function App() {
             path="/supervision"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <RouteAccess me={me} meLoading={meLoading} routeKey="supervision">
-                    <Supervision />
-                  </RouteAccess>
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <RouteAccess me={me} meLoading={meLoading} routeKey="supervision">
+                      <Supervision />
+                    </RouteAccess>
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />
@@ -601,9 +704,11 @@ export default function App() {
             path="/chat"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <Chat />
-                </Layout>
+                <SessionGate me={me} meLoading={meLoading}>
+                  <AppShell me={me} meLoading={meLoading}>
+                    <Chat />
+                  </AppShell>
+                </SessionGate>
               </ProtectedRoute>
             }
           />

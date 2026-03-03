@@ -20,7 +20,7 @@ export const NAV_SECTIONS = [
 ];
 
 function hasRole(me, role) {
-  const roles = Array.isArray(me?.roles) ? me.roles : [];
+  const roles = Array.isArray(me?.roles) ? me.roles : Array.isArray(me?.user?.roles) ? me.user.roles : [];
   const r = String(role || "").toLowerCase();
   return roles.some((x) => String(x || "").toLowerCase() === r);
 }
@@ -29,15 +29,18 @@ function hasRole(me, role) {
  * getNavSectionsForMe(me)
  *
  * ✅ Objetivo:
+ * - me null => DENY BY DEFAULT ([])
  * - Visitor => SOLO "visitas"
- * - Si hay "can" (ACL del backend) => filtra por can
- * - Si no hay info aún (me null) => DENY BY DEFAULT ([])
- *
- * Esto evita que al refrescar se vea todo el menú "por defecto".
+ * - superadmin => TODO
+ * - Si hay "can" (ACL del backend) => filtra por can (solo true)
+ * - Si no hay "can" => todo (solo para NO visitantes)
  */
 export function getNavSectionsForMe(me) {
-  // ✅ deny-by-default: si todavía no hay sesión/me, NO muestres el menú completo
+  // ✅ deny-by-default: si todavía no hay /me, NO muestres menú completo
   if (!me || typeof me !== "object") return [];
+
+  // ✅ superadmin explícito (si backend lo manda)
+  if (me?.superadmin === true) return NAV_SECTIONS;
 
   // Detecta visitante por flags o por rol
   const isVisitor =
@@ -46,15 +49,13 @@ export function getNavSectionsForMe(me) {
     hasRole(me, "visita") ||
     hasRole(me, "visitor");
 
-  // visitante: solo visitas
   if (isVisitor) {
     return NAV_SECTIONS.filter((s) => s.key === "visitas");
   }
 
-  // si backend manda "can", filtra por eso (parametrizado por routeKey)
+  // si backend manda "can", filtra por eso
   const can = me?.can || null;
   if (can && typeof can === "object") {
-    // mapa simple key -> routeKey
     const map = {
       accesos: "accesos",
       rondas: "rondasqr.admin",
@@ -72,6 +73,6 @@ export function getNavSectionsForMe(me) {
     });
   }
 
-  // Si no hay "can", cae a todo (solo para usuarios NO visitantes)
+  // si no hay can => usuario interno (no visitante) => todo
   return NAV_SECTIONS;
 }

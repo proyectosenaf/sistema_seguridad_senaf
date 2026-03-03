@@ -29,6 +29,11 @@ function normalizePerm(p) {
   return String(p || "").trim();
 }
 
+function isVisitorByRoles(roles = []) {
+  const R = new Set((roles || []).map(normalizeRole).filter(Boolean));
+  return R.has("visita") || R.has("visitor");
+}
+
 function buildEvaluator({ roles = [], perms = [] }) {
   const roleSet = new Set((roles || []).map(normalizeRole).filter(Boolean));
   const permSet = new Set((perms || []).map(normalizePerm).filter(Boolean));
@@ -52,10 +57,7 @@ function buildEvaluator({ roles = [], perms = [] }) {
     return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
   };
 
-  const hasPerm = (p) => {
-    if (!p) return true;
-    return tokenMatches(p);
-  };
+  const hasPerm = (p) => (!p ? true : tokenMatches(p));
 
   const hasAny = (arr) => {
     const A = asArr(arr);
@@ -121,7 +123,10 @@ function buildRouteRules() {
 /* =========================
    DefaultRoute desde backend
 ========================= */
-function pickDefaultRoute({ visitor, roles = [], perms = [] }) {
+function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = false }) {
+  // ✅ si es superadmin, manda al panel de IAM directo
+  if (isSuperAdmin) return "/iam/admin";
+
   const R = new Set((roles || []).map(normalizeRole).filter(Boolean));
   const Praw = Array.isArray(perms) ? perms : [];
   const P = new Set(Praw.map(normalizePerm).filter(Boolean));
@@ -147,35 +152,55 @@ r.get("/", async (req, res, next) => {
 
     const ctx = await withTimeout(buildContextFrom(req), 7000, "buildContextFrom");
 
-    const email = String(ctx.email || "").toLowerCase().trim() || null;
-
     const routeRules = buildRouteRules();
 
-    // 1) Sin identidad real
+    const email = String(ctx.email || "").toLowerCase().trim() || null;
+    const isSuperAdmin = !!ctx.isSuperAdmin;
+
+    // 1) Sin identidad real => se considera VISITA (deny-by-default)
     if (!email) {
       const visitor = true;
-      const roles = [];
+
+      // ✅ importante: roles incluye "visita" para que el frontend lo detecte aunque user sea null
+      const roles = ["visita"];
       const permissions = [];
+
+      const canBase = Object.fromEntries(Object.keys(routeRules).map((k) => [k, false]));
 
       return res.json({
         ok: true,
+
+        // Nota: user puede ser null aquí
         user: null,
+
         roles,
         permissions,
         perms: permissions,
+
         visitor,
+        isVisitor: visitor, // ✅ alias útil para frontend
         email: null,
-        isSuperAdmin: false,
+
+        // ✅ nombres consistentes (frontend puede usar cualquiera)
+        isSuperAdmin,
+        superadmin: isSuperAdmin,
+
         mustChangePassword: false,
 
         routeRules,
-        can: Object.fromEntries(Object.keys(routeRules).map((k) => [k, false])),
-        defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions }),
+        can: canBase,
+
+        defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions, isSuperAdmin }),
       });
     }
 
     // 2) Hay email pero no se resolvió usuario
     if (!ctx.user) {
+      const visitor = true;
+      const roles = ["visita"];
+      const permissions = [];
+      const canBase = Object.fromEntries(Object.keys(routeRules).map((k) => [k, false]));
+
       return res.status(401).json({
         ok: false,
         error: "user_not_resolved",
@@ -184,31 +209,42 @@ r.get("/", async (req, res, next) => {
         email,
 
         user: null,
-        roles: [],
-        permissions: [],
-        perms: [],
-        visitor: true,
-        isSuperAdmin: false,
+        roles,
+        permissions,
+        perms: permissions,
+
+        visitor,
+        isVisitor: visitor,
+
+        isSuperAdmin,
+        superadmin: isSuperAdmin,
+
         mustChangePassword: false,
         routeRules,
-        can: Object.fromEntries(Object.keys(routeRules).map((k) => [k, false])),
+        can: canBase,
         defaultRoute: "/login",
       });
     }
 
     const u = ctx.user;
 
-    const roles = Array.isArray(ctx.roles)
+    // roles/perms desde ctx o desde user
+    let roles = Array.isArray(ctx.roles)
       ? ctx.roles
       : Array.isArray(u.roles)
       ? u.roles
       : [];
 
-    const permissions = Array.isArray(ctx.permissions)
+    let permissions = Array.isArray(ctx.permissions)
       ? ctx.permissions
       : Array.isArray(u.perms)
       ? u.perms
       : [];
+
+    // ✅ superadmin hard-pass: inyecta wildcard para can/defaultRoute
+    if (isSuperAdmin) {
+      if (!permissions.includes("*")) permissions = ["*", ...permissions];
+    }
 
     // mustChangePassword (si usas expiración también)
     let mustChangePassword = !!u.mustChangePassword;
@@ -220,32 +256,57 @@ r.get("/", async (req, res, next) => {
       // ignore
     }
 
-    // ✅ si hay usuario, forzamos visitor=false para consistencia
-    const visitor = false;
+    // ✅ visitor real: por flag del user O por rol "visita/visitor"
+    const visitor =
+      !!u.visitor || !!u.isVisitor || isVisitorByRoles(roles);
 
     const evalr = buildEvaluator({ roles, perms: permissions });
-    const can = Object.fromEntries(
+
+    // ✅ can por reglas
+    let can = Object.fromEntries(
       Object.entries(routeRules).map(([k, rules]) => [k, !!evalr.canAccess(rules)])
     );
 
+    // ✅ si es visitante, deny-by-default excepto visitas
+    if (visitor && !isSuperAdmin) {
+      can = Object.fromEntries(Object.keys(routeRules).map((k) => [k, false]));
+      // dejamos habilitada la regla de visitas si quieres
+      can["visitas.control"] = true;
+    }
+
+    // ✅ si es superadmin => todo true
+    if (isSuperAdmin) {
+      can = Object.fromEntries(Object.keys(routeRules).map((k) => [k, true]));
+    }
+
     return res.json({
       ok: true,
+
       user: {
         id: String(u._id || u.id || ""),
         email: u.email,
         name: u.name || "",
       },
+
       roles,
       permissions,
       perms: permissions,
+
       visitor,
+      isVisitor: visitor,
+
       email: u.email,
-      isSuperAdmin: !!ctx.isSuperAdmin,
+
+      // ✅ nombres consistentes
+      isSuperAdmin,
+      superadmin: isSuperAdmin,
+
       mustChangePassword,
 
       routeRules,
       can,
-      defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions }),
+
+      defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions, isSuperAdmin }),
     });
   } catch (e) {
     if (String(e?.message || "").startsWith("[timeout]")) {
