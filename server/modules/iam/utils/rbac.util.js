@@ -3,10 +3,6 @@ import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 import { getBearer, verifyToken } from "./jwt.util.js";
 
-/**
- * Seguridad: no expongas env vars en producción.
- * Si quieres debug, usa IAM_DEBUG=1 en dev.
- */
 const IAM_DEBUG = String(process.env.IAM_DEBUG || "0") === "1";
 const IS_PROD = process.env.NODE_ENV === "production";
 
@@ -41,12 +37,7 @@ function withTimeout(promise, ms, label = "op") {
   });
 }
 
-/* =========================
-   JWT local helpers (HS256)
-   - Reutiliza req.auth.payload si el middleware ya verificó
-   ========================= */
 function getJwtPayload(req) {
-  // ✅ si ya pasó makeAuthMw, no vuelvas a verificar
   const pre = req?.auth?.payload;
   if (pre && typeof pre === "object") return { payload: pre, source: "req.auth" };
 
@@ -76,13 +67,29 @@ function getDefaultVisitorRole() {
   return String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita").trim().toLowerCase();
 }
 
-/**
- * Centralización:
- * - En PROD NO aceptamos headers de suplantación.
- * - En DEV solo si IAM_ALLOW_DEV_HEADERS=1
- */
 function canUseDevHeaders() {
   return !IS_PROD && String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+}
+
+function normRole(r) {
+  return String(r || "").trim().toLowerCase();
+}
+
+function normPerm(p) {
+  return String(p || "").trim();
+}
+
+function isAdminLikeRolesPerms({ roles = [], permissions = [], isSuperAdmin = false }) {
+  if (isSuperAdmin) return true;
+
+  const R = new Set((roles || []).map(normRole).filter(Boolean));
+  const Praw = Array.isArray(permissions) ? permissions : [];
+  const Plow = new Set(Praw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
+
+  if (Plow.has("*")) return true;
+  if (R.has("admin") || R.has("administrador") || R.has("ti") || R.has("administrador_it")) return true;
+
+  return false;
 }
 
 export async function buildContextFrom(req) {
@@ -96,21 +103,14 @@ export async function buildContextFrom(req) {
 
   const jwtEmail = getEmailFromPayload(payload);
 
-  // Identidad: preferimos JWT; si no hay, y allowDevHeaders, usamos header.
   const email = String(jwtEmail || headerEmail || "").toLowerCase().trim() || null;
-
   const hasIdentity = !!email && (!!payload || !!headerEmail);
 
   let user = null;
 
-  // Buscar por email (si hay)
   if (email) {
     try {
-      user = await withTimeout(
-        IamUser.findOne({ email }).lean(),
-        4000,
-        "IamUser.findOne(email)"
-      );
+      user = await withTimeout(IamUser.findOne({ email }).lean(), 4000, "IamUser.findOne(email)");
     } catch (e) {
       if (!IS_PROD) {
         // eslint-disable-next-line no-console
@@ -120,21 +120,14 @@ export async function buildContextFrom(req) {
     }
   }
 
-  /* =========================
-     ✅ Auto-provision (solo si hay identidad real)
-     - Bootstrap admin por SUPERADMIN_EMAIL o ROOT_ADMINS
-     - Si no existe, crea VISITA por defecto
-  ========================= */
   if (!user && hasIdentity && email) {
     const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
       String(x).toLowerCase().trim()
     );
 
     const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
-
     const isBootstrapAdmin = (!!superEmail && email === superEmail) || rootAdmins.includes(email);
 
-    // 1) Bootstrap admin
     if (isBootstrapAdmin) {
       const doc = {
         email,
@@ -152,18 +145,13 @@ export async function buildContextFrom(req) {
       };
 
       try {
-        const created = await withTimeout(
-          IamUser.create(doc),
-          4000,
-          "IamUser.create(bootstrap-admin)"
-        );
+        const created = await withTimeout(IamUser.create(doc), 4000, "IamUser.create(bootstrap-admin)");
         user = created.toObject();
         if (!IS_PROD) {
           // eslint-disable-next-line no-console
           console.log(`[iam] auto-provisioned: ${doc.email} (ADMIN)`);
         }
       } catch (e) {
-        // carrera: si ya existe, lo leemos
         try {
           const existing = await withTimeout(
             IamUser.findOne({ email }).lean(),
@@ -178,7 +166,6 @@ export async function buildContextFrom(req) {
       }
     }
 
-    // 2) Auto-provision VISITA
     if (!user) {
       const doc = {
         email,
@@ -218,24 +205,18 @@ export async function buildContextFrom(req) {
     }
   }
 
-  const normRole = (r) => String(r || "").trim().toLowerCase();
-  const normPerm = (p) => String(p || "").trim();
-
   const defaultVisitorRole = getDefaultVisitorRole();
 
-  // Roles base: user.roles o visitor por defecto si hay identidad
-  const baseRoles =
-    user && Array.isArray(user.roles) && user.roles.length
+  const baseRoles = user
+    ? Array.isArray(user.roles)
       ? user.roles
-      : hasIdentity
-      ? [defaultVisitorRole]
-      : [];
+      : []
+    : hasIdentity
+    ? [defaultVisitorRole]
+    : [];
 
-  const roleNames = new Set(
-    [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
-  );
+  const roleNames = new Set([...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean));
 
-  // Perms base: user.perms + headers dev
   const permSet = new Set([...(user?.perms || []).map(normPerm)].filter(Boolean));
   if (allowDevHeaders) {
     headerPerms
@@ -244,15 +225,21 @@ export async function buildContextFrom(req) {
       .forEach((p) => permSet.add(p));
   }
 
-  // Expand perms por roles desde IamRole
+  // ✅ EXPAND PERMS por roles: code (lower) + name (tal cual y lower)
   if (roleNames.size) {
-    const roleList = [...roleNames].map((r) => String(r).trim().toLowerCase());
+    const codesLower = [...roleNames].map((r) => String(r).trim().toLowerCase()).filter(Boolean);
+    const namesRaw = [...new Set([...(user?.roles || []), ...headerRoles])].map((x) => String(x || "").trim()).filter(Boolean);
+    const namesLower = namesRaw.map((x) => x.toLowerCase());
 
     try {
-      // Nota: tolera roles guardados como code (lower) o name (varía).
       const roleDocs = await withTimeout(
         IamRole.find({
-          $or: [{ code: { $in: roleList } }, { name: { $in: roleList } }, { key: { $in: roleList } }],
+          $or: [
+            { code: { $in: codesLower } },
+            { name: { $in: namesRaw } },
+            { name: { $in: namesLower } },
+            { key: { $in: codesLower } },
+          ],
         }).lean(),
         4000,
         "IamRole.find(expand-perms)"
@@ -288,23 +275,24 @@ export async function buildContextFrom(req) {
     return permSet.has(normPerm(perm));
   }
 
-  const isVisitor = roleNames.has(defaultVisitorRole);
+  // ✅ visitor SOLO si NO es admin-like
+  const rolesFinal = [...roleNames];
+  const permsFinal = [...permSet];
+  const adminLike = isAdminLikeRolesPerms({ roles: rolesFinal, permissions: permsFinal, isSuperAdmin });
+
+  const isVisitor = adminLike ? false : roleNames.has(defaultVisitorRole);
 
   return {
     user,
     email,
-    roles: [...roleNames],
-    permissions: [...permSet],
+    roles: rolesFinal,
+    permissions: permsFinal,
     has,
     isSuperAdmin,
     isVisitor,
   };
 }
 
-/**
- * devOr: NO abrir todo por defecto en dev.
- * Solo bypass si IAM_DEV_ALLOW_ALL=1 y NO es prod.
- */
 export function devOr(mw) {
   const allow = !IS_PROD && String(process.env.IAM_DEV_ALLOW_ALL || "0") === "1";
   return (req, res, next) => (allow ? next() : mw(req, res, next));

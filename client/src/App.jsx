@@ -50,6 +50,10 @@ const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
 const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
+const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+  .trim()
+  .toLowerCase();
+
 /* ───────────────── Helpers de rutas parametrizadas ───────────────── */
 
 function normalizePath(p) {
@@ -109,10 +113,6 @@ function useMeSession(currentPathname) {
         },
       });
 
-      // ✅ Normalización robusta:
-      // - si viene payload.me (objeto) úsalo
-      // - si viene payload.user (objeto) úsalo
-      // - si user viene null pero el root trae roles/visitor/defaultRoute => usa payload completo
       const payload = res?.data ?? null;
 
       let normalized = null;
@@ -137,7 +137,6 @@ function useMeSession(currentPathname) {
     (async () => {
       const hardToken = getToken() || "";
 
-      // ✅ FIX: Si NO hay token, NO llamar /me (evita 401 y estados basura)
       if (!hardToken) {
         if (!alive) return;
         setMe(null);
@@ -173,7 +172,9 @@ function pickHomeFromMe(me) {
   const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
   const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
-  if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
+  // ✅ FIX: NO mandar a visitas por “roles/perms vacíos”. SOLO si es visitor.
+  if (visitor) return "/visitas/agenda";
+
   if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
   if (R.has("guardia")) return "/rondasqr/scan";
   if (R.has("supervisor")) return "/rondasqr/reports";
@@ -183,6 +184,9 @@ function pickHomeFromMe(me) {
 
 /* ───────────────── visitor helpers ───────────────── */
 function isVisitorMe(me) {
+  const email = String(me?.email || me?.user?.email || "").trim().toLowerCase();
+  if (SUPERADMIN_EMAIL && email && email === SUPERADMIN_EMAIL) return false;
+
   const roles = me?.roles || me?.user?.roles || [];
   const visitor = !!me?.visitor || !!me?.isVisitor;
   const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
@@ -192,7 +196,7 @@ function isVisitorMe(me) {
 /**
  * ✅ AppShell:
  * - Visitante => NO Layout
- * - Sin me (todavía cargando / aún no llegó) => NO Layout (deny-by-default visual)
+ * - Sin me (todavía cargando / aún no llegó) => NO Layout
  * - Interno => Layout
  */
 function AppShell({ me, meLoading, children }) {
@@ -211,7 +215,6 @@ function asArr(v) {
 function canAccess(me, rules) {
   if (!rules) return true;
 
-  // superadmin hard-pass si backend lo manda
   if (me?.superadmin === true) return true;
 
   const roles = me?.roles || me?.user?.roles || [];
@@ -271,28 +274,28 @@ function ProtectedRoute({ children }) {
 }
 
 /**
- * ✅ SessionGate (CRÍTICO):
- * - Evita que, al refrescar, se rendericen módulos protegidos con me=null.
- * - Si es visitante (hint), permite SOLO /visitas/** mientras carga /me.
+ * ✅ SessionGate:
+ * - Evita render de módulos protegidos con me=null.
+ * - Si hay hint visitante, deja SOLO /visitas/** o rutas públicas mientras carga /me.
  */
 function SessionGate({ me, meLoading, children }) {
   const location = useLocation();
   const path = location?.pathname || "/";
   const hardToken = getToken() || "";
 
-  // Si no hay token, no bloqueamos aquí (ProtectedRoute lo maneja)
   if (!hardToken) return <>{children}</>;
 
-  // Si está cargando /me: solo deja pasar visitas si hint visitante
+  const hintVisitor = readVisitorHint();
+  const isPublic = isPublicPath(path);
+
   if (meLoading) {
-    const hintVisitor = readVisitorHint();
+    if (isPublic) return <>{children}</>;
     if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
     return <div className="p-6">Cargando sesión…</div>;
   }
 
-  // Si ya terminó de cargar, pero no hay me: bloquear por seguridad
   if (!me) {
-    const hintVisitor = readVisitorHint();
+    if (isPublic) return <>{children}</>;
     if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
     return <div className="p-6">Cargando sesión…</div>;
   }
@@ -302,11 +305,9 @@ function SessionGate({ me, meLoading, children }) {
 
 /* ───────────────── Guard por ruta usando routeRules ───────────────── */
 function RouteAccess({ me, meLoading, routeKey, children }) {
-  // ✅ deny-by-default total mientras no haya me listo (evita “se destapa”)
   if (meLoading) return <div className="p-6">Cargando…</div>;
   if (!me) return <div className="p-6">Cargando sesión…</div>;
 
-  // deny-by-default en visitante: si no es ruta de visitas, bloquea
   if (isVisitorMe(me)) {
     const allowed = String(routeKey || "").startsWith("visitas");
     if (!allowed) return <div className="p-6">No autorizado</div>;
@@ -314,7 +315,6 @@ function RouteAccess({ me, meLoading, routeKey, children }) {
 
   const rules = me?.routeRules?.[routeKey] || null;
 
-  // transición: si backend aún no manda reglas, NO bloqueamos aquí (para NO visitantes)
   if (!rules) return <>{children}</>;
 
   const ok = canAccess(me, rules);
@@ -388,12 +388,10 @@ export default function App() {
 
   const currentPath = location?.pathname || "/";
 
-  // ✅ ÚNICO lugar donde se llama /me
   const { me, loading: meLoading, error: meError, refresh } = useMeSession(currentPath);
 
   const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
 
-  // ✅ Force login on boot (SIN romper sesión en prod)
   const bootRef = useRef(false);
   useEffect(() => {
     if (!APP_CONFIG?.auth?.forceLoginOnBoot) return;
@@ -405,12 +403,10 @@ export default function App() {
 
     const hardToken = getToken() || "";
 
-    // ✅ NO limpies token si ya existe
     if (!hardToken && APP_CONFIG?.auth?.clearTokenOnBoot) {
       clearToken();
     }
 
-    // si ya hay token, NO fuerces login
     if (hardToken) return;
 
     navigate(loginRoute, {

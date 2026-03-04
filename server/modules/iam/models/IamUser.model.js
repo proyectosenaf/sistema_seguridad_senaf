@@ -1,26 +1,36 @@
 // server/modules/iam/models/IamUser.model.js
 import mongoose from "mongoose";
 
+function normEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normList(arr) {
+  const list = Array.isArray(arr) ? arr : [];
+  const cleaned = list
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(cleaned));
+}
+
 const IamUserSchema = new mongoose.Schema(
   {
-    /* =========================
-       IDENTIDAD
-    ========================= */
     email: {
       type: String,
       required: true,
       lowercase: true,
       trim: true,
-      set: (v) => String(v || "").trim().toLowerCase(),
+      set: normEmail,
+      validate: {
+        validator: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "")),
+        message: "email_invalid",
+      },
     },
 
     name: { type: String, trim: true, default: "" },
 
     active: { type: Boolean, default: true, index: true },
 
-    /* =========================
-       AUTENTICACIÓN
-    ========================= */
     provider: {
       type: String,
       enum: ["local", "external"],
@@ -35,63 +45,38 @@ const IamUserSchema = new mongoose.Schema(
     passwordChangedAt: { type: Date, default: null },
     passwordExpiresAt: { type: Date, default: null, index: true },
 
-    /* =========================
-       OTP
-    ========================= */
     otpVerifiedAt: { type: Date, default: null, index: true },
 
-    /* =========================
-       CLAVE TEMPORAL / RESET
-    ========================= */
     tempPassHash: { type: String, select: false, default: "" },
     tempPassExpiresAt: { type: Date, default: null, index: true },
     tempPassUsedAt: { type: Date, default: null },
     tempPassAttempts: { type: Number, default: 0 },
 
-    /* =========================
-       RBAC
-    ========================= */
     roles: {
       type: [String],
       default: [],
       index: true,
-      set: (arr) =>
-        Array.isArray(arr)
-          ? arr.map((x) => String(x || "").trim()).filter(Boolean)
-          : [],
+      set: normList,
     },
 
     perms: {
       type: [String],
       default: [],
-      set: (arr) =>
-        Array.isArray(arr)
-          ? arr.map((x) => String(x || "").trim()).filter(Boolean)
-          : [],
+      set: normList,
     },
 
-    /* =========================
-       LEGACY (solo si lo ocupas)
-    ========================= */
     externalId: { type: String, trim: true, default: null },
     legacySub: { type: String, trim: true, default: null },
 
-    /* =========================
-       AUDITORÍA
-    ========================= */
     lastLoginAt: { type: Date, default: null },
-    lastLoginIp: { type: String, default: "" },
+    lastLoginIp: { type: String, trim: true, default: "" },
   },
   { timestamps: true, collection: "iamusers" }
 );
 
-/* =========================
-   ÍNDICES
-========================= */
 IamUserSchema.index({ email: 1 }, { unique: true });
 IamUserSchema.index({ createdAt: -1 });
 
-// únicos pero sparse (permiten nulls repetidos)
 IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
 IamUserSchema.index({ legacySub: 1 }, { unique: true, sparse: true });
 

@@ -133,7 +133,10 @@ function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = fals
 
   const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
 
-  if (visitor || (!R.size && !Praw.length)) return "/visitas/agenda";
+  // ✅ FIX CRÍTICO:
+  // NO mandes a visitas por "roles/perms vacíos". Solo si visitor=true.
+  if (visitor) return "/visitas/agenda";
+
   if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
   if (R.has("guardia")) return "/rondasqr/scan";
   if (R.has("supervisor")) return "/rondasqr/reports";
@@ -277,6 +280,11 @@ r.get("/", async (req, res, next) => {
     let can = Object.fromEntries(
       Object.entries(routeRules).map(([k, rules]) => [k, !!evalr.canAccess(rules)])
     );
+
+    // ✅ FIX: adminLike debe ver el sistema aunque temporalmente falten roles/perms expandidos.
+    if (adminLike) {
+      can = Object.fromEntries(Object.keys(routeRules).map((k) => [k, true]));
+    }
 
     // si es visitante, deny-by-default excepto visitas
     if (visitor && !isSuperAdmin) {

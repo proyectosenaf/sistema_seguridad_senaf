@@ -3,23 +3,20 @@ import React, { useMemo } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut } from "lucide-react";
 
-// ✅ Auth local (RUTA REAL)
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
-
-// ✅ Token canónico (centralizado)
 import { clearToken } from "../lib/api.js";
-
-// ✅ Config central de navegación + filtro por sesión
 import { getNavSectionsForMe } from "../config/navConfig.js";
 
 const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
-// Keys de storage (mantener consistencia)
 const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 
-// Opcional: limitar qué secciones se muestran sin hardcode
+const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+  .trim()
+  .toLowerCase();
+
 // Ej: VITE_NAV_KEYS_ALLOWLIST="accesos,rondas,visitas"
 const NAV_KEYS_ALLOWLIST = String(import.meta.env.VITE_NAV_KEYS_ALLOWLIST || "")
   .split(",")
@@ -73,16 +70,17 @@ function readVisitorHint() {
 }
 
 function isVisitorUser(user) {
-  // 1) si user existe, lo detectamos por flags/roles
+  const email = String(user?.email || "").trim().toLowerCase();
+  if (SUPERADMIN_EMAIL && email === SUPERADMIN_EMAIL) return false;
+
   const roles = Array.isArray(user?.roles) ? user.roles : [];
   const isRoleVisitor = roles.some((r) => {
-    const x = String(r || "").toLowerCase();
+    const x = String(r || "").toLowerCase().trim();
     return x === "visita" || x === "visitor";
   });
 
   if (!!user?.visitor || !!user?.isVisitor || isRoleVisitor) return true;
 
-  // 2) fallback: hint persistido para refresh (cuando /me todavía no llegó)
   return readVisitorHint();
 }
 
@@ -93,46 +91,43 @@ export default function Sidebar({ onNavigate, variant }) {
   const handleLogoutClick = async () => {
     onNavigate?.();
 
-    // 1) logout del provider
     try {
       await logout?.();
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // 2) limpia token canónico + legacy + sesión usuario/hints
     try {
-      clearToken(); // senaf_token (canónico)
-      localStorage.removeItem("token"); // legacy por compat
-      localStorage.removeItem("access_token"); // por si quedó algo viejo
+      clearToken();
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
 
-      // ✅ limpia estado de sesión persistido
       localStorage.removeItem(USER_KEY);
       localStorage.removeItem(VISITOR_HINT_KEY);
       sessionStorage.removeItem(RETURN_TO_KEY);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // 3) manda a login
     nav(ROUTE_LOGIN, { replace: true });
   };
 
   const isVisitor = useMemo(() => isVisitorUser(user), [user]);
 
-  // ✅ Secciones filtradas por sesión (deny-by-default en navConfig)
-  const sessionSections = useMemo(() => {
-    const secs = getNavSectionsForMe(user);
+  const allowlistKey = useMemo(() => NAV_KEYS_ALLOWLIST.join(","), []);
 
-    const filtered =
+  const sessionSections = useMemo(() => {
+    const secs = getNavSectionsForMe(user) || [];
+
+    const filteredByAllowlist =
       NAV_KEYS_ALLOWLIST.length > 0
         ? secs.filter((x) => NAV_KEYS_ALLOWLIST.includes(String(x.key || "").trim()))
         : secs;
 
-    return Array.isArray(filtered) ? filtered : [];
-  }, [user, NAV_KEYS_ALLOWLIST.join(",")]);
+    const filteredByVisitor = isVisitor
+      ? filteredByAllowlist.filter((x) => String(x.path || "").startsWith("/visitas"))
+      : filteredByAllowlist;
 
-  // Home solo para NO visitantes
+    return Array.isArray(filteredByVisitor) ? filteredByVisitor : [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, isVisitor, allowlistKey]);
+
   const homeItem = useMemo(() => {
     if (isVisitor) return null;
     return {
@@ -161,12 +156,6 @@ export default function Sidebar({ onNavigate, variant }) {
     return base;
   }, [homeItem, sessionSections]);
 
-  /**
-   * ✅ Anti-flash más estricto:
-   * - Mientras isLoading => NO renderizar items.
-   * - Si hay sesión (isAuthenticated) pero aún no hay user => NO renderizar items.
-   *   (porque ahí es donde “se destapa” el menú por defaults en otros componentes)
-   */
   const showNav = !isLoading && (!isAuthenticated || (user && typeof user === "object"));
 
   return (
@@ -194,9 +183,7 @@ export default function Sidebar({ onNavigate, variant }) {
           ))}
         </nav>
       ) : (
-        <div className="text-sm text-neutral-600 dark:text-neutral-300 px-2">
-          Cargando sesión…
-        </div>
+        <div className="text-sm text-neutral-600 dark:text-neutral-300 px-2">Cargando sesión…</div>
       )}
 
       <div className="mt-auto pt-6">
