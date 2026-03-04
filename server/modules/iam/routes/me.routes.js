@@ -81,7 +81,7 @@ function buildEvaluator({ roles = [], perms = [] }) {
     return ok;
   };
 
-  return { roleSet, permSet, hasWildcard, canAccess, tokenMatches };
+  return { roleSet, permSet, permSetLower, hasWildcard, canAccess, tokenMatches };
 }
 
 /* =========================
@@ -99,16 +99,16 @@ function buildRouteRules() {
       ],
     },
 
-    "incidentes": {
+    incidentes: {
       anyOf: ["incidentes.read", "incidentes.list", "incidentes.ver", "incidentes", "*"],
     },
     "incidentes.create": {
       anyOf: ["incidentes.create", "incidentes.crear", "*"],
     },
 
-    "accesos": { anyOf: ["accesos.read", "accesos.ver", "accesos", "*"] },
-    "bitacora": { anyOf: ["bitacora.read", "bitacora.ver", "bitacora", "*"] },
-    "supervision": { anyOf: ["supervision.read", "supervision.ver", "supervision", "*"] },
+    accesos: { anyOf: ["accesos.read", "accesos.ver", "accesos", "*"] },
+    bitacora: { anyOf: ["bitacora.read", "bitacora.ver", "bitacora", "*"] },
+    supervision: { anyOf: ["supervision.read", "supervision.ver", "supervision", "*"] },
 
     "visitas.control": { anyOf: ["visitas.manage", "visitas.control", "visitas", "*"] },
 
@@ -124,7 +124,6 @@ function buildRouteRules() {
    DefaultRoute desde backend
 ========================= */
 function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = false }) {
-  // ✅ si es superadmin, manda al panel de IAM directo
   if (isSuperAdmin) return "/iam/admin";
 
   const R = new Set((roles || []).map(normalizeRole).filter(Boolean));
@@ -140,6 +139,25 @@ function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = fals
   if (R.has("supervisor")) return "/rondasqr/reports";
   if (R.has("recepcion")) return "/visitas/control";
   return "/";
+}
+
+/* =========================
+   Admin-like (nunca visitor)
+========================= */
+function isAdminLike({ roles = [], perms = [], isSuperAdmin = false }) {
+  if (isSuperAdmin) return true;
+
+  const R = new Set((roles || []).map(normalizeRole).filter(Boolean));
+  const Praw = Array.isArray(perms) ? perms : [];
+  const Plow = new Set(Praw.map((p) => String(p || "").trim().toLowerCase()).filter(Boolean));
+
+  if (Plow.has("*")) return true;
+
+  if (R.has("admin") || R.has("administrador") || R.has("ti") || R.has("administrador_it")) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -161,7 +179,6 @@ r.get("/", async (req, res, next) => {
     if (!email) {
       const visitor = true;
 
-      // ✅ importante: roles incluye "visita" para que el frontend lo detecte aunque user sea null
       const roles = ["visita"];
       const permissions = [];
 
@@ -169,8 +186,6 @@ r.get("/", async (req, res, next) => {
 
       return res.json({
         ok: true,
-
-        // Nota: user puede ser null aquí
         user: null,
 
         roles,
@@ -178,10 +193,9 @@ r.get("/", async (req, res, next) => {
         perms: permissions,
 
         visitor,
-        isVisitor: visitor, // ✅ alias útil para frontend
+        isVisitor: visitor,
         email: null,
 
-        // ✅ nombres consistentes (frontend puede usar cualquiera)
         isSuperAdmin,
         superadmin: isSuperAdmin,
 
@@ -229,11 +243,7 @@ r.get("/", async (req, res, next) => {
     const u = ctx.user;
 
     // roles/perms desde ctx o desde user
-    let roles = Array.isArray(ctx.roles)
-      ? ctx.roles
-      : Array.isArray(u.roles)
-      ? u.roles
-      : [];
+    let roles = Array.isArray(ctx.roles) ? ctx.roles : Array.isArray(u.roles) ? u.roles : [];
 
     let permissions = Array.isArray(ctx.permissions)
       ? ctx.permissions
@@ -241,7 +251,7 @@ r.get("/", async (req, res, next) => {
       ? u.perms
       : [];
 
-    // ✅ superadmin hard-pass: inyecta wildcard para can/defaultRoute
+    // superadmin hard-pass: inyecta wildcard para can/defaultRoute
     if (isSuperAdmin) {
       if (!permissions.includes("*")) permissions = ["*", ...permissions];
     }
@@ -256,25 +266,25 @@ r.get("/", async (req, res, next) => {
       // ignore
     }
 
-    // ✅ visitor real: por flag del user O por rol "visita/visitor"
-    const visitor =
-      !!u.visitor || !!u.isVisitor || isVisitorByRoles(roles);
+    // visitor real: por flags/rol, pero NUNCA si es admin-like
+    const adminLike = isAdminLike({ roles, perms: permissions, isSuperAdmin });
+    const visitorRaw = !!u.visitor || !!u.isVisitor || isVisitorByRoles(roles);
+    const visitor = adminLike ? false : visitorRaw;
 
     const evalr = buildEvaluator({ roles, perms: permissions });
 
-    // ✅ can por reglas
+    // can por reglas
     let can = Object.fromEntries(
       Object.entries(routeRules).map(([k, rules]) => [k, !!evalr.canAccess(rules)])
     );
 
-    // ✅ si es visitante, deny-by-default excepto visitas
+    // si es visitante, deny-by-default excepto visitas
     if (visitor && !isSuperAdmin) {
       can = Object.fromEntries(Object.keys(routeRules).map((k) => [k, false]));
-      // dejamos habilitada la regla de visitas si quieres
       can["visitas.control"] = true;
     }
 
-    // ✅ si es superadmin => todo true
+    // si es superadmin => todo true
     if (isSuperAdmin) {
       can = Object.fromEntries(Object.keys(routeRules).map((k) => [k, true]));
     }
@@ -297,7 +307,6 @@ r.get("/", async (req, res, next) => {
 
       email: u.email,
 
-      // ✅ nombres consistentes
       isSuperAdmin,
       superadmin: isSuperAdmin,
 

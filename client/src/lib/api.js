@@ -122,7 +122,10 @@ api.interceptors.request.use(
     const token = getToken();
     config.headers = config.headers || {};
 
-    if (token) config.headers.Authorization = `Bearer ${token}`;
+    // ✅ FIX defensivo: nunca sobreescribir si ya venía Authorization
+    if (token && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
 
     // Evita 304/caches raros (especialmente en dev / proxies)
     config.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";

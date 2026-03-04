@@ -1,5 +1,5 @@
 // client/src/App.jsx
-import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 
 // ✅ auth local
@@ -109,9 +109,16 @@ function useMeSession(currentPathname) {
         },
       });
 
-      // backend puede devolver { ok, me } o directamente el objeto
-      const payload = res?.data || null;
-      const normalized = payload?.me || payload?.user || payload;
+      // ✅ Normalización robusta:
+      // - si viene payload.me (objeto) úsalo
+      // - si viene payload.user (objeto) úsalo
+      // - si user viene null pero el root trae roles/visitor/defaultRoute => usa payload completo
+      const payload = res?.data ?? null;
+
+      let normalized = null;
+      if (payload?.me && typeof payload.me === "object") normalized = payload.me;
+      else if (payload?.user && typeof payload.user === "object") normalized = payload.user;
+      else if (payload && typeof payload === "object") normalized = payload;
 
       setMe(normalized || null);
       return normalized || null;
@@ -130,8 +137,8 @@ function useMeSession(currentPathname) {
     (async () => {
       const hardToken = getToken() || "";
 
-      // ✅ si estoy en ruta pública Y no hay token, no llamo /me
-      if (isPublicPath(currentPathname) && !hardToken) {
+      // ✅ FIX: Si NO hay token, NO llamar /me (evita 401 y estados basura)
+      if (!hardToken) {
         if (!alive) return;
         setMe(null);
         setError(null);

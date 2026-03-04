@@ -26,6 +26,9 @@ import { jwtDecode } from "jwt-decode";
  * - Hidratación robusta en refresh: token + user.
  * - Deriva roles/perms desde JWT para decidir UI (sidebar) desde el primer render.
  * - Evita “menu completo” durante loading.
+ *
+ * ✅ NEW:
+ * - Deriva name desde JWT y lo usa como displayName (fallback a email).
  */
 
 const AuthContext = createContext(null);
@@ -60,13 +63,13 @@ function normalizeArray(v) {
 }
 
 /**
- * Extrae roles/perms desde el token si los tienes embebidos.
+ * Extrae roles/perms/email/name desde el token si los tienes embebidos.
  * Ajusta aquí si tu payload usa otros nombres.
  */
 function deriveAuthFromToken(token) {
   const decoded = safeDecodeJwt(token);
   if (!decoded) {
-    return { decoded: null, roles: [], perms: [], email: "" };
+    return { decoded: null, roles: [], perms: [], email: "", name: "" };
   }
 
   // soporta varios nombres comunes
@@ -82,14 +85,16 @@ function deriveAuthFromToken(token) {
     normalizeArray(decoded["https://senaf/perms"]) ||
     [];
 
-  const email =
-    String(decoded.email || decoded.e || decoded.user?.email || "").trim();
+  const email = String(decoded.email || decoded.e || decoded.user?.email || "").trim();
 
-  return { decoded, roles, perms, email };
+  // ✅ name: según tu backend firmas `name: user.name || user.email`
+  const name = String(decoded.name || decoded.n || decoded.user?.name || "").trim();
+
+  return { decoded, roles, perms, email, name };
 }
 
 function mergeUser(storedUser, tokenInfo) {
-  // Si ya existe user guardado, lo respetamos, pero garantizamos roles/perms/email si vienen del token.
+  // Si ya existe user guardado, lo respetamos, pero garantizamos roles/perms/email/name si vienen del token.
   const u = storedUser && typeof storedUser === "object" ? storedUser : null;
 
   const merged = {
@@ -97,14 +102,17 @@ function mergeUser(storedUser, tokenInfo) {
   };
 
   // email: token gana si hay uno válido
-  if (tokenInfo.email) merged.email = tokenInfo.email;
+  if (tokenInfo?.email) merged.email = tokenInfo.email;
+
+  // ✅ name: token gana si trae uno válido (si no, conserva lo guardado)
+  if (tokenInfo?.name) merged.name = tokenInfo.name;
 
   // roles/perms: token gana si trae algo, si no, conserva lo guardado
   const uRoles = normalizeArray(u?.roles);
   const uPerms = normalizeArray(u?.perms);
 
-  merged.roles = tokenInfo.roles.length ? tokenInfo.roles : uRoles;
-  merged.perms = tokenInfo.perms.length ? tokenInfo.perms : uPerms;
+  merged.roles = tokenInfo?.roles?.length ? tokenInfo.roles : uRoles;
+  merged.perms = tokenInfo?.perms?.length ? tokenInfo.perms : uPerms;
 
   // marca interna útil para debug (opcional)
   merged._hydratedAt = new Date().toISOString();
@@ -249,7 +257,7 @@ export function AuthProvider({ children }) {
       let nextUser = null;
 
       if (u && typeof u === "object") {
-        // merge con token para asegurar roles/perms
+        // merge con token para asegurar roles/perms/email/name
         nextUser = tokenInfo ? mergeUser(u, tokenInfo) : u;
 
         setUser(nextUser);
@@ -320,6 +328,13 @@ export function AuthProvider({ children }) {
       roles.map((r) => r.toLowerCase()).includes("visita") ||
       roles.map((r) => r.toLowerCase()).includes("visitor");
 
+    // ✅ Nombre a mostrar (fallback)
+    const displayName =
+      String(user?.name || "").trim() ||
+      String(user?.nombreCompleto || "").trim() ||
+      String(user?.email || "").trim() ||
+      "";
+
     return {
       user,
       token,
@@ -329,6 +344,8 @@ export function AuthProvider({ children }) {
       roles,
       perms,
       isVisitor,
+
+      displayName, // <- úsalo en el header
 
       login,
       logout,

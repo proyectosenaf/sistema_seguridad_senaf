@@ -7,14 +7,10 @@ import ChatDock from "./ChatDock.jsx";
 import Footer from "./Footer.jsx";
 import { useLayoutUI } from "./layout-ui.jsx";
 import GlobalPanicListener from "./GlobalPanicListener.jsx";
+import { clearToken } from "../lib/api.js";
 
-/**
- * Layout modes:
- * - "app": normal (sidebar + footer + chat)
- * - "full": sin sidebar (ej: pantallas tipo módulo full)
- * - "visitor": experiencia “kiosk”
- */
-const DEFAULT_LOGIN_PATH = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+const DEFAULT_LOGIN_PATH =
+  String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
 function parseBool(v, def = false) {
   if (v === undefined || v === null) return def;
@@ -24,8 +20,6 @@ function parseBool(v, def = false) {
   return def;
 }
 
-// ✅ hint local para no “destapar” el sidebar mientras llega /me
-// Se setea en el flujo OTP/visitor (te explico abajo qué setear).
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 
 function getVisitorHint() {
@@ -36,16 +30,18 @@ function getVisitorHint() {
   }
 }
 
+function clearVisitorHint() {
+  try {
+    localStorage.removeItem(VISITOR_HINT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function Layout({
   children,
-
-  // compat anterior
   hideSidebar: hideSidebarProp = false,
-
-  // ✅ modo
   layoutMode = "app", // "app" | "full" | "visitor"
-
-  // ✅ overrides opcionales
   hideTopbar: hideTopbarProp,
   hideFooter: hideFooterProp,
   hideChatDock: hideChatDockProp,
@@ -62,23 +58,33 @@ export default function Layout({
     back,
   } = useLayoutUI();
 
-  // ENV opcional (parametrizado)
-  const ENV_HIDE_CHAT_FOR_VISITOR = parseBool(import.meta.env.VITE_HIDE_CHAT_FOR_VISITOR, true);
-  const ENV_HIDE_TOPBAR_FOR_VISITOR = parseBool(import.meta.env.VITE_HIDE_TOPBAR_FOR_VISITOR, false);
-  const ENV_HIDE_FOOTER_FOR_VISITOR = parseBool(import.meta.env.VITE_HIDE_FOOTER_FOR_VISITOR, true);
+  const ENV_HIDE_CHAT_FOR_VISITOR = parseBool(
+    import.meta.env.VITE_HIDE_CHAT_FOR_VISITOR,
+    true
+  );
+  const ENV_HIDE_TOPBAR_FOR_VISITOR = parseBool(
+    import.meta.env.VITE_HIDE_TOPBAR_FOR_VISITOR,
+    false
+  );
+  const ENV_HIDE_FOOTER_FOR_VISITOR = parseBool(
+    import.meta.env.VITE_HIDE_FOOTER_FOR_VISITOR,
+    true
+  );
 
-  // ✅ Reglas por modo
-  const modeHideSidebar = layoutMode === "full" || layoutMode === "visitor";
-  const modeHideFooter = layoutMode === "visitor" ? ENV_HIDE_FOOTER_FOR_VISITOR : false;
-  const modeHideChatDock = layoutMode === "visitor" ? ENV_HIDE_CHAT_FOR_VISITOR : false;
-  const modeHideTopbar = layoutMode === "visitor" ? ENV_HIDE_TOPBAR_FOR_VISITOR : false;
-
-  // ✅ Fallback: si la ruta es /visitas/** y hay hint de visitante, oculta sidebar
   const visitorHint = getVisitorHint();
-  const hintHideSidebar = visitorHint && String(pathname || "").startsWith("/visitas");
+  const isVisitasPath = String(pathname || "").startsWith("/visitas");
 
-  // ✅ merge final (prop > ctx > hint > modo)
-  const hideSidebar = Boolean(hideSidebarProp || hideSidebarCtx || hintHideSidebar || modeHideSidebar);
+  // visitorMode: si layoutMode lo pide O si hay hint y estamos en /visitas/**
+  const visitorMode = layoutMode === "visitor" || (visitorHint && isVisitasPath);
+
+  const modeHideSidebar = layoutMode === "full" || visitorMode;
+  const modeHideFooter = visitorMode ? ENV_HIDE_FOOTER_FOR_VISITOR : false;
+  const modeHideChatDock = visitorMode ? ENV_HIDE_CHAT_FOR_VISITOR : false;
+  const modeHideTopbar = visitorMode ? ENV_HIDE_TOPBAR_FOR_VISITOR : false;
+
+  const hideSidebar = Boolean(
+    hideSidebarProp || hideSidebarCtx || modeHideSidebar
+  );
 
   const hideFooter =
     hideFooterProp !== undefined
@@ -103,29 +109,38 @@ export default function Layout({
 
   const showSidebar = !hideSidebar;
 
-  // ✅ back sólo si hay Topbar
-  const showBack = !hideTopbar && (pathname !== "/" || !!back?.onClick);
+  const doVisitorExit = React.useCallback(() => {
+    clearToken();
+    clearVisitorHint();
+    navigate(DEFAULT_LOGIN_PATH, { replace: true });
+  }, [navigate]);
 
   const smartBack = React.useCallback(() => {
+    if (visitorMode) return doVisitorExit();
+
     if (back?.onClick) {
       back.onClick();
       return;
     }
+
     const ref = String(document.referrer || "");
     const cameFromLogin = ref.includes(DEFAULT_LOGIN_PATH);
     const shallowHistory = window.history.length <= 2;
 
     if (cameFromLogin || shallowHistory) navigate("/", { replace: true });
     else navigate(-1);
-  }, [back, navigate]);
+  }, [visitorMode, doVisitorExit, back, navigate]);
 
-  const backProp = React.useMemo(
-    () => ({
-      label: back?.label || "Regresar",
-      onClick: smartBack,
-    }),
-    [back?.label, smartBack]
-  );
+  const backProp = React.useMemo(() => {
+    if (visitorMode) {
+      return { label: "Salir", onClick: doVisitorExit };
+    }
+    return { label: back?.label || "Regresar", onClick: smartBack };
+  }, [visitorMode, doVisitorExit, back?.label, smartBack]);
+
+  // Mostrar back siempre en visitante (flecha “Salir”)
+  const showBack =
+    !hideTopbar && (visitorMode || pathname !== "/" || !!back?.onClick);
 
   React.useEffect(() => {
     const onKey = (e) => {
@@ -135,7 +150,6 @@ export default function Layout({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Si el sidebar está oculto, cerrar drawer móvil
   React.useEffect(() => {
     if (!showSidebar && mobileOpen) setMobileOpen(false);
   }, [showSidebar, mobileOpen]);
@@ -159,7 +173,11 @@ export default function Layout({
             border-b border-neutral-200/60 dark:border-white/10
           "
         >
-          <Topbar onToggleMenu={() => setMobileOpen(true)} showBack={showBack} back={backProp} />
+          <Topbar
+            onToggleMenu={() => setMobileOpen(true)}
+            showBack={showBack}
+            back={backProp}
+          />
         </header>
       )}
 
@@ -201,7 +219,6 @@ export default function Layout({
         {!hideFooter && <Footer />}
       </div>
 
-      {/* Drawer móvil (solo si sidebar visible) */}
       {showSidebar && (
         <div
           className={`fixed inset-0 z-50 md:hidden transition-opacity ${
@@ -209,7 +226,10 @@ export default function Layout({
           }`}
           aria-hidden={!mobileOpen}
         >
-          <div className="absolute inset-0 bg-black/35" onClick={() => setMobileOpen(false)} />
+          <div
+            className="absolute inset-0 bg-black/35"
+            onClick={() => setMobileOpen(false)}
+          />
           <div
             role="dialog"
             aria-modal="true"
@@ -225,7 +245,6 @@ export default function Layout({
         </div>
       )}
 
-      {/* Chat flotante */}
       {!hideChatDock && (
         <div className="fixed bottom-5 right-5 z-[9999]">
           <ChatDock />

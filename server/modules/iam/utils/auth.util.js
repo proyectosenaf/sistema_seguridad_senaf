@@ -44,7 +44,11 @@ export function makeAuthMw(options = {}) {
       return next();
     } catch (e) {
       if (!required) return next();
-      return res.status(401).json({ ok: false, error: errorMessage });
+      return res.status(401).json({
+        ok: false,
+        error: errorMessage,
+        details: String(e?.message || e), // ✅ esencial para diagnosticar (invalid signature / expired / malformed)
+      });
     }
   };
 }

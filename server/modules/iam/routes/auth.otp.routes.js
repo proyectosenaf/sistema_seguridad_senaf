@@ -110,6 +110,14 @@ function isPasswordExpired(user) {
   return new Date() > d;
 }
 
+function secondsRemaining(dateObj) {
+  if (!dateObj) return 0;
+  const t = new Date(dateObj).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const diffMs = t - Date.now();
+  return diffMs > 0 ? Math.ceil(diffMs / 1000) : 0;
+}
+
 /* ---------------------- Reset token (pwreset) ---------------------- */
 function signPwResetToken({ email, userId }) {
   const secret = jwtSecret();
@@ -126,11 +134,18 @@ function verifyPwResetToken(token) {
 }
 
 /* =========================================================
-   OTP en Mongo (AuthOtp)
+   OTP en Mongo (AuthOtp) - FIX anti "doble OTP"
 ========================================================= */
 
 async function getActiveOtp(email, purpose) {
-  return AuthOtp.findOne({ email, purpose, consumedAt: null }).sort({ createdAt: -1 }).exec();
+  return AuthOtp.findOne({
+    email,
+    purpose,
+    status: "active",
+    consumedAt: null,
+  })
+    .sort({ createdAt: -1 })
+    .exec();
 }
 
 function isExpiredDoc(doc) {
@@ -147,15 +162,12 @@ function canResendDoc(doc) {
   return new Date() >= ra;
 }
 
-function secondsRemaining(dateObj) {
-  if (!dateObj) return 0;
-  const t = new Date(dateObj).getTime();
-  if (!Number.isFinite(t)) return 0;
-  const diffMs = t - Date.now();
-  return diffMs > 0 ? Math.ceil(diffMs / 1000) : 0;
-}
-
-async function createOrReplaceActiveOtpDoc({
+/**
+ * ✅ Emite OTP de forma ATÓMICA:
+ * - Si existe OTP activo y AÚN está en cooldown (resendAfter > now) => NO lo reemplaza
+ * - Esto evita el bug del "primer OTP inválido" por doble request/race
+ */
+async function createOrReplaceActiveOtpDocAtomic({
   email,
   purpose,
   ttlSeconds,
@@ -163,12 +175,46 @@ async function createOrReplaceActiveOtpDoc({
   resendCooldownSeconds,
   metaUserId,
 }) {
+  const now = new Date();
+
+  // Si existe doc activo y aún está en cooldown y no está expirado, NO reemitimos.
+  // (Esto también cubre carreras entre 2 requests)
+  const existing = await getActiveOtp(email, purpose);
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return {
+      ok: false,
+      cooldown: true,
+      resendAfter: existing.resendAfter,
+      expiresAt: existing.expiresAt,
+    };
+  }
+
+  // Si está expirado, lo marcamos expired para mantener estado consistente
+  if (existing && isExpiredDoc(existing)) {
+    await existing.markExpired?.().catch(() => {});
+  }
+
   const code = randomOtp6();
   const codeHash = sha256(code);
 
-  const now = new Date();
   const expiresAt = new Date(now.getTime() + Number(ttlSeconds || 300) * 1000);
   const resendAfter = new Date(now.getTime() + Number(resendCooldownSeconds || 30) * 1000);
+
+  // ✅ filtro "seguro": solo permite update si:
+  // - no existe doc
+  // - o está expirado
+  // - o ya cumplió resendAfter
+  const filter = {
+    email,
+    purpose,
+    status: "active",
+    consumedAt: null,
+    $or: [
+      { resendAfter: null },
+      { resendAfter: { $lte: now } },
+      { expiresAt: { $lte: now } },
+    ],
+  };
 
   const update = {
     $set: {
@@ -178,39 +224,25 @@ async function createOrReplaceActiveOtpDoc({
       attempts: 0,
       maxAttempts: Number(maxAttempts || 5),
       consumedAt: null,
+      status: "active",
       meta: { userId: metaUserId || null },
     },
     $setOnInsert: { email, purpose },
   };
 
-  try {
-    await AuthOtp.findOneAndUpdate({ email, purpose, consumedAt: null }, update, {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-    }).exec();
-  } catch (e) {
-    const msg = String(e?.message || "");
-    if (e?.code === 11000 || msg.includes("E11000")) {
-      await AuthOtp.updateMany({ email, purpose, consumedAt: null }, { $set: { consumedAt: new Date() } }).exec();
+  // OJO: si existe doc pero no matchea el $or (cooldown), no lo reemplaza.
+  const doc = await AuthOtp.findOneAndUpdate(filter, update, {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: true,
+  }).exec();
 
-      await AuthOtp.create({
-        email,
-        purpose,
-        codeHash,
-        expiresAt,
-        resendAfter,
-        attempts: 0,
-        maxAttempts: Number(maxAttempts || 5),
-        consumedAt: null,
-        meta: { userId: metaUserId || null },
-      });
-    } else {
-      throw e;
-    }
+  // doc siempre debería venir, pero por seguridad:
+  if (!doc) {
+    return { ok: false, cooldown: true, resendAfter: existing?.resendAfter };
   }
 
-  return { code, expiresAt, resendAfter };
+  return { ok: true, code, expiresAt, resendAfter };
 }
 
 /* =========================================================
@@ -231,8 +263,6 @@ async function loginOtpHandler(req, res) {
     .select("+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email")
     .exec();
 
-  // Debug fuerte (opcional, pero recomendado hasta cerrar el bug)
-  // Ojo: no loguees passwordHash.
   if (process.env.DEBUG_AUTH === "1") {
     console.log("[login-otp] mongo.db:", mongoose.connection?.name);
     console.log("[login-otp] iamUser.collection:", IamUser.collection?.name);
@@ -242,7 +272,6 @@ async function loginOtpHandler(req, res) {
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
   if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
 
-  /** ✅ FIX: provider null/undefined cuenta como local */
   const provider = normProvider(user.provider);
   if (provider !== "local") {
     return res.status(403).json({ ok: false, error: "not_local_user" });
@@ -285,16 +314,8 @@ async function loginOtpHandler(req, res) {
 
   const purpose = isVisitor ? "visitor-login" : "employee-login";
 
-  const existing = await getActiveOtp(email, purpose);
-  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
-    return res.status(429).json({
-      ok: false,
-      error: "otp_resend_cooldown",
-      cooldownSecondsRemaining: secondsRemaining(existing.resendAfter),
-    });
-  }
-
-  const { code } = await createOrReplaceActiveOtpDoc({
+  // ✅ Emisión ATÓMICA anti-race
+  const issued = await createOrReplaceActiveOtpDocAtomic({
     email,
     purpose,
     ttlSeconds: settings.ttlSeconds,
@@ -302,6 +323,17 @@ async function loginOtpHandler(req, res) {
     resendCooldownSeconds: settings.resendCooldownSeconds,
     metaUserId: user._id,
   });
+
+  // Si cayó en cooldown (por carrera o por tiempo), devolvemos el mismo 429
+  if (!issued?.ok && issued?.cooldown) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSecondsRemaining: secondsRemaining(issued.resendAfter),
+    });
+  }
+
+  const { code } = issued;
 
   const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
@@ -345,16 +377,8 @@ async function resendOtpHandler(req, res) {
   const isVisitor = hasRole(user, "visita");
   const purpose = isVisitor ? "visitor-login" : "employee-login";
 
-  const existing = await getActiveOtp(email, purpose);
-  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
-    return res.status(429).json({
-      ok: false,
-      error: "otp_resend_cooldown",
-      cooldownSecondsRemaining: secondsRemaining(existing.resendAfter),
-    });
-  }
-
-  const { code } = await createOrReplaceActiveOtpDoc({
+  // ✅ Emisión ATÓMICA anti-race
+  const issued = await createOrReplaceActiveOtpDocAtomic({
     email,
     purpose,
     ttlSeconds: settings.ttlSeconds,
@@ -362,6 +386,16 @@ async function resendOtpHandler(req, res) {
     resendCooldownSeconds: settings.resendCooldownSeconds,
     metaUserId: user._id,
   });
+
+  if (!issued?.ok && issued?.cooldown) {
+    return res.status(429).json({
+      ok: false,
+      error: "otp_resend_cooldown",
+      cooldownSecondsRemaining: secondsRemaining(issued.resendAfter),
+    });
+  }
+
+  const { code } = issued;
 
   const mail = await sendOtpEmail({ to: email, code, purpose });
   if (mail?.ok === false) {
@@ -389,19 +423,30 @@ async function verifyOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
   }
 
-  // Busca último OTP activo en ambos purposes (orden estable)
-  let doc = await getActiveOtp(email, "employee-login");
-  if (!doc) doc = await getActiveOtp(email, "visitor-login");
+  const user = await IamUser.findOne({ email })
+    .select("email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt")
+    .exec();
+
+  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
+
+  const provider = normProvider(user.provider);
+  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
+
+  const isVisitor = hasRole(user, "visita");
+  const purpose = isVisitor ? "visitor-login" : "employee-login";
+
+  const doc = await getActiveOtp(email, purpose);
   if (!doc) return res.status(400).json({ ok: false, error: "otp_not_found" });
 
   if (isExpiredDoc(doc)) {
-    await doc.consume?.().catch(() => {});
+    await doc.markExpired?.().catch(() => {});
     return res.status(400).json({ ok: false, error: "otp_expired" });
   }
 
   const maxAttempts = Number.isFinite(Number(doc.maxAttempts)) ? Number(doc.maxAttempts) : settings.maxAttempts;
   if (Number(doc.attempts || 0) >= maxAttempts) {
-    await doc.consume?.().catch(() => {});
+    await doc.markConsumed?.().catch(() => {});
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
 
@@ -413,26 +458,14 @@ async function verifyOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "otp_invalid" });
   }
 
-  await doc.consume?.().catch(() => {});
-
-  const user = await IamUser.findOne({ email })
-    .select("email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt")
-    .exec();
-
-  if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-  if (user.active === false) return res.status(403).json({ ok: false, error: "user_inactive" });
-
-  const provider = normProvider(user.provider);
-  if (provider !== "local") return res.status(403).json({ ok: false, error: "not_local_user" });
+  await doc.markConsumed?.().catch(() => {});
 
   if (!user.otpVerifiedAt) {
     user.otpVerifiedAt = new Date();
     await user.save().catch(() => {});
   }
 
-  const isVisitor = hasRole(user, "visita");
   const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
-
   if (mustChange) {
     const resetToken = signPwResetToken({ email: user.email, userId: user._id });
     return res.json({ ok: true, mustChangePassword: true, resetToken });

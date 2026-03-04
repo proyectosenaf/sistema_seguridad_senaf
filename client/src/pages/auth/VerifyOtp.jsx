@@ -109,11 +109,7 @@ function isVisitorPayload(data, emailNorm) {
 
   const roleSet = new Set((roles || []).map((r) => String(r || "").toLowerCase()));
 
-  const flag =
-    !!data?.visitor ||
-    !!data?.isVisitor ||
-    !!me?.visitor ||
-    !!me?.isVisitor;
+  const flag = !!data?.visitor || !!data?.isVisitor || !!me?.visitor || !!me?.isVisitor;
 
   const byRole = roleSet.has("visita") || roleSet.has("visitor");
 
@@ -131,17 +127,27 @@ function persistMeForAuthProvider(data, emailNorm) {
     ...(me && typeof me === "object" ? me : {}),
     email: String((me?.email || data?.email || emailNorm || "")).trim().toLowerCase(),
     roles:
-      Array.isArray(me?.roles) ? me.roles :
-      Array.isArray(data?.roles) ? data.roles :
-      Array.isArray(me?.user?.roles) ? me.user.roles :
-      [],
+      Array.isArray(me?.roles)
+        ? me.roles
+        : Array.isArray(data?.roles)
+        ? data.roles
+        : Array.isArray(me?.user?.roles)
+        ? me.user.roles
+        : [],
     visitor: !!(me?.visitor || me?.isVisitor || data?.visitor || data?.isVisitor),
     isVisitor: !!(me?.isVisitor || data?.isVisitor),
-    can: (me?.can && typeof me.can === "object") ? me.can : (data?.can && typeof data.can === "object") ? data.can : undefined,
+    can:
+      me?.can && typeof me.can === "object"
+        ? me.can
+        : data?.can && typeof data.can === "object"
+        ? data.can
+        : undefined,
     routeRules:
-      (me?.routeRules && typeof me.routeRules === "object") ? me.routeRules :
-      (data?.routeRules && typeof data.routeRules === "object") ? data.routeRules :
-      undefined,
+      me?.routeRules && typeof me.routeRules === "object"
+        ? me.routeRules
+        : data?.routeRules && typeof data.routeRules === "object"
+        ? data.routeRules
+        : undefined,
     defaultRoute: me?.defaultRoute || data?.defaultRoute || undefined,
   };
 
@@ -168,8 +174,7 @@ export default function VerifyOtp() {
 
   const emailNorm = useMemo(() => String(email || "").trim().toLowerCase(), [email]);
 
-  // ✅ Usa la misma convención que tu lib/api.js
-  // VITE_API_BASE_URL debe incluir /api
+  // ✅ VITE_API_BASE_URL debe incluir /api
   const publicAuth = useMemo(() => {
     const base = String(import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").trim();
     return axios.create({
@@ -249,14 +254,18 @@ export default function VerifyOtp() {
 
       // ✅ Persistencias
       clearOtpAll();
-
       setToken(token);
 
-      // ✅ Persistir "me" / user para que AuthProvider y navConfig tengan estado estable
+      // ✅ Persistir me/user para AuthProvider + nav
       const storedMe = persistMeForAuthProvider(data, emailNorm);
 
-      // ✅ Visitor hint (para ocultar sidebar en refresh)
-      const isVisitor = isVisitorPayload(data, emailNorm);
+      // ✅ Visitor hint: usar storedMe primero (más confiable), luego payload
+      let isVisitor = !!(storedMe?.visitor || storedMe?.isVisitor);
+      if (!isVisitor) isVisitor = isVisitorPayload(data, emailNorm);
+
+      // ✅ superadmin nunca visitor (doble seguro)
+      if (SUPERADMIN_EMAIL && emailNorm === SUPERADMIN_EMAIL) isVisitor = false;
+
       try {
         if (isVisitor) localStorage.setItem(VISITOR_HINT_KEY, "1");
         else localStorage.removeItem(VISITOR_HINT_KEY);
@@ -268,7 +277,12 @@ export default function VerifyOtp() {
       // 1) si backend manda next, respétalo
       const nextPath = typeof data?.next === "string" ? data.next : null;
       if (safeInternalPath(nextPath)) {
-        navigate(nextPath, { replace: true });
+        // visitante: nunca permitir salir de /visitas/**
+        if (isVisitor && !String(nextPath).startsWith("/visitas")) {
+          navigate("/visitas/agenda", { replace: true });
+        } else {
+          navigate(nextPath, { replace: true });
+        }
         return;
       }
 
