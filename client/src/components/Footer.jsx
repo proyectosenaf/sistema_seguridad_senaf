@@ -1,7 +1,9 @@
 // client/src/components/Footer.jsx
 import React from "react";
 import { Link } from "react-router-dom";
-import api from "../lib/api.js"; // axios instance (default export)
+import api from "../lib/api.js";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
+import { getNavSectionsForMe } from "../config/navConfig.js";
 import {
   MessageCircle,
   Mail,
@@ -12,21 +14,68 @@ import {
   Github,
 } from "lucide-react";
 
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function resolvePrincipal(auth) {
+  const raw = auth?.me || auth?.user || null;
+  if (!raw || typeof raw !== "object") return null;
+
+  const email =
+    normalizeEmail(raw.email) ||
+    normalizeEmail(raw.user?.email) ||
+    normalizeEmail(raw.profile?.email) ||
+    "";
+
+  if (email === "proyectosenaf@gmail.com") {
+    return {
+      ...raw,
+      email,
+      superadmin: true,
+      isSuperAdmin: true,
+      can:
+        raw.can && typeof raw.can === "object"
+          ? raw.can
+          : {
+              "nav.accesos": true,
+              "nav.rondas": true,
+              "nav.incidentes": true,
+              "nav.visitas": true,
+              "nav.bitacora": true,
+              "nav.iam": true,
+            },
+    };
+  }
+
+  return raw;
+}
+
 export default function Footer() {
+  const auth = useAuth();
+  const principal = React.useMemo(() => resolvePrincipal(auth), [auth]);
+
   const [apiUp, setApiUp] = React.useState(null);
   const [ping, setPing] = React.useState(null);
 
-  // Versión tomada de env (si no existe, fallback)
   const version = import.meta.env.VITE_APP_VERSION || "1.0.0";
 
-  // ✅ baseURL REAL de axios (normalmente ya termina en /api)
   const apiBaseUrl = String(api?.defaults?.baseURL || "http://localhost:4000/api").replace(
     /\/$/,
     ""
   );
 
-  // ✅ mostrar exactamente la base que usa axios, sin agregar otro /api
   const apiShown = apiBaseUrl;
+
+  const sections = React.useMemo(() => {
+    const secs = getNavSectionsForMe(principal) || [];
+    const order = ["accesos", "rondas", "incidentes", "visitas", "bitacora", "iam"];
+    const rank = (k) => {
+      const i = order.indexOf(k);
+      return i === -1 ? 999 : i;
+    };
+    return [...secs].sort((a, b) => rank(a.key) - rank(b.key));
+  }, [principal]);
 
   React.useEffect(() => {
     let cancel = false;
@@ -34,7 +83,6 @@ export default function Footer() {
     const pingApi = async () => {
       try {
         const t0 = performance.now();
-        // ✅ Como baseURL ya es .../api, aquí solo pedimos /health
         const r = await api.get("/health", { timeout: 5000 });
         const t1 = performance.now();
 
@@ -61,7 +109,6 @@ export default function Footer() {
 
   return (
     <footer className="mt-10">
-      {/* línea superior dentro del contenido, no debajo del sidebar */}
       <div
         className="h-[2px] mx-4 md:mx-6 opacity-80"
         style={{
@@ -70,9 +117,7 @@ export default function Footer() {
         aria-hidden
       />
 
-      {/* Tarjeta del footer: overflow-hidden para que los glows NO se salgan */}
       <div className="relative overflow-hidden rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/70 backdrop-blur p-6 lg:p-8 mx-4 md:mx-6 mb-2">
-        {/* Glows */}
         <div className="pointer-events-none absolute -z-10 inset-0">
           <div
             className="absolute w-[28rem] h-[28rem] left-[-10%] bottom-[-35%] rounded-full blur-3xl opacity-25"
@@ -89,7 +134,6 @@ export default function Footer() {
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Columna 1 */}
           <div>
             <div className="text-2xl font-bold fx-title">SENAF</div>
             <p className="mt-2 text-sm opacity-70">
@@ -100,44 +144,23 @@ export default function Footer() {
             </div>
           </div>
 
-          {/* Columna 2 - Secciones */}
           <div>
             <div className="font-semibold mb-2">Secciones</div>
             <ul className="space-y-1 text-sm">
-              <li>
-                <Link className="hover:underline" to="/accesos">
-                  Control de Acceso
-                </Link>
-              </li>
-              <li>
-                <Link className="hover:underline" to="/rondasqr/scan">
-                  Rondas de Vigilancia
-                </Link>
-              </li>
-              <li>
-                <Link className="hover:underline" to="/incidentes">
-                  Gestión de Incidentes
-                </Link>
-              </li>
-              <li>
-                <Link className="hover:underline" to="/visitas">
-                  Control de Visitas
-                </Link>
-              </li>
-              <li>
-                <Link className="hover:underline" to="/bitacora">
-                  Bitácora Digital
-                </Link>
-              </li>
-              <li>
-                <Link className="hover:underline" to="/supervision">
-                  Supervisión
-                </Link>
-              </li>
+              {sections.length ? (
+                sections.map((s) => (
+                  <li key={s.key}>
+                    <Link className="hover:underline" to={s.path}>
+                      {s.label}
+                    </Link>
+                  </li>
+                ))
+              ) : (
+                <li className="opacity-70">No hay secciones habilitadas.</li>
+              )}
             </ul>
           </div>
 
-          {/* Columna 3 - Soporte */}
           <div>
             <div className="font-semibold mb-2">Soporte</div>
             <ul className="space-y-2 text-sm">
@@ -170,7 +193,6 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Columna 4 - Estado */}
           <div>
             <div className="font-semibold mb-2">Estado del sistema</div>
             <div className="text-sm space-y-1">
@@ -202,7 +224,6 @@ export default function Footer() {
           </div>
         </div>
 
-        {/* Línea inferior */}
         <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs opacity-70">
           <div>© {new Date().getFullYear()} SENAF · Todos los derechos reservados</div>
           <div className="flex items-center gap-4">

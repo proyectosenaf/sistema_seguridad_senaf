@@ -1,7 +1,9 @@
 // client/src/modules/rondasqr/admin/AdminHub.jsx
 import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import AssignmentsPage from "./AssignmentsPage.jsx";
+import QrRepoPage from "./QrRepoPage.jsx";
 
 /* ========= FX tokens ========= */
 
@@ -16,11 +18,11 @@ const fxTextMuted = "text-neutral-600 dark:text-white/70";
 const fxBtnPrimary =
   "inline-flex items-center justify-center h-11 px-5 rounded-2xl text-sm font-semibold " +
   "text-white bg-neutral-900/90 hover:bg-neutral-900 " +
-  "dark:bg-white/90 dark:text-neutral-900 dark:hover:bg-white transition";
+  "dark:bg-white/90 dark:text-neutral-900 dark:hover:bg-white transition disabled:opacity-60 disabled:cursor-not-allowed";
 
 const fxBtnDanger =
   "inline-flex items-center justify-center h-11 px-4 rounded-2xl text-sm font-semibold text-white " +
-  "bg-rose-600 hover:bg-rose-500 transition";
+  "bg-rose-600 hover:bg-rose-500 transition disabled:opacity-60 disabled:cursor-not-allowed";
 
 const fxBtnSmall =
   "inline-flex items-center justify-center h-9 px-3 rounded-xl text-xs font-semibold text-white " +
@@ -88,28 +90,139 @@ const numberClass =
   ctrlClass +
   " [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
+/* ---------- aliases de tabs ---------- */
+function normalizeAdminTab(raw) {
+  const t = String(raw || "").trim().toLowerCase();
+  if (!t) return null;
+
+  const aliases = {
+    sites: "sites",
+    site: "sites",
+
+    rounds: "rounds",
+    round: "rounds",
+    create: "rounds",
+    edit: "rounds",
+    load: "rounds",
+
+    point: "points",
+    points: "points",
+
+    plan: "plans",
+    plans: "plans",
+
+    assign: "assign",
+    assignment: "assign",
+    assignments: "assign",
+
+    qrrepo: "qrrepo",
+    qr: "qrrepo",
+    "qr-repo": "qrrepo",
+    qr_repo: "qrrepo",
+  };
+
+  return aliases[t] || null;
+}
+
 /* -------------------- Root Hub -------------------- */
 
 export default function AdminHub({ initialTab = "sites" }) {
-  const [tab, setTab] = useState(initialTab);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const tabs = useMemo(
+    () => [
+      { k: "sites", label: "Sitios" },
+      { k: "rounds", label: "Rondas" },
+      { k: "points", label: "Puntos" },
+      { k: "plans", label: "Planes" },
+      { k: "assign", label: "Asignaciones" },
+      { k: "qrrepo", label: "QRs" },
+    ],
+    []
+  );
+
+  const validTabs = useMemo(() => new Set(tabs.map((t) => t.k)), [tabs]);
+
+  const readTabFromUrl = useCallback(() => {
+    try {
+      const sp = new URLSearchParams(location.search || "");
+      return normalizeAdminTab(sp.get("tab"));
+    } catch {
+      return null;
+    }
+  }, [location.search]);
+
+  const normalizedInitialTab = normalizeAdminTab(initialTab) || "sites";
+
+  const [tab, setTab] = useState(() => {
+    const fromUrl = readTabFromUrl();
+    return fromUrl && validTabs.has(fromUrl) ? fromUrl : normalizedInitialTab;
+  });
+
+  const setTabAndUrl = useCallback(
+    (next) => {
+      const normalized = normalizeAdminTab(next);
+      const safeTab = normalized && validTabs.has(normalized) ? normalized : "sites";
+
+      setTab(safeTab);
+
+      try {
+        const sp = new URLSearchParams(location.search || "");
+        sp.set("tab", safeTab);
+        navigate(
+          {
+            pathname: location.pathname,
+            search: `?${sp.toString()}`,
+          },
+          { replace: true }
+        );
+      } catch {
+        navigate(location.pathname, { replace: true });
+      }
+    },
+    [location.pathname, location.search, navigate, validTabs]
+  );
 
   useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
+    const fromUrl = readTabFromUrl();
+    const nextTab =
+      fromUrl && validTabs.has(fromUrl)
+        ? fromUrl
+        : normalizedInitialTab && validTabs.has(normalizedInitialTab)
+        ? normalizedInitialTab
+        : "sites";
 
-  const tabs = [
-    { k: "sites", label: "Sitios" },
-    { k: "rounds", label: "Rondas" },
-    { k: "point", label: "Puntos" },
-    { k: "plans", label: "Planes" },
-    { k: "assign", label: "Asignaciones" },
-  ];
+    setTab(nextTab);
+
+    try {
+      const sp = new URLSearchParams(location.search || "");
+      const currentUrlTab = normalizeAdminTab(sp.get("tab"));
+      if (currentUrlTab !== nextTab) {
+        sp.set("tab", nextTab);
+        navigate(
+          {
+            pathname: location.pathname,
+            search: `?${sp.toString()}`,
+          },
+          { replace: true }
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }, [location.pathname, location.search, navigate, normalizedInitialTab, readTabFromUrl, validTabs]);
 
   return (
     <div className="space-y-4 layer-content">
       <div className="flex flex-wrap gap-2">
         {tabs.map((t) => (
-          <button key={t.k} onClick={() => setTab(t.k)} className={tabClass(tab === t.k)}>
+          <button
+            key={t.k}
+            type="button"
+            onClick={() => setTabAndUrl(t.k)}
+            className={tabClass(tab === t.k)}
+          >
             {t.label.toUpperCase()}
           </button>
         ))}
@@ -117,9 +230,10 @@ export default function AdminHub({ initialTab = "sites" }) {
 
       {tab === "sites" && <SitesTab />}
       {tab === "rounds" && <RoundsTab />}
-      {tab === "point" && <PointsTab />}
+      {tab === "points" && <PointsTab />}
       {tab === "plans" && <PlansTab />}
       {tab === "assign" && <AssignmentsPage />}
+      {tab === "qrrepo" && <QrRepoPage />}
     </div>
   );
 }
@@ -130,8 +244,13 @@ function SitesTab() {
   const [name, setName] = useState("");
 
   const load = useCallback(async () => {
-    const res = await api.listSites();
-    setRows(res?.items || []);
+    try {
+      const res = await api.listSites();
+      setRows(res?.items || []);
+    } catch (e) {
+      console.error("[SitesTab] listSites error:", e?.message || e);
+      setRows([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -140,14 +259,24 @@ function SitesTab() {
 
   async function add() {
     if (!name.trim()) return;
-    await api.createSite({ name: name.trim() });
-    setName("");
-    load();
+    try {
+      await api.createSite({ name: name.trim() });
+      setName("");
+      await load();
+    } catch (e) {
+      console.error("[SitesTab] createSite error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo crear el sitio.");
+    }
   }
 
   async function del(id) {
-    await api.deleteSite(id);
-    load();
+    try {
+      await api.deleteSite(id);
+      await load();
+    } catch (e) {
+      console.error("[SitesTab] deleteSite error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo eliminar el sitio.");
+    }
   }
 
   return (
@@ -155,7 +284,7 @@ function SitesTab() {
       title="Sitios"
       subtitle="Crea y elimina sitios. Luego podrás crear rondas y puntos por sitio."
       actions={
-        <button onClick={load} className={fxBtnPrimary}>
+        <button type="button" onClick={load} className={fxBtnPrimary}>
           Actualizar
         </button>
       }
@@ -163,9 +292,14 @@ function SitesTab() {
       <div className="p-5 space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className={ctrlWrap + " flex-1"}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nuevo sitio" className={ctrlClass} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nuevo sitio"
+              className={ctrlClass}
+            />
           </div>
-          <button onClick={add} className={fxBtnPrimary + " sm:w-auto w-full"}>
+          <button type="button" onClick={add} className={fxBtnPrimary + " sm:w-auto w-full"}>
             Agregar
           </button>
         </div>
@@ -176,7 +310,7 @@ function SitesTab() {
               <tr key={r._id} className={rowClass}>
                 <td className="px-4 py-3">{r.name}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => del(r._id)} className={fxBtnDanger}>
+                  <button type="button" onClick={() => del(r._id)} className={fxBtnDanger}>
                     Eliminar
                   </button>
                 </td>
@@ -205,14 +339,27 @@ function RoundsTab() {
   const [name, setName] = useState("");
 
   const loadSites = useCallback(async () => {
-    const s = await api.listSites();
-    setSites(s?.items || []);
+    try {
+      const s = await api.listSites();
+      setSites(s?.items || []);
+    } catch (e) {
+      console.error("[RoundsTab] listSites error:", e?.message || e);
+      setSites([]);
+    }
   }, []);
 
   const loadRounds = useCallback(async () => {
-    if (!siteId) return setRows([]);
-    const r = await api.listRounds(siteId);
-    setRows(r?.items || []);
+    if (!siteId) {
+      setRows([]);
+      return;
+    }
+    try {
+      const r = await api.listRounds(siteId);
+      setRows(r?.items || []);
+    } catch (e) {
+      console.error("[RoundsTab] listRounds error:", e?.message || e);
+      setRows([]);
+    }
   }, [siteId]);
 
   useEffect(() => {
@@ -225,14 +372,24 @@ function RoundsTab() {
 
   async function add() {
     if (!name.trim() || !siteId) return;
-    await api.createRound({ siteId, name: name.trim() });
-    setName("");
-    loadRounds();
+    try {
+      await api.createRound({ siteId, name: name.trim() });
+      setName("");
+      await loadRounds();
+    } catch (e) {
+      console.error("[RoundsTab] createRound error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo crear la ronda.");
+    }
   }
 
   async function del(id) {
-    await api.deleteRound(id);
-    loadRounds();
+    try {
+      await api.deleteRound(id);
+      await loadRounds();
+    } catch (e) {
+      console.error("[RoundsTab] deleteRound error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo eliminar la ronda.");
+    }
   }
 
   return (
@@ -240,7 +397,7 @@ function RoundsTab() {
       title="Rondas"
       subtitle="Selecciona un sitio y administra sus rondas."
       actions={
-        <button onClick={loadRounds} className={fxBtnPrimary} disabled={!siteId}>
+        <button type="button" onClick={loadRounds} className={fxBtnPrimary} disabled={!siteId}>
           Actualizar
         </button>
       }
@@ -259,9 +416,19 @@ function RoundsTab() {
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className={ctrlWrap + " flex-1"}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nueva ronda" className={ctrlClass} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nueva ronda"
+              className={ctrlClass}
+            />
           </div>
-          <button onClick={add} className={fxBtnPrimary + " sm:w-auto w-full"} disabled={!siteId}>
+          <button
+            type="button"
+            onClick={add}
+            className={fxBtnPrimary + " sm:w-auto w-full"}
+            disabled={!siteId}
+          >
             Agregar
           </button>
         </div>
@@ -272,7 +439,7 @@ function RoundsTab() {
               <tr key={r._id} className={rowClass}>
                 <td className="px-4 py-3">{r.name}</td>
                 <td className="px-4 py-3">
-                  <button onClick={() => del(r._id)} className={fxBtnDanger}>
+                  <button type="button" onClick={() => del(r._id)} className={fxBtnDanger}>
                     Eliminar
                   </button>
                 </td>
@@ -302,6 +469,8 @@ function RoundsTab() {
 
 /* -------------------- Points -------------------- */
 function PointsTab() {
+  const navigate = useNavigate();
+
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [rows, setRows] = useState([]);
@@ -314,23 +483,36 @@ function PointsTab() {
   const reqSeq = useRef(0);
 
   const loadSites = useCallback(async () => {
-    const res = await api.listSites();
-    setSites(res?.items || []);
+    try {
+      const res = await api.listSites();
+      setSites(res?.items || []);
+    } catch (e) {
+      console.error("[PointsTab] listSites error:", e?.message || e);
+      setSites([]);
+    }
   }, []);
 
   useEffect(() => {
     loadSites();
   }, [loadSites]);
 
-  const reloadRounds = useCallback(async (sid) => {
-    const nextSiteId = sid ?? siteId;
-    if (!nextSiteId) {
-      setRounds([]);
-      return;
-    }
-    const r = await api.listRounds(nextSiteId);
-    setRounds(r?.items || []);
-  }, [siteId]);
+  const reloadRounds = useCallback(
+    async (sid) => {
+      const nextSiteId = sid ?? siteId;
+      if (!nextSiteId) {
+        setRounds([]);
+        return;
+      }
+      try {
+        const r = await api.listRounds(nextSiteId);
+        setRounds(r?.items || []);
+      } catch (e) {
+        console.error("[PointsTab] listRounds error:", e?.message || e);
+        setRounds([]);
+      }
+    },
+    [siteId]
+  );
 
   const reloadPoints = useCallback(
     async (sid, rid) => {
@@ -390,7 +572,7 @@ function PointsTab() {
       });
       setName("");
       setOrder(0);
-      reloadPoints(siteId, roundId);
+      await reloadPoints(siteId, roundId);
     } catch (e) {
       console.error("[PointsTab] createPoint error:", e?.message || e);
       alert(e?.payload?.message || "No se pudo crear el punto (HTTP 400).");
@@ -398,8 +580,13 @@ function PointsTab() {
   }
 
   async function del(id) {
-    await api.deletePoint(id);
-    reloadPoints(siteId, roundId);
+    try {
+      await api.deletePoint(id);
+      await reloadPoints(siteId, roundId);
+    } catch (e) {
+      console.error("[PointsTab] deletePoint error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo eliminar el punto.");
+    }
   }
 
   async function rotateQr(id) {
@@ -409,16 +596,18 @@ function PointsTab() {
       else await api.updatePoint(id, { qr: undefined });
       await reloadPoints(siteId, roundId);
     } catch (e) {
-      console.error("Error al rotar QR", e);
-      alert("No se pudo rotar el QR de este punto.");
+      console.error("[PointsTab] rotatePointQr error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo rotar el QR de este punto.");
     }
   }
 
   function openQrRepo() {
-    if (!siteId || !roundId) return alert("Seleccione un sitio y una ronda para ver el repositorio de QRs.");
-    if (typeof api.qrRepoUrl !== "function") return alert("Falta implementar qrRepoUrl en rondasqrApi.");
-    const url = api.qrRepoUrl({ siteId, roundId });
-    if (url) window.open(url, "_blank", "noopener");
+    if (!siteId || !roundId) {
+      alert("Seleccione un sitio y una ronda para ver el repositorio de QRs.");
+      return;
+    }
+
+    navigate("/rondasqr/admin?tab=qrrepo", { replace: false });
   }
 
   function pointQrPngUrl(id) {
@@ -432,10 +621,20 @@ function PointsTab() {
       subtitle="Selecciona sitio y ronda. Agrega puntos con orden y rota su QR cuando sea necesario."
       actions={
         <div className="flex gap-2">
-          <button onClick={() => reloadPoints(siteId, roundId)} className={fxBtnPrimary} disabled={!siteId}>
+          <button
+            type="button"
+            onClick={() => reloadPoints(siteId, roundId)}
+            className={fxBtnPrimary}
+            disabled={!siteId}
+          >
             Actualizar
           </button>
-          <button onClick={openQrRepo} className={fxBtnPrimary} disabled={!siteId || !roundId}>
+          <button
+            type="button"
+            onClick={openQrRepo}
+            className={fxBtnPrimary}
+            disabled={!siteId || !roundId}
+          >
             Repositorio de QRs
           </button>
         </div>
@@ -457,7 +656,12 @@ function PointsTab() {
 
           <div className={ctrlWrap}>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Ronda</label>
-            <select value={roundId} onChange={(e) => setRoundId(e.target.value)} className={ctrlClass} disabled={!siteId}>
+            <select
+              value={roundId}
+              onChange={(e) => setRoundId(e.target.value)}
+              className={ctrlClass}
+              disabled={!siteId}
+            >
               <option value="">-- Ronda --</option>
               {rounds.map((r) => (
                 <option key={r._id} value={r._id}>
@@ -469,16 +673,35 @@ function PointsTab() {
 
           <div className={ctrlWrap + " xl:col-span-2"}>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Nombre del punto</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre punto" className={ctrlClass} disabled={!siteId || !roundId} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nombre punto"
+              className={ctrlClass}
+              disabled={!siteId || !roundId}
+            />
           </div>
 
           <div className="flex gap-2 items-end">
             <div className="w-28">
               <label className={"block text-xs mb-1 " + fxTextMuted}>Orden</label>
-              <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder="0" className={numberClass} disabled={!siteId || !roundId} />
+              <input
+                type="number"
+                value={order}
+                onChange={(e) => setOrder(e.target.value)}
+                placeholder="0"
+                className={numberClass}
+                disabled={!siteId || !roundId}
+              />
             </div>
 
-            <button onClick={add} className={fxBtnPrimary + " shrink-0"} disabled={!siteId || !roundId || !name.trim()} title={!siteId || !roundId ? "Seleccione sitio y ronda" : "Agregar punto"}>
+            <button
+              type="button"
+              onClick={add}
+              className={fxBtnPrimary + " shrink-0"}
+              disabled={!siteId || !roundId || !name.trim()}
+              title={!siteId || !roundId ? "Seleccione sitio y ronda" : "Agregar punto"}
+            >
               Agregar
             </button>
           </div>
@@ -495,7 +718,9 @@ function PointsTab() {
 
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <code className="text-xs px-2 py-1 rounded-xl bg-white/40 dark:bg-white/10">{r.qr || "—"}</code>
+                      <code className="text-xs px-2 py-1 rounded-xl bg-white/40 dark:bg-white/10">
+                        {r.qr || "—"}
+                      </code>
 
                       {qrUrl && r.qr && (
                         <a
@@ -514,10 +739,10 @@ function PointsTab() {
 
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2 justify-end">
-                      <button onClick={() => rotateQr(r._id)} className={fxBtnSmall}>
+                      <button type="button" onClick={() => rotateQr(r._id)} className={fxBtnSmall}>
                         Rotar QR
                       </button>
-                      <button onClick={() => del(r._id)} className={fxBtnDanger}>
+                      <button type="button" onClick={() => del(r._id)} className={fxBtnDanger}>
                         Eliminar
                       </button>
                     </div>
@@ -570,8 +795,13 @@ function PlansTab() {
 
   useEffect(() => {
     (async () => {
-      const s = await api.listSites();
-      setSites(s?.items || []);
+      try {
+        const s = await api.listSites();
+        setSites(s?.items || []);
+      } catch (e) {
+        console.error("[PlansTab] listSites error:", e?.message || e);
+        setSites([]);
+      }
     })();
   }, []);
 
@@ -585,8 +815,13 @@ function PlansTab() {
         setSavedCount(0);
         return;
       }
-      const r = await api.listRounds(siteId);
-      setRounds(r?.items || []);
+      try {
+        const r = await api.listRounds(siteId);
+        setRounds(r?.items || []);
+      } catch (e) {
+        console.error("[PlansTab] listRounds error:", e?.message || e);
+        setRounds([]);
+      }
     })();
   }, [siteId]);
 
@@ -616,24 +851,32 @@ function PlansTab() {
         setSavedCount(0);
         return;
       }
-      const res = await api.getPlan({ siteId, roundId, shift });
-      const item = pickPlanItem(res);
-      const ids = item?.pointIds?.length
-        ? item.pointIds.map(String)
-        : Array.isArray(item?.points)
-        ? item.points.map((x) => String(x.pointId))
-        : [];
-      setPlanIds(ids);
-      setSavedCount(ids.length);
+      try {
+        const res = await api.getPlan({ siteId, roundId, shift });
+        const item = pickPlanItem(res);
+        const ids = item?.pointIds?.length
+          ? item.pointIds.map(String)
+          : Array.isArray(item?.points)
+          ? item.points.map((x) => String(x.pointId))
+          : [];
+        setPlanIds(ids);
+        setSavedCount(ids.length);
+      } catch (e) {
+        console.error("[PlansTab] getPlan error:", e?.message || e);
+        setPlanIds([]);
+        setSavedCount(0);
+      }
     })();
   }, [siteId, roundId, shift]);
 
   function addPointToPlan(pointId) {
     setPlanIds((prev) => (prev.includes(pointId) ? prev : [...prev, pointId]));
   }
+
   function removePointFromPlan(pointId) {
     setPlanIds((prev) => prev.filter((id) => id !== pointId));
   }
+
   function moveUp(idx) {
     setPlanIds((prev) => {
       if (idx <= 0) return prev;
@@ -642,6 +885,7 @@ function PlansTab() {
       return arr;
     });
   }
+
   function moveDown(idx) {
     setPlanIds((prev) => {
       if (idx >= prev.length - 1) return prev;
@@ -652,16 +896,22 @@ function PlansTab() {
   }
 
   async function savePlan() {
-    if (!siteId || !roundId) return alert("Seleccione sitio y ronda.");
-    if (!planIds.length) return alert("El plan no tiene puntos.");
+    if (!siteId || !roundId) {
+      alert("Seleccione sitio y ronda.");
+      return;
+    }
+    if (!planIds.length) {
+      alert("El plan no tiene puntos.");
+      return;
+    }
 
     try {
       await api.createOrUpdatePlan({ siteId, roundId, shift, pointIds: planIds });
       setSavedCount(planIds.length);
       alert("Plan guardado.");
     } catch (e) {
-      console.error("Error guardando plan", e);
-      alert("No se pudo guardar el plan.");
+      console.error("[PlansTab] savePlan error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo guardar el plan.");
     }
   }
 
@@ -673,8 +923,8 @@ function PlansTab() {
       setSavedCount(0);
       alert("Plan eliminado.");
     } catch (e) {
-      console.error("Error eliminando plan", e);
-      alert("No se pudo eliminar el plan.");
+      console.error("[PlansTab] deletePlan error:", e?.message || e);
+      alert(e?.payload?.message || "No se pudo eliminar el plan.");
     }
   }
 
@@ -684,10 +934,20 @@ function PlansTab() {
       subtitle="Define el orden de puntos por sitio, ronda y turno."
       actions={
         <div className="flex gap-2">
-          <button onClick={savePlan} className={fxBtnPrimary} disabled={!siteId || !roundId || !planIds.length}>
+          <button
+            type="button"
+            onClick={savePlan}
+            className={fxBtnPrimary}
+            disabled={!siteId || !roundId || !planIds.length}
+          >
             Guardar plan
           </button>
-          <button onClick={deletePlan} className={fxBtnDanger} disabled={!siteId || !roundId}>
+          <button
+            type="button"
+            onClick={deletePlan}
+            className={fxBtnDanger}
+            disabled={!siteId || !roundId}
+          >
             Eliminar plan
           </button>
         </div>
@@ -709,7 +969,12 @@ function PlansTab() {
 
           <div>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Ronda</label>
-            <select value={roundId} onChange={(e) => setRoundId(e.target.value)} className={ctrlClass} disabled={!siteId}>
+            <select
+              value={roundId}
+              onChange={(e) => setRoundId(e.target.value)}
+              className={ctrlClass}
+              disabled={!siteId}
+            >
               <option value="">-- Ronda --</option>
               {rounds.map((r) => (
                 <option key={r._id} value={r._id}>
@@ -721,7 +986,12 @@ function PlansTab() {
 
           <div>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Turno</label>
-            <select value={shift} onChange={(e) => setShift(e.target.value)} className={ctrlClass} disabled={!siteId || !roundId}>
+            <select
+              value={shift}
+              onChange={(e) => setShift(e.target.value)}
+              className={ctrlClass}
+              disabled={!siteId || !roundId}
+            >
               {shiftOptions.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
@@ -743,10 +1013,17 @@ function PlansTab() {
                 <tbody>
                   {points.map((p) => (
                     <tr key={p._id} className={rowClass}>
-                      <td className="px-4 py-3 w-14 text-xs opacity-60">{typeof p.order === "number" ? p.order : "-"}</td>
+                      <td className="px-4 py-3 w-14 text-xs opacity-60">
+                        {typeof p.order === "number" ? p.order : "-"}
+                      </td>
                       <td className="px-4 py-3">{p.name}</td>
                       <td className="px-4 py-3 text-right">
-                        <button onClick={() => addPointToPlan(p._id)} className={fxBtnSmall} disabled={planIds.includes(p._id)}>
+                        <button
+                          type="button"
+                          onClick={() => addPointToPlan(p._id)}
+                          className={fxBtnSmall}
+                          disabled={planIds.includes(p._id)}
+                        >
                           Añadir
                         </button>
                       </td>
@@ -781,15 +1058,29 @@ function PlansTab() {
                         <td className="px-4 py-3 w-14 text-xs opacity-60">{idx + 1}</td>
                         <td className="px-4 py-3">{p?.name || id}</td>
                         <td className="px-4 py-3 w-24 text-right space-x-1">
-                          <button onClick={() => moveUp(idx)} className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15" title="Subir">
+                          <button
+                            type="button"
+                            onClick={() => moveUp(idx)}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15"
+                            title="Subir"
+                          >
                             ↑
                           </button>
-                          <button onClick={() => moveDown(idx)} className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15" title="Bajar">
+                          <button
+                            type="button"
+                            onClick={() => moveDown(idx)}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-white/40 hover:bg-white/55 dark:bg-white/10 dark:hover:bg-white/15"
+                            title="Bajar"
+                          >
                             ↓
                           </button>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button onClick={() => removePointFromPlan(id)} className="h-9 px-4 rounded-2xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500">
+                          <button
+                            type="button"
+                            onClick={() => removePointFromPlan(id)}
+                            className="h-9 px-4 rounded-2xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500"
+                          >
                             Quitar
                           </button>
                         </td>

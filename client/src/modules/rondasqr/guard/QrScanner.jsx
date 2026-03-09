@@ -23,6 +23,7 @@ export default function QrScanner({
   const videoRef = React.useRef(null);
   const codeReaderRef = React.useRef(null);
   const controlsRef = React.useRef(null);
+
   const [status, setStatus] = React.useState("init"); // init | starting | running | error | stopped
   const [errMsg, setErrMsg] = React.useState("");
   const [devices, setDevices] = React.useState([]);
@@ -33,20 +34,29 @@ export default function QrScanner({
   // 🔔 Beep corto por WebAudio
   const beep = React.useCallback(() => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+
+      const ctx = new Ctx();
       const o = ctx.createOscillator();
       const g = ctx.createGain();
+
       o.type = "square";
       o.frequency.setValueAtTime(880, ctx.currentTime);
       g.gain.setValueAtTime(0.08, ctx.currentTime);
+
       o.connect(g);
       g.connect(ctx.destination);
       o.start();
+
       setTimeout(() => {
-        o.stop();
-        ctx.close();
+        try {
+          o.stop();
+          ctx.close();
+        } catch {}
       }, 120);
     } catch {}
+
     try {
       navigator.vibrate?.(80);
     } catch {}
@@ -57,14 +67,15 @@ export default function QrScanner({
     try {
       const list = await BrowserMultiFormatReader.listVideoInputDevices();
       setDevices(list || []);
+
       if (!list || !list.length) return;
 
-      // Seleccionar por facingMode (trasera preferida)
       if (!deviceId) {
         if (facingMode === "environment") {
           const back =
             list.find((d) => /back|rear|trás|environment/i.test(`${d.label}`)) ||
             list.find((d) => /facing back/i.test(`${d.label}`));
+
           setDeviceId(back?.deviceId || list[0].deviceId);
         } else {
           setDeviceId(list[0].deviceId);
@@ -81,10 +92,12 @@ export default function QrScanner({
       const stream = videoRef.current?.srcObject;
       const track = stream?.getVideoTracks?.()?.[0];
       const caps = track?.getCapabilities?.();
+
       if (!caps || !caps.torch) {
         setCanTorch(false);
         return false;
       }
+
       setCanTorch(true);
       await track.applyConstraints({ advanced: [{ torch: !!on }] });
       setTorchOn(!!on);
@@ -102,6 +115,7 @@ export default function QrScanner({
       controlsRef.current?.stop?.();
       codeReaderRef.current?.reset?.();
     } catch {}
+
     try {
       const stream = videoRef.current?.srcObject;
       const tracks = stream?.getTracks?.() || [];
@@ -109,7 +123,11 @@ export default function QrScanner({
         if (t.readyState === "live") t.stop();
       });
     } catch {}
-    if (videoRef.current) videoRef.current.srcObject = null;
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
     setTorchOn(false);
     setStatus("stopped");
   }, []);
@@ -120,7 +138,16 @@ export default function QrScanner({
       stopReader();
       setStatus("starting");
       setErrMsg("");
+
       try {
+        if (
+          typeof navigator === "undefined" ||
+          !navigator.mediaDevices ||
+          typeof navigator.mediaDevices.getUserMedia !== "function"
+        ) {
+          throw new Error("Este navegador no soporta acceso a cámara.");
+        }
+
         await refreshDevices();
 
         const selected = explicitDevice || deviceId;
@@ -133,34 +160,35 @@ export default function QrScanner({
           audio: false,
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia(
-          streamConstraints
-        );
+        const stream = await navigator.mediaDevices.getUserMedia(streamConstraints);
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
 
-        // Torch disponible
         await applyTorch(torchOn);
         setStatus("running");
 
         const controls = await codeReader.decodeFromVideoDevice(
           selected || null,
           videoRef.current,
-          (result, err, _controls) => {
-            controlsRef.current = _controls;
+          (result, _err, internalControls) => {
+            controlsRef.current = internalControls;
+
             if (result) {
               const text = String(result.getText());
               beep();
               onResult?.(text);
+
               if (once) {
-                _controls?.stop?.();
+                internalControls?.stop?.();
                 setStatus("stopped");
+
                 try {
                   const st = videoRef.current?.srcObject;
                   st?.getTracks?.().forEach((t) => t.stop());
-                  videoRef.current.srcObject = null;
+                  if (videoRef.current) videoRef.current.srcObject = null;
                 } catch {}
               }
             }
@@ -171,15 +199,18 @@ export default function QrScanner({
       } catch (e) {
         console.warn("[QrScanner] start error", e);
         setStatus("error");
+
         const msg =
           e?.name === "NotAllowedError"
             ? "El navegador bloqueó el acceso a la cámara. Habilítalo y recarga."
             : e?.name === "NotFoundError"
             ? "No se encontró cámara en el dispositivo."
             : e?.message || "No se pudo iniciar la cámara.";
+
         setErrMsg(msg);
         onError?.(e);
-        if (e.name === "NotAllowedError") {
+
+        if (e?.name === "NotAllowedError") {
           alert("❌ Acceso a cámara bloqueado. Habilítalo y recarga la página.");
         }
       }
@@ -214,15 +245,17 @@ export default function QrScanner({
   }, [deviceId, facingMode]);
 
   // 🔁 Cambiar cámara
-  const flipCamera = async () => {
+  const flipCamera = () => {
     if (!devices.length) return;
+
     const idx = devices.findIndex((d) => d.deviceId === deviceId);
     const next = devices[(idx + 1) % devices.length];
-    setDeviceId(next.deviceId);
-    await startReader(next.deviceId);
+
+    if (next?.deviceId) {
+      setDeviceId(next.deviceId);
+    }
   };
 
-  // 🎨 UI
   return (
     <div className={`relative w-full h-full ${className}`}>
       <video
@@ -232,15 +265,14 @@ export default function QrScanner({
         muted
       />
 
-      {/* Marco visual */}
       <div className="pointer-events-none absolute inset-0 rounded-xl border-[3px] border-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.5)]" />
 
-      {/* Overlay de estado */}
       {status === "starting" && (
         <div className="absolute inset-0 grid place-items-center text-white/90">
           Iniciando cámara…
         </div>
       )}
+
       {status === "error" && (
         <div className="absolute inset-0 grid place-items-center px-4 text-center text-white">
           <div className="max-w-md p-3 rounded-lg bg-black/60">
@@ -250,11 +282,11 @@ export default function QrScanner({
         </div>
       )}
 
-      {/* Controles (torch / flip) */}
       {(enableTorch || enableFlip) && status === "running" && (
         <div className="absolute right-2 bottom-2 flex gap-2">
           {enableTorch && canTorch && (
             <button
+              type="button"
               onClick={() => applyTorch(!torchOn)}
               className="px-3 py-1 rounded-md text-white bg-black/50 hover:bg-black/70 backdrop-blur"
               title="Linterna"
@@ -262,8 +294,10 @@ export default function QrScanner({
               {torchOn ? "🔦 On" : "🔦 Off"}
             </button>
           )}
+
           {enableFlip && devices.length > 1 && (
             <button
+              type="button"
               onClick={flipCamera}
               className="px-3 py-1 rounded-md text-white bg-black/50 hover:bg-black/70 backdrop-blur"
               title="Cambiar cámara"

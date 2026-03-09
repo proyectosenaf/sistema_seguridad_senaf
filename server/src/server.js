@@ -51,6 +51,9 @@ import { registerIAMModule } from "../modules/iam/index.js";
 // ✅ ✅ Catálogos IAM (IMPORTANTE: montarlo o da 404)
 import catalogsRoutes from "../modules/iam/routes/catalogs.routes.js";
 
+// ✅ Sync de permisos al arrancar
+import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync.service.js";
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -233,6 +236,14 @@ await mongoose
   });
 
 console.log("[db] MongoDB conectado");
+
+// ✅ Recarga automática de permisos desde el catálogo al arrancar
+try {
+  const syncResult = await syncPermissionsCatalog();
+  console.log("[IAM] permisos sincronizados:", syncResult);
+} catch (e) {
+  console.error("[IAM] error sincronizando permisos:", e?.message || e);
+}
 
 /* ─────────────────── Auth opcional (GLOBAL) ──────────────────── */
 

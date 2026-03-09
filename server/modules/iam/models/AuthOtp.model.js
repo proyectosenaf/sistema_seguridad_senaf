@@ -3,14 +3,19 @@ import mongoose from "mongoose";
 
 const { Schema } = mongoose;
 
+function normEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
 const AuthOtpSchema = new Schema(
   {
     email: {
       type: String,
       required: true,
-      lowercase: true,
       trim: true,
+      lowercase: true,
       index: true,
+      set: normEmail,
     },
 
     /**
@@ -26,18 +31,12 @@ const AuthOtpSchema = new Schema(
     },
 
     // Hash del código OTP
-    codeHash: {
-      type: String,
-      required: true,
-    },
+    codeHash: { type: String, required: true },
 
     // Fecha de expiración del OTP (TTL)
-    expiresAt: {
-      type: Date,
-      required: true,
-    },
+    expiresAt: { type: Date, required: true },
 
-    // Estado explícito (evita depender de TTL para permitir re-emitir)
+    // Estado explícito
     status: {
       type: String,
       enum: ["active", "consumed", "expired"],
@@ -45,64 +44,71 @@ const AuthOtpSchema = new Schema(
       index: true,
     },
 
-    attempts: {
-      type: Number,
-      default: 0,
-    },
+    attempts: { type: Number, default: 0 },
+    maxAttempts: { type: Number, default: 5 },
 
-    maxAttempts: {
-      type: Number,
-      default: 5,
-    },
-
-    resendAfter: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-
-    consumedAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
+    resendAfter: { type: Date, default: null, index: true },
+    consumedAt: { type: Date, default: null, index: true },
 
     meta: {
-      userId: {
-        type: Schema.Types.ObjectId,
-        ref: "IamUser",
-        default: null,
-      },
+      userId: { type: Schema.Types.ObjectId, ref: "iam_users", default: null },
     },
   },
   {
     timestamps: true,
     versionKey: false,
+    collection: "authotps", // ✅ importante: coincide con tu error senafseg.authotps
   }
 );
 
-/* =========================================================
-   Índices
-========================================================= */
+/* =========================
+   ÍNDICES
+========================= */
 
 // TTL automático: elimina documento cuando expiresAt < now
 AuthOtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// Índice compuesto para búsquedas rápidas
+// búsquedas
 AuthOtpSchema.index({ email: 1, purpose: 1, status: 1 });
 
-// 🔒 Solo 1 OTP ACTIVO por email + purpose (status === "active")
+// ✅ Solo 1 OTP ACTIVO por email+purpose (status === "active")
 AuthOtpSchema.index(
   { email: 1, purpose: 1 },
   {
     unique: true,
     partialFilterExpression: { status: "active" },
+    name: "uniq_active_email_purpose",
   }
 );
 
-/* =========================================================
-   Métodos útiles
-========================================================= */
+/* =========================
+   NORMALIZACIÓN EXTRA
+========================= */
+
+AuthOtpSchema.pre("save", function (next) {
+  if (this.isModified("email")) this.email = normEmail(this.email);
+  next();
+});
+
+AuthOtpSchema.pre("findOneAndUpdate", function (next) {
+  const u = this.getUpdate() || {};
+
+  // Soporta update directo: { email: "..." }
+  if (u.email) u.email = normEmail(u.email);
+
+  // Soporta operadores: { $set: { email: "..." } }
+  if (u.$set?.email) u.$set.email = normEmail(u.$set.email);
+
+  // Soporta upsert insert: { $setOnInsert: { email: "..." } }
+  if (u.$setOnInsert?.email) u.$setOnInsert.email = normEmail(u.$setOnInsert.email);
+
+  this.setUpdate(u);
+  next();
+});
+
+/* =========================
+   MÉTODOS
+========================= */
 
 AuthOtpSchema.methods.markConsumed = function () {
   this.consumedAt = new Date();
@@ -119,4 +125,4 @@ AuthOtpSchema.methods.isExpired = function () {
   return !this.expiresAt || new Date() > this.expiresAt;
 };
 
-export default mongoose.model("AuthOtp", AuthOtpSchema);
+export default mongoose.models.AuthOtp || mongoose.model("AuthOtp", AuthOtpSchema);

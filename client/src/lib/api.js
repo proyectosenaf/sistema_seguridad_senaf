@@ -33,6 +33,16 @@ export const TOKEN_KEY = "senaf_token";
 /** ⚠️ Key legacy (compatibilidad con módulos viejos) */
 export const TOKEN_KEY_LEGACY = "token";
 
+/** ✅ Evento para notificar cambios de token en la MISMA pestaña */
+export const TOKEN_UPDATED_EVENT = "senaf:token_updated";
+function emitTokenUpdated() {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(TOKEN_UPDATED_EVENT));
+    }
+  } catch {}
+}
+
 /* =========================
    Storage safe helpers
 ========================= */
@@ -77,6 +87,7 @@ export function getToken() {
     // migración suave: guarda en canónico y limpia legacy
     safeStorageSet(TOKEN_KEY, legacy);
     safeStorageRemove(TOKEN_KEY_LEGACY);
+    emitTokenUpdated(); // ✅ notifica migración en misma tab
     return legacy;
   }
 
@@ -93,16 +104,19 @@ export function setToken(token) {
   if (!t) {
     safeStorageRemove(TOKEN_KEY);
     safeStorageRemove(TOKEN_KEY_LEGACY);
+    emitTokenUpdated(); // ✅
     return;
   }
   safeStorageSet(TOKEN_KEY, t);
   safeStorageRemove(TOKEN_KEY_LEGACY);
+  emitTokenUpdated(); // ✅
 }
 
 /** ✅ Limpia token (canónico + legacy) */
 export function clearToken() {
   safeStorageRemove(TOKEN_KEY);
   safeStorageRemove(TOKEN_KEY_LEGACY);
+  emitTokenUpdated(); // ✅
 }
 
 /* =========================

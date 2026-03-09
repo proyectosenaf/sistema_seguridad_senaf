@@ -10,7 +10,6 @@ import api, { API } from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
 import useSpeechToText from "../../iam/hooks/useSpeechToText.js";
 
-
 // 👉 librerías para exportar
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -87,32 +86,43 @@ async function downloadMedia({ url, rawSrc, filename }) {
     const src = String(rawSrc || url || "");
     const name = filename || `evidencia_${Date.now()}`;
 
+    // Caso 1: dataURL/base64
     if (src.startsWith("data:")) {
       const blob = dataUrlToBlob(src);
       const objectUrl = URL.createObjectURL(blob);
+
       const a = document.createElement("a");
       a.href = objectUrl;
       a.download = name;
       document.body.appendChild(a);
       a.click();
       a.remove();
+
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
       return;
     }
 
+    // Caso 2: archivo servido por backend
+    const fileUrl = url || src;
+    const res = await fetch(fileUrl);
+    if (!res.ok) {
+      throw new Error(`No se pudo descargar el archivo (${res.status})`);
+    }
+
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
     const a = document.createElement("a");
-    a.href = url || src;
+    a.href = objectUrl;
     a.download = name;
-    a.target = "_blank";
-    a.rel = "noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   } catch (e) {
     console.warn("downloadMedia error:", e);
-    alert(
-      "No se pudo descargar. Intenta 'Abrir' y luego descargar desde el navegador."
-    );
+    alert("No se pudo descargar el archivo.");
   }
 }
 
@@ -139,6 +149,66 @@ function getIncidentDate(inc) {
 function parseDateValue(d) {
   const t = new Date(d).getTime();
   return Number.isNaN(t) ? null : t;
+}
+
+function normalizeEvidenceKind(kind) {
+  const k = String(kind || "").trim().toLowerCase();
+  if (k === "photo" || k === "image") return "photo";
+  if (k === "video") return "video";
+  if (k === "audio") return "audio";
+  return "photo";
+}
+
+function mediaTypeFromEvidenceKind(kind) {
+  const k = normalizeEvidenceKind(kind);
+  if (k === "photo") return "image";
+  if (k === "video") return "video";
+  if (k === "audio") return "audio";
+  return "image";
+}
+
+function normalizeIncidentMedia(inc) {
+  // ✅ Nuevo formato normalizado
+  if (Array.isArray(inc?.evidences) && inc.evidences.length > 0) {
+    return inc.evidences
+      .filter(Boolean)
+      .map((ev) => {
+        const src = ev?.url || ev?.src || ev?.base64 || "";
+        if (!src) return null;
+        return {
+          type: mediaTypeFromEvidenceKind(ev?.kind),
+          src,
+          url: src,
+          originalName: ev?.originalName || "",
+          mimeType: ev?.mimeType || "",
+          size: Number(ev?.size || 0),
+          uploadedAt: ev?.uploadedAt || null,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // ✅ Compatibilidad legacy
+  const photos = [
+    ...(Array.isArray(inc?.photosBase64) ? inc.photosBase64 : []),
+    ...(Array.isArray(inc?.photos) ? inc.photos : []),
+  ];
+
+  const videos = [
+    ...(Array.isArray(inc?.videosBase64) ? inc.videosBase64 : []),
+    ...(Array.isArray(inc?.videos) ? inc.videos : []),
+  ];
+
+  const audios = [
+    ...(Array.isArray(inc?.audiosBase64) ? inc.audiosBase64 : []),
+    ...(Array.isArray(inc?.audios) ? inc.audios : []),
+  ];
+
+  return [
+    ...photos.filter(Boolean).map((src) => ({ type: "image", src, url: src })),
+    ...videos.filter(Boolean).map((src) => ({ type: "video", src, url: src })),
+    ...audios.filter(Boolean).map((src) => ({ type: "audio", src, url: src })),
+  ];
 }
 
 export default function IncidentesList() {
@@ -204,44 +274,11 @@ export default function IncidentesList() {
   const [evidenceTitle, setEvidenceTitle] = useState("");
   const [activeEvidenceIdx, setActiveEvidenceIdx] = useState(0);
 
-  function extractPhotos(inc) {
-    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
-    if (Array.isArray(inc.photos)) return inc.photos;
-    return [];
-  }
-  function extractVideos(inc) {
-    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
-    if (Array.isArray(inc.videos)) return inc.videos;
-    return [];
-  }
-  function extractAudios(inc) {
-    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
-    if (Array.isArray(inc.audios)) return inc.audios;
-    return [];
-  }
-
   function openEvidence(inc) {
-    const photos = extractPhotos(inc);
-    const videos = extractVideos(inc);
-    const audios = extractAudios(inc);
-
-    const items = [
-      ...photos.map((src) => ({
-        type: "image",
-        src,
-        url: toAbsoluteMediaUrl(src, API_HOST),
-      })),
-      ...videos.map((src) => ({
-        type: "video",
-        src,
-        url: toAbsoluteMediaUrl(src, API_HOST),
-      })),
-      ...audios.map((src) => ({
-        type: "audio",
-        src,
-        url: toAbsoluteMediaUrl(src, API_HOST),
-      })),
-    ];
+    const items = normalizeIncidentMedia(inc).map((item) => ({
+      ...item,
+      url: toAbsoluteMediaUrl(item.src, API_HOST),
+    }));
 
     setEvidenceItems(items);
     setEvidenceTitle(`${inc?.type || "Incidente"} — ${inc?._id || ""}`);
@@ -357,11 +394,9 @@ export default function IncidentesList() {
 
         // ✅ Preferir endpoint dedicado (backend decide quién es guardia)
         if (typeof iamApi.listGuards === "function") {
-          // token lo resuelve iamApi (tokenProvider/localStorage/dev headers)
           const r = await iamApi.listGuards("", true, undefined);
           items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
-          // fallback (no recomendado, pero mantiene compat)
           const r = await iamApi.listUsers("");
           const NS = "https://senaf.local/roles";
           items = (r.items || []).filter((u) => {
@@ -502,15 +537,13 @@ export default function IncidentesList() {
       );
       const label = guard ? guardLabel(guard) : form.reportedBy;
 
-      const photosBase64 = media
-        .filter((m) => m.type === "image")
-        .map((m) => m.src);
-      const videosBase64 = media
-        .filter((m) => m.type === "video")
-        .map((m) => m.src);
-      const audiosBase64 = media
-        .filter((m) => m.type === "audio")
-        .map((m) => m.src);
+      // ✅ Solo formato normalizado para evitar duplicados
+      const evidences = media.map((m) => ({
+        kind:
+          m.type === "image" ? "photo" : m.type === "video" ? "video" : "audio",
+        url: m.src,
+        base64: m.src,
+      }));
 
       const payload = {
         type: form.type,
@@ -522,9 +555,7 @@ export default function IncidentesList() {
         guardId: form.reportedByGuardId || undefined,
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
-        photosBase64,
-        videosBase64,
-        audiosBase64,
+        evidences,
       };
 
       if (editingId) {
@@ -537,6 +568,7 @@ export default function IncidentesList() {
           recomputeStats(next);
           return next;
         });
+        alert("Se guardaron los cambios.");
       } else {
         const res = await api.post("/incidentes", payload);
         const creado = res.data?.item || res.data;
@@ -545,6 +577,7 @@ export default function IncidentesList() {
           recomputeStats(next);
           return next;
         });
+        alert("Incidente guardado correctamente.");
       }
 
       resetForm();
@@ -591,15 +624,7 @@ export default function IncidentesList() {
       status: normalizeStatus(incidente.status || "abierto"),
     });
 
-    const oldPhotos = extractPhotos(incidente);
-    const oldVideos = extractVideos(incidente);
-    const oldAudios = extractAudios(incidente);
-
-    setMedia([
-      ...oldPhotos.map((src) => ({ type: "image", src })),
-      ...oldVideos.map((src) => ({ type: "video", src })),
-      ...oldAudios.map((src) => ({ type: "audio", src })),
-    ]);
+    setMedia(normalizeIncidentMedia(incidente));
   };
 
   const handleDelete = async (id) => {
@@ -636,19 +661,14 @@ export default function IncidentesList() {
     const toTs = dateTo ? parseDateValue(dateTo + "T23:59:59") : null;
 
     return (incidentes || []).filter((i) => {
-      // status
       if (fStatus !== "all" && normalizeStatus(i.status) !== fStatus) return false;
-
-      // priority
       if (fPriority !== "all" && safeLower(i.priority) !== fPriority) return false;
 
-      // date range
       const d = getIncidentDate(i);
       const t = d ? parseDateValue(d) : null;
       if (fromTs != null && t != null && t < fromTs) return false;
       if (toTs != null && t != null && t > toTs) return false;
 
-      // text search
       if (!text) return true;
 
       const haystack = [
@@ -1208,10 +1228,11 @@ export default function IncidentesList() {
                 </tr>
               ) : (
                 filtered.map((i) => {
-                  const photos = extractPhotos(i);
-                  const videos = extractVideos(i);
-                  const audios = extractAudios(i);
-                  const total = photos.length + videos.length + audios.length;
+                  const mediaItems = normalizeIncidentMedia(i);
+                  const photos = mediaItems.filter((m) => m.type === "image");
+                  const videos = mediaItems.filter((m) => m.type === "video");
+                  const audios = mediaItems.filter((m) => m.type === "audio");
+                  const total = mediaItems.length;
 
                   const d = getIncidentDate(i);
                   const fecha = d ? new Date(d).toLocaleString() : "—";

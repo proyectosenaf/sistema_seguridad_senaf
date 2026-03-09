@@ -1,30 +1,18 @@
-// client/src/modules/rondasqr/pages/ScanPage.jsx
-import React, { useState, useMemo, useEffect, useRef } from "react";
+// client/src/modules/rondasqr/guard/ScanPage.jsx
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import QrScanner from "./QrScanner.jsx";
+import QrScanner from "../guard/QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
 import { getOutbox, queueCheckin, transmitOutbox, countOutbox } from "../utils/outbox.js";
 
-// ✅ IAM API (central)
-import iamApi from "../../../iam/api/iamApi.js";
-// ✅ token canónico (central)
-import { getToken } from "../../../lib/api.js";
+// ✅ Central: identidad desde AuthProvider /me
+import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
-/* ===== helpers pequeños ===== */
-function toArr(v) {
-  return !v ? [] : Array.isArray(v) ? v : [v];
-}
-function uniqLower(arr) {
-  return Array.from(
-    new Set(
-      toArr(arr)
-        .map((x) => String(x).trim().toLowerCase())
-        .filter(Boolean)
-    )
-  );
-}
+/* =========================
+   Helpers
+========================= */
 function readJsonLS(key, fallback) {
   try {
     if (typeof localStorage === "undefined") return fallback;
@@ -36,6 +24,30 @@ function readJsonLS(key, fallback) {
     return fallback;
   }
 }
+
+function safeLSGet(key, fallback = null) {
+  try {
+    if (typeof localStorage === "undefined") return fallback;
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeLSSet(key, val) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(key, val);
+  } catch {}
+}
+
+function safeLSRemove(key) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.removeItem(key);
+  } catch {}
+}
+
 function buildAssignmentKey(a) {
   return (
     a.id ||
@@ -48,33 +60,30 @@ function buildAssignmentKey(a) {
   );
 }
 
-/* ===== fetch con JWT header (si hay token) ===== */
-async function authFetch(url, opts = {}) {
-  const headers = new Headers(opts.headers || {});
-  headers.set("Content-Type", headers.get("Content-Type") || "application/json");
-
-  const t = getToken?.();
-  if (t) headers.set("Authorization", `Bearer ${t}`);
-
-  // ✅ NO cookies; si algún endpoint requiere cookies, cámbialo a "include" puntualmente
-  const res = await fetch(url, {
-    ...opts,
-    headers,
-    credentials: "omit",
-    cache: "no-store",
-  });
-  return res;
-}
-
-function pickUserFromMePayload(data) {
-  if (!data) return null;
-  const user = data?.user || data?.me || data?.profile || data || null;
+function resolvePrincipal(user) {
   if (!user || typeof user !== "object") return null;
+
+  if (user.user && typeof user.user === "object") {
+    return {
+      ...user.user,
+      can:
+        user?.can && typeof user.can === "object"
+          ? user.can
+          : user?.user?.can && typeof user.user.can === "object"
+          ? user.user.can
+          : {},
+      superadmin:
+        user?.superadmin === true ||
+        user?.isSuperAdmin === true ||
+        user?.user?.superadmin === true ||
+        user?.user?.isSuperAdmin === true,
+    };
+  }
+
   return {
     ...user,
-    _id: user?._id || user?.id || null,
-    email: user?.email || null,
-    name: user?.name || user?.fullName || user?.nombreCompleto || null,
+    can: user?.can && typeof user.can === "object" ? user.can : {},
+    superadmin: user?.superadmin === true || user?.isSuperAdmin === true,
   };
 }
 
@@ -82,69 +91,23 @@ export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
 
-  // ✅ Identidad real desde IAM
-  const [me, setMe] = useState(null); // { _id, email, name, roles, perms, ... }
-  const [iamMe, setIamMe] = useState({ roles: [], perms: [] });
+  // ✅ SOLO desde AuthProvider
+  const { user, isLoading } = useAuth();
+  const principal = resolvePrincipal(user) || {};
+  const safeUser = principal;
 
-  const safeUser = me || {};
+  /**
+   * ✅ REGLA:
+   * ScanPage NO asigna roles/perms.
+   * Solo consume señales resueltas por backend:
+   * - superadmin / isSuperAdmin
+   * - user.can["rondasqr.*"]
+   */
+  const can = safeUser?.can && typeof safeUser.can === "object" ? safeUser.can : {};
+  const isSuperadmin = safeUser?.superadmin === true;
 
-  /* ===== cargar identidad/roles/permisos desde IAM ===== */
-  useEffect(() => {
-    let alive = true;
-
-    async function loadMe() {
-      try {
-        // 1) preferir iamApi.me() si existe
-        if (iamApi && typeof iamApi.me === "function") {
-          const data = await iamApi.me();
-          if (!alive) return;
-
-          const user = pickUserFromMePayload(data);
-          const roles =
-            data?.roles || data?.user?.roles || user?.roles || data?.user?.perms?.roles || [];
-          const perms =
-            data?.permissions ||
-            data?.perms ||
-            data?.user?.perms ||
-            user?.perms ||
-            user?.permissions ||
-            [];
-
-          setMe(user);
-          setIamMe({ roles, perms });
-          return;
-        }
-
-        // 2) fallback: endpoint canónico único
-        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
-        const url = `${API_ROOT}/iam/v1/me`; // porque VITE_API_BASE_URL ya incluye /api
-
-        const res = await authFetch(url, { method: "GET" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-
-        const data = (await res.json().catch(() => ({}))) || {};
-        if (!alive) return;
-
-        const user = pickUserFromMePayload(data);
-        const roles = data?.roles || data?.user?.roles || user?.roles || [];
-        const perms =
-          data?.permissions || data?.perms || data?.user?.perms || user?.perms || user?.permissions || [];
-
-        setMe(user);
-        setIamMe({ roles, perms });
-      } catch {
-        if (!alive) return;
-        setMe(null);
-        setIamMe({ roles: [], perms: [] });
-      }
-    }
-
-    loadMe();
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // 🔒 Debug visible SOLO en desarrollo si tú lo activas
+  const DEBUG_PERMS = import.meta.env.DEV && false;
 
   /* ===== notificaciones ===== */
   useEffect(() => {
@@ -164,11 +127,14 @@ export default function ScanPage() {
 
   function playAlarmTone() {
     try {
+      if (typeof window === "undefined") return;
+
       if (!audioCtxRef.current) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return;
+        if (!Ctx) throw new Error("No AudioContext");
         audioCtxRef.current = new Ctx();
       }
+
       const ctx = audioCtxRef.current;
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
@@ -211,16 +177,6 @@ export default function ScanPage() {
     return () => unsub?.();
   }, []);
 
-  /* ===== roles/permisos SOLO desde IAM ===== */
-  const roles = uniqLower(iamMe?.roles);
-  const perms = uniqLower(iamMe?.perms);
-
-  const isAdminLike =
-    perms.includes("*") || roles.includes("admin") || roles.includes("rondasqr.admin");
-
-  const isSupervisorLike =
-    roles.includes("supervisor") || perms.includes("rondasqr.view") || perms.includes("rondasqr.reports");
-
   /* ===== qué pestaña ===== */
   const tab = useMemo(() => {
     if (pathname.endsWith("/qr")) return "qr";
@@ -231,7 +187,7 @@ export default function ScanPage() {
     return "home";
   }, [pathname]);
 
-  // redirección de pestaña msg al módulo global de incidentes
+  // redirección msg al módulo global de incidentes
   useEffect(() => {
     if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
   }, [tab, nav]);
@@ -272,9 +228,9 @@ export default function ScanPage() {
   const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
 
   function loadLocalProgress() {
-    const lastPoint = localStorage.getItem("rondasqr:lastPointName") || null;
-    const nextPoint = localStorage.getItem("rondasqr:nextPointName") || null;
-    const pct = Math.max(0, Math.min(100, Number(localStorage.getItem("rondasqr:progressPct") || 0)));
+    const lastPoint = safeLSGet("rondasqr:lastPointName", null);
+    const nextPoint = safeLSGet("rondasqr:nextPointName", null);
+    const pct = Math.max(0, Math.min(100, Number(safeLSGet("rondasqr:progressPct", 0) || 0)));
     setProgress({ lastPoint, nextPoint, pct });
   }
 
@@ -289,8 +245,9 @@ export default function ScanPage() {
 
   function loadAssignmentStates() {
     try {
-      const raw = localStorage.getItem("rondasqr:assignmentStates");
-      const keyRaw = localStorage.getItem("rondasqr:currentAssignmentKey");
+      const raw = safeLSGet("rondasqr:assignmentStates", null);
+      const keyRaw = safeLSGet("rondasqr:currentAssignmentKey", null);
+
       if (raw) {
         const parsed = JSON.parse(raw);
         setAssignmentStates(parsed && typeof parsed === "object" ? parsed : {});
@@ -307,7 +264,7 @@ export default function ScanPage() {
   function saveAssignmentStates(next) {
     setAssignmentStates(next);
     try {
-      localStorage.setItem("rondasqr:assignmentStates", JSON.stringify(next));
+      safeLSSet("rondasqr:assignmentStates", JSON.stringify(next));
     } catch {}
   }
 
@@ -316,17 +273,15 @@ export default function ScanPage() {
     if (!key) return;
     setCurrentAssignmentKey(key);
     try {
-      localStorage.setItem("rondasqr:currentAssignmentKey", key);
-      localStorage.setItem("rondasqr:currentAssignment", JSON.stringify(a));
+      safeLSSet("rondasqr:currentAssignmentKey", key);
+      safeLSSet("rondasqr:currentAssignment", JSON.stringify(a));
     } catch {}
   }
 
   function clearActiveAssignment() {
     setCurrentAssignmentKey(null);
-    try {
-      localStorage.removeItem("rondasqr:currentAssignmentKey");
-      localStorage.removeItem("rondasqr:currentAssignment");
-    } catch {}
+    safeLSRemove("rondasqr:currentAssignmentKey");
+    safeLSRemove("rondasqr:currentAssignment");
   }
 
   function updateAssignmentStatus(a, status, extra = {}) {
@@ -345,11 +300,6 @@ export default function ScanPage() {
     saveAssignmentStates(next);
   }
 
-  function getAssignmentState(a) {
-    const key = buildAssignmentKey(a);
-    return key ? assignmentStates[key] || {} : {};
-  }
-
   function handleStartRound(a) {
     setActiveAssignment(a);
     updateAssignmentStatus(a, "en_progreso", { startedAt: new Date().toISOString() });
@@ -361,11 +311,6 @@ export default function ScanPage() {
       finishedAt: new Date().toISOString(),
       progressPct: progress.pct,
     });
-    clearActiveAssignment();
-  }
-
-  function handleCancelRound(a) {
-    updateAssignmentStatus(a, "cancelada");
     clearActiveAssignment();
   }
 
@@ -387,7 +332,7 @@ export default function ScanPage() {
 
       if (myId && gId) return gId === myId;
       if (myEmail && gEmail) return gEmail === myEmail;
-      if (myName && gName) return gName === myName;
+      if (myName && gName) return myName === gName;
       return false;
     });
 
@@ -413,18 +358,8 @@ export default function ScanPage() {
     return () => window.removeEventListener("storage", handleStorage);
   }, [safeUser?._id, safeUser?.email, safeUser?.name]);
 
-  /* ===== alerta rápida por hash #alert ===== */
-  useEffect(() => {
-    if (hash === "#alert") {
-      (async () => {
-        await sendAlert();
-        nav("/rondasqr/scan", { replace: true });
-      })();
-    }
-  }, [hash, nav]);
-
   /* ===== enviar alerta de pánico ===== */
-  async function sendAlert() {
+  const sendAlert = useCallback(async () => {
     if (sendingAlert) return false;
     setSendingAlert(true);
     try {
@@ -453,7 +388,17 @@ export default function ScanPage() {
     } finally {
       setSendingAlert(false);
     }
-  }
+  }, [sendingAlert, safeUser?.name, safeUser?.email]);
+
+  /* ===== alerta rápida por hash #alert ===== */
+  useEffect(() => {
+    if (hash === "#alert") {
+      (async () => {
+        await sendAlert();
+        nav("/rondasqr/scan", { replace: true });
+      })();
+    }
+  }, [hash, nav, sendAlert]);
 
   /* ===== manejar QR ESCANEADO ===== */
   async function handleScan(result) {
@@ -487,19 +432,11 @@ export default function ScanPage() {
       } else if (typeof rondasqrApi.scan === "function") {
         await rondasqrApi.scan({ qr, gps });
       } else {
-        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
-        const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
-
-        const res = await authFetch(url, {
-          method: "POST",
-          body: JSON.stringify({ qr, gps }),
-        });
-        if (!res.ok) throw new Error("HTTP " + res.status);
+        throw new Error("rondasqrApi no implementa checkinScan/scan");
       }
 
-      localStorage.setItem("rondasqr:lastPointName", qr);
-      localStorage.setItem("rondasqr:progressPct", "100");
+      safeLSSet("rondasqr:lastPointName", qr);
+      safeLSSet("rondasqr:progressPct", "100");
       setProgress((prev) => ({ ...prev, lastPoint: qr, pct: 100 }));
 
       alert("✅ Punto registrado: " + qr);
@@ -568,16 +505,7 @@ export default function ScanPage() {
       await rondasqrApi.scan({ qr: it.qr, gps: it.gps || null });
       return;
     }
-
-    const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-    const API_ROOT = String(RAW).trim().replace(/\/$/, "");
-    const url = `${API_ROOT}/rondasqr/v1/checkin/scan`;
-
-    const res = await authFetch(url, {
-      method: "POST",
-      body: JSON.stringify({ qr: it.qr, gps: it.gps || null }),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
+    throw new Error("rondasqrApi no implementa checkinScan/scan");
   }
 
   async function transmitNow() {
@@ -606,9 +534,9 @@ export default function ScanPage() {
   function buildOfflinePayload(currentUser) {
     const outboxData = getOutbox();
     const progressData = {
-      lastPoint: localStorage.getItem("rondasqr:lastPointName") || null,
-      nextPoint: localStorage.getItem("rondasqr:nextPointName") || null,
-      pct: Number(localStorage.getItem("rondasqr:progressPct") || 0),
+      lastPoint: safeLSGet("rondasqr:lastPointName", null),
+      nextPoint: safeLSGet("rondasqr:nextPointName", null),
+      pct: Number(safeLSGet("rondasqr:progressPct", 0) || 0),
     };
 
     const device = {
@@ -654,22 +582,13 @@ export default function ScanPage() {
         return;
       }
 
-      const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-      const API_ROOT = String(RAW).trim().replace(/\/$/, "");
-      const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
-
-      const res = await authFetch(url, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || `HTTP ${res.status}`);
+      if (typeof rondasqrApi.offlineDump === "function") {
+        const json = await rondasqrApi.offlineDump(payload);
+        alert("📤 Base de datos local enviada.\n" + (json?.message || ""));
+        return;
       }
 
-      const json = await res.json().catch(() => ({ ok: true }));
-      alert("📤 Base de datos local enviada.\n" + (json?.message || ""));
+      throw new Error("rondasqrApi no implementa offlineDump(payload)");
     } catch (err) {
       console.error("[ScanPage] dump offline error", err);
       alert("No se pudo enviar la base de datos.");
@@ -704,21 +623,12 @@ export default function ScanPage() {
 
         if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
 
-        const RAW = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
-        const API_ROOT = String(RAW).trim().replace(/\/$/, "");
-        const url = `${API_ROOT}/rondasqr/v1/offline/dump`;
-
-        try {
-          const res = await authFetch(url, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
-          if (!res.ok) {
-            const txt = await res.text().catch(() => "");
-            throw new Error(txt || `HTTP ${res.status}`);
+        if (typeof rondasqrApi.offlineDump === "function") {
+          try {
+            await rondasqrApi.offlineDump(payload);
+          } catch (e) {
+            console.error("[autoSync] error enviando dump offline", e);
           }
-        } catch (e) {
-          console.error("[autoSync] error enviando dump offline", e);
         }
       } catch (err) {
         console.error("[autoSync] error inesperado", err);
@@ -738,7 +648,7 @@ export default function ScanPage() {
         window.removeEventListener("online", handleOnline);
       };
     }
-  }, [safeUser?._id]); // ✅ evita loop por referencia de objeto
+  }, [safeUser?._id]); // intencional
 
   /* ===== estilos ===== */
   const pageClass = "space-y-6 layer-content";
@@ -775,10 +685,10 @@ export default function ScanPage() {
     .panic-indicator { animation: panic-blink 1s ease-in-out infinite; }
   `;
 
-  const homeCols = isAdminLike || isSupervisorLike ? "md:grid-cols-3" : "md:grid-cols-2";
+  const homeCols = "md:grid-cols-2";
 
   const BEEP_SRC =
-    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///w==";
+    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///w==";
 
   const activeAssignment = useMemo(() => {
     if (!currentAssignmentKey) return null;
@@ -791,6 +701,16 @@ export default function ScanPage() {
     nav("/rondasqr/scan", { replace: true });
   }
 
+  if (isLoading) {
+    return (
+      <div className={pageClass}>
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <div className="text-sm opacity-70">Cargando sesión...</div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className={pageClass}>
       <style>{neonStyles}</style>
@@ -801,6 +721,7 @@ export default function ScanPage() {
           onClick={() => setLastPanic(null)}
           className="fixed top-20 right-6 z-[120] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white panic-indicator shadow-lg"
           title={`Alerta recibida ${lastPanic.at}`}
+          type="button"
         >
           <span className="text-[10px] leading-none font-bold">ALERTA</span>
           <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
@@ -813,17 +734,20 @@ export default function ScanPage() {
           <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
             Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás tus rondas y alertas de hoy.
           </p>
-          <p className="text-[10px] mt-1 opacity-60">
-            roles={roles.join(",") || "—"} · perms={perms.join(",") || "—"}
-          </p>
+
+          {DEBUG_PERMS && (
+            <p className="text-[10px] mt-1 opacity-60">
+              superadmin={String(!!isSuperadmin)} · can={can ? "sí" : "no"}
+            </p>
+          )}
         </div>
+
         <div className="text-right text-xs sm:text-sm">
           <div className="opacity-70">Rondas pendientes por enviar</div>
           <div className="font-semibold text-lg sm:text-xl">{countOutbox()}</div>
         </div>
       </div>
 
-      {/* HOME */}
       {tab === "home" && (
         <div className={`grid grid-cols-1 ${homeCols} gap-4 sm:gap-6`}>
           <section className={[cardClass, cardFallback, "text-center"].join(" ")}>
@@ -840,6 +764,7 @@ export default function ScanPage() {
                   "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
                   sendingAlert ? "cursor-not-allowed opacity-80" : "",
                 ].join(" ")}
+                type="button"
               >
                 {sendingAlert ? "ENVIANDO..." : "ALERTA"}
               </button>
@@ -847,16 +772,19 @@ export default function ScanPage() {
             </div>
 
             <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
-              <button onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
+              <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
                 Registrador Punto Control
               </button>
-              <button onClick={() => nav("/incidentes/nuevo?from=ronda")} className="w-full btn-neon btn-neon-purple">
+              <button
+                type="button"
+                onClick={() => nav("/incidentes/nuevo?from=ronda")}
+                className="w-full btn-neon btn-neon-purple"
+              >
                 Mensaje Incidente
               </button>
             </div>
           </section>
 
-          {/* progreso */}
           <section className={[cardClass, cardFallback].join(" ")}>
             <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
@@ -889,52 +817,66 @@ export default function ScanPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3">
-                  <button onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
+                  <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
                     Continuar ronda
                   </button>
-                  <button onClick={finishActiveIfAny} className="btn-neon btn-neon-amber">
+                  <button type="button" onClick={finishActiveIfAny} className="btn-neon btn-neon-amber">
                     Finalizar ronda
                   </button>
                 </div>
               </>
             ) : (
               <p className="text-sm text-slate-600 dark:text-white/80">
-                Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el primer punto asignado.
+                Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el primer punto
+                asignado.
               </p>
             )}
           </section>
 
-          {(isAdminLike || isSupervisorLike) && (
-            <section className={[cardClass, cardFallback].join(" ")}>
-              <h3 className="font-semibold text-lg mb-3">Acciones</h3>
-              <p className="text-sm text-slate-600 dark:text-white/80 mb-4">
-                Acciones avanzadas disponibles para supervisores o administradores.
-              </p>
-              <div className="grid gap-3 max-w-sm">
-                <button onClick={() => nav("/rondasqr/reports")} className="btn-neon">
-                  📊 Abrir informes
-                </button>
-                {isAdminLike && (
-                  <button onClick={() => nav("/rondasqr/admin")} className="btn-neon btn-neon-purple">
-                    ⚙️ Administración de rondas
-                  </button>
-                )}
-              </div>
-            </section>
-          )}
-
-          {/* rondas asignadas (deja tu tabla aquí) */}
-          <section className={[cardClass, cardFallback, "md:col-span-2 xl:col-span-3"].join(" ")}>
-            {/* Tu UI de asignaciones puede ir aquí sin cambios. */}
-            {/* Si quieres que te la complete tal cual la tenías, pégame esa parte que omitiste. */}
+          <section className={[cardClass, cardFallback, "md:col-span-2"].join(" ")}>
             <div className="text-sm opacity-70">
               Asignaciones cargadas: <b>{myAssignments.length}</b>
             </div>
+
+            {!!myAssignments.length && (
+              <div className="mt-4 grid gap-3">
+                {myAssignments.map((a, idx) => {
+                  const key = buildAssignmentKey(a);
+                  const st = assignmentStates[key] || {};
+                  const isActive = currentAssignmentKey === key;
+
+                  return (
+                    <div
+                      key={key || idx}
+                      className="rounded-xl border border-black/10 dark:border-white/10 p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                    >
+                      <div>
+                        <div className="font-semibold">{a.roundName || a.round?.name || "Ronda"}</div>
+                        <div className="text-sm opacity-70">
+                          {a.siteName || a.site?.name || "Sitio"} · {a.date || a.day || "—"}
+                        </div>
+                        <div className="text-xs opacity-70 mt-1">
+                          Estado: {st.status || "pendiente"}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => handleStartRound(a)} className="btn-neon btn-neon-green">
+                          {isActive ? "Continuar" : "Iniciar"}
+                        </button>
+                        <button type="button" onClick={() => handleFinishRound(a)} className="btn-neon btn-neon-amber">
+                          Finalizar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
       )}
 
-      {/* QR */}
       {tab === "qr" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
@@ -950,6 +892,7 @@ export default function ScanPage() {
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <button
+              type="button"
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("qrscanner:stop"));
                 nav("/rondasqr/scan");
@@ -959,6 +902,7 @@ export default function ScanPage() {
               Finalizar
             </button>
             <button
+              type="button"
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("qrscanner:stop"));
                 nav("/rondasqr/scan/qr");
@@ -971,12 +915,16 @@ export default function ScanPage() {
         </section>
       )}
 
-      {/* OUTBOX */}
       {tab === "outbox" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <div className="flex items-center justify-between gap-3 mb-3">
             <h3 className="font-semibold text-lg">Pendientes por enviar</h3>
-            <button disabled={syncing} onClick={transmitNow} className="btn-neon btn-neon-green">
+            <button
+              type="button"
+              disabled={syncing}
+              onClick={transmitNow}
+              className="btn-neon btn-neon-green"
+            >
               {syncing ? "Enviando..." : "Transmitir ahora"}
             </button>
           </div>
@@ -985,23 +933,26 @@ export default function ScanPage() {
         </section>
       )}
 
-      {/* DUMP */}
       {tab === "dump" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Enviar base offline</h3>
-          <button onClick={sendOfflineDump} className="btn-neon">
+          <button type="button" onClick={sendOfflineDump} className="btn-neon">
             Enviar
           </button>
         </section>
       )}
 
-      {/* FOTOS */}
       {tab === "fotos" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Fotos</h3>
           <PhotoPicker photos={photos} setPhotos={setPhotos} />
           <div className="mt-4">
-            <button disabled={sendingPhotos} onClick={sendPhotos} className="btn-neon btn-neon-green">
+            <button
+              type="button"
+              disabled={sendingPhotos}
+              onClick={sendPhotos}
+              className="btn-neon btn-neon-green"
+            >
               {sendingPhotos ? "Enviando..." : "Enviar fotos"}
             </button>
           </div>
@@ -1044,6 +995,7 @@ function PhotoPicker({ photos, setPhotos }) {
             <button
               onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
+              type="button"
             >
               Eliminar
             </button>

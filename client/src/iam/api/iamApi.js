@@ -209,6 +209,11 @@ function to01(v, def = 0) {
   return def;
 }
 
+function normalizePermissionKeys(list = []) {
+  const arr = Array.isArray(list) ? list : [list];
+  return [...new Set(arr.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean))];
+}
+
 /* =========================
    API
 ========================= */
@@ -403,9 +408,23 @@ export const iamApi = {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
   setRolePerms(id, permissionKeys, token) {
+    const normalized = normalizePermissionKeys(permissionKeys);
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
-      body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
+      body: { permissionKeys: normalized },
+      token,
+    });
+  },
+
+  // ✅ método directo para la matriz de permisos
+  updateRolePermissions(id, body = {}, token) {
+    const permissionKeys = normalizePermissionKeys(
+      body?.permissionKeys ?? body?.permissions ?? []
+    );
+
+    return req(`/roles/${encodeURIComponent(id)}/permissions`, {
+      method: "PUT",
+      body: { permissionKeys },
       token,
     });
   },
@@ -415,9 +434,10 @@ export const iamApi = {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
   setPermsForRole(id, permissionKeys, token) {
+    const normalized = normalizePermissionKeys(permissionKeys);
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
       method: "PUT",
-      body: { permissionKeys: Array.isArray(permissionKeys) ? permissionKeys : [] },
+      body: { permissionKeys: normalized },
       token,
     });
   },

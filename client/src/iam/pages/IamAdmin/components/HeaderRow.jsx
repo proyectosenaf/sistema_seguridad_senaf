@@ -22,7 +22,9 @@ export default function HeaderRow({ roles, gridCols }) {
       </div>
 
       {roles.map((r) => (
-        <div key={r._id} className="text-center">{r.name || r.code}</div>
+        <div key={r._id} className="text-center">
+          {r.name || r.code}
+        </div>
       ))}
 
       <div className="text-center">Acciones</div>

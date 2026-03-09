@@ -7,18 +7,19 @@ import { rondasqrApi } from "../api/rondasqrApi.js";
 import { emitLocalPanic } from "../utils/panicBus.js";
 import iamApi from "../../../iam/api/iamApi.js";
 import { clearToken } from "../../../lib/api.js";
+import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
-const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+const ROUTE_LOGIN =
+  String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
-/**
- * SidebarGuard (refactor):
- * - Ya NO compite con el Sidebar global.
- * - Es un "Action Panel" del módulo de rondas.
- *
- * Reglas:
- * - Si asGlobal=true => no renderiza (porque ya existe Layout+Sidebar global)
- * - Si asGlobal=false => muestra acciones del módulo
- */
+const ROUTE_RONDAS_SCAN = "/rondasqr/scan";
+const ROUTE_INCIDENTE_NUEVO = "/incidentes/nuevo?from=ronda";
+
+// Consistencia de keys
+const USER_KEY = "senaf_user";
+const RETURN_TO_KEY = "auth:returnTo";
+const VISITOR_HINT_KEY = "senaf_is_visitor";
+
 export default function SidebarGuard({
   variant = "desktop", // "desktop" | "mobile"
   onCloseMobile,
@@ -26,46 +27,67 @@ export default function SidebarGuard({
   asGlobal = false,
 }) {
   const navigate = useNavigate();
+  const { logout } = useAuth(); // ✅ logout central
 
-  // ✅ Si el módulo está dentro del Layout global, NO mostrar este panel
   if (asGlobal) return null;
 
   async function doLogout() {
-    // 1) backend logout (si existe)
+    // 1️⃣ Logout del backend IAM
     try {
-      await iamApi.logout();
-    } catch {
-      // no bloquea
-    }
-
-    // 2) limpia token canónico + legacy + dev flags si existen
-    try {
-      clearToken();
-      localStorage.removeItem("token");
-      localStorage.removeItem("iamDevEmail");
-      localStorage.removeItem("iamDevRoles");
-      localStorage.removeItem("iamDevPerms");
+      await iamApi.logout?.();
     } catch {}
+
+    // 2️⃣ Logout central del AuthProvider
+    try {
+      await logout?.();
+    } catch {}
+
+    // 3️⃣ Limpieza completa del cliente
+    try {
+      clearToken(); // senaf_token
+
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(VISITOR_HINT_KEY);
+
+      sessionStorage.removeItem(RETURN_TO_KEY);
+
+      // flujo OTP
+      localStorage.removeItem("senaf_otp_email");
+      sessionStorage.removeItem("senaf_otp_flow");
+      sessionStorage.removeItem("senaf_pwreset_token");
+      sessionStorage.removeItem("senaf_otp_mustChange");
+    } catch {}
+
+    if (variant === "mobile" && typeof onCloseMobile === "function") {
+      onCloseMobile();
+    }
 
     navigate(ROUTE_LOGIN, { replace: true });
   }
 
   async function handleAlert() {
-    // Si te pasan handler externo, úsalo
     if (typeof onSendAlert === "function") {
       await onSendAlert();
-      if (variant === "mobile" && onCloseMobile) onCloseMobile();
+      if (variant === "mobile" && typeof onCloseMobile === "function") {
+        onCloseMobile();
+      }
       return;
     }
 
-    // fallback: toma gps si se puede y manda panic
     let gps = null;
+
     try {
       if (typeof navigator !== "undefined" && "geolocation" in navigator) {
         await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
             (pos) => {
-              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+              gps = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+              };
               resolve();
             },
             () => resolve(),
@@ -73,26 +95,35 @@ export default function SidebarGuard({
           );
         });
       }
+    } catch {}
+
+    try {
+      await rondasqrApi.panic(gps);
+
+      emitLocalPanic({
+        source: "rondas_action_panel",
+        user: "",
+      });
+
+      window.alert("🚨 Alerta de pánico enviada.");
+
+      if (variant === "mobile" && typeof onCloseMobile === "function") {
+        onCloseMobile();
+      }
+
+      navigate(ROUTE_RONDAS_SCAN);
     } catch {
-      // ignore
+      window.alert(
+        "No se pudo enviar la alerta. Revisa conexión e intenta de nuevo."
+      );
     }
-
-    await rondasqrApi.panic(gps);
-
-    emitLocalPanic({
-      source: "rondas_action_panel",
-      user: "",
-    });
-
-    window.alert("🚨 Alerta de pánico enviada.");
-    navigate("/rondasqr/scan");
-
-    if (variant === "mobile" && onCloseMobile) onCloseMobile();
   }
 
   function handleMsg() {
-    navigate("/incidentes/nuevo?from=ronda");
-    if (variant === "mobile" && onCloseMobile) onCloseMobile();
+    if (variant === "mobile" && typeof onCloseMobile === "function") {
+      onCloseMobile();
+    }
+    navigate(ROUTE_INCIDENTE_NUEVO);
   }
 
   const containerBase =
@@ -117,12 +148,12 @@ export default function SidebarGuard({
 
       <div className="flex flex-col gap-2">
         <button type="button" onClick={handleAlert} className={itemBase}>
-          <AlertTriangle size={18} aria-hidden />
+          <AlertTriangle size={18} />
           <span className="text-[15px] leading-none">Enviar Alerta</span>
         </button>
 
         <button type="button" onClick={handleMsg} className={itemBase}>
-          <MessageSquare size={18} aria-hidden />
+          <MessageSquare size={18} />
           <span className="text-[15px] leading-none">Mensaje Incidente</span>
         </button>
       </div>
@@ -135,7 +166,7 @@ export default function SidebarGuard({
                      bg-red-600/10 hover:bg-red-600/20 text-red-400 font-medium
                      transition-colors duration-150"
         >
-          <LogOut size={18} aria-hidden />
+          <LogOut size={18} />
           <span className="text-[15px] leading-none">Salir</span>
         </button>
       </div>

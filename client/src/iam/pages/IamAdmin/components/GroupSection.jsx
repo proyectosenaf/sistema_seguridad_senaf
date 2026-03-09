@@ -1,6 +1,10 @@
 import React from "react";
 import PermissionRow from "./PermissionRow";
 
+function roleIdOf(r) {
+  return r?._id || r?.id || null;
+}
+
 export default function GroupSection({
   group,
   roles,
@@ -37,9 +41,21 @@ export default function GroupSection({
 
       {/* Filas de permisos */}
       {group.items.map((item) => {
-        const flags = roleMatrix[item.key] || {};
-        const origFlags = origMatrix[item.key] || {};
+        const permKey = String(item?.key || "").trim().toLowerCase();
+
+        const flags = {};
+        const origFlags = {};
+
+        for (const role of roles || []) {
+          const rid = String(roleIdOf(role) || "");
+          if (!rid) continue;
+
+          flags[rid] = !!roleMatrix?.[rid]?.[permKey];
+          origFlags[rid] = !!origMatrix?.[rid]?.[permKey];
+        }
+
         const dirty = JSON.stringify(flags) !== JSON.stringify(origFlags);
+
         return (
           <PermissionRow
             key={item._id || item.key}
@@ -55,4 +71,4 @@ export default function GroupSection({
       })}
     </div>
   );
-}
+} 

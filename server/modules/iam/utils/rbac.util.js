@@ -26,6 +26,20 @@ export function parseList(v) {
     .filter(Boolean);
 }
 
+function safeJsonParse(s) {
+  try {
+    return JSON.parse(String(s || ""));
+  } catch {
+    return null;
+  }
+}
+
+function parseListSmart(v) {
+  const j = safeJsonParse(v);
+  if (Array.isArray(j)) return j.map((x) => String(x || "").trim()).filter(Boolean);
+  return parseList(v);
+}
+
 function withTimeout(promise, ms, label = "op") {
   let t;
   const timeout = new Promise((_, rej) => {
@@ -64,7 +78,9 @@ function getEmailFromPayload(payload) {
 }
 
 function getDefaultVisitorRole() {
-  return String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita").trim().toLowerCase();
+  return String(process.env.IAM_DEFAULT_VISITOR_ROLE || "visita")
+    .trim()
+    .toLowerCase();
 }
 
 function canUseDevHeaders() {
@@ -79,6 +95,28 @@ function normPerm(p) {
   return String(p || "").trim();
 }
 
+function getSuperadminEmails() {
+  return [
+    process.env.SUPERADMIN_EMAIL,
+    process.env.VITE_SUPERADMIN_EMAIL,
+    process.env.ROOT_ADMINS,
+    "proyectosenaf@gmail.com",
+  ]
+    .flatMap((v) =>
+      String(v || "")
+        .split(",")
+        .map((x) => x.trim().toLowerCase())
+    )
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+}
+
+function isSuperadminEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  return getSuperadminEmails().includes(e);
+}
+
 function isAdminLikeRolesPerms({ roles = [], permissions = [], isSuperAdmin = false }) {
   if (isSuperAdmin) return true;
 
@@ -87,7 +125,9 @@ function isAdminLikeRolesPerms({ roles = [], permissions = [], isSuperAdmin = fa
   const Plow = new Set(Praw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean));
 
   if (Plow.has("*")) return true;
-  if (R.has("admin") || R.has("administrador") || R.has("ti") || R.has("administrador_it")) return true;
+  if (R.has("admin") || R.has("administrador") || R.has("ti") || R.has("administrador_it")) {
+    return true;
+  }
 
   return false;
 }
@@ -98,12 +138,22 @@ export async function buildContextFrom(req) {
   const allowDevHeaders = canUseDevHeaders();
 
   const headerEmail = allowDevHeaders ? req?.headers?.["x-user-email"] : null;
-  const headerRoles = allowDevHeaders ? parseList(req?.headers?.["x-roles"]) : [];
-  const headerPerms = allowDevHeaders ? parseList(req?.headers?.["x-perms"]) : [];
+
+  const headerRolesRaw = allowDevHeaders
+    ? req?.headers?.["x-user-roles"] ?? req?.headers?.["x-roles"]
+    : null;
+
+  const headerPermsRaw = allowDevHeaders
+    ? req?.headers?.["x-user-perms"] ?? req?.headers?.["x-perms"]
+    : null;
+
+  const headerRoles = allowDevHeaders ? parseListSmart(headerRolesRaw) : [];
+  const headerPerms = allowDevHeaders ? parseListSmart(headerPermsRaw) : [];
 
   const jwtEmail = getEmailFromPayload(payload);
 
   const email = String(jwtEmail || headerEmail || "").toLowerCase().trim() || null;
+
   const hasIdentity = !!email && (!!payload || !!headerEmail);
 
   let user = null;
@@ -120,13 +170,10 @@ export async function buildContextFrom(req) {
     }
   }
 
-  if (!user && hasIdentity && email) {
-    const rootAdmins = parseList(process.env.ROOT_ADMINS || "").map((x) =>
-      String(x).toLowerCase().trim()
-    );
+  const forcedSuperadmin = isSuperadminEmail(email);
 
-    const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
-    const isBootstrapAdmin = (!!superEmail && email === superEmail) || rootAdmins.includes(email);
+  if (!user && hasIdentity && email) {
+    const isBootstrapAdmin = forcedSuperadmin;
 
     if (isBootstrapAdmin) {
       const doc = {
@@ -145,7 +192,11 @@ export async function buildContextFrom(req) {
       };
 
       try {
-        const created = await withTimeout(IamUser.create(doc), 4000, "IamUser.create(bootstrap-admin)");
+        const created = await withTimeout(
+          IamUser.create(doc),
+          4000,
+          "IamUser.create(bootstrap-admin)"
+        );
         user = created.toObject();
         if (!IS_PROD) {
           // eslint-disable-next-line no-console
@@ -215,9 +266,12 @@ export async function buildContextFrom(req) {
     ? [defaultVisitorRole]
     : [];
 
-  const roleNames = new Set([...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean));
+  const roleNames = new Set(
+    [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
+  );
 
   const permSet = new Set([...(user?.perms || []).map(normPerm)].filter(Boolean));
+
   if (allowDevHeaders) {
     headerPerms
       .map(normPerm)
@@ -225,10 +279,15 @@ export async function buildContextFrom(req) {
       .forEach((p) => permSet.add(p));
   }
 
-  // ✅ EXPAND PERMS por roles: code (lower) + name (tal cual y lower)
   if (roleNames.size) {
-    const codesLower = [...roleNames].map((r) => String(r).trim().toLowerCase()).filter(Boolean);
-    const namesRaw = [...new Set([...(user?.roles || []), ...headerRoles])].map((x) => String(x || "").trim()).filter(Boolean);
+    const codesLower = [...roleNames]
+      .map((r) => String(r).trim().toLowerCase())
+      .filter(Boolean);
+
+    const namesRaw = [...new Set([...(user?.roles || []), ...headerRoles])]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+
     const namesLower = namesRaw.map((x) => x.toLowerCase());
 
     try {
@@ -265,20 +324,37 @@ export async function buildContextFrom(req) {
     }
   }
 
-  const superEmail = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
-  const isSuperAdmin = !!email && !!superEmail && email === superEmail;
+  const isSuperAdmin = forcedSuperadmin;
+
+  const rolesFinal = [...roleNames];
+
+  const adminLike = isAdminLikeRolesPerms({
+    roles: rolesFinal,
+    permissions: [...permSet],
+    isSuperAdmin,
+  });
+
+  if (adminLike) {
+    const permSetLowerTemp = new Set([...permSet].map((p) => String(p).toLowerCase()));
+    if (!permSet.has("*") && !permSetLowerTemp.has("*")) {
+      permSet.add("*");
+    }
+  }
+
+  const permissionsFinal = [...permSet];
+  const permSetLower = new Set(permissionsFinal.map((p) => String(p).toLowerCase()));
 
   function has(perm) {
     if (isSuperAdmin) return true;
-    if (permSet.has("*")) return true;
+    if (adminLike) return true;
+    if (permSet.has("*") || permSetLower.has("*")) return true;
     if (!perm) return true;
-    return permSet.has(normPerm(perm));
-  }
 
-  // ✅ visitor SOLO si NO es admin-like
-  const rolesFinal = [...roleNames];
-  const permsFinal = [...permSet];
-  const adminLike = isAdminLikeRolesPerms({ roles: rolesFinal, permissions: permsFinal, isSuperAdmin });
+    const raw = normPerm(perm);
+    const low = raw.toLowerCase();
+
+    return permSet.has(raw) || permSetLower.has(low);
+  }
 
   const isVisitor = adminLike ? false : roleNames.has(defaultVisitorRole);
 
@@ -286,7 +362,7 @@ export async function buildContextFrom(req) {
     user,
     email,
     roles: rolesFinal,
-    permissions: permsFinal,
+    permissions: permissionsFinal,
     has,
     isSuperAdmin,
     isVisitor,
@@ -298,7 +374,15 @@ export function devOr(mw) {
   return (req, res, next) => (allow ? next() : mw(req, res, next));
 }
 
+/**
+ * ✅ requirePerm:
+ * - acepta string: "iam.roles.manage"
+ * - o array: ["iam.permissions.manage","iam.roles.manage"] (ANY-OF)
+ */
 export function requirePerm(perm) {
+  const needList = Array.isArray(perm) ? perm : [perm];
+  const need = needList.map((x) => String(x || "").trim()).filter(Boolean);
+
   return async (req, res, next) => {
     try {
       const ctx = await buildContextFrom(req);
@@ -308,10 +392,12 @@ export function requirePerm(perm) {
         return res.status(401).json({ message: "No autenticado" });
       }
 
-      if (!ctx.has(perm)) {
+      const ok = need.length ? need.some((p) => ctx.has(p)) : true;
+
+      if (!ok) {
         return res.status(403).json({
           message: "forbidden",
-          need: perm,
+          need: Array.isArray(perm) ? need : String(perm || ""),
           email: ctx.email,
           roles: ctx.roles,
           perms: ctx.permissions,

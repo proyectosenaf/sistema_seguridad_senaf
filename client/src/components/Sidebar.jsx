@@ -1,10 +1,10 @@
 // client/src/components/Sidebar.jsx
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut } from "lucide-react";
 
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
-import { clearToken } from "../lib/api.js";
+import api, { clearToken, getToken } from "../lib/api.js";
 import { getNavSectionsForMe } from "../config/navConfig.js";
 
 const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
@@ -13,7 +13,9 @@ const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 
-const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+const SUPERADMIN_EMAIL = String(
+  import.meta.env.VITE_SUPERADMIN_EMAIL || "proyectosenaf@gmail.com"
+)
   .trim()
   .toLowerCase();
 
@@ -46,7 +48,9 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={[base, active ? activeCls : inactive, emphasizeCls].filter(Boolean).join(" ")}
+      className={[base, active ? activeCls : inactive, emphasizeCls]
+        .filter(Boolean)
+        .join(" ")}
       aria-current={active ? "page" : undefined}
     >
       <div className="flex items-center gap-3 px-4 py-3">
@@ -69,24 +73,183 @@ function readVisitorHint() {
   }
 }
 
-function isVisitorUser(user) {
-  const email = String(user?.email || "").trim().toLowerCase();
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normalizeMePayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+
+  const root = payload;
+  const userObj = payload.user && typeof payload.user === "object" ? payload.user : null;
+  const meObj = payload.me && typeof payload.me === "object" ? payload.me : null;
+
+  const source = meObj || root;
+
+  const email =
+    normalizeEmail(source?.email) ||
+    normalizeEmail(userObj?.email) ||
+    normalizeEmail(root?.email) ||
+    "";
+
+  const roles = Array.isArray(source?.roles)
+    ? source.roles
+    : Array.isArray(root?.roles)
+    ? root.roles
+    : Array.isArray(userObj?.roles)
+    ? userObj.roles
+    : [];
+
+  const permissions = Array.isArray(source?.permissions)
+    ? source.permissions
+    : Array.isArray(source?.perms)
+    ? source.perms
+    : Array.isArray(root?.permissions)
+    ? root.permissions
+    : Array.isArray(root?.perms)
+    ? root.perms
+    : Array.isArray(userObj?.permissions)
+    ? userObj.permissions
+    : Array.isArray(userObj?.perms)
+    ? userObj.perms
+    : [];
+
+  const can =
+    (source?.can && typeof source.can === "object" && source.can) ||
+    (root?.can && typeof root.can === "object" && root.can) ||
+    (userObj?.can && typeof userObj.can === "object" && userObj.can) ||
+    null;
+
+  const normalized = {
+    ...(userObj || {}),
+    ...(root || {}),
+    ...(source || {}),
+    user: userObj || source?.user || null,
+    email,
+    roles,
+    permissions,
+    perms: permissions,
+    can,
+    superadmin:
+      source?.superadmin === true ||
+      source?.isSuperAdmin === true ||
+      root?.superadmin === true ||
+      root?.isSuperAdmin === true ||
+      userObj?.superadmin === true ||
+      userObj?.isSuperAdmin === true,
+    isSuperAdmin:
+      source?.isSuperAdmin === true ||
+      source?.superadmin === true ||
+      root?.isSuperAdmin === true ||
+      root?.superadmin === true ||
+      userObj?.isSuperAdmin === true ||
+      userObj?.superadmin === true,
+    visitor:
+      source?.visitor === true ||
+      source?.isVisitor === true ||
+      root?.visitor === true ||
+      root?.isVisitor === true ||
+      userObj?.visitor === true ||
+      userObj?.isVisitor === true,
+    isVisitor:
+      source?.isVisitor === true ||
+      source?.visitor === true ||
+      root?.isVisitor === true ||
+      root?.visitor === true ||
+      userObj?.isVisitor === true ||
+      userObj?.visitor === true,
+  };
+
+  if (email && email === SUPERADMIN_EMAIL) {
+    normalized.superadmin = true;
+    normalized.isSuperAdmin = true;
+
+    if (!normalized.can || typeof normalized.can !== "object") {
+      normalized.can = {
+        "nav.accesos": true,
+        "nav.rondas": true,
+        "nav.incidentes": true,
+        "nav.visitas": true,
+        "nav.bitacora": true,
+        "nav.iam": true,
+      };
+    }
+  }
+
+  return normalized;
+}
+
+function isVisitorUser(meLike) {
+  const email = normalizeEmail(meLike?.email || meLike?.user?.email || "");
   if (SUPERADMIN_EMAIL && email === SUPERADMIN_EMAIL) return false;
 
-  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  const roles = Array.isArray(meLike?.roles)
+    ? meLike.roles
+    : Array.isArray(meLike?.user?.roles)
+    ? meLike.user.roles
+    : [];
+
   const isRoleVisitor = roles.some((r) => {
     const x = String(r || "").toLowerCase().trim();
     return x === "visita" || x === "visitor";
   });
 
-  if (!!user?.visitor || !!user?.isVisitor || isRoleVisitor) return true;
+  if (!!meLike?.visitor || !!meLike?.isVisitor || isRoleVisitor) return true;
 
   return readVisitorHint();
 }
 
 export default function Sidebar({ onNavigate, variant }) {
   const nav = useNavigate();
-  const { isAuthenticated, isLoading, user, logout } = useAuth();
+  const { isAuthenticated, isLoading, user, me, logout } = useAuth();
+
+  // ✅ Fuente canónica para menú: /iam/v1/me (incluye can + routeRules)
+  const [meState, setMeState] = useState(null);
+  const [meLoading, setMeLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      const hardToken = getToken?.() || "";
+      if (!hardToken) {
+        if (!alive) return;
+        setMeState(null);
+        setMeLoading(false);
+        return;
+      }
+
+      setMeLoading(true);
+      try {
+        const res = await api.get("/iam/v1/me", {
+          headers: { "Cache-Control": "no-store, no-cache", Pragma: "no-cache" },
+        });
+
+        const payload = res?.data ?? null;
+        const normalized = normalizeMePayload(payload);
+
+        if (!alive) return;
+        setMeState(normalized || null);
+      } catch {
+        if (!alive) return;
+        setMeState(null);
+      } finally {
+        if (!alive) return;
+        setMeLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const effectiveMe = useMemo(() => {
+    if (meState && typeof meState === "object") return meState;
+    if (me && typeof me === "object") return normalizeMePayload(me);
+    if (user && typeof user === "object") return normalizeMePayload(user);
+    return null;
+  }, [meState, me, user]);
 
   const handleLogoutClick = async () => {
     onNavigate?.();
@@ -108,12 +271,12 @@ export default function Sidebar({ onNavigate, variant }) {
     nav(ROUTE_LOGIN, { replace: true });
   };
 
-  const isVisitor = useMemo(() => isVisitorUser(user), [user]);
+  const isVisitor = useMemo(() => isVisitorUser(effectiveMe), [effectiveMe]);
 
   const allowlistKey = useMemo(() => NAV_KEYS_ALLOWLIST.join(","), []);
 
   const sessionSections = useMemo(() => {
-    const secs = getNavSectionsForMe(user) || [];
+    const secs = getNavSectionsForMe(effectiveMe) || [];
 
     const filteredByAllowlist =
       NAV_KEYS_ALLOWLIST.length > 0
@@ -126,7 +289,7 @@ export default function Sidebar({ onNavigate, variant }) {
 
     return Array.isArray(filteredByVisitor) ? filteredByVisitor : [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, isVisitor, allowlistKey]);
+  }, [effectiveMe, isVisitor, allowlistKey]);
 
   const homeItem = useMemo(() => {
     if (isVisitor) return null;
@@ -156,7 +319,10 @@ export default function Sidebar({ onNavigate, variant }) {
     return base;
   }, [homeItem, sessionSections]);
 
-  const showNav = !isLoading && (!isAuthenticated || (user && typeof user === "object"));
+  const showNav =
+    !isLoading &&
+    !meLoading &&
+    (!isAuthenticated || (effectiveMe && typeof effectiveMe === "object"));
 
   return (
     <div

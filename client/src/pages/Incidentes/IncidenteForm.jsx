@@ -10,6 +10,97 @@ import iamApi from "../../iam/api/iamApi.js";
 // ✅ Dictado por voz
 import useSpeechToText from "../../iam/hooks/useSpeechToText";
 
+const USER_KEY = "senaf_user";
+
+function safeJSONParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function readLocalUser() {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return safeJSONParse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function normRole(x) {
+  return String(x || "").trim().toLowerCase();
+}
+
+function extractRoles(u) {
+  const roles = Array.isArray(u?.roles) ? u.roles : u?.roles ? [u.roles] : [];
+  const NS = "https://senaf.local/roles";
+  const nsRoles = Array.isArray(u?.[NS]) ? u[NS] : [];
+  return [...roles, ...nsRoles].map(normRole).filter(Boolean);
+}
+
+function normalizeMediaType(kind) {
+  if (kind === "photo" || kind === "image") return "image";
+  if (kind === "video") return "video";
+  if (kind === "audio") return "audio";
+  return "image";
+}
+
+function normalizeEvidenceKind(type) {
+  if (type === "image") return "photo";
+  if (type === "video") return "video";
+  if (type === "audio") return "audio";
+  return "photo";
+}
+
+function normalizeIncidentMedia(inc) {
+  if (!inc || typeof inc !== "object") return [];
+
+  // ✅ Nuevo formato normalizado
+  if (Array.isArray(inc.evidences) && inc.evidences.length > 0) {
+    return inc.evidences
+      .filter(Boolean)
+      .map((e) => {
+        const src =
+          e?.url ||
+          e?.src ||
+          e?.base64 ||
+          e?.path ||
+          "";
+        if (!src) return null;
+
+        return {
+          type: normalizeMediaType(e?.kind),
+          src,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // ✅ Compatibilidad legacy
+  const photos = [
+    ...(Array.isArray(inc.photosBase64) ? inc.photosBase64 : []),
+    ...(Array.isArray(inc.photos) ? inc.photos : []),
+  ];
+
+  const videos = [
+    ...(Array.isArray(inc.videosBase64) ? inc.videosBase64 : []),
+    ...(Array.isArray(inc.videos) ? inc.videos : []),
+  ];
+
+  const audios = [
+    ...(Array.isArray(inc.audiosBase64) ? inc.audiosBase64 : []),
+    ...(Array.isArray(inc.audios) ? inc.audios : []),
+  ];
+
+  return [
+    ...photos.filter(Boolean).map((src) => ({ type: "image", src })),
+    ...videos.filter(Boolean).map((src) => ({ type: "video", src })),
+    ...audios.filter(Boolean).map((src) => ({ type: "audio", src })),
+  ];
+}
+
 export default function IncidenteForm({
   stayOnFinish = false,
   onCancel,
@@ -37,7 +128,7 @@ export default function IncidenteForm({
     status: "abierto",
   });
 
-  // media = [{ type: "image"|"video"|"audio", src: dataUrl }]
+  // media = [{ type: "image"|"video"|"audio", src: dataUrl|url }]
   const [media, setMedia] = useState([]);
   const [sending, setSending] = useState(false);
 
@@ -66,7 +157,6 @@ export default function IncidenteForm({
     interimResults: false,
   });
 
-  // Evita insertar lo mismo 2+ veces
   const lastInsertedRef = useRef("");
 
   function normalizeSpeechText(t) {
@@ -78,7 +168,6 @@ export default function IncidenteForm({
     const t = normalizeSpeechText(raw);
     if (!t) return;
 
-    // ✅ no insertar duplicado
     if (t === lastInsertedRef.current) {
       sttReset();
       return;
@@ -93,7 +182,6 @@ export default function IncidenteForm({
     sttReset();
   }
 
-  // ✅ Al detener, insertamos 1 vez automáticamente
   async function stopAndInsert() {
     try {
       await sttStop();
@@ -110,56 +198,92 @@ export default function IncidenteForm({
       : g.name || "(Sin nombre)";
   }
 
-  // ---- Extractores para editar (ahora incluye video/audio) ----
-  function extractPhotos(inc) {
-    if (Array.isArray(inc.photosBase64)) return inc.photosBase64;
-    if (Array.isArray(inc.photos)) return inc.photos;
-    return [];
-  }
-  function extractVideos(inc) {
-    if (Array.isArray(inc.videosBase64)) return inc.videosBase64;
-    if (Array.isArray(inc.videos)) return inc.videos;
-    return [];
-  }
-  function extractAudios(inc) {
-    if (Array.isArray(inc.audiosBase64)) return inc.audiosBase64;
-    if (Array.isArray(inc.audios)) return inc.audios;
-    return [];
+  function normalizeGuards(items) {
+    const normalized = (items || [])
+      .filter(Boolean)
+      .map((u) => ({
+        _id: u._id,
+        name: u.name,
+        email: u.email,
+        opId: u.opId || u.sub || u.legacyId || String(u._id),
+        active: u.active !== false,
+      }))
+      .filter((u) => u.active !== false);
+
+    const seen = new Set();
+    return normalized.filter((g) => {
+      const k = String(g.opId || g.email || g._id || "");
+      if (!k) return true;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   }
 
-  // ✅ Cargar guardias (SOLO SAFE: /users/guards/picker)
+  // ✅ Cargar guardias
   useEffect(() => {
     let mounted = true;
 
     (async () => {
-      try {
-        setLoadingGuards(true);
+      setLoadingGuards(true);
 
-        if (typeof iamApi.listGuardsPicker !== "function") {
-          // ✅ Error explícito: evita fallback a endpoints prohibidos
+      try {
+        let items = [];
+
+        if (typeof iamApi.listGuardsPicker === "function") {
+          const r = await iamApi.listGuardsPicker("", true);
+          items = Array.isArray(r?.items) ? r.items : [];
+        } else if (typeof iamApi.listGuards === "function") {
+          const r = await iamApi.listGuards("", true, undefined);
+          items = r?.items || r?.guards || r?.users || [];
+        } else if (typeof iamApi.listUsers === "function") {
+          const r = await iamApi.listUsers("");
+          const raw = Array.isArray(r?.items) ? r.items : [];
+          items = raw.filter((u) => {
+            const roles = extractRoles(u);
+            return (
+              roles.includes("guardia") ||
+              roles.includes("guard") ||
+              roles.includes("rondasqr.guard")
+            );
+          });
+        } else {
           throw new Error(
-            "iamApi.listGuardsPicker no existe. Tu build/frontend o iamApi.js están desactualizados."
+            "No hay método para listar guardias en iamApi (picker/listGuards/listUsers)."
           );
         }
 
-        const r = await iamApi.listGuardsPicker("", true);
-        const items = Array.isArray(r?.items) ? r.items : [];
+        const normalized = normalizeGuards(items);
 
-        const normalized = items
-          .filter(Boolean)
-          .map((u) => ({
-            _id: u._id,
-            name: u.name,
-            email: u.email,
-            // ✅ opId debe venir del backend; si no, caer a algo estable
-            opId: u.opId || u.sub || u.legacyId || String(u._id),
-            active: u.active !== false,
-          }))
-          .filter((u) => u.active !== false);
+        if (!mounted) return;
+        setGuards(normalized);
 
-        if (mounted) setGuards(normalized);
+        if (fromQueryIsRonda) {
+          const lu = readLocalUser();
+          const myEmail = String(lu?.email || "").trim().toLowerCase();
+          const myId = String(lu?._id || lu?.id || "").trim();
+
+          const meMatch =
+            (myEmail &&
+              normalized.find(
+                (g) => String(g.email || "").toLowerCase() === myEmail
+              )) ||
+            (myId &&
+              normalized.find(
+                (g) => String(g._id || g.opId || "") === myId
+              )) ||
+            null;
+
+          if (meMatch) {
+            setForm((prev) => ({
+              ...prev,
+              reportedByGuardId: String(meMatch.opId),
+              reportedBy: getGuardLabel(meMatch),
+            }));
+          }
+        }
       } catch (e) {
-        console.warn("[IncidenteForm] listGuardsPicker error:", e);
+        console.warn("[IncidenteForm] load guards error:", e);
         if (mounted) setGuards([]);
       } finally {
         if (mounted) setLoadingGuards(false);
@@ -169,9 +293,10 @@ export default function IncidenteForm({
     return () => {
       mounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Modo edición: cargar campos + media
+  // ✅ Modo edición: cargar campos + media normalizada
   useEffect(() => {
     if (!editingIncident) return;
 
@@ -190,15 +315,7 @@ export default function IncidenteForm({
       status: editingIncident.status || "abierto",
     }));
 
-    const prevPhotos = extractPhotos(editingIncident);
-    const prevVideos = extractVideos(editingIncident);
-    const prevAudios = extractAudios(editingIncident);
-
-    setMedia([
-      ...prevPhotos.map((src) => ({ type: "image", src })),
-      ...prevVideos.map((src) => ({ type: "video", src })),
-      ...prevAudios.map((src) => ({ type: "audio", src })),
-    ]);
+    setMedia(normalizeIncidentMedia(editingIncident));
   }, [editingIncident]);
 
   const handleChange = (e) =>
@@ -222,12 +339,11 @@ export default function IncidenteForm({
     const isVideo = file.type?.startsWith("video/");
     const isAudio = file.type?.startsWith("audio/");
 
-    const item = {
-      type: isVideo ? "video" : isAudio ? "audio" : "image",
-      src: base64,
-    };
+    setMedia((prev) => [
+      ...prev,
+      { type: isVideo ? "video" : isAudio ? "audio" : "image", src: base64 },
+    ]);
 
-    setMedia((prev) => [...prev, item]);
     e.target.value = "";
   };
 
@@ -264,13 +380,9 @@ export default function IncidenteForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.description.trim()) {
-      alert("Describa el incidente.");
-      return;
-    }
+    if (!form.description.trim()) return alert("Describa el incidente.");
     if (!form.reportedByGuardId) {
-      alert("Seleccione el guardia que reporta el incidente.");
-      return;
+      return alert("Seleccione el guardia que reporta el incidente.");
     }
 
     try {
@@ -281,15 +393,25 @@ export default function IncidenteForm({
       );
       const label = guard ? getGuardLabel(guard) : form.reportedBy;
 
+      // ✅ Compatibilidad actual
       const photosBase64 = media
         .filter((m) => m.type === "image")
         .map((m) => m.src);
+
       const videosBase64 = media
         .filter((m) => m.type === "video")
         .map((m) => m.src);
+
       const audiosBase64 = media
         .filter((m) => m.type === "audio")
         .map((m) => m.src);
+
+      // ✅ Nuevo formato normalizado
+      const evidences = media.map((m) => ({
+        kind: normalizeEvidenceKind(m.type),
+        url: m.src,
+        base64: m.src,
+      }));
 
       const payload = {
         ...form,
@@ -297,9 +419,15 @@ export default function IncidenteForm({
         guardId: form.reportedByGuardId || undefined,
         guardName: guard?.name || undefined,
         guardEmail: guard?.email || undefined,
+
+        // Legacy
         photosBase64,
         videosBase64,
         audiosBase64,
+
+        // Nuevo
+        evidences,
+
         ...(origin ? { origin } : {}),
         ...extraData,
       };
@@ -371,7 +499,6 @@ export default function IncidenteForm({
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-6 text-sm">
-          {/* Tipo */}
           <div>
             <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
               Tipo de Incidente
@@ -389,7 +516,6 @@ export default function IncidenteForm({
             </select>
           </div>
 
-          {/* Descripción + dictado */}
           <div>
             <div className="flex items-center justify-between gap-3 mb-2">
               <label className="block text-gray-700 dark:text-white/80 font-medium">
@@ -473,7 +599,6 @@ export default function IncidenteForm({
             ) : null}
           </div>
 
-          {/* Reportado / Zona */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
@@ -514,7 +639,6 @@ export default function IncidenteForm({
             </div>
           </div>
 
-          {/* Prioridad */}
           <div>
             <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
               Prioridad
@@ -531,7 +655,6 @@ export default function IncidenteForm({
             </select>
           </div>
 
-          {/* Evidencias */}
           <div className="space-y-2">
             <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
               Evidencias (fotos / videos / audio)

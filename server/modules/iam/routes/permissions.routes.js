@@ -8,11 +8,15 @@ import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
 
-/* =========================
- * Centralized helpers
- * =======================*/
-
-const MW_PERMS_MANAGE = devOr(requirePerm("iam.roles.manage"));
+/**
+ * ✅ Nota clave:
+ * - permissions CRUD debe estar protegido por "iam.permissions.manage"
+ * - "iam.roles.manage" es para roles, no para permisos.
+ * - Para no romper instalaciones donde aún no existe ese permiso, aceptamos ambos.
+ */
+const MW_PERMS_MANAGE = devOr(
+  requirePerm(["iam.permissions.manage", "iam.roles.manage"])
+);
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
@@ -23,19 +27,24 @@ function escapeRegex(s = "") {
 }
 
 function auditSafe(req, payload, label) {
-  return writeAudit(req, payload).catch((e) => {
+  try {
+    return Promise.resolve(writeAudit?.(req, payload)).catch((e) => {
+      console.warn(`[IAM][AUDIT ${label}] error (no bloquea):`, e?.message || e);
+    });
+  } catch (e) {
     console.warn(`[IAM][AUDIT ${label}] error (no bloquea):`, e?.message || e);
-  });
+    return Promise.resolve();
+  }
 }
 
-/** Normaliza un permiso recibido desde el front */
 function normalizePerm(p = {}) {
   let key = String(p.key ?? "").trim().toLowerCase();
   const label = String(p.label ?? "").trim();
   const group = String(p.group ?? "").trim().toLowerCase();
-  const order = Number.isFinite(p.order) ? Number(p.order) : 0;
 
-  // Auto-namespace: si viene "create" y group="rondas" => "rondas.create"
+  const orderNum = Number(p.order);
+  const order = Number.isFinite(orderNum) ? Math.trunc(orderNum) : 0;
+
   if (group && key && !key.includes(".")) key = `${group}.${key}`;
 
   return { key, label, group, order };
@@ -56,25 +65,27 @@ function validatePerm(p) {
   return errors;
 }
 
-/** Sanitiza objetos para updates (whitelist) */
 function pickUpdatable(body = {}) {
   const out = {};
+
   if (body.key != null) out.key = String(body.key).trim().toLowerCase();
   if (body.label != null) out.label = String(body.label).trim();
   if (body.group != null) out.group = String(body.group).trim().toLowerCase();
-  if (body.order != null) out.order = Number(body.order) || 0;
 
-  // si cambian group + key sin namespace, prefijar
+  if (body.order != null && String(body.order).trim() !== "") {
+    const n = Number(body.order);
+    out.order = Number.isFinite(n) ? Math.trunc(n) : 0;
+  }
+
   if (out.group && out.key && !out.key.includes(".")) out.key = `${out.group}.${out.key}`;
 
   return out;
 }
 
-/** Reemplaza permission key en roles de forma segura */
 async function replacePermissionKeyInRoles(prevKey, nextKey) {
   if (!prevKey || !nextKey || prevKey === nextKey) return;
 
-  // Update por pipeline: reemplaza todas las ocurrencias del array
+  // MongoDB 4.2+ pipeline update
   await IamRole.updateMany(
     { permissions: prevKey },
     [
@@ -94,13 +105,8 @@ async function replacePermissionKeyInRoles(prevKey, nextKey) {
 }
 
 /* =========================
- * Routes
- * =======================*/
-
-/**
- * GET /api/iam/v1/permissions
- * Lista permisos. Soporta filtros básicos (?group=, ?q=) y anotación por rol (?role=<roleId>).
- */
+   LIST
+========================= */
 r.get("/", MW_PERMS_MANAGE, async (req, res) => {
   try {
     const { group, q, role: roleId } = req.query;
@@ -117,7 +123,6 @@ r.get("/", MW_PERMS_MANAGE, async (req, res) => {
       .sort({ group: 1, order: 1, key: 1 })
       .lean();
 
-    // Si viene rol, anotar selected comparando por KEY
     let selectedSet = null;
     if (roleId && isValidObjectId(roleId)) {
       const role = await IamRole.findById(roleId).select("permissions").lean();
@@ -128,7 +133,6 @@ r.get("/", MW_PERMS_MANAGE, async (req, res) => {
       ? docs.map((d) => ({ ...d, selected: selectedSet.has(d.key) }))
       : docs;
 
-    // Estructura por grupo
     const groupMap = new Map();
     for (const d of annotated) {
       const g = d.group || "general";
@@ -150,10 +154,9 @@ r.get("/", MW_PERMS_MANAGE, async (req, res) => {
   }
 });
 
-/**
- * POST /api/iam/v1/permissions
- * Crea un permiso individual (evita duplicados por key).
- */
+/* =========================
+   CREATE
+========================= */
 r.post("/", MW_PERMS_MANAGE, async (req, res) => {
   try {
     const input = normalizePerm(req.body || {});
@@ -184,10 +187,9 @@ r.post("/", MW_PERMS_MANAGE, async (req, res) => {
   }
 });
 
-/**
- * PATCH /api/iam/v1/permissions/:id
- * Actualiza campos permitidos. Si cambia la key, la sincroniza en los roles.
- */
+/* =========================
+   UPDATE
+========================= */
 r.patch("/:id", MW_PERMS_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
@@ -202,7 +204,6 @@ r.patch("/:id", MW_PERMS_MANAGE, async (req, res) => {
     const prev = await IamPermission.findById(id).lean();
     if (!prev) return res.status(404).json({ message: "No encontrado" });
 
-    // Si key cambia, validar duplicado
     if (update.key && update.key !== prev.key) {
       const dup = await IamPermission.exists({ _id: { $ne: id }, key: update.key });
       if (dup) return res.status(409).json({ message: "Ya existe un permiso con esa key" });
@@ -214,7 +215,8 @@ r.patch("/:id", MW_PERMS_MANAGE, async (req, res) => {
       { new: true, runValidators: true }
     ).lean();
 
-    // Sync roles si cambia key
+    if (!doc) return res.status(404).json({ message: "No encontrado" });
+
     if (update.key && update.key !== prev.key) {
       await replacePermissionKeyInRoles(prev.key, update.key);
     }
@@ -238,10 +240,9 @@ r.patch("/:id", MW_PERMS_MANAGE, async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/iam/v1/permissions/:id
- * Elimina un permiso por id y lo quita de los roles que lo tengan.
- */
+/* =========================
+   DELETE
+========================= */
 r.delete("/:id", MW_PERMS_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
@@ -274,10 +275,9 @@ r.delete("/:id", MW_PERMS_MANAGE, async (req, res) => {
   }
 });
 
-/**
- * POST /api/iam/v1/permissions/sync
- * Siembra/sincroniza permisos desde el frontend de forma idempotente.
- */
+/* =========================
+   SYNC (bulk)
+========================= */
 r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
   try {
     const { permissions = [], dryRun = false } = req.body || {};
@@ -288,6 +288,7 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
 
     const map = new Map();
     const allErrors = [];
+    const dupKeys = new Set();
 
     for (const raw of permissions) {
       const p = normalizePerm(raw);
@@ -296,6 +297,7 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
         allErrors.push({ key: raw?.key ?? "(sin key)", errors: errs });
         continue;
       }
+      if (map.has(p.key)) dupKeys.add(p.key);
       map.set(p.key, p);
     }
 
@@ -321,7 +323,9 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
       return res.json({
         ok: true,
         dryRun: true,
-        totalReceived: list.length,
+        totalReceived: permissions.length,
+        totalUnique: list.length,
+        duplicateKeys: [...dupKeys],
         wouldCreateCount: wouldCreate.length,
         wouldUpdateCount: wouldUpdate.length,
         wouldCreate,
@@ -343,6 +347,7 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
       (result.upsertedCount != null
         ? result.upsertedCount
         : Object.keys(result.upsertedIds || {}).length) || 0;
+
     const matched = result.matchedCount ?? 0;
     const modified = result.modifiedCount ?? 0;
 
@@ -354,7 +359,8 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
         entityId: "bulk",
         before: null,
         after: {
-          totalReceived: list.length,
+          totalReceived: permissions.length,
+          totalUnique: list.length,
           created,
           matched,
           modified,
@@ -365,7 +371,14 @@ r.post("/sync", MW_PERMS_MANAGE, async (req, res) => {
       "sync permissions"
     );
 
-    return res.json({ ok: true, totalReceived: list.length, created, matched, modified });
+    return res.json({
+      ok: true,
+      totalReceived: permissions.length,
+      totalUnique: list.length,
+      created,
+      matched,
+      modified,
+    });
   } catch (err) {
     console.error("[IAM][POST /permissions/sync] ERROR:", err);
     return res.status(500).json({ message: "Error sincronizando permisos", error: err.message });

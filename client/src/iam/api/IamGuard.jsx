@@ -1,184 +1,72 @@
 // client/src/iam/api/IamGuard.jsx
-import React, { useEffect, useState } from "react";
+import React from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "../../pages/auth/AuthProvider.jsx";
+import { APP_CONFIG } from "../../config/app.config.js";
 
 /**
- * IamGuard (post-refactor / centralizado):
- * - ✅ El backend decide roles/perms (incl. wildcard).
- * - ✅ El FRONTEND NO llama /me aquí. Debe recibir `me` desde App.jsx.
- * - ✅ Nunca "superadmin por email" en frontend.
- * - ✅ Nunca "skip verify" en PROD.
+ * IamGuard (sin hardcode de permisos)
  *
- * USO:
- * <IamGuard me={me} meLoading={meLoading} requirePerm="iam.users.manage">...</IamGuard>
+ * Reglas:
+ * - Loading auth o meLoading => fallback
+ * - Sin sesión => redirect SOLO a login
+ * - Con sesión:
+ *    - Si viene `me.navSections` (o variantes) y se pasa `sectionKey`,
+ *      permite solo si esa sección está incluida.
+ *    - Si NO viene `me.navSections` y pasaste `sectionKey` => DENY BY DEFAULT
+ *    - Si NO pasas `sectionKey` => no bloquea (solo gate opcional)
+ *
+ * Uso recomendado:
+ * <IamGuard me={me} meLoading={meLoading} sectionKey="iam" fallback={...}>
+ *   ...
+ * </IamGuard>
  */
+function normalizeSectionList(me) {
+  const list =
+    me?.navSections ??
+    me?.sections ??
+    me?.ui?.navSections ??
+    me?.ui?.sections ??
+    null;
 
-const IS_LOCALHOST =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-
-// Entorno
-const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
-const MODE = String(import.meta.env.MODE || "").toLowerCase();
-const IS_PROD = VITE_ENV === "production" || MODE === "production";
-
-/**
- * SKIP IAM (solo DEV/local)
- * - Nunca debe abrir accesos en producción.
- * - Si necesitas “bypass” en prod, que sea SOLO desde backend.
- */
-const SKIP_IAM =
-  !IS_PROD &&
-  (IS_LOCALHOST ||
-    String(import.meta.env.VITE_SKIP_VERIFY || "") === "1" ||
-    String(import.meta.env.VITE_DISABLE_AUTH || "") === "1" ||
-    String(import.meta.env.VITE_FORCE_DEV_IAM || "") === "1");
-
-function asArr(v) {
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
+  return Array.isArray(list) ? list.map(String).filter(Boolean) : null;
 }
 
-function normalizeTokens(v) {
-  return asArr(v)
-    .map((x) => String(x || "").trim())
-    .filter(Boolean);
-}
-
-function pickEmailFromMe(me) {
-  return String(me?.email || me?.user?.email || me?.data?.email || me?.profile?.email || "")
-    .trim()
-    .toLowerCase();
-}
-
-function pickRolesFromMe(me) {
-  return me?.roles || me?.user?.roles || me?.data?.roles || me?.data?.user?.roles || [];
-}
-
-function pickPermsFromMe(me) {
-  return (
-    me?.permissions ||
-    me?.perms ||
-    me?.user?.permissions ||
-    me?.user?.perms ||
-    me?.data?.permissions ||
-    me?.data?.perms ||
-    []
-  );
-}
-
-function isVisitorFromMe(me, roles = []) {
-  const visitorFlag = !!me?.visitor || !!me?.isVisitor;
-  const R = new Set((roles || []).map((r) => String(r || "").toLowerCase()));
-  return visitorFlag || R.has("visita") || R.has("visitor");
-}
-
-/**
- * Props:
- * - me: objeto /me ya resuelto (desde App.jsx)
- * - meLoading: boolean loading de /me (desde App.jsx)
- * - requirePerm: string (p.ej. "iam.users.manage")
- * - anyOf: string | string[]   ✅ acepta roles o permisos (compat)
- * - allOf: string | string[]   ✅ acepta roles o permisos (compat)
- * - requireRole: string | string[]
- * - fallback: ReactNode
- */
 export default function IamGuard({
   me,
   meLoading,
-  requirePerm,
-  anyOf,
-  allOf,
-  requireRole,
-  fallback = null,
+  sectionKey, // ✅ clave UI: "iam", "rondas", "incidentes", etc (NO permisos)
+  fallback = <div className="p-6">Cargando…</div>,
+  unauthorized = <div className="p-6">No autorizado</div>,
   children,
 }) {
-  const [state, setState] = useState(() =>
-    SKIP_IAM
-      ? { loading: false, roles: ["admin"], perms: ["*"], email: "", visitor: false }
-      : { loading: true, roles: [], perms: [], email: "", visitor: false }
-  );
+  const loc = useLocation();
+  const { isAuthenticated, isLoading } = useAuth();
 
-  // ✅ Fuente única: props me/meLoading (App.jsx)
-  useEffect(() => {
-    if (SKIP_IAM) return;
+  const loginRoute = String(APP_CONFIG?.routes?.login || "/login").trim() || "/login";
 
-    if (meLoading) {
-      setState((s) => ({ ...s, loading: true }));
-      return;
-    }
+  // 1) Loading global (auth o /me)
+  if (isLoading || meLoading) return fallback;
 
-    if (me && typeof me === "object") {
-      const roles = normalizeTokens(pickRolesFromMe(me));
-      const perms = normalizeTokens(pickPermsFromMe(me));
-      const email = pickEmailFromMe(me);
-      const visitor = isVisitorFromMe(me, roles);
+  // 2) Sin sesión => solo login
+  if (!isAuthenticated) {
+    return <Navigate to={loginRoute} replace state={{ from: loc.pathname }} />;
+  }
 
-      setState({ loading: false, roles, perms, email, visitor });
-      return;
-    }
+  // 3) Sesión pero `me` aún no está
+  if (!me) return fallback;
 
-    // ✅ Si App no mandó `me` (o falló /me), NO inventamos auth aquí.
-    setState({ loading: false, roles: [], perms: [], email: "", visitor: false });
-  }, [me, meLoading]);
+  // 4) Gate por sección (si aplica)
+  if (sectionKey) {
+    const sections = normalizeSectionList(me);
 
-  // ✅ IMPORTANTÍSIMO: NO hooks después de un return condicional.
-  // Por eso aquí NO usamos useMemo: sets simples y listo.
-  const roleSet = new Set((state.roles || []).map((r) => String(r).toLowerCase()));
-  const permSet = new Set((state.perms || []).map((p) => String(p)));
-  const permSetLower = new Set((state.perms || []).map((p) => String(p).toLowerCase()));
+    // ✅ Sin lista => deny-by-default si pediste gate
+    if (!sections) return unauthorized;
 
-  // Wildcard SOLO si backend lo envía (o si SKIP_IAM en dev)
-  const hasWildcard =
-    permSet.has("*") ||
-    permSetLower.has("*") ||
-    roleSet.has("admin") ||
-    roleSet.has("administrador");
+    const allowed = sections.includes(String(sectionKey));
+    return allowed ? <>{children}</> : unauthorized;
+  }
 
-  const hasPerm = (p) => {
-    if (!p) return true;
-    if (hasWildcard) return true;
-    const key = String(p);
-    return permSet.has(key) || permSetLower.has(key.toLowerCase());
-  };
-
-  const hasRole = (r) => {
-    const A = asArr(r).map((x) => String(x).toLowerCase());
-    if (!A.length) return true;
-    if (hasWildcard) return true;
-    return A.some((x) => roleSet.has(x));
-  };
-
-  // compat: el token puede ser permiso o rol (tu diseño actual)
-  const tokenMatches = (k) => {
-    if (!k) return false;
-    if (hasWildcard) return true;
-
-    const raw = String(k);
-    const low = raw.toLowerCase();
-    return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
-  };
-
-  const hasAny = (arr) => {
-    const A = asArr(arr);
-    if (!A.length) return true;
-    return A.some(tokenMatches);
-  };
-
-  const hasAll = (arr) => {
-    const A = asArr(arr);
-    if (!A.length) return true;
-    return A.every(tokenMatches);
-  };
-
-  // ✅ Render controlado (ya sin romper hooks)
-  if (state.loading) return fallback || <div className="p-6">Cargando…</div>;
-
-  // Evaluación final
-  let ok = true;
-  if (requirePerm) ok = ok && hasPerm(requirePerm);
-  if (asArr(anyOf).length) ok = ok && hasAny(anyOf);
-  if (asArr(allOf).length) ok = ok && hasAll(allOf);
-  if (requireRole) ok = ok && hasRole(requireRole);
-
-  return ok ? <>{children}</> : fallback || <div className="p-6">No autorizado</div>;
+  // 5) Sin sectionKey => no bloqueamos
+  return <>{children}</>;
 }

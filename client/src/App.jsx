@@ -31,6 +31,7 @@ const IncidentesList = React.lazy(() => import("./pages/Incidentes/IncidentesLis
 const IncidenteForm = React.lazy(() => import("./pages/Incidentes/IncidenteForm.jsx"));
 
 // Rondas QR
+const RondasLanding = React.lazy(() => import("./modules/rondasqr/RondasLanding.jsx"));
 const RondasDashboard = React.lazy(() => import("./modules/rondasqr/supervisor/ReportsPage.jsx"));
 const RondasScan = React.lazy(() => import("./modules/rondasqr/guard/ScanPage.jsx"));
 const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"));
@@ -38,7 +39,6 @@ const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"
 // Otros módulos
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
-const Supervision = React.lazy(() => import("./pages/Supervision/Supervision.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 
 // Visitas
@@ -53,6 +53,10 @@ const IS_PROD = VITE_ENV === "production" || MODE === "production";
 const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
   .trim()
   .toLowerCase();
+
+/* ───────────────── ✅ Keys compartidas con AuthProvider ───────────────── */
+const USER_KEY = "senaf_user";
+const USER_UPDATED_EVENT = "senaf:user_updated";
 
 /* ───────────────── Helpers de rutas parametrizadas ───────────────── */
 
@@ -75,7 +79,6 @@ function isPublicPath(pathname) {
   const login = normalizePath(APP_CONFIG?.routes?.login || "/login");
   if (startsWithPath(p, login)) return true;
 
-  // públicas mínimas para flujo
   if (startsWithPath(p, "/otp")) return true;
   if (startsWithPath(p, "/force-change-password")) return true;
 
@@ -87,6 +90,7 @@ function isPublicPath(pathname) {
 
 /* ───────────────── Visitor hint (anti-flash al refrescar) ───────────────── */
 const VISITOR_HINT_KEY = "senaf_is_visitor";
+
 function readVisitorHint() {
   try {
     return localStorage.getItem(VISITOR_HINT_KEY) === "1";
@@ -95,66 +99,81 @@ function readVisitorHint() {
   }
 }
 
-/* ───────────────── Session bootstrap: 1 sola llamada /me ───────────────── */
-function useMeSession(currentPathname) {
-  const [me, setMe] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+function writeVisitorHint(isVisitor) {
+  try {
+    localStorage.setItem(VISITOR_HINT_KEY, isVisitor ? "1" : "0");
+  } catch {}
+}
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+function clearVisitorHint() {
+  try {
+    localStorage.removeItem(VISITOR_HINT_KEY);
+  } catch {}
+}
 
-    try {
-      const res = await api.get("/iam/v1/me", {
-        headers: {
-          "Cache-Control": "no-store, no-cache",
-          Pragma: "no-cache",
-        },
-      });
+function clearPersistedSessionArtifacts() {
+  try {
+    localStorage.removeItem(USER_KEY);
+  } catch {}
+  clearVisitorHint();
+  try {
+    window.dispatchEvent(new Event(USER_UPDATED_EVENT));
+  } catch {}
+}
 
-      const payload = res?.data ?? null;
+/* ───────────────── Helpers de normalización de /me ───────────────── */
 
-      let normalized = null;
-      if (payload?.me && typeof payload.me === "object") normalized = payload.me;
-      else if (payload?.user && typeof payload.user === "object") normalized = payload.user;
-      else if (payload && typeof payload === "object") normalized = payload;
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
 
-      setMe(normalized || null);
-      return normalized || null;
-    } catch (e) {
-      setMe(null);
-      setError(e);
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+function normalizeMePayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
 
-  useEffect(() => {
-    let alive = true;
+  const userObj = payload.user && typeof payload.user === "object" ? payload.user : {};
+  const payloadRoles = normalizeArray(payload.roles);
+  const payloadPerms = normalizeArray(payload.permissions?.length ? payload.permissions : payload.perms);
+  const userRoles = normalizeArray(userObj.roles);
+  const userPerms = normalizeArray(userObj.permissions?.length ? userObj.permissions : userObj.perms);
 
-    (async () => {
-      const hardToken = getToken() || "";
+  const roles = payloadRoles.length ? payloadRoles : userRoles;
+  const permissions = payloadPerms.length ? payloadPerms : userPerms;
 
-      if (!hardToken) {
-        if (!alive) return;
-        setMe(null);
-        setError(null);
-        setLoading(false);
-        return;
-      }
+  const can =
+    payload.can && typeof payload.can === "object"
+      ? payload.can
+      : userObj.can && typeof userObj.can === "object"
+      ? userObj.can
+      : {};
 
-      if (!alive) return;
-      await refresh();
-    })();
+  const superadmin =
+    payload.superadmin === true ||
+    payload.isSuperAdmin === true ||
+    userObj.superadmin === true ||
+    userObj.isSuperAdmin === true;
 
-    return () => {
-      alive = false;
-    };
-  }, [refresh, currentPathname]);
+  const normalized = {
+    ...payload,
+    user: {
+      ...userObj,
+      roles,
+      permissions,
+      perms: permissions,
+      can,
+      superadmin,
+      isSuperAdmin: superadmin,
+    },
+    roles,
+    permissions,
+    perms: permissions,
+    can,
+    superadmin,
+    isSuperAdmin: superadmin,
+  };
 
-  return { me, loading, error, refresh };
+  return normalized;
 }
 
 /* ───────────────── HOME PICKER ───────────────── */
@@ -162,23 +181,16 @@ function pickHomeFromMe(me) {
   const def = me?.defaultRoute || me?.home || me?.redirectTo;
   if (def) return String(def);
 
-  const roles = me?.roles || me?.user?.roles || [];
-  const perms = me?.permissions || me?.perms || [];
-  const visitor = !!me?.visitor || !!me?.isVisitor;
+  const can = me?.can && typeof me.can === "object" ? me.can : null;
+  if (can) {
+    if (can["nav.iam"] === true) return "/iam/admin";
+    if (can["nav.rondas"] === true) return "/rondasqr";
+    if (can["nav.visitas"] === true) return "/visitas/control";
+    if (can["nav.accesos"] === true) return "/accesos";
+    if (can["nav.incidentes"] === true) return "/incidentes";
+    if (can["nav.bitacora"] === true) return "/bitacora";
+  }
 
-  const R = new Set((roles || []).map((r) => String(r).toLowerCase()));
-  const Praw = Array.isArray(perms) ? perms : [];
-  const P = new Set(Praw.map((p) => String(p)));
-  const Plow = new Set(Praw.map((p) => String(p).toLowerCase()));
-  const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
-
-  // ✅ FIX: NO mandar a visitas por “roles/perms vacíos”. SOLO si es visitor.
-  if (visitor) return "/visitas/agenda";
-
-  if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
-  if (R.has("guardia")) return "/rondasqr/scan";
-  if (R.has("supervisor")) return "/rondasqr/reports";
-  if (R.has("recepcion")) return "/visitas/control";
   return "/";
 }
 
@@ -193,10 +205,127 @@ function isVisitorMe(me) {
   return visitor || R.has("visita") || R.has("visitor");
 }
 
+/* ───────────────── Root Error Boundary (evita pantalla en blanco) ───────────────── */
+class RootErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, err: null };
+  }
+
+  static getDerivedStateFromError(err) {
+    return { hasError: true, err };
+  }
+
+  componentDidCatch(err, info) {
+    console.error("[RootErrorBoundary]", err, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6">
+          <div className="text-lg font-bold text-red-600">Error de interfaz</div>
+          <div className="mt-2 text-sm opacity-80">
+            {String(this.state.err?.message || this.state.err || "Error")}
+          </div>
+          {!import.meta.env.PROD ? (
+            <pre className="mt-3 text-[11px] whitespace-pre-wrap opacity-70">
+              {String(this.state.err?.stack || "")}
+            </pre>
+          ) : null}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ───────────────── Session bootstrap: 1 sola llamada /me por token ───────────────── */
+function useMeSession(authToken) {
+  const [me, setMe] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const refresh = useCallback(async () => {
+    const hardToken = String(authToken || getToken() || "").trim();
+
+    if (!hardToken) {
+      setMe(null);
+      setError(null);
+      setLoading(false);
+      return null;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await api.get("/iam/v1/me", {
+        headers: {
+          "Cache-Control": "no-store, no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      const payload = res?.data ?? null;
+      const normalized = normalizeMePayload(payload);
+
+      try {
+        if (normalized && typeof normalized === "object") {
+          localStorage.setItem(USER_KEY, JSON.stringify(normalized));
+          writeVisitorHint(isVisitorMe(normalized));
+          window.dispatchEvent(new Event(USER_UPDATED_EVENT));
+        }
+      } catch {}
+
+      setMe(normalized || null);
+      return normalized || null;
+    } catch (e) {
+      setMe(null);
+      setError(e);
+
+      if (Number(e?.status) === 401) {
+        clearPersistedSessionArtifacts();
+        clearToken();
+      }
+
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      const hardToken = String(authToken || getToken() || "").trim();
+
+      if (!hardToken) {
+        if (!alive) return;
+        setMe(null);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      const result = await refresh();
+      if (!alive) return;
+      void result;
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [authToken, refresh]);
+
+  return { me, loading, error, refresh };
+}
+
 /**
  * ✅ AppShell:
  * - Visitante => NO Layout
- * - Sin me (todavía cargando / aún no llegó) => NO Layout
+ * - Sin me => NO Layout
  * - Interno => Layout
  */
 function AppShell({ me, meLoading, children }) {
@@ -204,56 +333,6 @@ function AppShell({ me, meLoading, children }) {
   if (!me) return <>{children}</>;
   if (isVisitorMe(me)) return <>{children}</>;
   return <Layout>{children}</Layout>;
-}
-
-/* ───────────────── Evaluador local de reglas ───────────────── */
-function asArr(v) {
-  if (!v) return [];
-  return Array.isArray(v) ? v : [v];
-}
-
-function canAccess(me, rules) {
-  if (!rules) return true;
-
-  if (me?.superadmin === true) return true;
-
-  const roles = me?.roles || me?.user?.roles || [];
-  const perms = me?.permissions || me?.perms || [];
-
-  const roleSet = new Set((roles || []).map((r) => String(r).toLowerCase()));
-  const permSet = new Set((perms || []).map((p) => String(p)));
-  const permSetLower = new Set((perms || []).map((p) => String(p).toLowerCase()));
-
-  const hasWildcard = permSet.has("*") || permSetLower.has("*") || roleSet.has("admin");
-
-  const tokenMatches = (k) => {
-    if (!k) return false;
-    if (hasWildcard) return true;
-    const raw = String(k);
-    const low = raw.toLowerCase();
-    return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
-  };
-
-  const hasPerm = (p) => (!p ? true : tokenMatches(p));
-
-  const hasAny = (arr) => {
-    const A = asArr(arr);
-    if (!A.length) return true;
-    return A.some(tokenMatches);
-  };
-
-  const hasAll = (arr) => {
-    const A = asArr(arr);
-    if (!A.length) return true;
-    return A.every(tokenMatches);
-  };
-
-  let ok = true;
-  if (rules.requirePerm) ok = ok && hasPerm(rules.requirePerm);
-  if (asArr(rules.anyOf).length) ok = ok && hasAny(rules.anyOf);
-  if (asArr(rules.allOf).length) ok = ok && hasAll(rules.allOf);
-
-  return ok;
 }
 
 /* ───────────────── ProtectedRoute ───────────────── */
@@ -274,9 +353,7 @@ function ProtectedRoute({ children }) {
 }
 
 /**
- * ✅ SessionGate:
- * - Evita render de módulos protegidos con me=null.
- * - Si hay hint visitante, deja SOLO /visitas/** o rutas públicas mientras carga /me.
+ * ✅ SessionGate
  */
 function SessionGate({ me, meLoading, children }) {
   const location = useLocation();
@@ -295,6 +372,7 @@ function SessionGate({ me, meLoading, children }) {
   }
 
   if (!me) {
+    if (!hardToken) return <>{children}</>;
     if (isPublic) return <>{children}</>;
     if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
     return <div className="p-6">Cargando sesión…</div>;
@@ -303,7 +381,7 @@ function SessionGate({ me, meLoading, children }) {
   return <>{children}</>;
 }
 
-/* ───────────────── Guard por ruta usando routeRules ───────────────── */
+/* ───────────────── Guard por ruta usando can (backend) ───────────────── */
 function RouteAccess({ me, meLoading, routeKey, children }) {
   if (meLoading) return <div className="p-6">Cargando…</div>;
   if (!me) return <div className="p-6">Cargando sesión…</div>;
@@ -313,12 +391,10 @@ function RouteAccess({ me, meLoading, routeKey, children }) {
     if (!allowed) return <div className="p-6">No autorizado</div>;
   }
 
-  const rules = me?.routeRules?.[routeKey] || null;
+  const can = me?.can && typeof me.can === "object" ? me.can : null;
+  if (!can || !routeKey) return <div className="p-6">No autorizado</div>;
 
-  if (!rules) return <>{children}</>;
-
-  const ok = canAccess(me, rules);
-  return ok ? <>{children}</> : <div className="p-6">No autorizado</div>;
+  return can[routeKey] === true ? <>{children}</> : <div className="p-6">No autorizado</div>;
 }
 
 /* ───────────────── Redirección tras login ───────────────── */
@@ -379,20 +455,21 @@ function AuthTokenBridge({ children }) {
     );
   }
 
-  return children;
+  return <>{children}</>;
 }
 
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { token, isLoading: authLoading } = useAuth();
 
-  const currentPath = location?.pathname || "/";
-
-  const { me, loading: meLoading, error: meError, refresh } = useMeSession(currentPath);
+  const hardToken = String(token || getToken() || "").trim();
+  const { me, loading: meLoading, error: meError, refresh } = useMeSession(hardToken);
 
   const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
 
   const bootRef = useRef(false);
+
   useEffect(() => {
     if (!APP_CONFIG?.auth?.forceLoginOnBoot) return;
     if (bootRef.current) return;
@@ -401,13 +478,14 @@ export default function App() {
     const path = location?.pathname || "/";
     if (isPublicPath(path)) return;
 
-    const hardToken = getToken() || "";
+    const tokenNow = getToken() || "";
 
-    if (!hardToken && APP_CONFIG?.auth?.clearTokenOnBoot) {
+    if (!tokenNow && APP_CONFIG?.auth?.clearTokenOnBoot) {
       clearToken();
+      clearPersistedSessionArtifacts();
     }
 
-    if (hardToken) return;
+    if (tokenNow) return;
 
     navigate(loginRoute, {
       replace: true,
@@ -416,7 +494,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Bloqueo duro para VISITA (solo /visitas/**) cuando YA existe me
   useEffect(() => {
     if (meLoading) return;
     if (!me) return;
@@ -439,286 +516,281 @@ export default function App() {
     }
   }, [me, meLoading, location?.pathname, loginRoute, navigate]);
 
+  useEffect(() => {
+    if (authLoading) return;
+    if (hardToken) return;
+    clearPersistedSessionArtifacts();
+  }, [authLoading, hardToken]);
+
   return (
-    <AuthTokenBridge>
-      <Suspense fallback={<div className="p-6">Cargando…</div>}>
-        <Routes>
-          {/* Login */}
-          <Route path={loginRoute} element={<LoginLocal />} />
+    <RootErrorBoundary>
+      <AuthTokenBridge>
+        <Suspense fallback={<div className="p-6">Cargando…</div>}>
+          <Routes>
+            <Route path={loginRoute} element={<LoginLocal />} />
 
-          {/* Legacy Auth0 routes */}
-          <Route path="/entry" element={<Navigate to={loginRoute} replace />} />
-          <Route path="/callback" element={<Navigate to={loginRoute} replace />} />
+            <Route path="/entry" element={<Navigate to={loginRoute} replace />} />
+            <Route path="/callback" element={<Navigate to={loginRoute} replace />} />
 
-          {/* OTP */}
-          <Route path="/otp" element={<VerifyOtp />} />
+            <Route path="/otp" element={<VerifyOtp />} />
+            <Route path="/force-change-password" element={<ForceChangePassword />} />
 
-          {/* primer login / password vencida */}
-          <Route path="/force-change-password" element={<ForceChangePassword />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <Home />
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Home */}
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <Home />
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/start"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RoleRedirectInline me={me} meLoading={meLoading} refresh={refresh} />
+                      {meError && !IS_PROD ? (
+                        <div className="p-3 text-sm text-red-600">
+                          /me error: {String(meError?.message || meError)}
+                        </div>
+                      ) : null}
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Start */}
-          <Route
-            path="/start"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RoleRedirectInline me={me} meLoading={meLoading} refresh={refresh} />
-                    {meError && !IS_PROD ? (
-                      <div className="p-3 text-sm text-red-600">
-                        /me error: {String(meError?.message || meError)}
-                      </div>
-                    ) : null}
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/incidentes"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
+                        <IncidentesList />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Incidentes */}
-          <Route
-            path="/incidentes"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
-                      <IncidentesList />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/incidentes/lista"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
-                      <IncidentesList />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/incidentes/nuevo"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes.create">
-                      <IncidenteForm />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/incidentes/lista"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes">
+                        <IncidentesList />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* IAM */}
-          <Route
-            path="/iam"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/iam/admin" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/iam/admin"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="iam.admin">
-                      <IamAdminPage me={me} meLoading={meLoading} />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/incidentes/nuevo"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="incidentes.create">
+                        <IncidenteForm />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* RondasQR */}
-          <Route
-            path="/rondasqr"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/rondasqr/scan" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/rondasqr/scan/*"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.scan">
-                      <RondasScan />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/rondasqr/reports"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.reports">
-                      <RondasDashboard />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/rondasqr/admin"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.admin">
-                      <AdminHub />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/iam"
+              element={
+                <ProtectedRoute>
+                  <Navigate to="/iam/admin" replace />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Aliases legacy */}
-          <Route path="/rondas" element={<Navigate to="/rondasqr/scan" replace />} />
-          <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
-          <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
-          <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
+            <Route
+              path="/iam/admin"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="iam.admin">
+                        <IamAdminPage me={me} meLoading={meLoading} />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Otros módulos */}
-          <Route
-            path="/accesos"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="accesos">
-                      <Accesos />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/rondasqr"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="rondas.panel">
+                        <RondasLanding me={me} />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          {/* ✅ VISITAS */}
-          <Route
-            path="/visitas"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
-                      <VisitsPageCore />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/visitas/control"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
-                      <VisitsPageCore />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/visitas/agenda"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <AgendaPageCore />
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/rondasqr/scan/*"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.scan">
+                        <RondasScan />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/bitacora"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="bitacora">
-                      <Bitacora />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/rondasqr/reports"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.reports">
+                        <RondasDashboard />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/supervision"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <RouteAccess me={me} meLoading={meLoading} routeKey="supervision">
-                      <Supervision />
-                    </RouteAccess>
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/rondasqr/admin"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="rondasqr.admin">
+                        <AdminHub />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute>
-                <SessionGate me={me} meLoading={meLoading}>
-                  <AppShell me={me} meLoading={meLoading}>
-                    <Chat />
-                  </AppShell>
-                </SessionGate>
-              </ProtectedRoute>
-            }
-          />
+            {/* Aliases legacy */}
+            <Route path="/rondas" element={<Navigate to="/rondasqr" replace />} />
+            <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
+            <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
+            <Route path="/rondas/reports" element={<Navigate to="/rondasqr/reports" replace />} />
 
-          <Route path="*" element={<div className="p-6">No encontrado</div>} />
-        </Routes>
-      </Suspense>
-    </AuthTokenBridge>
+            <Route
+              path="/accesos"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="accesos">
+                        <Accesos />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/visitas"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                        <VisitsPageCore />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/visitas/control"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                        <VisitsPageCore />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/visitas/agenda"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <AgendaPageCore />
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/bitacora"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="bitacora">
+                        <Bitacora />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <Chat />
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route path="*" element={<div className="p-6">No encontrado</div>} />
+          </Routes>
+        </Suspense>
+      </AuthTokenBridge>
+    </RootErrorBoundary>
   );
 }

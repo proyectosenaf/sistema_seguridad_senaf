@@ -1,32 +1,48 @@
 // guard/PanicButton.jsx
-import React from "react";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 export default function PanicButton() {
-  async function sendPanic() {
-    let gps = null;
-    if ("geolocation" in navigator) {
-      gps = await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-          () => resolve(null),
-          { enableHighAccuracy: true, timeout: 5000 }
-        );
-      });
-    }
+  const navigate = useNavigate();
+  const [sending, setSending] = useState(false);
 
-    await rondasqrApi.panic(gps);
-    alert("🚨 Alerta de pánico enviada.");
-    // si quieres que este también vaya al mismo lugar:
-    window.location.assign("/rondasqr/scan");
+  async function sendPanic() {
+    if (sending) return;
+
+    setSending(true);
+    try {
+      let gps = null;
+
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+        gps = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        });
+      }
+
+      await rondasqrApi.panic(gps);
+      alert("🚨 Alerta de pánico enviada.");
+      navigate("/rondasqr/scan", { replace: true });
+    } catch (e) {
+      console.error("[PanicButton] panic error:", e?.message || e);
+      alert(e?.payload?.message || e?.message || "No se pudo enviar la alerta de pánico.");
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
     <button
+      type="button"
       onClick={sendPanic}
-      className="bg-red-600 text-white px-6 py-4 rounded-2xl w-full"
+      disabled={sending}
+      className="bg-red-600 text-white px-6 py-4 rounded-2xl w-full disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      ALERTA
+      {sending ? "ENVIANDO..." : "ALERTA"}
     </button>
   );
 }

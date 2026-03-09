@@ -71,11 +71,19 @@ export default function Layout({
     true
   );
 
-  const visitorHint = getVisitorHint();
-  const isVisitasPath = String(pathname || "").startsWith("/visitas");
+  /**
+   * ✅ FIX CLAVE:
+   * Si Layout se está renderizando, es porque el usuario NO es visitante
+   * (tu AppShell ya evita Layout para visitantes).
+   * Por lo tanto: limpiamos cualquier visitorHint viejo para que NO afecte
+   * a admins/supervisores al entrar a /visitas/**.
+   */
+  React.useEffect(() => {
+    if (getVisitorHint()) clearVisitorHint();
+  }, []);
 
-  // visitorMode: si layoutMode lo pide O si hay hint y estamos en /visitas/**
-  const visitorMode = layoutMode === "visitor" || (visitorHint && isVisitasPath);
+  // ✅ visitorMode SOLO si lo piden explícitamente (no por hint)
+  const visitorMode = layoutMode === "visitor";
 
   const modeHideSidebar = layoutMode === "full" || visitorMode;
   const modeHideFooter = visitorMode ? ENV_HIDE_FOOTER_FOR_VISITOR : false;

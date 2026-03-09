@@ -1,5 +1,5 @@
-// src/iam/pages/IamAdmin/index.jsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+// client/src/iam/pages/IamAdmin/index.jsx
+import React, { useEffect, useMemo, useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import IamGuard from "../../api/IamGuard.jsx";
@@ -10,133 +10,15 @@ import RolesPage from "./RolesPage.jsx";
 import PermissionCatalog from "./PermissionCatalog/PermissionCatalog.jsx";
 import AuditPage from "./AuditPage.jsx";
 
-import { iamApi } from "../../api/iamApi.js";
-import { permisosKeys, rolesKeys } from "../../catalog/perms.js";
-
-/* =========================
-   Helpers normalización
-========================= */
-function pickListPayload(x) {
-  // Soporta: {items:[...]} | {permissions:[...]} | {roles:[...]} | {data:[...]} | [...]
-  if (!x) return [];
-  if (Array.isArray(x)) return x;
-  return x.items || x.permissions || x.roles || x.data || [];
-}
-
-function permKeyOf(p) {
-  return p?.key || p?.name || p?.code || p?._id || p?.id || null;
-}
-function roleCodeOf(r) {
-  return r?.code || r?.name || r?._id || r?.id || null;
-}
-function rolePermsOf(r) {
-  const v = r?.permissions ?? r?.perms ?? [];
-  return Array.isArray(v) ? v : [];
-}
-
-/** Merge de permisos: agrega faltantes (no borra) */
-async function seedFromLocalCatalog(token) {
-  // --- PERMISOS
-  let existingPerms = [];
-  try {
-    const res = await iamApi.listPerms(token);
-    existingPerms = pickListPayload(res);
-  } catch {
-    existingPerms = [];
-  }
-
-  const have = new Set(existingPerms.map(permKeyOf).filter(Boolean));
-
-  for (const [key, label] of Object.entries(permisosKeys)) {
-    if (have.has(key)) continue;
-    const group = String(key).split(".")[0];
-    const order = 0;
-    try {
-      await iamApi.createPerm({ key, label, group, order }, token);
-      // eslint-disable-next-line no-console
-      console.log("[IAM seed] permiso creado:", key);
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn("[IAM seed] no se pudo crear permiso", key, e?.message || e);
-    }
-  }
-
-  // --- ROLES
-  let existingRoles = [];
-  try {
-    const r = await iamApi.listRoles(token);
-    existingRoles = pickListPayload(r);
-  } catch {
-    existingRoles = [];
-  }
-
-  const byCode = new Map(
-    existingRoles
-      .map((r) => [roleCodeOf(r), r])
-      .filter(([k]) => !!k)
-  );
-
-  for (const [code, perms] of Object.entries(rolesKeys)) {
-    const desired = Array.isArray(perms) ? perms : [];
-    const currentRole = byCode.get(code);
-
-    if (!currentRole) {
-      try {
-        await iamApi.createRole(
-          { code, name: code, description: "", permissions: desired },
-          token
-        );
-        // eslint-disable-next-line no-console
-        console.log("[IAM seed] rol creado:", code);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[IAM seed] no se pudo crear rol", code, e?.message || e);
-      }
-      continue;
-    }
-
-    const current = rolePermsOf(currentRole);
-    const currentSet = new Set(current);
-    const desiredSet = new Set(desired);
-
-    const same =
-      current.length === desired.length &&
-      current.every((k) => desiredSet.has(k));
-
-    if (!same) {
-      // ✅ merge seguro: no borra permisos manuales, solo agrega catálogo
-      const merged = Array.from(new Set([...currentSet, ...desiredSet]));
-
-      try {
-        await iamApi.updateRole(
-          currentRole._id || currentRole.id,
-          {
-            code,
-            name: currentRole.name || code,
-            description: currentRole.description || "",
-            permissions: merged,
-          },
-          token
-        );
-        // eslint-disable-next-line no-console
-        console.log("[IAM seed] rol actualizado (merge):", code);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[IAM seed] no se pudo actualizar rol", code, e?.message || e);
-      }
-    }
-  }
-}
-
 /**
- * IamAdmin (centralizado)
- * - ✅ NO llama /me aquí.
- * - ✅ Recibe `me` y `meLoading` desde App.jsx (único lugar que llama /me).
- *
- * En App.jsx:
- * <Route path="/iam/admin" element={<IamAdmin me={me} meLoading={meLoading} />} />
+ * IamAdmin
+ * - NO llama /me aquí (lo hace App.jsx)
+ * - NO seed desde frontend
+ * - NO hardcode de permisos/roles: el backend manda `me.can`
  */
 export default function IamAdmin({ me, meLoading }) {
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
   const tabs = useMemo(
     () => [
       { id: "users", label: "Usuarios" },
@@ -146,6 +28,7 @@ export default function IamAdmin({ me, meLoading }) {
     ],
     []
   );
+
   const tabIds = useMemo(() => tabs.map((t) => t.id), [tabs]);
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -171,91 +54,19 @@ export default function IamAdmin({ me, meLoading }) {
     [searchParams, setSearchParams, tabIds]
   );
 
-  const [needsSeed, setNeedsSeed] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-  const [checkErr, setCheckErr] = useState("");
-
-  /**
-   * ✅ SIN Auth0:
-   * - iamApi.rawFetch ya intenta tokenProvider automáticamente (attachIamAuth)
-   * - aquí devolvemos null; no rompe nada y mantiene estructura
-   */
-  const getToken = useCallback(async () => null, []);
-
-  /**
-   * ✅ CHECK “catálogo vacío” (robusto)
-   * - NO toca /me
-   * - Intenta con token (si existiera) y si no, deja que iamApi use tokenProvider o modo dev
-   */
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        const token = await getToken();
-
-        const [pRes, rRes] = await Promise.all([
-          iamApi.listPerms(token || undefined),
-          iamApi.listRoles(token || undefined),
-        ]);
-
-        const pCount = pickListPayload(pRes).length;
-        const rCount = pickListPayload(rRes).length;
-
-        if (!alive) return;
-
-        setCheckErr("");
-        setNeedsSeed(pCount === 0 || rCount === 0);
-      } catch (e) {
-        if (!alive) return;
-        setNeedsSeed(true);
-        setCheckErr(e?.message || "No se pudo verificar permisos/roles.");
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [getToken]);
-
-  const runSeed = useCallback(async () => {
-    try {
-      setSeeding(true);
-
-      // ✅ SIN Auth0: dejamos que iamApi use tokenProvider automáticamente
-      const token = await getToken();
-
-      await seedFromLocalCatalog(token || undefined);
-
-      const [pRes, rRes] = await Promise.all([
-        iamApi.listPerms(token || undefined),
-        iamApi.listRoles(token || undefined),
-      ]);
-
-      const pCount = pickListPayload(pRes).length;
-      const rCount = pickListPayload(rRes).length;
-
-      setNeedsSeed(pCount === 0 || rCount === 0);
-      setCheckErr("");
-
-      alert("✅ Permisos y roles cargados (merge).");
-    } catch (e) {
-      alert(e?.message || "❌ No se pudo cargar la plantilla.");
-    } finally {
-      setSeeding(false);
-    }
-  }, [getToken]);
-
   const onKeyDownTabs = useCallback(
     (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       e.preventDefault();
+
       const idx = tabs.findIndex((t) => t.id === activeTab);
       if (idx < 0) return;
+
       const next =
         e.key === "ArrowRight"
           ? tabs[(idx + 1) % tabs.length]
           : tabs[(idx - 1 + tabs.length) % tabs.length];
+
       changeTab(next.id);
       const btn = document.getElementById(`tab-${next.id}`);
       if (btn) btn.focus();
@@ -263,41 +74,19 @@ export default function IamAdmin({ me, meLoading }) {
     [tabs, activeTab, changeTab]
   );
 
+  const handlePermissionsSaved = useCallback(() => {
+    setRefreshNonce((n) => n + 1);
+  }, []);
+
   return (
     <IamGuard
       me={me}
       meLoading={meLoading}
+      routeKey="iam.admin"
       fallback={<div className="p-6">Cargando…</div>}
-      anyOf={[
-        "iam.users.manage",
-        "iam.roles.manage",
-        "iam.usuarios.gestionar",
-        "iam.roles.gestionar",
-        "*",
-      ]}
+      unauthorized={<div className="p-6">No autorizado</div>}
     >
       <div className="p-4 md:p-6 space-y-4 layer-content">
-        {needsSeed && (
-          <div className="rounded-2xl border border-amber-400/40 bg-amber-50/70 dark:bg-amber-900/30 dark:border-amber-500/60 text-amber-900 dark:text-amber-100 px-4 py-3 flex items-center justify-between backdrop-blur-sm">
-            <div>
-              <div className="font-semibold">Catálogo vacío</div>
-              <div className="text-sm opacity-90">
-                {checkErr
-                  ? `No se pudo consultar la API. ${checkErr}`
-                  : "Cargar plantilla de permisos y roles desde el catálogo local."}
-              </div>
-            </div>
-
-            <button
-              className="px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-semibold shadow-sm hover:bg-amber-500 disabled:opacity-60"
-              onClick={runSeed}
-              disabled={seeding}
-            >
-              {seeding ? "Cargando…" : "Cargar plantilla"}
-            </button>
-          </div>
-        )}
-
         <div
           role="tablist"
           aria-label="Secciones IAM"
@@ -344,7 +133,7 @@ export default function IamAdmin({ me, meLoading }) {
           aria-labelledby="tab-roles"
           hidden={activeTab !== "roles"}
         >
-          {activeTab === "roles" && <RolesPage />}
+          {activeTab === "roles" && <RolesPage key={`roles-${refreshNonce}`} />}
         </section>
 
         <section
@@ -353,7 +142,12 @@ export default function IamAdmin({ me, meLoading }) {
           aria-labelledby="tab-perms"
           hidden={activeTab !== "perms"}
         >
-          {activeTab === "perms" && <PermissionCatalog />}
+          {activeTab === "perms" && (
+            <PermissionCatalog
+              key={`perms-${refreshNonce}`}
+              onSaved={handlePermissionsSaved}
+            />
+          )}
         </section>
 
         <section

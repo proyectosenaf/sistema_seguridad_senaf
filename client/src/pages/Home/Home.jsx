@@ -1,10 +1,15 @@
 // src/pages/Home/Home.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { NAV_SECTIONS } from "../../config/navConfig.js";
-import api from "../../lib/api.js";
-import IamGuard from "../../iam/api/IamGuard.jsx";
+
+// ✅ Usa el filtro por ACL (no NAV_SECTIONS directo)
+import { getNavSectionsForMe } from "../../config/navConfig.js";
+
+import api, { getToken } from "../../lib/api.js";
 import { socket } from "../../lib/socket.js";
+
+// ✅ para obtener el user/me ya hidratado
+import { useAuth } from "../auth/AuthProvider.jsx";
 
 import {
   DoorOpen,
@@ -12,8 +17,6 @@ import {
   AlertTriangle,
   Users,
   NotebookPen,
-  ClipboardList,
-  ClipboardCheck,
   ShieldCheck,
   Home as HomeIcon,
 } from "lucide-react";
@@ -23,36 +26,13 @@ const ICONS = {
   home: HomeIcon,
   accesos: DoorOpen,
   rondas: Footprints,
-  rondasqr: Footprints,
   incidentes: AlertTriangle,
   visitas: Users,
   bitacora: NotebookPen,
-  supervision: ClipboardList,
   iam: ShieldCheck,
 };
 
-/* ==========================================
-   Permisos requeridos por sección (anyOf)
-   ========================================== */
-const PERMS_BY_SECTION = {
-  accesos: ["accesos.read", "accesos.write", "accesos.export", "*"],
-
-  // ✅ rondas: permisos + rol guardia
-  rondasqr: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
-  rondas: ["rondasqr.view", "rondasqr.admin", "rondasqr.reports", "guardia", "*"],
-
-  incidentes: ["incidentes.read", "incidentes.create", "incidentes.edit", "incidentes.reports", "*"],
-  visitas: ["visitas.read", "visitas.write", "visitas.close", "*"],
-  bitacora: ["bitacora.read", "bitacora.write", "bitacora.export", "*"],
-  supervision: ["supervision.read", "supervision.create", "supervision.edit", "supervision.reports", "*"],
-
-  // ✅ CORREGIDO: mismos permisos que usa tu IamAdmin/index.jsx
-  iam: ["iam.usuarios.gestionar", "iam.roles.gestionar", "*"],
-};
-
-/* ===============
-   Badge pill UI
-   =============== */
+/* Badge pill UI */
 function Badge({ value }) {
   const v = Number(value || 0);
   return (
@@ -71,8 +51,44 @@ function Badge({ value }) {
   );
 }
 
+function resolvePrincipal(raw) {
+  if (!raw || typeof raw !== "object") return null;
+
+  if (raw.user && typeof raw.user === "object") {
+    return {
+      ...raw.user,
+      ...raw,
+      can:
+        raw.can && typeof raw.can === "object"
+          ? raw.can
+          : raw.user.can && typeof raw.user.can === "object"
+          ? raw.user.can
+          : {},
+      superadmin:
+        raw.superadmin === true ||
+        raw.isSuperAdmin === true ||
+        raw.user.superadmin === true ||
+        raw.user.isSuperAdmin === true,
+      isSuperAdmin:
+        raw.isSuperAdmin === true ||
+        raw.superadmin === true ||
+        raw.user.isSuperAdmin === true ||
+        raw.user.superadmin === true,
+    };
+  }
+
+  return {
+    ...raw,
+    can: raw.can && typeof raw.can === "object" ? raw.can : {},
+    superadmin: raw.superadmin === true || raw.isSuperAdmin === true,
+    isSuperAdmin: raw.isSuperAdmin === true || raw.superadmin === true,
+  };
+}
+
 export default function Home() {
   const nav = useNavigate();
+  const auth = useAuth();
+  const { user, isLoading } = auth || {};
 
   const [incStats, setIncStats] = React.useState({
     total: 0,
@@ -82,13 +98,17 @@ export default function Home() {
     alta: 0,
   });
 
+  /* ✅ Fuente principal robusta para ACL: SOLO backend/session */
+  const principal = React.useMemo(() => {
+    return resolvePrincipal(user);
+  }, [user]);
+
   /* Socket listeners */
   React.useEffect(() => {
     if (!socket) return;
 
     const onCheck = () => {
       // opcional: refrescar KPIs si llega un evento
-      // refreshIncStats();
     };
 
     socket.on("rondasqr:check", onCheck);
@@ -100,12 +120,15 @@ export default function Home() {
     };
   }, []);
 
-  /* KPIs incidentes */
+  /* KPIs incidentes (solo si hay token) */
   React.useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
+        const token = getToken() || "";
+        if (!token) return;
+
         const r = await api.get("/incidentes", { params: { limit: 500 } });
 
         const data = Array.isArray(r.data)
@@ -132,49 +155,39 @@ export default function Home() {
     };
   }, []);
 
-  /* Secciones normalizadas */
+  /* ✅ Secciones desde ACL (backend -> can) */
   const SECTIONS = React.useMemo(() => {
-    const base = (NAV_SECTIONS || []).map((s) => {
-      if (s.key === "rondas") {
-        return { ...s, key: "rondasqr", path: "/rondasqr/scan" };
-      }
-      if (s.key === "rondasqr") return { ...s, path: "/rondasqr/scan" };
-      return s;
-    });
+    const secs = getNavSectionsForMe(principal) || [];
 
-    if (!base.some((s) => s.key === "iam")) {
-      base.push({ key: "iam", label: "Usuarios y Permisos", path: "/iam/admin" });
-    }
+    const order = ["accesos", "rondas", "iam", "incidentes", "visitas", "bitacora"];
+    const rank = (k) => {
+      const i = order.indexOf(k);
+      return i === -1 ? 999 : i;
+    };
 
-    // Orden estable (opcional, pero ayuda consistencia visual)
-
-    const order = [
-      "accesos",
-      "iam",
-      "rondasqr",
-      "incidentes",
-      "visitas",
-      "bitacora",
-      "supervision",
-    ];
-    base.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
-
-    return base;
-  }, []);
+    return [...secs].sort((a, b) => rank(a.key) - rank(b.key));
+  }, [principal]);
 
   /* Badges */
   const BADGES = React.useMemo(
     () => ({
       accesos: 0,
+      rondas: 0,
       iam: 0,
-      rondasqr: 0,
-      supervision: 0,
       incidentes: incStats.total || 0,
       visitas: 0,
       bitacora: 0,
     }),
     [incStats.total]
   );
+
+  if (isLoading) {
+    return <div className="p-6">Cargando…</div>;
+  }
+
+  if (!principal) {
+    return <div className="p-6">Cargando sesión…</div>;
+  }
 
   return (
     <div className="space-y-6 layer-content">
@@ -206,15 +219,24 @@ export default function Home() {
       <div className="fx-card">
         <h2 className="font-semibold mb-3">Secciones</h2>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {SECTIONS.map((s) => {
-            const key = s.key;
-            const Icon = ICONS[key] || null;
-            const badgeValue = BADGES[key] ?? 0;
+        {SECTIONS.length === 0 ? (
+          <div className="p-4 text-sm opacity-80">
+            No hay secciones habilitadas para tu usuario.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {SECTIONS.map((s) => {
+              const key = s.key;
+              const Icon = ICONS[key] || null;
+              const badgeValue = BADGES[key] ?? 0;
 
-            return (
-              <IamGuard key={key} section={key} fallback={null}>
-                <button onClick={() => nav(s.path)} className="fx-tile text-left p-4">
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => nav(s.path)}
+                  className="fx-tile text-left p-4"
+                >
                   <div className="flex items-center gap-3">
                     {Icon && <Icon className="w-5 h-5 opacity-80" />}
                     <div className="font-medium">{s.label}</div>
@@ -222,10 +244,10 @@ export default function Home() {
                   </div>
                   <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
                 </button>
-              </IamGuard>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

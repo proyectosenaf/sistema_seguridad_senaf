@@ -1,10 +1,27 @@
 // client/src/modules/rondasqr/admin/AssignmentsPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import iamApi from "../../../iam/api/iamApi.js";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeUsersResponse(res) {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.items)) return res.items;
+  if (Array.isArray(res?.users)) return res.users;
+  if (Array.isArray(res?.data)) return res.data;
+  return [];
+}
+
+function normalizeGuardUser(u) {
+  return {
+    _id: u?._id ? String(u._id) : u?.id ? String(u.id) : "",
+    name: String(u?.name || u?.fullName || u?.nombre || "").trim(),
+    email: String(u?.email || "").trim(),
+    active: u?.active !== false,
+  };
 }
 
 export default function AssignmentsPage() {
@@ -17,9 +34,9 @@ export default function AssignmentsPage() {
   const [rounds, setRounds] = useState([]);
   const [roundId, setRoundId] = useState("");
 
-  // Guardias (IAM)
-  const [guards, setGuards] = useState([]); // [{_id, name, email, active, roles}]
-  const [guardId, setGuardId] = useState(""); // ✅ guardId = _id del usuario IAM
+  // Guardias: deben venir ya resueltos por backend
+  const [guards, setGuards] = useState([]);
+  const [guardId, setGuardId] = useState("");
 
   // Horarios
   const [startTime, setStartTime] = useState("");
@@ -29,111 +46,104 @@ export default function AssignmentsPage() {
     return /^([01]\d|2[0-3]):[0-5]\d$/.test(str);
   }
 
-  /* ─────────────── Cargar sitios ─────────────── */
-  useEffect(() => {
-    api
-      .listSites()
-      .then((d) => setSites(d?.items || []))
-      .catch(console.error);
+  const loadSites = useCallback(async () => {
+    try {
+      const d = await api.listSites();
+      setSites(d?.items || []);
+    } catch (e) {
+      console.error("[Assignments] listSites error:", e?.message || e);
+      setSites([]);
+    }
   }, []);
 
-  /* ─────────────── Cargar rondas ─────────────── */
-  useEffect(() => {
-    if (!siteId) {
+  const loadRounds = useCallback(async (nextSiteId) => {
+    if (!nextSiteId) {
       setRounds([]);
       setRoundId("");
       return;
     }
-    api
-      .listRounds(siteId)
-      .then((d) => setRounds(d?.items || []))
-      .catch(console.error);
-  }, [siteId]);
 
-  /* ─────────────── Cargar guardias ─────────────── */
-  useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        let users = [];
-
-        // Si existe endpoint directo de guardias, úsalo
-        if (typeof iamApi.listGuards === "function") {
-          const r = await iamApi.listGuards();
-          users = r?.items || r?.users || [];
-        } else {
-          const r = await iamApi.listUsers();
-          users = r?.items || r?.users || [];
-        }
-
-        // Filtra guardias (solo por roles locales en tu IAM)
-        const normalized = (users || [])
-          .filter((u) => u?.active !== false)
-          .filter((u) => {
-            // Si listGuards existe, probablemente ya vienen filtrados
-            if (typeof iamApi.listGuards === "function") return true;
-
-            const roles = (Array.isArray(u?.roles) ? u.roles : [])
-              .map((x) => String(x).toLowerCase().trim())
-              .filter(Boolean);
-
-            return (
-              roles.includes("guardia") ||
-              roles.includes("guard") ||
-              roles.includes("rondasqr.guard")
-            );
-          })
-          .map((u) => ({
-            _id: u?._id ? String(u._id) : "",
-            name: u?.name || u?.fullName || "",
-            email: u?.email || "",
-            active: u?.active !== false,
-            roles: Array.isArray(u?.roles) ? u.roles : [],
-          }))
-          .filter((u) => !!u._id);
-
-        if (mounted) setGuards(normalized);
-      } catch (e) {
-        console.error("[Assignments] listGuards error:", e);
-        if (mounted) setGuards([]);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+    try {
+      const d = await api.listRounds(nextSiteId);
+      setRounds(d?.items || []);
+    } catch (e) {
+      console.error("[Assignments] listRounds error:", e?.message || e);
+      setRounds([]);
+    }
   }, []);
 
-  /* ─────────────── Listado del día ─────────────── */
-  async function refresh() {
+  const loadGuards = useCallback(async () => {
+    try {
+      let users = [];
+
+      // ✅ fuente oficial: backend/IAM decide quién es guardia
+      if (typeof iamApi.listGuards === "function") {
+        const r = await iamApi.listGuards();
+        users = normalizeUsersResponse(r);
+      } else {
+        // fallback sin inferir roles en frontend
+        const r = await iamApi.listUsers({ q: "", onlyActive: 1, limit: 2000, skip: 0 });
+        users = normalizeUsersResponse(r);
+      }
+
+      const normalized = (users || [])
+        .map(normalizeGuardUser)
+        .filter((u) => !!u._id)
+        .filter((u) => u.active);
+
+      setGuards(normalized);
+    } catch (e) {
+      console.error("[Assignments] loadGuards error:", e?.message || e);
+      setGuards([]);
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const d = await api.listAssignments(date);
       setItems(d?.items || []);
     } catch (e) {
-      console.error(e);
+      console.error("[Assignments] listAssignments error:", e?.message || e);
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }
+  }, [date]);
+
+  useEffect(() => {
+    loadSites();
+  }, [loadSites]);
+
+  useEffect(() => {
+    loadRounds(siteId);
+  }, [siteId, loadRounds]);
+
+  useEffect(() => {
+    loadGuards();
+  }, [loadGuards]);
 
   useEffect(() => {
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date]);
+  }, [refresh]);
 
-  /* ─────────────── Crear asignación ─────────────── */
   async function onCreate() {
     if (!date || !roundId || !guardId) {
       alert("Completa fecha, ronda y guardia.");
       return;
     }
-    if (startTime && !isHHMM(startTime)) return alert("Hora de inicio inválida (usa HH:mm)");
-    if (endTime && !isHHMM(endTime)) return alert("Hora de fin inválida (usa HH:mm)");
+
+    if (startTime && !isHHMM(startTime)) {
+      alert("Hora de inicio inválida (usa HH:mm)");
+      return;
+    }
+
+    if (endTime && !isHHMM(endTime)) {
+      alert("Hora de fin inválida (usa HH:mm)");
+      return;
+    }
 
     try {
-      // ✅ guardId = _id (IAM)
       await api.createAssignment({
         date,
         roundId,
@@ -142,7 +152,6 @@ export default function AssignmentsPage() {
         endTime: endTime || "",
       });
 
-      // limpiar
       setRoundId("");
       setGuardId("");
       setStartTime("");
@@ -150,7 +159,7 @@ export default function AssignmentsPage() {
 
       await refresh();
     } catch (e) {
-      console.error(e);
+      console.error("[Assignments] createAssignment error:", e?.message || e);
       const msg =
         e?.payload?.message ||
         e?.payload?.error ||
@@ -160,27 +169,36 @@ export default function AssignmentsPage() {
     }
   }
 
-  /* ─────────────── Eliminar ─────────────── */
   async function onDelete(id) {
     try {
       await api.deleteAssignment(id);
     } catch (e) {
-      console.error(e);
+      console.error("[Assignments] deleteAssignment error:", e?.message || e);
+      alert(e?.payload?.message || e?.message || "No se pudo eliminar la asignación.");
     } finally {
       await refresh();
     }
   }
 
-  /* ─────────────── Render guardia ─────────────── */
   function renderGuardCell(a) {
-    const g =
-      guards.find((x) => x._id && x._id === a.guardId) ||
-      // fallback por si backend manda objeto
-      guards.find((x) => x._id && x._id === a.guardId?._id);
+    const guardRawId =
+      typeof a?.guardId === "string"
+        ? a.guardId
+        : a?.guardId?._id
+        ? String(a.guardId._id)
+        : "";
 
-    return g
-      ? `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`
-      : (typeof a.guardId === "string" ? a.guardId : "—");
+    const g = guards.find((x) => x._id === guardRawId);
+
+    if (g) {
+      return `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`;
+    }
+
+    if (a?.guardName || a?.guardEmail) {
+      return `${a.guardName || "(Sin nombre)"}${a.guardEmail ? ` — ${a.guardEmail}` : ""}`;
+    }
+
+    return guardRawId || "—";
   }
 
   const controlClass =
@@ -276,12 +294,14 @@ export default function AssignmentsPage() {
         <h2 className="text-lg font-semibold">Listado ({date})</h2>
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={onCreate}
             className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition"
           >
             Crear asignación
           </button>
           <button
+            type="button"
             onClick={refresh}
             className="px-4 py-2 rounded-xl bg-cyan-500 text-white hover:bg-cyan-400 transition"
           >
@@ -322,12 +342,13 @@ export default function AssignmentsPage() {
                   <td className="p-3 text-center">{a.pointsCount || 0}</td>
                   <td className="p-3">{a.startTime || "-"}</td>
                   <td className="p-3">{a.endTime || "-"}</td>
-                  <td className="p-3 capitalize">{a.status}</td>
+                  <td className="p-3 capitalize">{a.status || "-"}</td>
                   <td className="p-3">
                     {a.createdAt ? new Date(a.createdAt).toLocaleString() : "-"}
                   </td>
                   <td className="p-3">
                     <button
+                      type="button"
                       onClick={() => onDelete(a._id)}
                       className="px-3 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition"
                     >

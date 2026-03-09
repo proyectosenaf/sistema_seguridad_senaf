@@ -1,5 +1,7 @@
 // client/src/modules/rondasqr/api/rondasqrApi.js
 
+import { getToken } from "../../../lib/api.js";
+
 // Convención: VITE_API_BASE_URL YA incluye /api
 // ej. https://tu-dominio.com/api
 const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api").replace(/\/$/, "");
@@ -7,6 +9,11 @@ const ROOT = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api").
 // Base de RondasQR: /api/rondasqr/v1
 const BASE = `${ROOT}/rondasqr/v1`;
 
+// ✅ Si tu auth es JWT (lo tuyo), usa omit.
+// Si en algún entorno usas cookies/sesión, cambia a "include" aquí y listo.
+const DEFAULT_CREDENTIALS = "omit"; // "omit" | "include"
+
+/* ───────────── querystring ───────────── */
 function toQS(o = {}) {
   return Object.entries(o)
     .filter(([, v]) => v !== "" && v != null)
@@ -59,9 +66,24 @@ function normalizePlanBody(body = {}) {
   return { siteId, roundId, points };
 }
 
-async function buildHeaders({ json = true } = {}) {
+/**
+ * ✅ Headers centralizados:
+ * - JSON Content-Type cuando aplica
+ * - Authorization Bearer <token> desde lib/api.js (senaf_token)
+ */
+async function buildHeaders({ json = true, token } = {}) {
   const h = {};
+
   if (json) h["Content-Type"] = "application/json";
+
+  // token param > storage
+  const t = String(token || getToken?.() || "").trim();
+  if (t) h["Authorization"] = `Bearer ${t}`;
+
+  // anti-cache
+  h["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
+  h["Pragma"] = "no-cache";
+
   return h;
 }
 
@@ -72,21 +94,33 @@ async function fetchJson(url, opts = {}) {
   const wantsJson = typeof body === "string";
 
   const r = await fetch(url, {
-    credentials: "include", // si NO usas cookies/sesión, cambia a "omit"
+    credentials: opts.credentials || DEFAULT_CREDENTIALS,
+    cache: "no-store",
     ...opts,
-    headers: { ...(await buildHeaders({ json: wantsJson })), ...(opts.headers || {}) },
+    headers: {
+      ...(await buildHeaders({ json: wantsJson, token: opts.token })),
+      ...(opts.headers || {}),
+    },
   });
 
   if (!r.ok) {
     let err = {};
+    let text = "";
     try {
       err = await r.json();
-    } catch {}
-    const e = new Error(err?.message || err?.error || `HTTP ${r.status}`);
+    } catch {
+      try {
+        text = await r.text();
+      } catch {}
+    }
+    const e = new Error(err?.message || err?.error || text || `HTTP ${r.status}`);
     e.status = r.status;
     e.payload = err;
+    e.text = text;
     throw e;
   }
+
+  if (r.status === 204) return { ok: true };
 
   try {
     return await r.json();
@@ -101,19 +135,44 @@ export const rondasqrApi = {
   async getSummary(q) {
     return fetchJson(`${BASE}/reports/summary?${toQS(q)}`);
   },
+
   async getDetailed(q) {
     return fetchJson(`${BASE}/reports/detailed?${toQS(q)}`);
+  },
+
+  // ✅ aliases de compatibilidad para páginas ya existentes
+  async reportsSummary(q) {
+    return this.getSummary(q);
+  },
+
+  async summary(q) {
+    return this.getSummary(q);
+  },
+
+  async listReports(q) {
+    return this.getDetailed(q);
+  },
+
+  async reports(q) {
+    return this.getDetailed(q);
+  },
+
+  async listCheckins(q) {
+    return this.getDetailed(q);
   },
 
   csvUrl(q) {
     return `${BASE}/reports/export/csv?${toQS(q)}`;
   },
+
   kmlUrl(q) {
     return `${BASE}/reports/export/kml?${toQS(q)}`;
   },
+
   xlsxUrl(q) {
     return `${BASE}/reports/export/excel?${toQS(q)}`;
   },
+
   pdfUrl(q) {
     return `${BASE}/reports/export/pdf?${toQS(q)}`;
   },
@@ -122,7 +181,7 @@ export const rondasqrApi = {
     try {
       const r = await fetch(url, {
         method: "GET",
-        credentials: "include",
+        credentials: DEFAULT_CREDENTIALS,
         headers: await buildHeaders({ json: false }),
       });
       return r.ok;
@@ -141,7 +200,7 @@ export const rondasqrApi = {
 
   // Incidente desde rondas → módulo central de incidentes
   async postIncident(payload) {
-    const url = `${ROOT}/incidentes`; // /api/incidentes
+    const url = `${ROOT}/incidentes`;
     return fetchJson(url, {
       method: "POST",
       body: JSON.stringify(payload || {}),
@@ -156,13 +215,26 @@ export const rondasqrApi = {
     });
   },
 
+  // ✅ PANIC: envía GeoJSON válido (loc.coordinates = [lon, lat])
   async panic(gps) {
-    const body =
+    const input =
       gps && typeof gps === "object"
         ? "gps" in gps
           ? gps
           : { gps }
         : { gps: null };
+
+    const lat = Number(input?.gps?.lat);
+    const lon = Number(input?.gps?.lon);
+
+    const body = { ...input };
+
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      body.loc = { type: "Point", coordinates: [lon, lat] };
+    } else {
+      delete body.loc;
+      body.gps = input?.gps ?? null;
+    }
 
     const urls = [
       `${BASE}/checkin/panic`,
@@ -189,6 +261,7 @@ export const rondasqrApi = {
       body: JSON.stringify(payload || {}),
     });
   },
+
   async postFall(payload) {
     return fetchJson(`${BASE}/checkin/fall`, {
       method: "POST",
@@ -203,6 +276,7 @@ export const rondasqrApi = {
       body: JSON.stringify(item || {}),
     });
   },
+
   async offlineDump(payload) {
     return fetchJson(`${BASE}/offline/dump`, {
       method: "POST",
@@ -214,18 +288,21 @@ export const rondasqrApi = {
   async listSites() {
     return fetchJson(`${BASE}/admin/sites`);
   },
+
   async createSite(body) {
     return fetchJson(`${BASE}/admin/sites`, {
       method: "POST",
       body: JSON.stringify(body || {}),
     });
   },
+
   async updateSite(id, body) {
     return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body || {}),
     });
   },
+
   async deleteSite(id) {
     return fetchJson(`${BASE}/admin/sites/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -237,18 +314,21 @@ export const rondasqrApi = {
     const q = siteId ? `?${toQS({ siteId })}` : "";
     return fetchJson(`${BASE}/admin/rounds${q}`);
   },
+
   async createRound(body) {
     return fetchJson(`${BASE}/admin/rounds`, {
       method: "POST",
       body: JSON.stringify(body || {}),
     });
   },
+
   async updateRound(id, body) {
     return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body || {}),
     });
   },
+
   async deleteRound(id) {
     return fetchJson(`${BASE}/admin/rounds/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -260,23 +340,27 @@ export const rondasqrApi = {
     const q = toQS({ siteId, roundId });
     return fetchJson(`${BASE}/admin/points${q ? `?${q}` : ""}`);
   },
+
   async createPoint(body) {
     return fetchJson(`${BASE}/admin/points`, {
       method: "POST",
       body: JSON.stringify(body || {}),
     });
   },
+
   async updatePoint(id, body) {
     return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body || {}),
     });
   },
+
   async deletePoint(id) {
     return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
   },
+
   async reorderPoints(roundId, pointIds) {
     return fetchJson(`${BASE}/admin/points/reorder`, {
       method: "PUT",
@@ -291,6 +375,7 @@ export const rondasqrApi = {
     if (!id) return "";
     return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.png`;
   },
+
   pointQrPdfUrl(id) {
     if (!id) return "";
     return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.pdf`;
@@ -304,7 +389,6 @@ export const rondasqrApi = {
     });
   },
 
-  /** JSON repo (si lo implementas) */
   async listQrRepo(params = {}) {
     const qs = toQS(params);
     const url1 = `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
@@ -318,7 +402,6 @@ export const rondasqrApi = {
     }
   },
 
-  /** URL para abrir en nueva pestaña */
   qrRepoUrl(params = {}) {
     const qs = toQS(params);
     return `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
@@ -353,6 +436,7 @@ export const rondasqrApi = {
       e.payload = { errors: { siteId: !base.siteId, roundId: !base.roundId } };
       throw e;
     }
+
     if (!Array.isArray(base.points) || base.points.length === 0) {
       const e = new Error("El plan debe contener al menos 1 punto");
       e.status = 400;
@@ -413,12 +497,15 @@ export const rondasqrApi = {
   async listPlans(q = {}) {
     return this.getPlan(q);
   },
+
   async createPlan(body) {
     return this.createOrUpdatePlan(body);
   },
+
   async updatePlan(_, body) {
     return this.createOrUpdatePlan(body);
   },
+
   async deletePlan(arg) {
     if (arg && typeof arg === "object") return this.deletePlanByQuery(arg);
     const e = new Error("deletePlan(id) no soportado; usa deletePlanByQuery({siteId, roundId})");
@@ -431,12 +518,14 @@ export const rondasqrApi = {
     const qs = toQS(date ? { date } : {});
     return fetchJson(`${BASE}/admin/assignments${qs ? `?${qs}` : ""}`);
   },
+
   async createAssignment(payload) {
     return fetchJson(`${BASE}/admin/assignments`, {
       method: "POST",
       body: JSON.stringify(payload || {}),
     });
   },
+
   async deleteAssignment(id) {
     return fetchJson(`${BASE}/admin/assignments/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -447,6 +536,7 @@ export const rondasqrApi = {
   async checkinScan(payload) {
     return this.postScan(payload);
   },
+
   async scan(payload) {
     return this.postScan(payload);
   },

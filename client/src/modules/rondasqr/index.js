@@ -1,10 +1,15 @@
 import React, { Suspense, lazy } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 
+// Landing del módulo
+const RondasLanding = lazy(() => import("./RondasLanding.jsx"));
+
 // Guard / Panel unificado
 const ScanPage = lazy(() => import("./guard/ScanPage.jsx"));
+
 // Reportes (supervisor)
 const ReportsPage = lazy(() => import("./supervisor/ReportsPage.jsx"));
+
 // Admin
 const AdminHub = lazy(() => import("./admin/AdminHub.jsx"));
 const CreateRoundsPage = lazy(() => import("./admin/CreateRoundsPage.jsx"));
@@ -15,8 +20,8 @@ function RondasqrModule() {
   return (
     <Suspense fallback={null}>
       <Routes>
-        {/* /rondasqr → /rondasqr/scan */}
-        <Route index element={<Navigate to="scan" replace />} />
+        {/* /rondasqr → landing del módulo */}
+        <Route index element={<RondasLanding />} />
 
         {/* Panel del guardia (todas las subrutas: /scan, /scan/qr, /scan/msg, /scan/fotos, etc.) */}
         <Route path="scan/*" element={<ScanPage />} />
@@ -31,7 +36,7 @@ function RondasqrModule() {
         <Route path="admin/load" element={<LoadRoundsPage />} />
 
         {/* Catch-all del módulo */}
-        <Route path="*" element={<Navigate to="scan" replace />} />
+        <Route path="*" element={<Navigate to="/rondasqr" replace />} />
       </Routes>
     </Suspense>
   );
@@ -43,6 +48,6 @@ export { RondasqrModule };
 
 // Redirecciones legacy opcionales
 export const rondasqrLegacyRoutes = [
-  { path: "/rondasqrpanel",  element: <Navigate to="/rondasqr/scan" replace /> },
-  { path: "/rondasqr/panel", element: <Navigate to="/rondasqr/scan" replace /> },
+  { path: "/rondasqrpanel", element: <Navigate to="/rondasqr" replace /> },
+  { path: "/rondasqr/panel", element: <Navigate to="/rondasqr" replace /> },
 ];

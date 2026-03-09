@@ -1,4 +1,4 @@
-// modules/iam/routes/roles.routes.js
+// server/modules/iam/routes/roles.routes.js
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamRole from "../models/IamRole.model.js";
@@ -8,35 +8,25 @@ import { writeAudit } from "../utils/audit.util.js";
 
 const r = Router();
 
-/* =========================
-   Helpers (centralizados)
-========================= */
-
-const normCode = (s = "") =>
-  String(s).trim().toLowerCase().replace(/\s+/g, "_");
+const normCode = (s = "") => String(s).trim().toLowerCase().replace(/\s+/g, "_");
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
 }
 
 function cleanKeys(arr) {
-  return [...new Set((arr || []).map((k) => String(k || "").trim()))].filter(Boolean);
+  return [...new Set((arr || []).map((k) => String(k || "").trim().toLowerCase()))].filter(Boolean);
 }
 
-/** Valida que todas las permission keys existan */
 async function assertPermKeysExist(keys = []) {
   const clean = cleanKeys(keys);
   if (!clean.length) return clean;
 
-  // countDocuments funciona, pero evita falsos si hay duplicados (ya limpiamos)
-  const cnt = await IamPermission.countDocuments({ key: { $in: clean } });
-  if (cnt !== clean.length) {
-    const existing = await IamPermission.find({ key: { $in: clean } })
-      .select("key")
-      .lean();
-    const have = new Set(existing.map((x) => x.key));
-    const missing = clean.filter((k) => !have.has(k));
+  const existing = await IamPermission.find({ key: { $in: clean } }).select("key").lean();
+  const have = new Set(existing.map((x) => String(x.key || "").trim().toLowerCase()));
 
+  if (have.size !== clean.length) {
+    const missing = clean.filter((k) => !have.has(k));
     const err = new Error("Uno o más permisos (keys) no existen");
     err.status = 400;
     err.payload = { missing };
@@ -54,41 +44,27 @@ async function auditSafe(req, payload, label) {
   }
 }
 
-/* =========================
-   Middleware base
-========================= */
 const MW_ROLES_MANAGE = devOr(requirePerm("iam.roles.manage"));
 
-/* =========================
-   LISTAR ROLES
-========================= */
 r.get("/", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const items = await IamRole.find().sort({ name: 1 }).lean();
-    return res.json({ items });
+    return res.json({ ok: true, items });
   } catch (err) {
     console.error("[IAM][GET /roles] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al listar roles",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al listar roles" });
   }
 });
 
-/* =========================
-   CREAR ROL
-   body: { code?, name, description?, permissions? (array de KEYS) }
-========================= */
 r.post("/", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const { code: rawCode, name, description, permissions = [] } = req.body || {};
-    if (!name) return res.status(400).json({ message: "name es requerido" });
+    if (!name) return res.status(400).json({ ok: false, message: "name es requerido" });
 
     const code = normCode(rawCode || name);
 
-    // duplicado por code
     const dup = await IamRole.exists({ code });
-    if (dup) return res.status(409).json({ message: "code ya existe" });
+    if (dup) return res.status(409).json({ ok: false, message: "code ya existe" });
 
     const cleanPerms = await assertPermKeysExist(permissions);
 
@@ -116,30 +92,25 @@ r.post("/", MW_ROLES_MANAGE, async (req, res) => {
       "create role"
     );
 
-    return res.status(201).json(doc);
+    return res.status(201).json({ ok: true, item: doc.toObject ? doc.toObject() : doc });
   } catch (err) {
     const status = err?.status || 500;
     if (status === 400) {
       return res.status(400).json({
+        ok: false,
         message: err.message,
         ...(err.payload ? err.payload : null),
       });
     }
     console.error("[IAM][POST /roles] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al crear rol",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al crear rol" });
   }
 });
 
-/* =========================
-   ACTUALIZAR ROL (name/code/description)
-========================= */
 r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
-    if (!isValidObjectId(id)) return res.status(400).json({ message: "ID inválido" });
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
 
     const { code, name, description } = req.body || {};
 
@@ -148,14 +119,12 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
     if (typeof description !== "undefined") update.description = description;
     if (typeof code !== "undefined") update.code = normCode(code);
 
-    // before (audit)
     const before = await IamRole.findById(id).lean();
-    if (!before) return res.status(404).json({ message: "No encontrado" });
+    if (!before) return res.status(404).json({ ok: false, message: "No encontrado" });
 
-    // si cambia code, validar duplicado
     if (update.code && update.code !== before.code) {
       const exists = await IamRole.exists({ _id: { $ne: id }, code: update.code });
-      if (exists) return res.status(409).json({ message: "code ya existe" });
+      if (exists) return res.status(409).json({ ok: false, message: "code ya existe" });
     }
 
     const doc = await IamRole.findByIdAndUpdate(
@@ -170,46 +139,32 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
         action: "update",
         entity: "role",
         entityId: id,
-        before: {
-          code: before.code,
-          name: before.name,
-          description: before.description ?? null,
-        },
-        after: {
-          code: doc.code,
-          name: doc.name,
-          description: doc.description ?? null,
-        },
+        before: { code: before.code, name: before.name, description: before.description ?? null },
+        after: { code: doc.code, name: doc.name, description: doc.description ?? null },
       },
       "update role"
     );
 
-    return res.json(doc);
+    return res.json({ ok: true, item: doc });
   } catch (err) {
     console.error("[IAM][PATCH /roles/:id] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al actualizar rol",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al actualizar rol" });
   }
 });
 
-/* =========================
-   ELIMINAR ROL (proteger admin)
-========================= */
 r.delete("/:id", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
-    if (!isValidObjectId(id)) return res.status(400).json({ message: "ID inválido" });
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
 
     const role = await IamRole.findById(id).lean();
-    if (!role) return res.status(404).json({ message: "No encontrado" });
+    if (!role) return res.status(404).json({ ok: false, message: "No encontrado" });
 
     const codeLc = String(role.code || "").toLowerCase().trim();
     const nameLc = String(role.name || "").toLowerCase().trim();
 
     if (codeLc === "admin" || nameLc === "admin" || nameLc === "administrador") {
-      return res.status(400).json({ message: "No se puede eliminar admin" });
+      return res.status(400).json({ ok: false, message: "No se puede eliminar admin" });
     }
 
     await IamRole.deleteOne({ _id: id });
@@ -234,51 +189,41 @@ r.delete("/:id", MW_ROLES_MANAGE, async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error("[IAM][DELETE /roles/:id] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al eliminar rol",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al eliminar rol" });
   }
 });
 
-/* =========================
-   OBTENER PERMISOS DEL ROL (por KEYS)
-   GET /api/iam/v1/roles/:id/permissions  -> { permissionKeys: string[] }
-========================= */
 r.get("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
-    if (!isValidObjectId(id)) return res.status(400).json({ message: "ID inválido" });
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
 
     const role = await IamRole.findById(id).select("permissions").lean();
-    if (!role) return res.status(404).json({ message: "Rol no encontrado" });
+    if (!role) return res.status(404).json({ ok: false, message: "Rol no encontrado" });
 
-    return res.json({ permissionKeys: role.permissions || [] });
+    return res.json({ ok: true, permissionKeys: cleanKeys(role.permissions || []) });
   } catch (err) {
     console.error("[IAM][GET /roles/:id/permissions] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al obtener permisos del rol",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al obtener permisos del rol" });
   }
 });
 
-/* =========================
-   REEMPLAZAR PERMISOS DEL ROL (por KEYS)
-   PUT /api/iam/v1/roles/:id/permissions  body:{ permissionKeys: string[] }
-========================= */
 r.put("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
   try {
     const { id } = req.params;
-    if (!isValidObjectId(id)) return res.status(400).json({ message: "ID inválido" });
+    if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
 
-    const { permissionKeys = [] } = req.body || {};
+    const body = req.body || {};
+    const rawPermissionKeys = Array.isArray(body.permissionKeys)
+      ? body.permissionKeys
+      : Array.isArray(body.permissions)
+      ? body.permissions
+      : [];
 
-    // before (audit)
     const before = await IamRole.findById(id).lean();
-    if (!before) return res.status(404).json({ message: "Rol no encontrado" });
+    if (!before) return res.status(404).json({ ok: false, message: "Rol no encontrado" });
 
-    const clean = await assertPermKeysExist(permissionKeys);
+    const clean = await assertPermKeysExist(rawPermissionKeys);
 
     const doc = await IamRole.findByIdAndUpdate(
       id,
@@ -292,26 +237,28 @@ r.put("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
         action: "update",
         entity: "role",
         entityId: id,
-        before: { permissions: before?.permissions || [] },
-        after: { permissions: doc?.permissions || [] },
+        before: { permissions: cleanKeys(before?.permissions || []) },
+        after: { permissions: cleanKeys(doc?.permissions || []) },
       },
       "update role perms"
     );
 
-    return res.json(doc);
+    return res.json({
+      ok: true,
+      item: doc,
+      permissionKeys: cleanKeys(doc?.permissions || []),
+    });
   } catch (err) {
     const status = err?.status || 500;
     if (status === 400) {
       return res.status(400).json({
+        ok: false,
         message: err.message,
         ...(err.payload ? err.payload : null),
       });
     }
     console.error("[IAM][PUT /roles/:id/permissions] ERROR:", err);
-    return res.status(500).json({
-      message: "Error interno al actualizar permisos del rol",
-      error: err.message,
-    });
+    return res.status(500).json({ ok: false, message: "Error interno al actualizar permisos del rol" });
   }
 });
 

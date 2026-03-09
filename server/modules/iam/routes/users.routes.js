@@ -2,7 +2,7 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
-import { devOr, requirePerm } from "../utils/rbac.util.js";
+import { devOr, requirePerm, parseList, buildContextFrom } from "../utils/rbac.util.js";
 import { writeAudit } from "../utils/audit.util.js";
 import { hashPassword } from "../utils/password.util.js";
 
@@ -11,9 +11,44 @@ const r = Router();
 /* ===================== Middlewares ===================== */
 
 const MW_USERS_MANAGE = devOr(requirePerm("iam.users.manage"));
-const MW_USERS_VIEW = devOr(requirePerm("iam.users.view")); // si no lo tienes, usa manage en ambos
+
+// View = view OR manage (para no clavarte si no creaste iam.users.view)
+const MW_USERS_VIEW = devOr(async (req, res, next) => {
+  try {
+    const ctx = await buildContextFrom(req);
+    req.iam = ctx;
+
+    if (!ctx?.email) return res.status(401).json({ ok: false, message: "No autenticado" });
+
+    const canView = ctx.has("iam.users.view") || ctx.has("iam.users.manage");
+    if (!canView) {
+      return res.status(403).json({
+        ok: false,
+        message: "forbidden",
+        need: "iam.users.view|iam.users.manage",
+        email: ctx.email,
+        roles: ctx.roles,
+        perms: ctx.permissions,
+      });
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 /* ===================== Helpers ===================== */
+
+const SUPERADMIN_EMAIL = String(process.env.SUPERADMIN_EMAIL || "").trim().toLowerCase();
+const ROOT_ADMINS = parseList(process.env.ROOT_ADMINS || "").map((x) => String(x).toLowerCase().trim());
+
+function isProtectedAdminEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  if (SUPERADMIN_EMAIL && e === SUPERADMIN_EMAIL) return true;
+  return ROOT_ADMINS.includes(e);
+}
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
@@ -29,9 +64,47 @@ function normEmail(e) {
   return String(e || "").trim().toLowerCase();
 }
 
+/**
+ * ✅ FIX: soporta roles como:
+ * - ["admin", "visita"]
+ * - "admin,visita"
+ * - [{code:"admin"}, {value:"visita"}]
+ * - [{id:"admin"}] etc.
+ */
 function toStringArray(v) {
-  if (Array.isArray(v)) return v.map(String).map((s) => s.trim()).filter(Boolean);
-  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  const normOne = (x) => {
+    if (x == null) return "";
+    if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") return String(x).trim();
+    if (typeof x === "object") {
+      // intenta campos típicos de selects / catálogos
+      const cand =
+        x.code ??
+        x.value ??
+        x.key ??
+        x.id ??
+        x._id ??
+        x.slug ??
+        x.name; // último recurso
+      return cand != null ? String(cand).trim() : "";
+    }
+    return String(x).trim();
+  };
+
+  if (Array.isArray(v)) {
+    const out = v.map(normOne).filter(Boolean);
+    // normaliza (lowercase + underscores) para evitar "Administrador IT"
+    return [...new Set(out.map((s) => s.toLowerCase().replace(/\s+/g, "_")))];
+  }
+
+  if (typeof v === "string") {
+    const out = v
+      .split(",")
+      .map((s) => String(s).trim())
+      .filter(Boolean)
+      .map((s) => s.toLowerCase().replace(/\s+/g, "_"));
+    return [...new Set(out)];
+  }
+
   return [];
 }
 
@@ -74,7 +147,6 @@ function pickUser(u) {
     createdAt: u.createdAt,
     updatedAt: u.updatedAt,
 
-    // compat UI
     nombreCompleto: u.name || "",
     correoPersona: u.email || "",
   };
@@ -82,6 +154,7 @@ function pickUser(u) {
 
 /**
  * Input del UsersPage (form) -> schema real
+ * ✅ FIX mínimo: aceptar alias comunes de password para no crear usuarios sin hash.
  */
 function mapBodyToIamUser(body = {}) {
   const email = normEmail(body.email || body.correoPersona);
@@ -90,23 +163,22 @@ function mapBodyToIamUser(body = {}) {
   const roles = toStringArray(body.roles);
   const active = body.active === false ? false : true;
 
-  // checkbox del UI
   const mustChangePasswordRaw = body.mustChangePassword ?? body.forcePwChange;
 
-  // password sanitizado
-  const password = body.password != null ? String(body.password).trim() : "";
+  // ✅ acepta varios nombres típicos del front
+  const rawPwd =
+    body.password ??
+    body.newPassword ??
+    body.pass ??
+    body.contrasena ??
+    body.contraseña ??
+    "";
+
+  const password = rawPwd != null ? String(rawPwd).trim() : "";
 
   return { email, name, roles, active, mustChangePasswordRaw, password };
 }
 
-/**
- * Fechas desde inputs type="date" (YYYY-MM-DD):
- * - from => inicio del día (incluyente)
- * - to   => fin del rango (EXCLUSIVO) = inicio del día siguiente
- *
- * Esto arregla el bug donde "Hasta 2026-03-01" se convertía a 2026-03-01T00:00Z
- * y excluía todo lo creado durante ese día.
- */
 function isDateOnlyString(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "").trim());
 }
@@ -116,8 +188,6 @@ function parseDateFromStart(s) {
   if (!raw) return null;
 
   if (isDateOnlyString(raw)) {
-    // interpretamos como "inicio del día" en UTC (lo importante es consistencia)
-    // 2026-03-01 => 2026-03-01T00:00:00.000Z
     const d = new Date(`${raw}T00:00:00.000Z`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
@@ -131,11 +201,9 @@ function parseDateToExclusive(s) {
   if (!raw) return null;
 
   if (isDateOnlyString(raw)) {
-    // "hasta" inclusivo por día => usamos límite exclusivo del día siguiente
     const base = new Date(`${raw}T00:00:00.000Z`);
     if (Number.isNaN(base.getTime())) return null;
-    const next = new Date(base.getTime() + 24 * 60 * 60 * 1000);
-    return next;
+    return new Date(base.getTime() + 24 * 60 * 60 * 1000);
   }
 
   const d = new Date(raw);
@@ -144,32 +212,16 @@ function parseDateToExclusive(s) {
 
 /* ===================== Routes ===================== */
 
-/**
- * GET /api/iam/v1/users
- *
- * Query params:
- * - q
- * - onlyActive=1|0  (default: true)
- * - createdFrom=YYYY-MM-DD
- * - createdTo=YYYY-MM-DD   (incluye todo el día)
- * - limit (default: 5 sin filtros; 2000 con filtros)
- * - skip (default: 0)
- *
- * Response:
- * { ok, items, meta: { total, limit, skip, hasMore, hasFilters, onlyActive } }
- */
 r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
-
-    // default recomendado: solo activos
     const onlyActive = parseBool(req.query.onlyActive, true) || String(req.query.active || "") === "1";
 
     const createdFromRaw = String(req.query.createdFrom || req.query.from || "").trim();
     const createdToRaw = String(req.query.createdTo || req.query.to || "").trim();
 
-    const createdFrom = parseDateFromStart(createdFromRaw);      // incluyente
-    const createdToExcl = parseDateToExclusive(createdToRaw);    // EXCLUSIVO (si es date-only)
+    const createdFrom = parseDateFromStart(createdFromRaw);
+    const createdToExcl = parseDateToExclusive(createdToRaw);
 
     const query = {};
 
@@ -184,13 +236,10 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
       query.createdAt = {};
       if (createdFrom) query.createdAt.$gte = createdFrom;
       if (createdToExcl) {
-        // si era date-only => usamos $lt nextDay
-        // si era datetime => usamos $lte exacto
         query.createdAt[isDateOnlyString(createdToRaw) ? "$lt" : "$lte"] = createdToExcl;
       }
     }
 
-    // hasFilters SOLO cuando hay q o fechas (onlyActive es default)
     const hasFilters = !!q || !!query.createdAt;
 
     const limitParam = Number(req.query.limit || 0);
@@ -257,7 +306,7 @@ r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
 });
 
 /**
- * POST /api/iam/v1/users  (crear por ADMIN)
+ * POST /api/iam/v1/users (crear por ADMIN)
  */
 r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
   try {
@@ -330,21 +379,49 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     const id = String(req.params.id || "").trim();
     if (!isValidObjectId(id)) return res.status(400).json({ ok: false, message: "ID inválido" });
 
+    const before = await IamUser.findById(id).lean();
+    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    const protectedUser = isProtectedAdminEmail(before.email);
+
     const body = req.body || {};
     const update = {};
 
-    if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
-    if (body.name != null || body.nombreCompleto != null) update.name = String(body.name || body.nombreCompleto || "").trim();
+    // ---------- si NO es protegido: permitir cambios normales ----------
+    if (!protectedUser) {
+      if (body.email != null || body.correoPersona != null) update.email = normEmail(body.email || body.correoPersona);
 
-    let newRoles = null;
-    if (body.roles != null) {
-      const roles = toStringArray(body.roles);
-      if (!roles.length) return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
-      newRoles = roles;
-      update.roles = roles;
+      let newRoles = null;
+      if (body.roles != null) {
+        const roles = toStringArray(body.roles);
+        if (!roles.length) return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
+        newRoles = roles;
+        update.roles = roles;
+      }
+
+      if (body.active != null) update.active = body.active === false ? false : true;
+
+      const effectiveRoles = newRoles || before.roles || [];
+      const isVisitor = hasRole(effectiveRoles, "visita");
+      if (isVisitor) update.mustChangePassword = false;
     }
 
-    if (body.active != null) update.active = body.active === false ? false : true;
+    // ---------- si ES protegido: permitir SOLO asegurar/poner admin ----------
+    if (protectedUser && body.roles != null) {
+      const roles = toStringArray(body.roles);
+      // protegido: no permitir que se quede sin admin
+      if (!hasRole(roles, "admin")) {
+        return res.status(400).json({
+          ok: false,
+          message: "Usuario protegido: no puedes quitar el rol admin.",
+        });
+      }
+      update.roles = roles; // ✅ permite poner admin (y otros) mientras admin esté incluido
+    }
+
+    if (body.name != null || body.nombreCompleto != null) {
+      update.name = String(body.name || body.nombreCompleto || "").trim();
+    }
 
     if (body.mustChangePassword != null || body.forcePwChange != null) {
       update.mustChangePassword = parseBool(body.mustChangePassword ?? body.forcePwChange, false);
@@ -360,17 +437,24 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
         update.tempPassExpiresAt = null;
         update.tempPassUsedAt = null;
         update.tempPassAttempts = 0;
+
+        if (body.mustChangePassword == null && body.forcePwChange == null) {
+          update.mustChangePassword = false;
+        }
       }
     }
 
-    const before = await IamUser.findById(id).lean();
-    if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+    // ✅ hardening: si es protegido y NO mandaron roles, y ya tenía admin, lo preserva
+    if (protectedUser && body.roles == null && hasRole(before.roles || [], "admin")) {
+      // nada que hacer
+    }
 
-    const effectiveRoles = newRoles || before.roles || [];
-    const isVisitor = hasRole(effectiveRoles, "visita");
-    if (isVisitor) update.mustChangePassword = false;
+    const u = await IamUser.findByIdAndUpdate(
+      id,
+      { $set: update },
+      { new: true, runValidators: true }
+    ).lean();
 
-    const u = await IamUser.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
     await auditSafe(
@@ -415,7 +499,12 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: true } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } }, "enable user");
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: true } },
+      "enable user"
+    );
+
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
@@ -430,10 +519,19 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
     const before = await IamUser.findById(id).lean();
     if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
+    if (isProtectedAdminEmail(before.email)) {
+      return res.status(400).json({ ok: false, message: "No puedes desactivar un admin protegido." });
+    }
+
     const u = await IamUser.findByIdAndUpdate(id, { $set: { active: false } }, { new: true }).lean();
     if (!u) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
 
-    await auditSafe(req, { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } }, "disable user");
+    await auditSafe(
+      req,
+      { action: "update", entity: "user", entityId: id, before: { active: before.active !== false }, after: { active: false } },
+      "disable user"
+    );
+
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     next(e);
@@ -447,6 +545,10 @@ r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
 
     const before = await IamUser.findById(id).lean();
     if (!before) return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+
+    if (isProtectedAdminEmail(before.email)) {
+      return res.status(400).json({ ok: false, message: "No puedes eliminar un admin protegido." });
+    }
 
     await IamUser.deleteOne({ _id: id });
 

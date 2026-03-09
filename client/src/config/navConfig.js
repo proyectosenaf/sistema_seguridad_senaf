@@ -5,74 +5,101 @@ import {
   AlertTriangle,
   Users,
   NotebookPen,
-  ClipboardList,
   ShieldCheck,
 } from "lucide-react";
 
+/**
+ * NAV_SECTIONS (UI)
+ * - Solo define navegación visual.
+ * - NO define lógica de permisos internos.
+ * - El backend decide qué puede ver el usuario mediante me.can
+ */
 export const NAV_SECTIONS = [
-  { key: "accesos", label: "Control de Acceso", path: "/accesos", icon: DoorOpen },
-  { key: "rondas", label: "Rondas de Vigilancia", path: "/rondasqr/admin", icon: Footprints },
-  { key: "incidentes", label: "Gestión de Incidentes", path: "/incidentes", icon: AlertTriangle },
-  { key: "visitas", label: "Control de Visitas", path: "/visitas", icon: Users },
-  { key: "bitacora", label: "Bitácora Digital", path: "/bitacora", icon: NotebookPen },
-  { key: "supervision", label: "Supervisión", path: "/supervision", icon: ClipboardList },
-  { key: "iam", label: "Usuarios y Permisos", path: "/iam/admin", icon: ShieldCheck },
+  {
+    key: "accesos",
+    label: "Control de Acceso",
+    path: "/accesos",
+    icon: DoorOpen,
+    accessKey: "nav.accesos",
+  },
+  {
+    key: "rondas",
+    label: "Rondas de Vigilancia",
+    path: "/rondasqr",
+    icon: Footprints,
+    accessKey: "nav.rondas",
+  },
+  {
+    key: "incidentes",
+    label: "Gestión de Incidentes",
+    path: "/incidentes",
+    icon: AlertTriangle,
+    accessKey: "nav.incidentes",
+  },
+  {
+    key: "visitas",
+    label: "Control de Visitas",
+    path: "/visitas",
+    icon: Users,
+    accessKey: "nav.visitas",
+  },
+  {
+    key: "bitacora",
+    label: "Bitácora Digital",
+    path: "/bitacora",
+    icon: NotebookPen,
+    accessKey: "nav.bitacora",
+  },
+  {
+    key: "iam",
+    label: "Usuarios y Permisos",
+    path: "/iam/admin",
+    icon: ShieldCheck,
+    accessKey: "nav.iam",
+  },
 ];
 
-function hasRole(me, role) {
-  const roles = Array.isArray(me?.roles) ? me.roles : Array.isArray(me?.user?.roles) ? me.user.roles : [];
-  const r = String(role || "").toLowerCase();
-  return roles.some((x) => String(x || "").toLowerCase() === r);
+/**
+ * Extrae objeto de sesión usable
+ */
+function resolvePrincipal(me) {
+  if (!me || typeof me !== "object") return null;
+
+  // si ya viene plano
+  if (me.can || me.superadmin === true || me.isSuperAdmin === true) return me;
+
+  // compat si viene anidado
+  if (me.user && typeof me.user === "object") {
+    return {
+      ...me.user,
+      can: me.can || me.user.can || null,
+      superadmin: me.superadmin === true || me.user.superadmin === true,
+      isSuperAdmin: me.isSuperAdmin === true || me.user.isSuperAdmin === true,
+    };
+  }
+
+  return me;
 }
 
 /**
  * getNavSectionsForMe(me)
- *
- * ✅ Objetivo:
- * - me null => DENY BY DEFAULT ([])
- * - Visitor => SOLO "visitas"
- * - superadmin => TODO
- * - Si hay "can" (ACL del backend) => filtra por can (solo true)
- * - Si no hay "can" => todo (solo para NO visitantes)
+ * - El frontend solo consume flags calculados por backend.
+ * - Si backend no manda me.can, deny-by-default.
  */
 export function getNavSectionsForMe(me) {
-  // ✅ deny-by-default: si todavía no hay /me, NO muestres menú completo
-  if (!me || typeof me !== "object") return [];
+  const principal = resolvePrincipal(me);
+  if (!principal || typeof principal !== "object") return [];
 
-  // ✅ superadmin explícito (si backend lo manda)
-  if (me?.superadmin === true) return NAV_SECTIONS;
-
-  // Detecta visitante por flags o por rol
-  const isVisitor =
-    !!me?.visitor ||
-    !!me?.isVisitor ||
-    hasRole(me, "visita") ||
-    hasRole(me, "visitor");
-
-  if (isVisitor) {
-    return NAV_SECTIONS.filter((s) => s.key === "visitas");
+  if (principal.superadmin === true || principal.isSuperAdmin === true) {
+    return NAV_SECTIONS;
   }
 
-  // si backend manda "can", filtra por eso
-  const can = me?.can || null;
-  if (can && typeof can === "object") {
-    const map = {
-      accesos: "accesos",
-      rondas: "rondasqr.admin",
-      incidentes: "incidentes",
-      visitas: "visitas.control",
-      bitacora: "bitacora",
-      supervision: "supervision",
-      iam: "iam.admin",
-    };
+  const can =
+    principal.can && typeof principal.can === "object" ? principal.can : null;
 
-    return NAV_SECTIONS.filter((s) => {
-      const rk = map[s.key];
-      if (!rk) return false; // deny-by-default si no está mapeado
-      return can[rk] === true; // ✅ solo true habilita
-    });
-  }
+  if (!can) return [];
 
-  // si no hay can => usuario interno (no visitante) => todo
-  return NAV_SECTIONS;
+  return NAV_SECTIONS.filter((item) => can[item.accessKey] === true);
 }
+
+export default NAV_SECTIONS;

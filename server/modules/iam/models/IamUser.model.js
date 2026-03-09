@@ -5,7 +5,15 @@ function normEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
-function normList(arr) {
+function normRoles(arr) {
+  const list = Array.isArray(arr) ? arr : [];
+  const cleaned = list
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  return Array.from(new Set(cleaned));
+}
+
+function normPerms(arr) {
   const list = Array.isArray(arr) ? arr : [];
   const cleaned = list
     .map((x) => String(x || "").trim())
@@ -16,7 +24,7 @@ function normList(arr) {
 const IamUserSchema = new mongoose.Schema(
   {
     email: {
-      type: String,
+      type: String, 
       required: true,
       lowercase: true,
       trim: true,
@@ -27,9 +35,17 @@ const IamUserSchema = new mongoose.Schema(
       },
     },
 
-    name: { type: String, trim: true, default: "" },
+    name: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    active: { type: Boolean, default: true, index: true },
+    active: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
 
     provider: {
       type: String,
@@ -38,46 +54,112 @@ const IamUserSchema = new mongoose.Schema(
       index: true,
     },
 
-    passwordHash: { type: String, select: false, default: "" },
+    passwordHash: {
+      type: String,
+      select: false,
+      default: "",
+    },
 
-    mustChangePassword: { type: Boolean, default: false, index: true },
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
 
-    passwordChangedAt: { type: Date, default: null },
-    passwordExpiresAt: { type: Date, default: null, index: true },
+    passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
 
-    otpVerifiedAt: { type: Date, default: null, index: true },
+    passwordExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
 
-    tempPassHash: { type: String, select: false, default: "" },
-    tempPassExpiresAt: { type: Date, default: null, index: true },
-    tempPassUsedAt: { type: Date, default: null },
-    tempPassAttempts: { type: Number, default: 0 },
+    otpVerifiedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    tempPassHash: {
+      type: String,
+      select: false,
+      default: "",
+    },
+
+    tempPassExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    tempPassUsedAt: {
+      type: Date,
+      default: null,
+    },
+
+    tempPassAttempts: {
+      type: Number,
+      default: 0,
+    },
 
     roles: {
       type: [String],
       default: [],
       index: true,
-      set: normList,
+      set: normRoles,
     },
 
     perms: {
       type: [String],
       default: [],
-      set: normList,
+      set: normPerms,
     },
 
-    externalId: { type: String, trim: true, default: null },
-    legacySub: { type: String, trim: true, default: null },
+    externalId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
 
-    lastLoginAt: { type: Date, default: null },
-    lastLoginIp: { type: String, trim: true, default: "" },
+    legacySub: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastLoginIp: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
-  { timestamps: true, collection: "iamusers" }
+  {
+    timestamps: true,
+    collection: "iam_users",
+  }
 );
+
+/* =========================
+   Índices
+========================= */
 
 IamUserSchema.index({ email: 1 }, { unique: true });
 IamUserSchema.index({ createdAt: -1 });
-
 IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
 IamUserSchema.index({ legacySub: 1 }, { unique: true, sparse: true });
 
-export default mongoose.models.IamUser || mongoose.model("IamUser", IamUserSchema);
+/* =========================
+   Export seguro
+========================= */
+
+const IamUser = mongoose.models.IamUser || mongoose.model("IamUser", IamUserSchema);
+
+export default IamUser;

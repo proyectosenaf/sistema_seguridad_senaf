@@ -4,6 +4,7 @@ import { useLocation, useNavigate, Link } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
+import { getNavSectionsForMe } from "../config/navConfig.js";
 import {
   Menu,
   LogOut,
@@ -12,17 +13,7 @@ import {
   Plus,
   X,
   ArrowLeft,
-  DoorOpen,
-  Footprints,
-  AlertTriangle,
-  UsersRound,
-  NotebookPen,
-  ClipboardList,
-  ClipboardCheck,
-  ShieldCheck,
 } from "lucide-react";
-
-
 
 // ✅ usar el socket global (NO crear otro)
 import { socket } from "../lib/socket.js";
@@ -52,6 +43,43 @@ function useDismissOnOutside(open, refs, onClose) {
   }, [open, refs, onClose]);
 }
 
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function resolvePrincipal(auth) {
+  const raw = auth?.me || auth?.user || null;
+  if (!raw || typeof raw !== "object") return null;
+
+  const email =
+    normalizeEmail(raw.email) ||
+    normalizeEmail(raw.user?.email) ||
+    normalizeEmail(raw.profile?.email) ||
+    "";
+
+  if (email === "proyectosenaf@gmail.com") {
+    return {
+      ...raw,
+      email,
+      superadmin: true,
+      isSuperAdmin: true,
+      can:
+        raw.can && typeof raw.can === "object"
+          ? raw.can
+          : {
+              "nav.accesos": true,
+              "nav.rondas": true,
+              "nav.incidentes": true,
+              "nav.visitas": true,
+              "nav.bitacora": true,
+              "nav.iam": true,
+            },
+    };
+  }
+
+  return raw;
+}
+
 /* -------------------------
    PATH labels (robusto)
 ------------------------- */
@@ -64,7 +92,6 @@ function getPathLabel(pathname) {
   if (P.startsWith("/incidentes")) return "Gestión de Incidentes";
   if (P.startsWith("/visitas")) return "Control de Visitas";
   if (P.startsWith("/bitacora")) return "Bitácora Digital";
-  if (P.startsWith("/supervision")) return "Supervisión";
   if (P.startsWith("/iam")) return "Usuarios y Permisos";
 
   return P.replaceAll("/", "");
@@ -129,32 +156,26 @@ const fxModal =
   "bg-white/70 dark:bg-neutral-950/50 " +
   "backdrop-blur-2xl shadow-2xl p-4";
 
-/* -------------------------
-   Íconos de módulos
-------------------------- */
-const IconDoor = DoorOpen;
-const IconFootprints = Footprints;
-const IconVisitors = UsersRound;
-const IconEval = ClipboardCheck;
-const IconIAM = ShieldCheck;
-
-const MODULES = [
-  { to: "/accesos", label: "Control de Acceso", Icon: IconDoor },
-
-  // ✅ canónico: abrir directo scan
-  { to: "/rondasqr/scan", label: "Rondas de Vigilancia", Icon: IconFootprints },
-
-  { to: "/incidentes", label: "Gestión de Incidentes", Icon: AlertTriangle },
-  { to: "/visitas", label: "Control de Visitas", Icon: IconVisitors },
-  { to: "/bitacora", label: "Bitácora Digital", Icon: NotebookPen },
-  { to: "/supervision", label: "Supervisión", Icon: ClipboardList },
-  { to: "/iam/admin", label: "Usuarios y Permisos", Icon: IconIAM },
-];
-
 export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
-  const { user, logout, isAuthenticated } = useAuth();
+  const auth = useAuth();
+  const { user, logout, isAuthenticated } = auth;
+  const principal = React.useMemo(() => resolvePrincipal(auth), [auth]);
+
   const nav = useNavigate();
   const { pathname } = useLocation();
+
+  // ✅ módulos desde backend
+  const modules = React.useMemo(() => {
+    const secs = getNavSectionsForMe(principal) || [];
+
+    const order = ["accesos", "rondas", "incidentes", "visitas", "bitacora", "iam"];
+    const rank = (k) => {
+      const i = order.indexOf(k);
+      return i === -1 ? 999 : i;
+    };
+
+    return [...secs].sort((a, b) => rank(a.key) - rank(b.key));
+  }, [principal]);
 
   // -------- búsqueda --------
   const [q, setQ] = React.useState("");
@@ -174,10 +195,12 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   function runSearch() {
     const base = pathname.startsWith("/visitas")
       ? "/visitas"
-      : pathname.startsWith("/supervision")
-      ? "/supervision"
       : pathname.startsWith("/bitacora")
       ? "/bitacora"
+      : pathname.startsWith("/rondas")
+      ? "/rondas"
+      : pathname.startsWith("/accesos")
+      ? "/accesos"
       : "/incidentes";
 
     if (q.trim()) nav(`${base}?q=${encodeURIComponent(q.trim())}`);
@@ -337,6 +360,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         pos={quickPos}
         fxBtn={fxBtn}
         fxPopover={fxPopover}
+        modules={modules}
       />
 
       {/* Campana */}
@@ -456,7 +480,17 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
 
 /* ---------- Subcomponentes ---------- */
 
-function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPopover }) {
+function TopbarQuickMenu({
+  nav,
+  open,
+  toggle,
+  btnRef,
+  menuRef,
+  pos,
+  fxBtn,
+  fxPopover,
+  modules = [],
+}) {
   useDismissOnOutside(open, [btnRef, menuRef], () => open && toggle());
 
   return (
@@ -481,20 +515,27 @@ function TopbarQuickMenu({ nav, open, toggle, btnRef, menuRef, pos, fxBtn, fxPop
           role="menu"
         >
           <div className="px-3 py-2 text-xs font-semibold opacity-70">Abrir módulo</div>
-          {MODULES.map(({ to, label, Icon }) => (
-            <button
-              key={to}
-              onClick={() => {
-                nav(to);
-                toggle();
-              }}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/40 dark:hover:bg-white/10 text-left"
-              role="menuitem"
-            >
-              <Icon className="w-4 h-4 opacity-80" />
-              <span>{label}</span>
-            </button>
-          ))}
+
+          {!modules.length ? (
+            <div className="px-3 py-3 text-sm opacity-70">
+              No hay módulos habilitados para tu usuario.
+            </div>
+          ) : (
+            modules.map(({ path, label, icon: Icon, key }) => (
+              <button
+                key={key || path}
+                onClick={() => {
+                  nav(path);
+                  toggle();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/40 dark:hover:bg-white/10 text-left"
+                role="menuitem"
+              >
+                {Icon ? <Icon className="w-4 h-4 opacity-80" /> : null}
+                <span>{label}</span>
+              </button>
+            ))
+          )}
         </div>
       )}
     </>

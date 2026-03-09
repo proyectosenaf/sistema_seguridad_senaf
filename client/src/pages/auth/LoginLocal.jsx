@@ -47,18 +47,36 @@ function stashReturnTo(returnTo) {
 function humanLoginError(codeOrMsg) {
   const s = String(codeOrMsg || "").toLowerCase();
 
-  if (s.includes("user_not_found"))
+  if (s.includes("user_not_found")) {
     return "No existe una cuenta con ese correo. Regístrate en la pestaña de registro.";
-  if (s.includes("invalid_credentials"))
+  }
+  if (s.includes("invalid_credentials")) {
     return "Credenciales inválidas. Revisa correo y contraseña.";
-  if (s.includes("password_not_set"))
+  }
+  if (s.includes("password_not_set") || s.includes("password_not_configured")) {
     return "Tu usuario no tiene contraseña configurada. Contacta al administrador.";
-  if (s.includes("user_inactive"))
+  }
+  if (s.includes("user_inactive")) {
     return "Tu usuario está inactivo. Contacta al administrador.";
-  if (s.includes("not_local_user")) return "Usuario no permitido para login local.";
-  if (s.includes("employee_otp_disabled")) return "OTP deshabilitado por configuración.";
-  if (s.includes("otp_resend_cooldown")) return "Espera unos segundos y vuelve a intentar.";
-  if (s.includes("otp_required")) return "Debes validar el código OTP para continuar.";
+  }
+  if (s.includes("not_local_user")) {
+    return "Usuario no permitido para login local.";
+  }
+  if (s.includes("employee_otp_disabled")) {
+    return "OTP deshabilitado por configuración.";
+  }
+  if (s.includes("otp_resend_cooldown")) {
+    return "Espera unos segundos y vuelve a intentar.";
+  }
+  if (s.includes("otp_required")) {
+    return "Debes validar el código OTP para continuar.";
+  }
+  if (s.includes("forbidden")) {
+    return "Acceso denegado para este usuario. Revisa su configuración.";
+  }
+  if (s.includes("network error")) {
+    return "Error de conexión con el servidor.";
+  }
 
   return codeOrMsg || "Login fallido.";
 }
@@ -71,8 +89,9 @@ function humanRegisterError(codeOrMsg) {
   if (s.includes("password_required")) return "Ingresa una contraseña.";
   if (s.includes("password_too_short")) return "La contraseña debe tener al menos 8 caracteres.";
   if (s.includes("email_invalid")) return "Correo inválido. Revisa el formato.";
-  if (s.includes("email_taken") || s.includes("user_exists"))
+  if (s.includes("email_taken") || s.includes("user_exists")) {
     return "Ya existe una cuenta con ese correo. Inicia sesión.";
+  }
   if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
 
   return codeOrMsg || "No se pudo completar el registro.";
@@ -91,8 +110,9 @@ function passwordPolicyErrorLettersNumbersSpecial(pw) {
   if (s.length < 8) return "La contraseña debe tener al menos 8 caracteres.";
   if (!/[A-Za-z]/.test(s)) return "La contraseña debe incluir al menos 1 letra.";
   if (!/[0-9]/.test(s)) return "La contraseña debe incluir al menos 1 número.";
-  if (!/[^A-Za-z0-9]/.test(s))
+  if (!/[^A-Za-z0-9]/.test(s)) {
     return "La contraseña debe incluir al menos 1 carácter especial (ej: !@#$%).";
+  }
 
   return "";
 }
@@ -104,6 +124,29 @@ function setVisitorHint(isVisitor) {
     if (isVisitor) localStorage.setItem(VISITOR_HINT_KEY, "1");
     else localStorage.removeItem(VISITOR_HINT_KEY);
   } catch {}
+}
+
+function clearOtpContext() {
+  try {
+    localStorage.removeItem("senaf_otp_email");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_mustChange");
+  } catch {}
+}
+
+function readTokenFromPayload(data) {
+  return String(
+    data?.token ||
+      data?.accessToken ||
+      data?.jwt ||
+      data?.data?.token ||
+      data?.data?.accessToken ||
+      ""
+  ).trim();
 }
 
 export default function LoginLocal() {
@@ -159,11 +202,16 @@ export default function LoginLocal() {
     const base = String(API_BASE || "http://localhost:4000/api")
       .trim()
       .replace(/\/$/, "");
+
     return axios.create({
       baseURL: base,
       withCredentials: false,
       timeout: 30000,
-      headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+      headers: {
+        "Cache-Control": "no-store",
+        Pragma: "no-cache",
+        "Content-Type": "application/json",
+      },
     });
   }, []);
 
@@ -174,35 +222,44 @@ export default function LoginLocal() {
     setError("");
     setInfo("");
 
-    if (!emailNorm || !emailNorm.includes("@")) return setError("Ingresa tu correo (email).");
-    if (!password) return setError("Ingresa tu contraseña.");
+    if (!emailNorm || !emailNorm.includes("@")) {
+      return setError("Ingresa tu correo (email).");
+    }
+    if (!password) {
+      return setError("Ingresa tu contraseña.");
+    }
 
     const returnTo = consumeReturnTo(loc.search);
 
     try {
       setSubmitting(true);
 
-      // evita Bearer viejo
+      // limpia residuos de sesión previa
       clearToken();
+      clearOtpContext();
       setVisitorHint(false);
 
-      // pega SIEMPRE a /public/v1/auth/login-otp
+      // ✅ baseURL ya trae /api, por eso aquí va /public/...
       const res = await publicAuth.post("/public/v1/auth/login-otp", {
         email: emailNorm,
         password: String(password || ""),
       });
 
       const data = res?.data || {};
-      if (data?.ok === false) return setError(humanLoginError(data?.error || data?.message));
 
-      if (data?.otpRequired === false && data?.token) {
-        const tkn = String(data.token || "").trim();
-        setToken(tkn);
+      if (data?.ok === false) {
+        return setError(humanLoginError(data?.error || data?.message));
+      }
 
-        // ✅ interno: nunca debe quedar hint visitante
+      const directToken = readTokenFromPayload(data);
+
+      if (data?.otpRequired === false && directToken) {
+        setToken(directToken);
+
+        // interno: nunca debe quedar hint visitante
         setVisitorHint(false);
 
-        await auth.login({ email: emailNorm }, tkn);
+        await auth.login({ email: emailNorm }, directToken);
 
         if (data?.mustChangePassword) {
           navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
@@ -216,7 +273,6 @@ export default function LoginLocal() {
       }
 
       if (data?.otpRequired) {
-        // en login interno, el hint se deja limpio
         setVisitorHint(false);
 
         stashOtpContext({
@@ -225,6 +281,7 @@ export default function LoginLocal() {
           returnTo,
           mustChangePassword: !!data?.mustChangePassword,
         });
+
         navigate("/otp", { replace: true });
         return;
       }
@@ -233,13 +290,17 @@ export default function LoginLocal() {
     } catch (err) {
       const d = err?.response?.data;
       const msg =
-        (d && typeof d === "object" && (d.error || d.message)) ||
+        (d && typeof d === "object" && (d.error || d.message || d.details)) ||
         err?.message ||
         "Error de conexión";
+
       setError(humanLoginError(msg));
 
       const st = err?.response?.status || err?.status;
-      if (st === 401 || st === 403) clearToken();
+      if (st === 401 || st === 403) {
+        clearToken();
+        setVisitorHint(false);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -254,13 +315,17 @@ export default function LoginLocal() {
 
     const name = String(fullName || "").trim();
     if (!name) return setError("Ingresa tu nombre.");
-    if (!visitorEmailNorm || !visitorEmailNorm.includes("@")) return setError("Ingresa tu correo.");
+    if (!visitorEmailNorm || !visitorEmailNorm.includes("@")) {
+      return setError("Ingresa tu correo.");
+    }
 
     if (!vPassword) return setError("Ingresa tu contraseña.");
     const policyMsg = passwordPolicyErrorLettersNumbersSpecial(vPassword);
     if (policyMsg) return setError(policyMsg);
 
-    if (String(vPassword) !== String(vPassword2)) return setError("Las contraseñas no coinciden.");
+    if (String(vPassword) !== String(vPassword2)) {
+      return setError("Las contraseñas no coinciden.");
+    }
 
     const returnTo = readReturnTo(loc.search);
     stashReturnTo(returnTo);
@@ -268,6 +333,7 @@ export default function LoginLocal() {
     try {
       setSubmitting(true);
       clearToken();
+      clearOtpContext();
 
       const res = await api.post("/iam/v1/auth/register-visitor", {
         name,
@@ -276,17 +342,19 @@ export default function LoginLocal() {
       });
 
       const data = res?.data || {};
-      if (data?.ok === false) return setError(humanRegisterError(data?.error || data?.message));
+      if (data?.ok === false) {
+        return setError(humanRegisterError(data?.error || data?.message));
+      }
 
-      // ✅ visitante: activar hint SIEMPRE (para esconder menú/footer/Chat)
+      // ✅ visitante: activar hint SIEMPRE
       setVisitorHint(true);
 
-      if (data?.token) {
-        const tkn = String(data.token || "").trim();
-        setToken(tkn);
-        await auth.login({ email: visitorEmailNorm }, tkn);
+      const directToken = readTokenFromPayload(data);
 
-        // visitante SIEMPRE a /visitas/agenda (aunque returnTo venga raro)
+      if (directToken) {
+        setToken(directToken);
+        await auth.login({ email: visitorEmailNorm }, directToken);
+
         navigate("/visitas/agenda", { replace: true });
         return;
       }
@@ -312,9 +380,10 @@ export default function LoginLocal() {
     } catch (err) {
       const d = err?.response?.data;
       const msg =
-        (d && typeof d === "object" && (d.error || d.message)) ||
+        (d && typeof d === "object" && (d.error || d.message || d.details)) ||
         err?.message ||
         "Error registrando visitante";
+
       setError(humanRegisterError(msg));
       setVisitorHint(false);
     } finally {

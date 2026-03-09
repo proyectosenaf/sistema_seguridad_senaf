@@ -1,5 +1,6 @@
 // client/src/modules/rondasqr/admin/QrRepoPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 
 /* ----- estilos básicos reutilizados ----- */
@@ -34,6 +35,8 @@ const btnDangerSmall =
  * Usa rondasqrApi.listQrRepo(), pointQrPngUrl(), pointQrPdfUrl(), rotatePointQr().
  */
 export default function QrRepoPage() {
+  const navigate = useNavigate();
+
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [siteId, setSiteId] = useState("");
@@ -42,74 +45,117 @@ export default function QrRepoPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  const loadRepo = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg("");
+
+    try {
+      const res = await api.listQrRepo({
+        siteId: siteId || undefined,
+        roundId: roundId || undefined,
+      });
+      setItems(Array.isArray(res?.items) ? res.items : []);
+    } catch (e) {
+      console.error("[QrRepoPage] listQrRepo error", e);
+      setItems([]);
+      setErrorMsg("No se pudo cargar el repositorio de QRs.");
+    } finally {
+      setLoading(false);
+    }
+  }, [siteId, roundId]);
+
   // cargar sitios al montar
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
       try {
+        setErrorMsg("");
         const res = await api.listSites();
-        setSites(res?.items || []);
+        if (!mounted) return;
+        setSites(Array.isArray(res?.items) ? res.items : []);
       } catch (e) {
         console.error("[QrRepoPage] listSites error", e);
+        if (!mounted) return;
+        setSites([]);
         setErrorMsg("No se pudieron cargar los sitios.");
       }
     })();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // cargar rondas cuando cambia siteId
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
       if (!siteId) {
         setRounds([]);
         setRoundId("");
         return;
       }
+
       try {
+        setErrorMsg("");
         const res = await api.listRounds(siteId);
-        setRounds(res?.items || []);
+        if (!mounted) return;
+
+        const nextRounds = Array.isArray(res?.items) ? res.items : [];
+        setRounds(nextRounds);
+
+        // si la ronda actual ya no pertenece al sitio seleccionado, reset
+        const exists = nextRounds.some((r) => String(r?._id || "") === String(roundId || ""));
+        if (!exists) setRoundId("");
       } catch (e) {
         console.error("[QrRepoPage] listRounds error", e);
+        if (!mounted) return;
+        setRounds([]);
+        setRoundId("");
         setErrorMsg("No se pudieron cargar las rondas.");
       }
     })();
-  }, [siteId]);
+
+    return () => {
+      mounted = false;
+    };
+  }, [siteId, roundId]);
 
   // cargar repositorio cuando cambia siteId o roundId
   useEffect(() => {
     loadRepo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId, roundId]);
-
-  async function loadRepo() {
-    setLoading(true);
-    setErrorMsg("");
-    try {
-      const res = await api.listQrRepo({
-        siteId: siteId || undefined,
-        roundId: roundId || undefined,
-      });
-      setItems(res?.items || []);
-    } catch (e) {
-      console.error("[QrRepoPage] listQrRepo error", e);
-      setErrorMsg("No se pudo cargar el repositorio de QRs.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  }, [loadRepo]);
 
   function openPng(p) {
-    const url = api.pointQrPngUrl(p.id);
+    const pointId = p?.id || p?._id;
+    if (!pointId) return;
+
+    const url = api.pointQrPngUrl(pointId);
     if (url) window.open(url, "_blank", "noreferrer");
   }
 
   function openPdf(p) {
-    const url = api.pointQrPdfUrl(p.id);
+    const pointId = p?.id || p?._id;
+    if (!pointId) return;
+
+    const url = api.pointQrPdfUrl(pointId);
     if (url) window.open(url, "_blank", "noreferrer");
   }
 
   async function rotate(p) {
-    if (!window.confirm(`¿Rotar el código QR del punto "${p.name}"?`)) return;
+    const pointId = p?.id || p?._id;
+    if (!pointId) {
+      alert("No se encontró el identificador del punto.");
+      return;
+    }
+
+    if (!window.confirm(`¿Rotar el código QR del punto "${p?.name || "—"}"?`)) return;
+
     try {
-      await api.rotatePointQr(p.id);
+      setErrorMsg("");
+      await api.rotatePointQr(pointId);
       await loadRepo();
     } catch (e) {
       console.error("[QrRepoPage] rotatePointQr error", e);
@@ -118,7 +164,7 @@ export default function QrRepoPage() {
   }
 
   function goBack() {
-    if (window.history.length > 1) window.history.back();
+    navigate("/rondasqr/admin");
   }
 
   return (
@@ -135,7 +181,7 @@ export default function QrRepoPage() {
           </button>
           <h1 className="text-2xl font-semibold">Repositorio de códigos QR</h1>
           <p className="text-sm text-slate-500 dark:text-white/60">
-            Consulta e imprime los códigos QR de los puntos de ronda. 
+            Consulta e imprime los códigos QR de los puntos de ronda.
           </p>
         </div>
       </div>
@@ -159,6 +205,7 @@ export default function QrRepoPage() {
               ))}
             </select>
           </div>
+
           <div>
             <label className="block text-xs font-medium mb-1">Ronda</label>
             <select
@@ -174,6 +221,7 @@ export default function QrRepoPage() {
                 </option>
               ))}
             </select>
+
             {!siteId && (
               <p className="mt-1 text-[11px] text-slate-400">
                 Primero selecciona un sitio para ver sus rondas.
@@ -214,10 +262,11 @@ export default function QrRepoPage() {
                 <th className="text-right px-3 py-2">Acciones</th>
               </tr>
             </thead>
+
             <tbody>
               {items.map((p) => (
                 <tr
-                  key={p.id}
+                  key={p.id || p._id || p.qr || p.name}
                   className="border-b border-slate-200/80 dark:border-white/10"
                 >
                   <td className="px-3 py-2 text-xs">
@@ -228,6 +277,7 @@ export default function QrRepoPage() {
                       </div>
                     )}
                   </td>
+
                   <td className="px-3 py-2 text-xs">
                     <div className="font-medium">{p.roundName || "—"}</div>
                     {p.roundCode && (
@@ -236,15 +286,19 @@ export default function QrRepoPage() {
                       </div>
                     )}
                   </td>
+
                   <td className="px-3 py-2 w-16 text-center">
                     {typeof p.order === "number" ? p.order : "—"}
                   </td>
-                  <td className="px-3 py-2">{p.name}</td>
+
+                  <td className="px-3 py-2">{p.name || "—"}</td>
+
                   <td className="px-3 py-2">
                     <code className="text-xs bg-slate-100 dark:bg-white/10 px-1.5 py-0.5 rounded">
                       {p.qr || "—"}
                     </code>
                   </td>
+
                   <td className="px-3 py-2">
                     <span
                       className={
@@ -257,6 +311,7 @@ export default function QrRepoPage() {
                       {p.active ? "Activo" : "Inactivo"}
                     </span>
                   </td>
+
                   <td className="px-3 py-2 text-right space-x-2">
                     <button
                       type="button"
@@ -265,6 +320,7 @@ export default function QrRepoPage() {
                     >
                       PNG
                     </button>
+
                     <button
                       type="button"
                       onClick={() => openPdf(p)}
@@ -272,6 +328,7 @@ export default function QrRepoPage() {
                     >
                       PDF
                     </button>
+
                     <button
                       type="button"
                       onClick={() => rotate(p)}
@@ -282,6 +339,7 @@ export default function QrRepoPage() {
                   </td>
                 </tr>
               ))}
+
               {!items.length && !loading && (
                 <tr>
                   <td

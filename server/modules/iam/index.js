@@ -1,4 +1,4 @@
-// modules/iam/index.js
+// server/modules/iam/index.js
 import express from "express";
 import fileUpload from "express-fileupload";
 
@@ -42,6 +42,7 @@ export async function registerIAMModule({
     next();
   });
 
+  // OPTIONS preflight rápido
   router.use((req, res, next) => {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -125,12 +126,8 @@ export async function registerIAMModule({
   app.use(basePath, router);
 
   if (enableLegacyRedirects) {
-    app.use("/api/iam", (req, res) =>
-      res.redirect(307, `${basePath}${req.url}`)
-    );
-    app.use("/iam/v1", (req, res) =>
-      res.redirect(307, `${basePath}${req.url}`)
-    );
+    app.use("/api/iam", (req, res) => res.redirect(307, `${basePath}${req.url}`));
+    app.use("/iam/v1", (req, res) => res.redirect(307, `${basePath}${req.url}`));
   }
 
   console.log(`[IAM] módulo montado en ${basePath}`);

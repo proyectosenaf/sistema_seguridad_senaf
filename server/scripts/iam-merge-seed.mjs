@@ -1,6 +1,6 @@
 // scripts/iam-merge-seed.mjs
 import { MongoClient } from "mongodb";
-import { permisosKeys, rolesKeys } from "../client/src/iam/catalog/perms.js";
+import { permisosKeys, rolesKeys } from "../server/modules/iam/catalog/perms.catalog.js";
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || "senafseg";

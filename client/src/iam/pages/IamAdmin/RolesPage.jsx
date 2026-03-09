@@ -23,6 +23,21 @@ function roleLabel(r) {
   return name || code || "(sin nombre)";
 }
 
+function asListPayload(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  return x.items || x.roles || x.data || [];
+}
+
+function normalizePermKey(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normalizePermList(list = []) {
+  const arr = Array.isArray(list) ? list : [];
+  return [...new Set(arr.map(normalizePermKey).filter(Boolean))];
+}
+
 export default function RolesPage() {
   const [roles, setRoles] = useState([]);
   const [roleId, setRoleId] = useState(null);
@@ -36,17 +51,19 @@ export default function RolesPage() {
 
   async function loadAll() {
     const rRoles = await iamApi.listRoles();
-    const items = rRoles?.items || rRoles?.roles || [];
+    const items = asListPayload(rRoles);
     setRoles(items);
 
-    // rol por defecto: si existe "administrador" por code/name, si no el primero
-    const adminId =
+    // rol por defecto: admin/administrador si existe, si no el primero
+    const pick =
+      items.find((x) => String(x.code || "").toLowerCase() === "admin")?._id ||
+      items.find((x) => String(x.name || "").toLowerCase() === "admin")?._id ||
       items.find((x) => String(x.code || "").toLowerCase() === "administrador")?._id ||
       items.find((x) => String(x.name || "").toLowerCase() === "administrador")?._id ||
       items[0]?._id ||
       null;
 
-    setRoleId((v) => v || adminId);
+    setRoleId((v) => v || pick);
   }
 
   async function loadPermsForRole(id) {
@@ -54,11 +71,46 @@ export default function RolesPage() {
       setPermItems([]);
       return;
     }
+
     setPermLoading(true);
     try {
-      const r = await iamApi.listPermsForRole(id);
-      const items = Array.isArray(r?.items) ? r.items : [];
-      setPermItems(items);
+      const [rolePermsRes, allPermsRes] = await Promise.all([
+        iamApi.listPermsForRole(id),
+        iamApi.listPerms({}),
+      ]);
+
+      const selectedKeys = normalizePermList(
+        rolePermsRes?.permissionKeys ||
+          rolePermsRes?.permissions ||
+          rolePermsRes?.items ||
+          []
+      );
+
+      const selectedSet = new Set(selectedKeys);
+
+      const allPerms = asListPayload(allPermsRes)
+        .map((p) => ({
+          ...p,
+          key: normalizePermKey(p?.key),
+          label: String(p?.label || "").trim(),
+          group: String(p?.group || "general").trim(),
+          order: Number.isFinite(Number(p?.order)) ? Number(p.order) : 0,
+          selected: selectedSet.has(normalizePermKey(p?.key)),
+        }))
+        .filter((p) => p.key);
+
+      allPerms.sort((a, b) => {
+        const g = String(a.group || "").localeCompare(String(b.group || ""));
+        if (g !== 0) return g;
+
+        const ao = Number(a.order || 0);
+        const bo = Number(b.order || 0);
+        if (ao !== bo) return ao - bo;
+
+        return String(a.key || "").localeCompare(String(b.key || ""));
+      });
+
+      setPermItems(allPerms);
     } catch (e) {
       setPermItems([]);
       setMsg(e?.message || "Error al cargar permisos");
@@ -114,12 +166,26 @@ export default function RolesPage() {
     setWorking(true);
     setMsg("");
     try {
-      await iamApi.updateRole(selected._id, {
-        name: selected.name,
-        description: selected.description,
-      });
-      setMsg("Cambios guardados.");
+      const permissions = normalizePermList(
+        permItems.filter((p) => p.selected).map((p) => p.key)
+      );
+
+      if (typeof iamApi.updateRolePermissions === "function") {
+        await iamApi.updateRolePermissions(selected._id, { permissions });
+      } else if (typeof iamApi.setRolePerms === "function") {
+        await iamApi.setRolePerms(selected._id, permissions);
+      } else {
+        await iamApi.updateRole(selected._id, {
+          name: selected.name,
+          description: selected.description,
+          permissions,
+        });
+      }
+
       await loadAll();
+      await loadPermsForRole(selected._id);
+
+      setMsg("Cambios guardados.");
     } catch (e) {
       setMsg(e?.message || "Error al guardar");
     } finally {
@@ -143,7 +209,7 @@ export default function RolesPage() {
       setWorking(true);
       await iamApi.createRole({
         code: code || undefined,
-        key: code || undefined, // para backends que piden "key"
+        key: code || undefined, // compat
         name,
         description: name,
       });
@@ -174,6 +240,8 @@ export default function RolesPage() {
       });
 
       await loadAll();
+      await loadPermsForRole(selected._id);
+
       setMsg("Rol actualizado.");
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
@@ -353,7 +421,6 @@ export default function RolesPage() {
             </div>
           ) : (
             <>
-              {/* Encabezado suave */}
               <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-50/80 to-indigo-50/80 dark:from-slate-950/70 dark:to-slate-900/80 border-b border-slate-200/70 dark:border-slate-800">
                 <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                   Total permisos
@@ -363,7 +430,6 @@ export default function RolesPage() {
                 </div>
               </div>
 
-              {/* Lista de grupos y permisos */}
               <div className="divide-y divide-slate-200/70 dark:divide-slate-800">
                 {rolePermSummary.byGroup.map((g) => (
                   <div key={g.group} className="p-4 sm:p-5">
@@ -379,7 +445,6 @@ export default function RolesPage() {
                       </span>
                     </div>
 
-                    {/* Chips de permisos */}
                     <ul className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                       {g.items.map((it) => (
                         <li

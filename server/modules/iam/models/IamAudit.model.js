@@ -6,15 +6,7 @@ const IamAuditSchema = new Schema(
   {
     action: {
       type: String,
-      enum: [
-        "create",
-        "update",
-        "delete",
-        "activate",
-        "deactivate",
-        "enable",   // compat (opcional)
-        "disable",  // compat (opcional)
-      ],
+      enum: ["create", "update", "delete", "activate", "deactivate"],
       index: true,
       required: true,
     },
@@ -24,15 +16,11 @@ const IamAuditSchema = new Schema(
       index: true,
       required: true,
     },
-    entityId: { type: String, index: true },
-
-    actorId: { type: String, index: true, sparse: true },
+    entityId: { type: String, index: true, default: null },
+    actorId: { type: String, index: true, sparse: true, default: null },
     actorEmail: { type: String, index: true, default: "" },
-
     before: Schema.Types.Mixed,
     after: Schema.Types.Mixed,
-
-    // ✅ para guardar ip/ua/path/method
     meta: {
       ip: { type: String, default: null },
       ua: { type: String, default: null },
@@ -41,20 +29,21 @@ const IamAuditSchema = new Schema(
     },
   },
   {
-    timestamps: true, // createdAt / updatedAt
+    timestamps: true,
     versionKey: false,
     minimize: false,
   }
 );
 
-/* Índices */
+// índices...
 IamAuditSchema.index({ createdAt: -1 });
 IamAuditSchema.index({ entity: 1, action: 1, createdAt: -1 });
 IamAuditSchema.index({ actorEmail: 1, createdAt: -1 });
 IamAuditSchema.index({ entity: 1, createdAt: -1 });
 IamAuditSchema.index({ action: 1, createdAt: -1 });
 
-// TTL opcional
-// IamAuditSchema.index({ createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
+// ✅ fuerza a "iam_audit" sí o sí
+const IamAudit =
+  mongoose.models.IamAudit || mongoose.model("IamAudit", IamAuditSchema, "iam_audit");
 
-export default mongoose.model("IamAudit", IamAuditSchema);
+export default IamAudit;

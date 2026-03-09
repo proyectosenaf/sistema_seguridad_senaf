@@ -72,7 +72,13 @@ const RqIncidentSchema = new Schema(
     stepsAtAlert: { type: Number, default: null }, // pasos al disparar
     fallDetected: { type: Boolean, default: false }, // para type=fall
   },
-  { timestamps: true, collection: "rq_incidents" }
+  {
+    timestamps: true,
+    // Puedes dejarlo, pero la fijación real se hace abajo con el 3er parámetro
+    collection: "rq_incidents",
+    versionKey: false,
+    minimize: false,
+  }
 );
 
 /* ──────────────── Índices (sin duplicar) ──────────────── */
@@ -96,8 +102,10 @@ RqIncidentSchema.set("toJSON", {
   },
 });
 
-/* ──────────────── Registro seguro ──────────────── */
+/* ──────────────── Registro seguro (colección FIJA) ──────────────── */
+// ✅ El 3er parámetro evita que Mongoose cree/uses "rqincidents"
 const RqIncident =
-  mongoose.models.RqIncident || mongoose.model("RqIncident", RqIncidentSchema);
+  mongoose.models.RqIncident ||
+  mongoose.model("RqIncident", RqIncidentSchema, "rq_incidents");
 
 export default RqIncident;

@@ -25,7 +25,7 @@ function PermissionRow({ item, roles, gridCols, flags, dirty, onToggle, onDelete
         <div key={r._id} className="flex items-center justify-center">
           <RoleCheck
             checked={!!flags[r._id]}
-            onChange={() => onToggle(item.key, r._id)}
+            onChange={() => onToggle(r._id, item.key)}
             label={`${r.name || r.code} puede ${item.label}`}
           />
         </div>
@@ -56,4 +56,4 @@ export default memo(PermissionRow, (prev, next) => {
     if (Boolean(p[r._id]) !== Boolean(n[r._id])) return false;
   }
   return true;
-});
+}); 

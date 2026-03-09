@@ -1,3 +1,4 @@
+// server/modules/iam/models/IamPermission.model.js
 import mongoose from "mongoose";
 
 const schema = new mongoose.Schema(
@@ -7,47 +8,37 @@ const schema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      lowercase: true, // 🔥 siempre en minúsculas
+      lowercase: true,
     },
 
     label: {
       type: String,
       required: true,
-      trim: true, // ej: "Crear usuarios"
+      trim: true,
     },
 
     group: {
       type: String,
       required: true,
       trim: true,
-      lowercase: true, // 🔥 para agrupar sin inconsistencias
+      lowercase: true,
     },
 
     order: {
       type: Number,
-      default: 0, // orden relativo dentro del grupo
+      default: 0,
     },
   },
   {
     timestamps: true,
-    collection: "iam_permissions", // 👌 nombre correcto
+    collection: "iam_permissions",  
   }
 );
 
-/* -------------------------
-   ÍNDICES
-------------------------- */
-
-// Orden dentro de cada grupo
+// Índice para orden por grupo
 schema.index({ group: 1, order: 1 });
 
-// NO declaramos índice para "key":
-// unique:true ya genera uno automáticamente ✔
-
-/* -------------------------
-   NORMALIZACIONES
-------------------------- */
-
+// Normaliza strings
 schema.pre("save", function (next) {
   if (this.isModified("key") && typeof this.key === "string") {
     this.key = this.key.trim().toLowerCase();
@@ -55,22 +46,39 @@ schema.pre("save", function (next) {
   if (this.isModified("group") && typeof this.group === "string") {
     this.group = this.group.trim().toLowerCase();
   }
+  if (this.isModified("label") && typeof this.label === "string") {
+    this.label = this.label.trim();
+  }
+  if (this.isModified("order")) {
+    const n = Number(this.order);
+    this.order = Number.isFinite(n) ? Math.trunc(n) : 0;
+  }
   next();
 });
 
 schema.pre("findOneAndUpdate", function (next) {
-  const u = this.getUpdate();
+  const u = this.getUpdate() || {};
+  const setObj = u.$set && typeof u.$set === "object" ? u.$set : u;
 
-  if (u?.key && typeof u.key === "string") {
-    u.key = u.key.trim().toLowerCase();
+  if (setObj.key && typeof setObj.key === "string") {
+    setObj.key = setObj.key.trim().toLowerCase();
+  }
+  if (setObj.group && typeof setObj.group === "string") {
+    setObj.group = setObj.group.trim().toLowerCase();
+  }
+  if (setObj.label && typeof setObj.label === "string") {
+    setObj.label = setObj.label.trim();
+  }
+  if (setObj.order != null) {
+    const n = Number(setObj.order);
+    setObj.order = Number.isFinite(n) ? Math.trunc(n) : 0;
   }
 
-  if (u?.group && typeof u.group === "string") {
-    u.group = u.group.trim().toLowerCase();
-  }
+  if (u.$set) u.$set = setObj;
 
   this.setUpdate(u);
   next();
 });
 
-export default mongoose.model("IamPermission", schema);
+export default mongoose.models.IamPermission ||
+  mongoose.model("IamPermission", schema);
