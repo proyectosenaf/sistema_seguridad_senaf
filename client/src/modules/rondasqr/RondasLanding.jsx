@@ -86,7 +86,7 @@ export default function RondasLanding({ me }) {
       list.push({
         key: "admin",
         title: "Administración",
-        subtitle: "Sitios, rondas, puntos, planes y asignaciones.",
+        subtitle: "Ciudades, rondas, puntos, planes y asignaciones.",
         Icon: Settings2,
         go: "/rondasqr/admin",
       });

@@ -132,7 +132,7 @@ export default function AdminHub({ initialTab = "sites" }) {
 
   const tabs = useMemo(
     () => [
-      { k: "sites", label: "Sitios" },
+      { k: "sites", label: "Ciudad" },
       { k: "rounds", label: "Rondas" },
       { k: "points", label: "Puntos" },
       { k: "plans", label: "Planes" },
@@ -281,8 +281,8 @@ function SitesTab() {
 
   return (
     <Section
-      title="Sitios"
-      subtitle="Crea y elimina sitios. Luego podrás crear rondas y puntos por sitio."
+      title="Ciudad"
+      subtitle="Crea y elimina ciudades. Luego podrás crear rondas y puntos por ciudad."
       actions={
         <button type="button" onClick={load} className={fxBtnPrimary}>
           Actualizar
@@ -320,7 +320,7 @@ function SitesTab() {
             {!rows.length && (
               <tr>
                 <td className={"px-4 py-4 " + fxTextMuted} colSpan={2}>
-                  No hay sitios aún.
+                  No hay ciudades aún.
                 </td>
               </tr>
             )}

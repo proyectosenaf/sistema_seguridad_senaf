@@ -1,4 +1,4 @@
-// guard/PanicButton.jsx
+// client/src/modules/rondasqr/guard/PanicButton.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { rondasqrApi } from "../api/rondasqrApi.js";
@@ -17,7 +17,11 @@ export default function PanicButton() {
       if (typeof navigator !== "undefined" && "geolocation" in navigator) {
         gps = await new Promise((resolve) => {
           navigator.geolocation.getCurrentPosition(
-            (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+            (p) =>
+              resolve({
+                lat: Number(p.coords.latitude),
+                lon: Number(p.coords.longitude),
+              }),
             () => resolve(null),
             { enableHighAccuracy: true, timeout: 5000 }
           );
@@ -25,11 +29,17 @@ export default function PanicButton() {
       }
 
       await rondasqrApi.panic(gps);
+
       alert("🚨 Alerta de pánico enviada.");
       navigate("/rondasqr/scan", { replace: true });
     } catch (e) {
       console.error("[PanicButton] panic error:", e?.message || e);
-      alert(e?.payload?.message || e?.message || "No se pudo enviar la alerta de pánico.");
+      alert(
+        e?.payload?.message ||
+          e?.payload?.error ||
+          e?.message ||
+          "No se pudo enviar la alerta de pánico."
+      );
     } finally {
       setSending(false);
     }

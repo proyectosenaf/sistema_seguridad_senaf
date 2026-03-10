@@ -46,8 +46,8 @@
     "rondasqr.checkpoints.read": "Rondas QR • Puntos de control (ver)",
     "rondasqr.checkpoints.write": "Rondas QR • Puntos de control (crear/editar/eliminar)",
 
-    "rondasqr.sites.read": "Rondas QR • Sitios (ver)",
-    "rondasqr.sites.write": "Rondas QR • Sitios (crear/editar/eliminar)",
+    "rondasqr.sites.read": "Rondas QR • Ciudades (ver)",
+    "rondasqr.sites.write": "Rondas QR • Ciudades (crear/editar/eliminar)",
 
     "rondasqr.rounds.read": "Rondas QR • Rondas (ver)",
     "rondasqr.rounds.write": "Rondas QR • Rondas (crear/editar/eliminar)",
@@ -206,8 +206,8 @@
     "rondasqr.checkpoints.read": "Rondas QR • Puntos de control (ver)",
     "rondasqr.checkpoints.write": "Rondas QR • Puntos de control (crear/editar/eliminar)",
 
-    "rondasqr.sites.read": "Rondas QR • Sitios (ver)",
-    "rondasqr.sites.write": "Rondas QR • Sitios (crear/editar/eliminar)",
+    "rondasqr.sites.read": "Rondas QR • Ciudades (ver)",
+    "rondasqr.sites.write": "Rondas QR • Ciudades (crear/editar/eliminar)",
 
     "rondasqr.rounds.read": "Rondas QR • Rondas (ver)",
     "rondasqr.rounds.write": "Rondas QR • Rondas (crear/editar/eliminar)",

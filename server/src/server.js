@@ -11,6 +11,7 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
+
 // Importando el middleware para forzar cambio de contraseña
 import forcePasswordChange from "./middleware/forcePasswordChange.js";
 // (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo)
@@ -355,6 +356,8 @@ app.use("/chat", chatRoutes);
 const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
 const pingCheckinHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
+console.log("[routes] mount rondasqr -> /api/rondasqr/v1 y /rondasqr/v1");
+
 // Con /api
 app.get("/api/rondasqr/v1/ping", pingHandler);
 app.get("/api/rondasqr/v1/checkin/ping", pingCheckinHandler);
@@ -401,6 +404,27 @@ app.use((err, _req, res, _next) => {
   });
 });
 
+/* ───────────────────── 404 específico QR admin ───────────────────── */
+
+app.use("/api/rondasqr/v1/admin", (req, res, next) => {
+  if (/^\/points\/[^/]+\/qr\/?$/.test(req.path)) {
+    console.warn("[404][rondasqr-admin-qr]", {
+      method: req.method,
+      path: req.originalUrl,
+    });
+
+    return res.status(404).json({
+      ok: false,
+      error: "Not implemented",
+      method: req.method,
+      path: req.originalUrl,
+      hint: "La ruta DELETE /admin/points/:id/qr no está siendo alcanzada en el backend activo.",
+    });
+  }
+
+  return next();
+});
+
 /* ─────────────────────────── 404 final ────────────────────────── */
 /**
  * ✅ Mejora: devuelve ruta y método para que identifiques rápido qué endpoint falta.
@@ -423,7 +447,7 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`[io] path: ${io?.opts?.path || "/socket.io"}`);
 });
 
-/* ───────────────────────── Socket.IO ──────────────────────────── */
+ /* ───────────────────────── Socket.IO ──────────────────────────── */
 
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);

@@ -1,14 +1,30 @@
 // client/src/modules/rondasqr/admin/PointsTab.jsx
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
-function Select({ value, onChange, children, className = "" }) {
+function toId(v) {
+  if (!v) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "object") return String(v.id || v._id || "").trim();
+  return "";
+}
+
+function asItems(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.items)) return res.items;
+  return [];
+}
+
+function Select({ value, onChange, children, className = "", disabled = false }) {
   return (
     <select
       value={value || ""}
-      onChange={(e) => onChange?.(e.target.value || null)}
+      onChange={(e) => onChange?.(e.target.value || "")}
+      disabled={disabled}
       className={
-        "px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white w-full focus:outline-none focus:ring-2 focus:ring-emerald-400 " +
+        "px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white w-full " +
+        "focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed " +
         className
       }
     >
@@ -22,135 +38,173 @@ export default function PointsTab() {
   const [rounds, setRounds] = useState([]);
   const [points, setPoints] = useState([]);
 
-  const [siteId, setSiteId] = useState(null);
-  const [roundId, setRoundId] = useState(null);
+  const [siteId, setSiteId] = useState("");
+  const [roundId, setRoundId] = useState("");
 
   const [name, setName] = useState("");
   const [qr, setQr] = useState("");
-  const [order, setOrder] = useState(0);
+  const [order, setOrder] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [repoOpen, setRepoOpen] = useState(false);
   const [repoItems, setRepoItems] = useState([]);
 
+  const selectedSite = useMemo(
+    () => sites.find((s) => toId(s) === siteId) || null,
+    [sites, siteId]
+  );
+
+  const selectedRound = useMemo(
+    () => rounds.find((r) => toId(r) === roundId) || null,
+    [rounds, roundId]
+  );
+
   const loadPoints = useCallback(async (sid, rid) => {
-    if (!sid || !rid) {
+    const safeSiteId = toId(sid);
+    const safeRoundId = toId(rid);
+
+    if (!safeSiteId || !safeRoundId) {
       setPoints([]);
+      setOrder("");
       return;
     }
 
     try {
       setLoading(true);
-      const res = await rondasqrApi.listPoints({ siteId: sid, roundId: rid });
-      const items = res?.items || [];
+      const res = await rondasqrApi.listPoints({
+        siteId: safeSiteId,
+        roundId: safeRoundId,
+      });
+
+      const items = asItems(res).sort((a, b) => {
+        const ao = Number(a?.order ?? 0);
+        const bo = Number(b?.order ?? 0);
+        return ao - bo;
+      });
+
       setPoints(items);
-      setOrder(items.length);
+      setOrder(String(items.length));
     } catch (e) {
       console.error("[PointsTab] listPoints error", e);
+      setPoints([]);
+      setOrder("");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadSites = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await rondasqrApi.listSites();
+      const items = asItems(res);
+      setSites(items);
+
+      if (!items.length) {
+        setSiteId("");
+        setRoundId("");
+        setRounds([]);
+        setPoints([]);
+        return;
+      }
+
+      setSiteId((prev) => {
+        const exists = items.some((s) => toId(s) === prev);
+        return exists ? prev : toId(items[0]);
+      });
+    } catch (e) {
+      console.error("[PointsTab] listSites error", e);
+      setSites([]);
+      setSiteId("");
+      setRoundId("");
+      setRounds([]);
       setPoints([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  /* ---------------- Cargar sitios al inicio ---------------- */
-  useEffect(() => {
-    let alive = true;
+  const loadRounds = useCallback(async (sid) => {
+    const safeSiteId = toId(sid);
 
-    (async () => {
-      try {
-        const res = await rondasqrApi.listSites();
-        const items = res?.items || [];
-        if (!alive) return;
-
-        setSites(items);
-
-        if (items.length) {
-          const firstSiteId = String(items[0].id || items[0]._id);
-          setSiteId((prev) => prev || firstSiteId);
-        }
-      } catch (e) {
-        console.error("[PointsTab] listSites error", e);
-        if (!alive) return;
-        setSites([]);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  /* ------------- Cuando cambia sitio → cargar rondas --------- */
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      if (!siteId) {
-        setRounds([]);
-        setRoundId(null);
-        setPoints([]);
-        return;
-      }
-
-      try {
-        const res = await rondasqrApi.listRounds(siteId);
-        const items = res?.items || [];
-        if (!alive) return;
-
-        setRounds(items);
-
-        if (!items.length) {
-          setRoundId(null);
-          setPoints([]);
-          return;
-        }
-
-        const firstRoundId = String(items[0].id || items[0]._id);
-
-        setRoundId((prev) => {
-          const exists = items.some((r) => String(r.id || r._id) === String(prev || ""));
-          return exists ? prev : firstRoundId;
-        });
-      } catch (e) {
-        console.error("[PointsTab] listRounds error", e);
-        if (!alive) return;
-        setRounds([]);
-        setRoundId(null);
-        setPoints([]);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [siteId]);
-
-  /* ------------- Cuando cambia sitio/ronda → puntos ---------- */
-  useEffect(() => {
-    loadPoints(siteId, roundId);
-  }, [siteId, roundId, loadPoints]);
-
-  /* -------------------- Crear punto -------------------- */
-  async function handleAddPoint() {
-    if (!siteId || !roundId || !name.trim()) {
-      alert("Completa sitio, ronda y nombre del punto.");
+    if (!safeSiteId) {
+      setRounds([]);
+      setRoundId("");
+      setPoints([]);
       return;
     }
 
     try {
       setLoading(true);
-      await rondasqrApi.createPoint({
-        siteId,
-        roundId,
-        name: name.trim(),
-        qr: qr.trim() || undefined,
-        order: Number(order) || 0,
+      const res = await rondasqrApi.listRounds(safeSiteId);
+      const items = asItems(res);
+      setRounds(items);
+
+      if (!items.length) {
+        setRoundId("");
+        setPoints([]);
+        setOrder("");
+        return;
+      }
+
+      setRoundId((prev) => {
+        const exists = items.some((r) => toId(r) === prev);
+        return exists ? prev : toId(items[0]);
       });
+    } catch (e) {
+      console.error("[PointsTab] listRounds error", e);
+      setRounds([]);
+      setRoundId("");
+      setPoints([]);
+      setOrder("");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSites();
+  }, [loadSites]);
+
+  useEffect(() => {
+    loadRounds(siteId);
+  }, [siteId, loadRounds]);
+
+  useEffect(() => {
+    loadPoints(siteId, roundId);
+  }, [siteId, roundId, loadPoints]);
+
+  async function handleAddPoint() {
+    const safeSiteId = toId(siteId);
+    const safeRoundId = toId(roundId);
+    const safeName = String(name || "").trim();
+    const safeQr = String(qr || "").trim();
+
+    if (!safeSiteId || !safeRoundId || !safeName) {
+      alert("Completa sitio, ronda y nombre del punto.");
+      return;
+    }
+
+    const payload = {
+      siteId: safeSiteId,
+      roundId: safeRoundId,
+      name: safeName,
+    };
+
+    if (safeQr) payload.qr = safeQr;
+
+    const parsedOrder = Number(order);
+    if (order !== "" && Number.isFinite(parsedOrder) && parsedOrder >= 0) {
+      payload.order = Math.floor(parsedOrder);
+    }
+
+    try {
+      setLoading(true);
+      await rondasqrApi.createPoint(payload);
 
       setName("");
       setQr("");
-      await loadPoints(siteId, roundId);
+      await loadPoints(safeSiteId, safeRoundId);
     } catch (e) {
       console.error("[PointsTab] createPoint error", e);
       alert(e?.payload?.message || e?.message || "No se pudo crear el punto");
@@ -159,13 +213,15 @@ export default function PointsTab() {
     }
   }
 
-  /* -------------------- Eliminar punto -------------------- */
   async function handleDeletePoint(p) {
+    const id = toId(p);
+    if (!id) return;
+
     if (!window.confirm(`¿Eliminar el punto "${p.name}"?`)) return;
 
     try {
       setLoading(true);
-      await rondasqrApi.deletePoint(p.id || p._id);
+      await rondasqrApi.deletePoint(id);
       await loadPoints(siteId, roundId);
     } catch (e) {
       console.error("[PointsTab] deletePoint error", e);
@@ -175,11 +231,13 @@ export default function PointsTab() {
     }
   }
 
-  /* -------------------- Rotar QR de un punto -------------------- */
   async function handleRotateQr(p) {
+    const id = toId(p);
+    if (!id) return;
+
     try {
       setLoading(true);
-      await rondasqrApi.rotatePointQr(p.id || p._id);
+      await rondasqrApi.rotatePointQr(id);
       await loadPoints(siteId, roundId);
     } catch (e) {
       console.error("[PointsTab] rotatePointQr error", e);
@@ -189,17 +247,24 @@ export default function PointsTab() {
     }
   }
 
-  /* -------------------- Repositorio de QRs -------------------- */
   async function openRepo() {
-    if (!siteId && !roundId) {
-      alert("Selecciona al menos un sitio o una ronda.");
+    if (!siteId || !roundId) {
+      alert("Selecciona sitio y ronda.");
       return;
     }
 
     try {
       setLoading(true);
-      const res = await rondasqrApi.listQrRepo({ siteId, roundId });
-      setRepoItems(res?.items || []);
+
+      if (typeof rondasqrApi.listQrRepo === "function") {
+        const res = await rondasqrApi.listQrRepo({ siteId, roundId });
+        setRepoItems(asItems(res));
+        setRepoOpen(true);
+        return;
+      }
+
+      // fallback: usar puntos ya cargados
+      setRepoItems(points.filter((p) => !!p.qr));
       setRepoOpen(true);
     } catch (e) {
       console.error("[PointsTab] listQrRepo error", e);
@@ -209,23 +274,23 @@ export default function PointsTab() {
     }
   }
 
-  /* -------------------- Render -------------------- */
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3 items-end">
         <div className="w-full sm:w-1/4">
           <label className="block text-xs text-white/60 mb-1">Sitio</label>
           <Select
-            value={siteId || ""}
+            value={siteId}
             onChange={(v) => {
               setSiteId(v);
-              setRoundId(null);
+              setRoundId("");
               setPoints([]);
+              setOrder("");
             }}
           >
-            {sites.length === 0 && <option value="">Sin sitios</option>}
+            {sites.length === 0 && <option value="">Sin ciudades</option>}
             {sites.map((s) => (
-              <option key={s.id || s._id} value={s.id || s._id}>
+              <option key={toId(s)} value={toId(s)}>
                 {s.name}
               </option>
             ))}
@@ -234,10 +299,10 @@ export default function PointsTab() {
 
         <div className="w-full sm:w-1/4">
           <label className="block text-xs text-white/60 mb-1">Ronda</label>
-          <Select value={roundId || ""} onChange={setRoundId}>
+          <Select value={roundId} onChange={setRoundId} disabled={!siteId}>
             {rounds.length === 0 && <option value="">Sin rondas</option>}
             {rounds.map((r) => (
-              <option key={r.id || r._id} value={r.id || r._id}>
+              <option key={toId(r)} value={toId(r)}>
                 {r.name}
               </option>
             ))}
@@ -268,16 +333,19 @@ export default function PointsTab() {
           <label className="block text-xs text-white/60 mb-1">Orden</label>
           <input
             type="number"
+            min="0"
             value={order}
             onChange={(e) => setOrder(e.target.value)}
             className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            placeholder="auto"
           />
         </div>
 
         <button
           type="button"
           onClick={handleAddPoint}
-          className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold text-black shadow"
+          disabled={!siteId || !roundId || !name.trim() || loading}
+          className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-sm font-semibold text-black shadow disabled:opacity-60 disabled:cursor-not-allowed"
         >
           Agregar
         </button>
@@ -285,10 +353,17 @@ export default function PointsTab() {
         <button
           type="button"
           onClick={openRepo}
-          className="ml-auto px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-sm font-semibold text-black shadow"
+          disabled={!siteId || !roundId}
+          className="ml-auto px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-sm font-semibold text-black shadow disabled:opacity-60 disabled:cursor-not-allowed"
         >
           Repositorio de códigos QR
         </button>
+      </div>
+
+      <div className="text-xs text-white/60">
+        <span className="font-semibold">Sitio:</span> {selectedSite?.name || "—"}{" "}
+        · <span className="font-semibold">Ronda:</span> {selectedRound?.name || "—"}{" "}
+        · <span className="font-semibold">Puntos:</span> {points.length}
       </div>
 
       <div className="rounded-xl bg-black/40 border border-white/10 overflow-hidden">
@@ -317,18 +392,23 @@ export default function PointsTab() {
               )}
 
               {points.map((p) => {
-                const id = p.id || p._id;
-                const qrUrl = p.qr ? rondasqrApi.pointQrPngUrl(id) : null;
+                const id = toId(p);
+                const qrValue = p.qr || p.qrNo || p.code || "";
+                const qrUrl = qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
+                  ? rondasqrApi.pointQrPngUrl(id)
+                  : null;
 
                 return (
                   <tr key={id} className="border-t border-white/5 hover:bg-white/5">
-                    <td className="px-3 py-2 align-top">{p.order}</td>
+                    <td className="px-3 py-2 align-top">{p.order ?? "—"}</td>
+
                     <td className="px-3 py-2 align-top">
                       <div className="font-medium">{p.name}</div>
                       {p.notes && <div className="text-xs text-white/60">{p.notes}</div>}
                     </td>
+
                     <td className="px-3 py-2 align-top">
-                      {p.qr ? (
+                      {qrValue ? (
                         <div className="flex items-center gap-3">
                           {qrUrl && (
                             <img
@@ -337,12 +417,13 @@ export default function PointsTab() {
                               className="w-16 h-16 object-contain bg-white rounded"
                             />
                           )}
-                          <div className="text-xs break-all max-w-[200px]">{p.qr}</div>
+                          <div className="text-xs break-all max-w-[220px]">{qrValue}</div>
                         </div>
                       ) : (
-                        <span className="text-xs text-white/50">Sin QR (se generará al rotar)</span>
+                        <span className="text-xs text-white/50">Sin QR</span>
                       )}
                     </td>
+
                     <td className="px-3 py-2 align-top">
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -353,7 +434,7 @@ export default function PointsTab() {
                           Rotar QR
                         </button>
 
-                        {p.qr && (
+                        {qrValue && typeof rondasqrApi.pointQrPdfUrl === "function" && (
                           <a
                             href={rondasqrApi.pointQrPdfUrl(id)}
                             target="_blank"
@@ -404,8 +485,11 @@ export default function PointsTab() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {repoItems.map((item) => {
-                  const id = item.id || item._id;
-                  const qrUrl = item.qr ? rondasqrApi.pointQrPngUrl(id) : null;
+                  const id = toId(item);
+                  const qrValue = item.qr || item.qrNo || item.code || "";
+                  const qrUrl = qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
+                    ? rondasqrApi.pointQrPngUrl(id)
+                    : null;
 
                   return (
                     <div
@@ -414,7 +498,7 @@ export default function PointsTab() {
                     >
                       <div className="text-xs text-white/70 text-center">
                         <div className="font-semibold">
-                          {item.siteName} – {item.roundName}
+                          {item.siteName || selectedSite?.name || "—"} – {item.roundName || selectedRound?.name || "—"}
                         </div>
                         <div>{item.name}</div>
                       </div>
@@ -429,9 +513,9 @@ export default function PointsTab() {
                         <span className="text-xs text-white/50">Sin QR</span>
                       )}
 
-                      {item.qr && (
+                      {qrValue && (
                         <div className="text-[10px] text-white/60 break-all text-center">
-                          {item.qr}
+                          {qrValue}
                         </div>
                       )}
                     </div>

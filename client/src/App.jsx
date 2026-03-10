@@ -50,7 +50,10 @@ const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
 const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
-const SUPERADMIN_EMAIL = String(import.meta.env.VITE_SUPERADMIN_EMAIL || "")
+// ✅ fallback fijo confirmado por ti
+const SUPERADMIN_EMAIL = String(
+  import.meta.env.VITE_SUPERADMIN_EMAIL || "proyectosenaf@gmail.com"
+)
   .trim()
   .toLowerCase();
 
@@ -133,10 +136,16 @@ function normalizeMePayload(payload) {
   if (!payload || typeof payload !== "object") return null;
 
   const userObj = payload.user && typeof payload.user === "object" ? payload.user : {};
+
   const payloadRoles = normalizeArray(payload.roles);
-  const payloadPerms = normalizeArray(payload.permissions?.length ? payload.permissions : payload.perms);
+  const payloadPerms = normalizeArray(
+    payload.permissions?.length ? payload.permissions : payload.perms
+  );
+
   const userRoles = normalizeArray(userObj.roles);
-  const userPerms = normalizeArray(userObj.permissions?.length ? userObj.permissions : userObj.perms);
+  const userPerms = normalizeArray(
+    userObj.permissions?.length ? userObj.permissions : userObj.perms
+  );
 
   const roles = payloadRoles.length ? payloadRoles : userRoles;
   const permissions = payloadPerms.length ? payloadPerms : userPerms;
@@ -148,16 +157,27 @@ function normalizeMePayload(payload) {
       ? userObj.can
       : {};
 
-  const superadmin =
+  const payloadEmail = String(payload.email || "").trim().toLowerCase();
+  const userEmail = String(userObj.email || "").trim().toLowerCase();
+  const resolvedEmail = payloadEmail || userEmail;
+
+  const superadminByPayload =
     payload.superadmin === true ||
     payload.isSuperAdmin === true ||
     userObj.superadmin === true ||
     userObj.isSuperAdmin === true;
 
+  const superadminByEmail =
+    !!resolvedEmail && !!SUPERADMIN_EMAIL && resolvedEmail === SUPERADMIN_EMAIL;
+
+  const superadmin = superadminByPayload || superadminByEmail;
+
   const normalized = {
     ...payload,
+    email: resolvedEmail || payload.email || userObj.email || "",
     user: {
       ...userObj,
+      email: userObj.email || payload.email || "",
       roles,
       permissions,
       perms: permissions,
@@ -385,6 +405,10 @@ function SessionGate({ me, meLoading, children }) {
 function RouteAccess({ me, meLoading, routeKey, children }) {
   if (meLoading) return <div className="p-6">Cargando…</div>;
   if (!me) return <div className="p-6">Cargando sesión…</div>;
+
+  if (me?.superadmin === true || me?.isSuperAdmin === true) {
+    return <>{children}</>;
+  }
 
   if (isVisitorMe(me)) {
     const allowed = String(routeKey || "").startsWith("visitas");

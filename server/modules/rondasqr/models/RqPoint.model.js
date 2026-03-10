@@ -7,7 +7,6 @@ const { Schema } = mongoose;
 /* ─────────────── Helpers internos para QR ─────────────── */
 
 function randomToken(len = 8) {
-  // base64url → quitamos cualquier cosa rara
   return crypto
     .randomBytes(Math.ceil(len))
     .toString("base64url")
@@ -17,13 +16,11 @@ function randomToken(len = 8) {
 
 /**
  * Construye un código QR legible para el sticker físico.
- * No depende de secretos, solo es identificador del punto.
  * Ej: P05-AB29FQ
  */
 function buildQrCode({ order, name }) {
   const ord = Number.isFinite(order) ? order : 0;
   const ordStr = String(ord + 1).padStart(2, "0");
-  // opcional: usar inicial del nombre para hacerlo un poco más “humano”
   const initial = String(name || "P").trim().charAt(0).toUpperCase() || "P";
   const token = randomToken(6);
   return `${initial}${ordStr}-${token}`;
@@ -37,6 +34,7 @@ const RqPointSchema = new Schema(
       required: true,
       index: true,
     },
+
     roundId: {
       type: Schema.Types.ObjectId,
       ref: "RqRound",
@@ -44,43 +42,50 @@ const RqPointSchema = new Schema(
       index: true,
     },
 
-    name: { type: String, required: true, trim: true, index: true },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
 
-    // Identificadores que usamos en las rutas:
-    // qr  → código impreso en el sticker (lo que escanea el guardia)
-    // qrNo / code → alias usados en flujos legacy / offline
-    qr: { type: String, trim: true, index: true }, // QR físico
-    qrNo: { type: String, trim: true, index: true, sparse: true }, // algunos flujos lo llaman así
-    code: { type: String, trim: true, index: true, sparse: true }, // usado en offline/dump
-    nfc: { type: String, trim: true }, // opcional
+    qr: { type: String, trim: true, index: true },
+    qrNo: { type: String, trim: true, index: true, sparse: true },
+    code: { type: String, trim: true, index: true, sparse: true },
+    nfc: { type: String, trim: true },
 
-    // 🔐 Secret interno para validar / rotar QR sin romper marcas viejas
     qrSecret: {
       type: String,
       trim: true,
-      select: false, // no lo mandamos al cliente
+      select: false,
     },
+
     qrVersion: {
       type: Number,
       default: 1,
     },
+
     qrRotatedAt: { type: Date },
 
-    // Orden secuencial dentro de la ronda (0,1,2…)
-    order: { type: Number, default: null, index: true },
+    order: {
+      type: Number,
+      default: null,
+      index: true,
+    },
 
-    // Ventana de tolerancia (minutos)
     window: {
       startMin: { type: Number, default: 0 },
       endMin: { type: Number, default: 0 },
     },
 
-    // Estado
     active: { type: Boolean, default: true },
 
-    // GeoJSON opcional (solo si hay coords válidas)
     loc: {
-      type: { type: String, enum: ["Point"], default: undefined },
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: undefined,
+      },
       coordinates: {
         type: [Number], // [lon, lat]
         validate: {
@@ -98,85 +103,123 @@ const RqPointSchema = new Schema(
       },
     },
 
-    // Coordenadas simples (compatibilidad)
-    gps: { lat: Number, lon: Number },
+    gps: {
+      lat: { type: Number, default: undefined },
+      lon: { type: Number, default: undefined },
+    },
 
-    // Notas
-    notes: { type: String, trim: true },
+    notes: { type: String, trim: true, default: "" },
   },
-  { timestamps: true, collection: "rq_points" }
+  {
+    timestamps: true,
+    collection: "rq_points",
+    versionKey: false,
+    minimize: false,
+  }
 );
 
 /* -------------------- Índices -------------------- */
-RqPointSchema.index({ loc: "2dsphere" });
 
-// un punto por ronda+posición
+RqPointSchema.index({ loc: "2dsphere" });
+RqPointSchema.index({ active: 1 });
+
 RqPointSchema.index(
   { siteId: 1, roundId: 1, order: 1 },
   { unique: true }
 );
 
-// búsquedas rápidas
-RqPointSchema.index({ active: 1 });
+RqPointSchema.index(
+  { roundId: 1, name: 1 },
+  { unique: true }
+);
 
-// evitar duplicar QR dentro de la misma ronda
 RqPointSchema.index(
   { roundId: 1, qr: 1 },
   { unique: true, sparse: true }
 );
 
-// lo mismo para qrNo y code por si los usas
 RqPointSchema.index(
   { roundId: 1, qrNo: 1 },
   { unique: true, sparse: true }
 );
+
 RqPointSchema.index(
   { roundId: 1, code: 1 },
   { unique: true, sparse: true }
 );
 
 /* ----------------- Normalización JSON ----------------- */
+
 RqPointSchema.set("toJSON", {
   virtuals: true,
   versionKey: false,
-  transform(_, ret) {
-    ret.id = ret._id;
+  transform(_doc, ret) {
+    ret.id = String(ret._id);
     delete ret._id;
     return ret;
   },
 });
 
-/* --------------- Saneado de loc --------------- */
-RqPointSchema.pre("validate", function (next) {
-  const hasLonLat =
-    this?.loc?.coordinates &&
-    Array.isArray(this.loc.coordinates) &&
-    this.loc.coordinates.length === 2 &&
-    this.loc.coordinates.every((n) => Number.isFinite(n));
+/* --------------- Saneado de loc/gps --------------- */
 
-  if (hasLonLat) {
-    this.loc.type = "Point";
-    const [lon, lat] = this.loc.coordinates;
-    this.loc.coordinates = [Number(lon), Number(lat)];
-  } else {
-    // si no vino bien, no guardamos loc
-    this.loc = undefined;
+RqPointSchema.pre("validate", function preValidate(next) {
+  try {
+    const hasLonLat =
+      this?.loc?.coordinates &&
+      Array.isArray(this.loc.coordinates) &&
+      this.loc.coordinates.length === 2 &&
+      this.loc.coordinates.every((n) => Number.isFinite(n));
+
+    if (hasLonLat) {
+      this.loc.type = "Point";
+      const [lon, lat] = this.loc.coordinates;
+      this.loc.coordinates = [Number(lon), Number(lat)];
+
+      this.gps = this.gps || {};
+      this.gps.lon = Number(lon);
+      this.gps.lat = Number(lat);
+    } else if (
+      this?.gps &&
+      Number.isFinite(this.gps.lat) &&
+      Number.isFinite(this.gps.lon)
+    ) {
+      this.loc = {
+        type: "Point",
+        coordinates: [Number(this.gps.lon), Number(this.gps.lat)],
+      };
+    } else {
+      this.loc = undefined;
+    }
+
+    if (typeof this.name === "string") {
+      this.name = this.name.trim();
+    }
+
+    if (typeof this.qr === "string") this.qr = this.qr.trim();
+    if (typeof this.qrNo === "string") this.qrNo = this.qrNo.trim();
+    if (typeof this.code === "string") this.code = this.code.trim();
+
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
 });
 
-/* --------- Asignación automática de 'order' y QR (0..N) --------- */
-RqPointSchema.pre("save", async function (next) {
+/* --------- Asignación automática de order y QR --------- */
+
+RqPointSchema.pre("save", async function preSave(next) {
   try {
-    // 1) order correlativo si es nuevo
     if (this.isNew && (this.order === null || this.order === undefined)) {
       const count = await this.constructor.countDocuments({
         roundId: this.roundId,
       });
-      this.order = count; // siguiente correlativo
+      this.order = count;
     }
 
-    // 2) QR generado automáticamente si no se envió
+    if (!Number.isFinite(this.order)) {
+      this.order = 0;
+    }
+
     if (!this.qr) {
       this.qr = buildQrCode({
         order: this.order,
@@ -184,16 +227,13 @@ RqPointSchema.pre("save", async function (next) {
       });
     }
 
-    // 3) qrNo / code se rellenan si están vacíos
     if (!this.qrNo) this.qrNo = this.qr;
     if (!this.code) this.code = this.qr;
 
-    // 4) Secret interno para validar/rotar
     if (!this.qrSecret) {
       this.qrSecret = randomToken(24);
     }
 
-    // Normalización de version
     if (!Number.isFinite(this.qrVersion)) {
       this.qrVersion = 1;
     }
@@ -205,18 +245,20 @@ RqPointSchema.pre("save", async function (next) {
 });
 
 /* --------------- Recompactado tras eliminar --------------- */
-RqPointSchema.statics.compactAfterDelete = async function (
+
+RqPointSchema.statics.compactAfterDelete = async function compactAfterDelete(
   roundId,
   deletedOrder
 ) {
+  if (!roundId || !Number.isFinite(deletedOrder)) return;
+
   await this.updateMany(
     { roundId, order: { $gt: deletedOrder } },
     { $inc: { order: -1 } }
   );
 };
 
-// se activa con findOneAndDelete / findByIdAndDelete
-RqPointSchema.post("findOneAndDelete", async function (doc) {
+RqPointSchema.post("findOneAndDelete", async function postDelete(doc) {
   if (doc && doc.roundId && typeof doc.order === "number") {
     await doc.constructor.compactAfterDelete(doc.roundId, doc.order);
   }
@@ -224,11 +266,7 @@ RqPointSchema.post("findOneAndDelete", async function (doc) {
 
 /* --------------- Métodos estáticos útiles para QR --------------- */
 
-/**
- * Rota el código QR del punto (para cambiar stickers cada X meses).
- * No borra marcas antiguas; ellas quedan con el pointQr que tenían.
- */
-RqPointSchema.statics.rotateQr = async function (pointId) {
+RqPointSchema.statics.rotateQr = async function rotateQr(pointId) {
   const point = await this.findById(pointId);
   if (!point) {
     const e = new Error("Punto no encontrado");
@@ -243,8 +281,7 @@ RqPointSchema.statics.rotateQr = async function (pointId) {
     name: point.name,
   });
   point.qrNo = point.qr;
-  // code solo lo sobrescribimos si estaba vacío
-  if (!point.code) point.code = point.qr;
+  point.code = point.qr;
 
   point.qrSecret = randomToken(24);
   point.qrVersion = (point.qrVersion || 1) + 1;
@@ -254,11 +291,7 @@ RqPointSchema.statics.rotateQr = async function (pointId) {
   return { point, oldQr };
 };
 
-/**
- * Asegura que todos los puntos de una ronda tengan QR asignado.
- * Útil para comandos de mantenimiento / migraciones.
- */
-RqPointSchema.statics.ensureQrForRound = async function (roundId) {
+RqPointSchema.statics.ensureQrForRound = async function ensureQrForRound(roundId) {
   const points = await this.find({ roundId });
   let updated = 0;
 
@@ -296,6 +329,7 @@ RqPointSchema.statics.ensureQrForRound = async function (roundId) {
 };
 
 /* --------------- Registro del modelo --------------- */
+
 const RqPoint =
   mongoose.models.RqPoint || mongoose.model("RqPoint", RqPointSchema);
 

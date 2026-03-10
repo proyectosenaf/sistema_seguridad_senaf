@@ -2,6 +2,8 @@
 import express from "express";
 import mongoose from "mongoose";
 import crypto from "node:crypto";
+import QRCode from "qrcode";
+import PDFDocument from "pdfkit";
 
 import RqPoint from "./models/RqPoint.model.js";
 import RqRound from "./models/RqRound.model.js";
@@ -9,7 +11,7 @@ import RqSite from "./models/RqSite.model.js";
 import RqPlan from "./models/RqPlan.model.js";
 import RqMark from "./models/RqMark.model.js";
 import RqIncident from "./models/RqIncident.model.js";
-import RqDevice from "./models/RqDevice.model.js"; // 👈 usado en varias rutas
+import RqDevice from "./models/RqDevice.model.js";
 
 // ⬇️ Rutas de asignaciones (crear/listar/borrar)
 import assignmentsRoutes from "./routes/assignments.routes.js";
@@ -20,18 +22,16 @@ const router = express.Router();
 
 /* ─────────── Inyectar io y notifier al request ─────────── */
 router.use((req, _res, next) => {
-  req.io = req.app.get("io"); // socket.io
-  req.notifier = req.app.get("notifier"); // servicio de notificaciones (si existe)
+  req.io = req.app.get("io");
+  req.notifier = req.app.get("notifier");
   next();
 });
 
 /* ───────────────── Auth liviano ───────────────── */
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
-const IAM_ALLOW_DEV_HEADERS =
-  String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+const IAM_ALLOW_DEV_HEADERS = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
 function auth(req, _res, next) {
-  // ✅ Si server.js ya inyectó req.user (devIdentity o JWT), no lo pises
   if (req.user?.email) return next();
 
   if (DISABLE_AUTH) {
@@ -52,7 +52,6 @@ function auth(req, _res, next) {
     return next();
   }
 
-  // En producción, la app principal ya habrá puesto req.user desde Auth0/JWT
   return next();
 }
 
@@ -61,6 +60,7 @@ function getPointIdFields() {
   const fields = [];
   if (RqPoint.schema.path("qr")) fields.push("qr");
   if (RqPoint.schema.path("qrNo")) fields.push("qrNo");
+  if (RqPoint.schema.path("code")) fields.push("code");
   return fields;
 }
 
@@ -75,6 +75,7 @@ async function nextOrderForRound(roundId) {
     .select({ order: 1 })
     .limit(1)
     .lean();
+
   const max = last[0]?.order ?? -1;
   return max + 1;
 }
@@ -85,10 +86,45 @@ function qrToken() {
   return `qr_${crypto.randomBytes(16).toString("hex")}`;
 }
 
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * ✅ Construye GPS + loc GeoJSON válidos
+ * Mongo 2dsphere requiere coordinates = [lon, lat]
+ */
+function buildGeoFromGps(input) {
+  const lat = Number(input?.lat);
+  const lon = Number(input?.lon);
+
+  const hasGps = Number.isFinite(lat) && Number.isFinite(lon);
+
+  return {
+    gps: hasGps ? { lat, lon } : {},
+    loc: hasGps ? { type: "Point", coordinates: [lon, lat] } : undefined,
+  };
+}
+
+function pointQrValue(point) {
+  return String(point?.qr || point?.qrNo || point?.code || "").trim();
+}
+
+async function qrPngBufferFromText(text) {
+  return QRCode.toBuffer(String(text || ""), {
+    type: "png",
+    width: 700,
+    margin: 2,
+    errorCorrectionLevel: "H",
+    color: {
+      dark: "#000000",
+      light: "#FFFFFF",
+    },
+  });
+}
+
 /* ───────────────── PING/DEBUG ───────────────── */
-router.get("/ping", (_req, res) =>
-  res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
-);
+router.get("/ping", (_req, res) => res.json({ ok: true, where: "/api/rondasqr/v1/ping" }));
 
 router.get("/checkin/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
@@ -104,9 +140,7 @@ router.get("/_debug/routes", (_req, res) => {
             .toUpperCase();
           return `${methods} ${l.route.path}`;
         }
-        if (l.name === "router" && l.regexp) {
-          return `USE ${l.regexp}`;
-        }
+        if (l.name === "router" && l.regexp) return `USE ${l.regexp}`;
         return null;
       })
       .filter(Boolean);
@@ -127,7 +161,7 @@ admin.get("/sites", auth, async (req, res, next) => {
     const filter = q
       ? {
           name: {
-            $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            $regex: escapeRegExp(q),
             $options: "i",
           },
         }
@@ -148,8 +182,9 @@ admin.post("/sites", auth, async (req, res, next) => {
     }
 
     const exists = await RqSite.findOne({
-      name: new RegExp(`^${name}$`, "i"),
+      name: new RegExp(`^${escapeRegExp(name)}$`, "i"),
     }).lean();
+
     if (exists) {
       return res.status(409).json({ ok: false, error: "site_exists" });
     }
@@ -191,7 +226,6 @@ admin.get("/rounds", auth, async (req, res, next) => {
   }
 });
 
-/* ───────── ROUNDS: crear ───────── */
 admin.post("/rounds", auth, async (req, res) => {
   try {
     const b = req.body || {};
@@ -228,8 +262,9 @@ admin.post("/rounds", auth, async (req, res) => {
       }
 
       site = await RqSite.findOne({
-        name: new RegExp(`^${siteNameCandidate}$`, "i"),
+        name: new RegExp(`^${escapeRegExp(siteNameCandidate)}$`, "i"),
       }).lean();
+
       if (!site) {
         return res.status(400).json({ ok: false, error: "site_not_found_by_name" });
       }
@@ -237,8 +272,9 @@ admin.post("/rounds", auth, async (req, res) => {
 
     const exists = await RqRound.findOne({
       siteId: site._id,
-      name: new RegExp(`^${name}$`, "i"),
+      name: new RegExp(`^${escapeRegExp(name)}$`, "i"),
     }).lean();
+
     if (exists) {
       return res.status(409).json({ ok: false, error: "round_exists" });
     }
@@ -248,12 +284,11 @@ admin.post("/rounds", auth, async (req, res) => {
       name,
       active: true,
     });
+
     return res.status(201).json({ ok: true, item: doc });
   } catch (e) {
     console.error("[admin.rounds.create]", e);
-    return res
-      .status(500)
-      .json({ ok: false, error: e?.message || "internal_error" });
+    return res.status(500).json({ ok: false, error: e?.message || "internal_error" });
   }
 });
 
@@ -272,7 +307,6 @@ admin.delete("/rounds/:id", auth, async (req, res, next) => {
 });
 
 /** POINTS *********************************************************/
-// list
 admin.get("/points", auth, async (req, res, next) => {
   try {
     const roundId = String(req.query.roundId || "").trim();
@@ -296,7 +330,6 @@ admin.get("/points", auth, async (req, res, next) => {
   }
 });
 
-// create  ✅ YA NO REQUIERE qr EN FRONTEND (lo genera)
 admin.post("/points", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -312,50 +345,42 @@ admin.post("/points", auth, async (req, res, next) => {
       RqSite.findById(siteId).lean(),
       RqRound.findById(roundId).lean(),
     ]);
+
     if (!site) return res.status(404).json({ ok: false, error: "site_not_found" });
     if (!round) return res.status(404).json({ ok: false, error: "round_not_found" });
 
-    const idFields = getPointIdFields();
-    if (idFields.length === 0) {
-      return res.status(500).json({
-        ok: false,
-        error: "No id fields in RqPoint schema (expected qr or qrNo)",
-      });
-    }
-
-    let order =
-      normalizeOrder(b.order) ??
-      normalizeOrder(b.ord) ??
-      normalizeOrder(b.index);
-
+    let order = normalizeOrder(b.order) ?? normalizeOrder(b.ord) ?? normalizeOrder(b.index);
     if (order === null) order = await nextOrderForRound(roundId);
 
-    const toInsert = { siteId, roundId, name, active: true, order };
-
-    // ✅ Genera QR si el schema lo usa y no viene en payload
     const rawQr = typeof b.qr === "string" ? b.qr.trim() : "";
     const rawQrNo = typeof b.qrNo === "string" ? b.qrNo.trim() : "";
 
-    if (idFields.includes("qr")) {
-      const value = rawQr || rawQrNo || qrToken();
-      const dup = await RqPoint.findOne({ qr: value }).lean();
-      if (dup) return res.status(409).json({ ok: false, error: "point_qr_exists" });
-      toInsert.qr = value;
-    } else {
-      const value = rawQrNo || rawQr || qrToken();
-      const dup = await RqPoint.findOne({ qrNo: value }).lean();
-      if (dup) return res.status(409).json({ ok: false, error: "point_qrNo_exists" });
-      toInsert.qrNo = value;
-    }
+    const toInsert = {
+      siteId,
+      roundId,
+      name,
+      active: true,
+      order,
+    };
+
+    if (rawQr) toInsert.qr = rawQr;
+    if (rawQrNo) toInsert.qrNo = rawQrNo;
 
     const doc = await RqPoint.create(toInsert);
     res.status(201).json({ ok: true, item: doc });
   } catch (e) {
+    if (e?.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_point",
+        message: "Ya existe un punto con ese orden o QR dentro de la ronda.",
+        details: e?.keyValue || null,
+      });
+    }
     next(e);
   }
 });
 
-// update
 admin.patch("/points/:id", auth, async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -367,26 +392,14 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
     const updates = {};
 
     if (typeof b.name === "string") updates.name = b.name.trim();
+    if (typeof b.notes === "string") updates.notes = b.notes.trim();
+    if (typeof b.active === "boolean") updates.active = b.active;
 
-    const idFields = getPointIdFields();
+    if (typeof b.qr === "string") updates.qr = b.qr.trim();
+    if (typeof b.qrNo === "string") updates.qrNo = b.qrNo.trim();
+    if (typeof b.code === "string") updates.code = b.code.trim();
 
-    if (idFields.includes("qr") && typeof b.qr === "string") {
-      const qr = b.qr.trim();
-      const dup = await RqPoint.findOne({ _id: { $ne: id }, qr }).lean();
-      if (dup) return res.status(409).json({ ok: false, error: "point_qr_exists" });
-      updates.qr = qr;
-    } else if (idFields.includes("qrNo") && typeof b.qrNo === "string") {
-      const qrNo = b.qrNo.trim();
-      const dup = await RqPoint.findOne({ _id: { $ne: id }, qrNo }).lean();
-      if (dup) return res.status(409).json({ ok: false, error: "point_qrNo_exists" });
-      updates.qrNo = qrNo;
-    }
-
-    let order =
-      normalizeOrder(b.order) ??
-      normalizeOrder(b.ord) ??
-      normalizeOrder(b.index);
-
+    const order = normalizeOrder(b.order) ?? normalizeOrder(b.ord) ?? normalizeOrder(b.index);
     if (order !== null) updates.order = order;
 
     if (Object.keys(updates).length === 0) {
@@ -400,11 +413,18 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
     const doc = await RqPoint.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
     res.json({ ok: true, item: doc });
   } catch (e) {
+    if (e?.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_point",
+        message: "Ya existe un punto con ese orden o QR dentro de la ronda.",
+        details: e?.keyValue || null,
+      });
+    }
     next(e);
   }
 });
 
-// delete
 admin.delete("/points/:id", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -419,28 +439,166 @@ admin.delete("/points/:id", auth, async (req, res, next) => {
   }
 });
 
-// rotate qr ✅ para tu botón “Rotar QR”
 admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
-    if (!isId(id)) return res.status(400).json({ ok: false, error: "invalid_pointId" });
-
-    const idFields = getPointIdFields();
-    if (!idFields.length) {
-      return res.status(500).json({
-        ok: false,
-        error: "No id fields in RqPoint schema (expected qr or qrNo)",
-      });
+    if (!isId(id)) {
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
     }
 
-    const patch = {};
-    if (idFields.includes("qr")) patch.qr = qrToken();
-    else patch.qrNo = qrToken();
+    if (typeof RqPoint.rotateQr === "function") {
+      const { point } = await RqPoint.rotateQr(id);
+      return res.json({ ok: true, item: point });
+    }
 
-    const doc = await RqPoint.findByIdAndUpdate(id, { $set: patch }, { new: true }).lean();
-    if (!doc) return res.status(404).json({ ok: false, error: "point_not_found" });
+    const point = await RqPoint.findById(id);
+    if (!point) {
+      return res.status(404).json({ ok: false, error: "point_not_found" });
+    }
 
-    res.json({ ok: true, item: doc });
+    point.qr = qrToken();
+    if ("qrNo" in point) point.qrNo = point.qr;
+    if ("code" in point) point.code = point.qr;
+    if ("qrVersion" in point) point.qrVersion = Number(point.qrVersion || 1) + 1;
+    if ("qrRotatedAt" in point) point.qrRotatedAt = new Date();
+
+    await point.save();
+    return res.json({ ok: true, item: point.toJSON ? point.toJSON() : point });
+  } catch (e) {
+    if (e?.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_point_qr",
+        message: "No se pudo rotar QR porque se generó uno duplicado. Intenta de nuevo.",
+      });
+    }
+    next(e);
+  }
+});
+
+// ✅ NUEVO: eliminar solo el QR del punto, no el punto
+admin.delete("/points/:id/qr", auth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) {
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
+    }
+
+    const point = await RqPoint.findById(id);
+    if (!point) {
+      return res.status(404).json({ ok: false, error: "point_not_found" });
+    }
+
+    const oldQr = pointQrValue(point);
+    if (!oldQr) {
+      return res.status(400).json({ ok: false, error: "point_qr_not_found" });
+    }
+
+    if ("qr" in point) point.qr = null;
+    if ("qrNo" in point) point.qrNo = null;
+    if ("code" in point) point.code = null;
+    if ("qrDeletedAt" in point) point.qrDeletedAt = new Date();
+
+    await point.save();
+
+    return res.json({
+      ok: true,
+      item: point.toJSON ? point.toJSON() : point,
+      oldQr,
+      message: "QR eliminado correctamente",
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** QR PNG *********************************************************/
+admin.get("/points/:id/qr.png", auth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) {
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
+    }
+
+    const point = await RqPoint.findById(id).lean();
+    if (!point) {
+      return res.status(404).json({ ok: false, error: "point_not_found" });
+    }
+
+    const qrValue = pointQrValue(point);
+    if (!qrValue) {
+      return res.status(404).json({ ok: false, error: "point_qr_not_found" });
+    }
+
+    const buffer = await qrPngBufferFromText(qrValue);
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    return res.end(buffer);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** QR PDF *********************************************************/
+admin.get("/points/:id/qr.pdf", auth, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isId(id)) {
+      return res.status(400).json({ ok: false, error: "invalid_pointId" });
+    }
+
+    const point = await RqPoint.findById(id).lean();
+    if (!point) {
+      return res.status(404).json({ ok: false, error: "point_not_found" });
+    }
+
+    const [site, round] = await Promise.all([
+      point.siteId ? RqSite.findById(point.siteId).lean() : null,
+      point.roundId ? RqRound.findById(point.roundId).lean() : null,
+    ]);
+
+    const qrValue = pointQrValue(point);
+    if (!qrValue) {
+      return res.status(404).json({ ok: false, error: "point_qr_not_found" });
+    }
+
+    const pngBuffer = await qrPngBufferFromText(qrValue);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="qr-${id}.pdf"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: 40,
+    });
+
+    doc.pipe(res);
+
+    doc.fontSize(20).text("Etiqueta QR del punto", { align: "center" });
+    doc.moveDown(1);
+    doc.fontSize(12).text(`Sitio: ${site?.name || "-"}`);
+    doc.text(`Ronda: ${round?.name || "-"}`);
+    doc.text(`Punto: ${point?.name || "-"}`);
+    doc.text(`Orden: ${point?.order ?? "-"}`);
+    doc.text(`Código QR: ${qrValue}`);
+    doc.moveDown(1);
+
+    const imgSize = 260;
+    const x = (doc.page.width - imgSize) / 2;
+
+    doc.image(pngBuffer, x, doc.y, {
+      fit: [imgSize, imgSize],
+      align: "center",
+    });
+
+    doc.moveDown(15);
+    doc.fontSize(10).fillColor("#444").text("SENAF • Repositorio de códigos QR", {
+      align: "center",
+    });
+
+    doc.end();
   } catch (e) {
     next(e);
   }
@@ -467,63 +625,119 @@ admin.put("/points/reorder", auth, async (req, res, next) => {
     if (ops.length) await RqPoint.bulkWrite(ops);
     res.json({ ok: true, count: ops.length });
   } catch (e) {
+    if (e?.code === 11000) {
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_order",
+        message: "No se pudo reordenar porque hay conflicto de orden duplicado.",
+      });
+    }
     next(e);
   }
 });
 
-/** ✅ QR REPO *********************************************************
- * GET /admin/qr-repo?siteId=...&roundId=...
- * Devuelve HTML simple para imprimir / ver.
+/** ✅ QR REPO ******************************************************
+ * GET /admin/qr-repo?siteId=...&roundId=...&format=html
+ * - JSON por defecto para frontend
+ * - HTML si format=html para imprimir
  */
 admin.get("/qr-repo", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
     const roundId = String(req.query.roundId || "").trim();
+    const format = String(req.query.format || "").trim().toLowerCase();
 
-    if (!isId(siteId) || !isId(roundId)) {
-      return res.status(400).json({ ok: false, error: "siteId_and_roundId_required" });
+    if (siteId && !isId(siteId)) {
+      return res.status(400).json({ ok: false, error: "invalid_siteId" });
     }
 
-    const [site, round, points] = await Promise.all([
-      RqSite.findById(siteId).lean(),
-      RqRound.findById(roundId).lean(),
-      RqPoint.find({ siteId, roundId }).sort({ order: 1, createdAt: 1 }).lean(),
+    if (roundId && !isId(roundId)) {
+      return res.status(400).json({ ok: false, error: "invalid_roundId" });
+    }
+
+    const filter = {};
+    if (siteId) filter.siteId = siteId;
+    if (roundId) filter.roundId = roundId;
+
+    const [points, sites, rounds] = await Promise.all([
+      RqPoint.find(filter).sort({ siteId: 1, roundId: 1, order: 1, createdAt: 1 }).lean(),
+      RqSite.find(siteId ? { _id: siteId } : {}).lean(),
+      RqRound.find(roundId ? { _id: roundId } : siteId ? { siteId } : {}).lean(),
     ]);
 
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.end(`
-      <html>
-        <head>
-          <title>Repositorio de QRs</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-        </head>
-        <body style="font-family:system-ui;padding:16px">
-          <h2>Repositorio de QRs</h2>
-          <p><b>Sitio:</b> ${site?.name || siteId}</p>
-          <p><b>Ronda:</b> ${round?.name || roundId}</p>
-          <p><b>Total:</b> ${points.length}</p>
-          <hr/>
-          <ol>
-            ${points
-              .map((p) => {
-                const code = p.qr || p.qrNo || "-";
-                return `<li style="margin:10px 0">
-                  <div><b>${p.order ?? ""}</b> — ${p.name || ""}</div>
-                  <div><code>${code}</code></div>
-                </li>`;
-              })
-              .join("")}
-          </ol>
-        </body>
-      </html>
-    `);
+    const siteMap = new Map(sites.map((s) => [String(s._id), s]));
+    const roundMap = new Map(rounds.map((r) => [String(r._id), r]));
+
+    const items = points.map((p) => {
+      const site = siteMap.get(String(p.siteId)) || null;
+      const round = roundMap.get(String(p.roundId)) || null;
+      const qrValue = pointQrValue(p);
+
+      return {
+        ...p,
+        id: p._id,
+        siteName: site?.name || "",
+        roundName: round?.name || "",
+        qr: qrValue,
+        active: p.active !== false,
+      };
+    });
+
+    if (format === "html") {
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      return res.end(`
+        <html>
+          <head>
+            <title>Repositorio de QRs</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <style>
+              body { font-family: system-ui, sans-serif; padding: 16px; }
+              h2 { margin-bottom: 8px; }
+              .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
+              .card { border:1px solid #ddd; border-radius:12px; padding:12px; }
+              .meta { color:#555; font-size:12px; margin-bottom:8px; }
+              img { width:180px; height:180px; object-fit:contain; background:#fff; border:1px solid #eee; display:block; margin:8px auto; }
+              code { display:block; word-break:break-all; font-size:12px; }
+            </style>
+          </head>
+          <body>
+            <h2>Repositorio de códigos QR</h2>
+            <p>Total: ${items.length}</p>
+            <div class="grid">
+              ${items
+                .map((p) => {
+                  const imgUrl = `/api/rondasqr/v1/admin/points/${p._id}/qr.png`;
+                  return `
+                    <div class="card">
+                      <div><b>${p.name || ""}</b></div>
+                      <div class="meta">
+                        Sitio: ${p.siteName || "-"}<br/>
+                        Ronda: ${p.roundName || "-"}<br/>
+                        Orden: ${p.order ?? "-"}
+                      </div>
+                      ${
+                        p.qr
+                          ? `<img src="${imgUrl}" alt="${p.name || "QR"}" />`
+                          : `<div>Sin QR</div>`
+                      }
+                      <code>${p.qr || "-"}</code>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    return res.json({ ok: true, items, count: items.length });
   } catch (e) {
     next(e);
   }
 });
 
 /** PLANS *********************************************************/
-// GET /admin/plans?siteId=&roundId=
 admin.get("/plans", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
@@ -543,9 +757,7 @@ admin.get("/plans", auth, async (req, res, next) => {
 
     const items = plans.map((plan) => ({
       ...plan,
-      pointIds: plan.pointIds?.length
-        ? plan.pointIds
-        : (plan.points || []).map((p) => p.pointId),
+      pointIds: plan.pointIds?.length ? plan.pointIds : (plan.points || []).map((p) => p.pointId),
     }));
 
     res.json({ ok: true, items, count: items.length });
@@ -554,7 +766,6 @@ admin.get("/plans", auth, async (req, res, next) => {
   }
 });
 
-// POST /admin/plans  (upsert)
 admin.post("/plans", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -635,7 +846,6 @@ admin.post("/plans", auth, async (req, res, next) => {
   }
 });
 
-// DELETE /admin/plans?siteId=&roundId=
 admin.delete("/plans", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
@@ -658,7 +868,6 @@ admin.delete("/plans", auth, async (req, res, next) => {
 /* ──────────────── MONTAJE DE RUTAS ──────────────── */
 router.use("/admin/assignments", assignmentsRoutes);
 router.use("/admin", admin);
-// mantenemos tu ruta rara para no romper compat
 router.use("/admin/aviones", admin);
 
 // rutas OFFLINE
@@ -669,6 +878,7 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
     const qr = typeof b.qr === "string" ? b.qr.trim() : "";
+
     if (!qr) {
       return res.status(400).json({ ok: false, error: "qr_required" });
     }
@@ -693,8 +903,10 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
       point.siteId ? RqSite.findById(point.siteId).lean() : null,
     ]);
 
-    const gps = b.gps || {};
-    const hasGps = typeof gps.lat === "number" && typeof gps.lon === "number";
+    const rawGps = b.gps || {};
+    const { gps, loc } = buildGeoFromGps(rawGps);
+
+    const qrValue = pointQrValue(point);
 
     const mark = await RqMark.create({
       hardwareId: b.hardwareId || "",
@@ -706,17 +918,16 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
       roundName: round?.name || "",
       pointId: point._id,
       pointName: point.name || "",
-      qr: point.qr || qr,
+      qr: qrValue || qr,
       qrNo: point.qrNo || undefined,
-      pointQr: point.qrNo,
+      pointQr: qrValue || "",
       at: b.ts ? new Date(b.ts) : new Date(),
       gps,
-      loc: hasGps
-        ? { type: "Point", coordinates: [Number(gps.lon), Number(gps.lat)] }
-        : undefined,
+      loc,
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
       guardId: req?.user?.sub || "",
+      guardName: req?.user?.name || req?.user?.email || "",
     });
 
     req.io?.emit?.("rondasqr:mark", { item: mark });
@@ -727,7 +938,7 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
       point: {
         id: point._id,
         name: point.name,
-        qr: point.qr || point.qrNo || qr,
+        qr: qrValue || qr,
       },
     });
   } catch (e) {
@@ -743,16 +954,20 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
       return res.status(400).json({ ok: false, error: "text_required" });
     }
 
-    const gps = b.gps || (b.lat && b.lon ? { lat: b.lat, lon: b.lon } : {});
+    const rawGps = b.gps || (b.lat && b.lon ? { lat: b.lat, lon: b.lon } : {});
+    const { gps, loc } = buildGeoFromGps(rawGps);
+
     const doc = await RqIncident.create({
-      type: "message",
+      type: "custom",
       text: b.text,
-      photosBase64: Array.isArray(b.photosBase64) ? b.photosBase64.slice(0, 10) : [],
+      photos: Array.isArray(b.photosBase64) ? b.photosBase64.slice(0, 10) : [],
       gps,
+      loc,
       at: new Date(),
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
-      officerSub: req?.user?.sub || "",
+      guardId: req?.user?.sub || "",
+      guardName: req?.user?.name || req?.user?.email || "",
     });
 
     req.io?.emit?.("rondasqr:incident", { kind: "message", item: doc });
@@ -765,18 +980,24 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
 /* ──────────────── PÁNICO (botón rojo) ──────────────── */
 router.post("/checkin/panic", auth, async (req, res, next) => {
   try {
-    const { gps = {} } = req.body || {};
+    const { gps: rawGps } = req.body || {};
+    const { gps, loc } = buildGeoFromGps(rawGps);
+
     const doc = await RqIncident.create({
       type: "panic",
       text: "Botón de pánico",
       gps,
+      loc,
       at: new Date(),
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
-      officerSub: req?.user?.sub || "",
+      guardId: req?.user?.sub || "",
+      guardName: req?.user?.name || req?.user?.email || "",
     });
 
     req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
+    req.io?.emit?.("rondasqr:incident", { kind: "panic", item: doc });
+
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -787,10 +1008,13 @@ router.post("/checkin/panic", auth, async (req, res, next) => {
 router.post("/checkin/inactivity", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
+    const { gps, loc } = buildGeoFromGps(b.gps);
+
     const doc = await RqIncident.create({
       type: "inactivity",
       text: `Inmovilidad de ${b.minutes ?? "?"} minutos`,
-      gps: b.gps || {},
+      gps,
+      loc,
       at: new Date(),
       durationMin: Number(b.minutes ?? 0) || 0,
       stepsAtAlert: typeof b.steps === "number" ? b.steps : null,
@@ -802,10 +1026,13 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
       pointName: b.pointName || "",
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
-      officerSub: req?.user?.sub || "",
+      guardId: req?.user?.sub || "",
+      guardName: req?.user?.name || req?.user?.email || "",
     });
 
     req.io?.emit?.("rondasqr:alert", { kind: "inactivity", item: doc });
+    req.io?.emit?.("rondasqr:incident", { kind: "inactivity", item: doc });
+
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
@@ -816,19 +1043,25 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
 router.post("/checkin/fall", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
+    const { gps, loc } = buildGeoFromGps(b.gps);
+
     const doc = await RqIncident.create({
       type: "fall",
       text: `Hombre caído${b.afterInactivityMin ? ` tras ${b.afterInactivityMin} min de inmovilidad` : ""}`,
-      gps: b.gps || {},
+      gps,
+      loc,
       at: new Date(),
       stepsAtAlert: typeof b.steps === "number" ? b.steps : null,
       fallDetected: true,
       officerEmail: req?.user?.email || "",
       officerName: req?.user?.name || req?.user?.email || "",
-      officerSub: req?.user?.sub || "",
+      guardId: req?.user?.sub || "",
+      guardName: req?.user?.name || req?.user?.email || "",
     });
 
     req.io?.emit?.("rondasqr:alert", { kind: "fall", item: doc });
+    req.io?.emit?.("rondasqr:incident", { kind: "fall", item: doc });
+
     res.json({ ok: true, item: doc });
   } catch (e) {
     next(e);
