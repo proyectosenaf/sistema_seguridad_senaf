@@ -27,24 +27,21 @@ export default function SidebarGuard({
   asGlobal = false,
 }) {
   const navigate = useNavigate();
-  const { logout } = useAuth(); // ✅ logout central
+  const { logout } = useAuth();
 
   if (asGlobal) return null;
 
   async function doLogout() {
-    // 1️⃣ Logout del backend IAM
     try {
       await iamApi.logout?.();
     } catch {}
 
-    // 2️⃣ Logout central del AuthProvider
     try {
       await logout?.();
     } catch {}
 
-    // 3️⃣ Limpieza completa del cliente
     try {
-      clearToken(); // senaf_token
+      clearToken();
 
       localStorage.removeItem("token");
       localStorage.removeItem("access_token");
@@ -54,7 +51,6 @@ export default function SidebarGuard({
 
       sessionStorage.removeItem(RETURN_TO_KEY);
 
-      // flujo OTP
       localStorage.removeItem("senaf_otp_email");
       sessionStorage.removeItem("senaf_otp_flow");
       sessionStorage.removeItem("senaf_pwreset_token");
@@ -128,46 +124,103 @@ export default function SidebarGuard({
 
   const containerBase =
     variant === "mobile"
-      ? "fixed inset-y-0 left-0 z-50 p-4 border-r overflow-y-auto overscroll-contain md:hidden " +
-        "backdrop-blur bg-white/80 dark:bg-black/40 border-black/10 dark:border-white/10 text-slate-900 dark:text-white w-72"
-      : "flex flex-col p-4 border-r overflow-y-auto overscroll-contain " +
-        "backdrop-blur bg-white/60 dark:bg-black/20 border-black/10 dark:border-white/10 text-slate-900 dark:text-white w-64";
+      ? "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto overscroll-contain p-4 md:hidden"
+      : "flex w-64 flex-col overflow-y-auto overscroll-contain p-4";
+
+  const sectionCardStyle = {
+    background: "color-mix(in srgb, var(--card) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(14px) saturate(130%)",
+    WebkitBackdropFilter: "blur(14px) saturate(130%)",
+  };
 
   const itemBase =
-    "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition " +
-    "border border-neutral-200/60 dark:border-white/10 " +
-    "bg-white/55 dark:bg-neutral-950/35 backdrop-blur-xl shadow-sm " +
-    "hover:bg-white/70 dark:hover:bg-neutral-900/45";
+    "w-full flex items-center gap-3 px-4 py-3 rounded-[18px] text-left transition-all duration-150";
+
+  const neutralItemStyle = {
+    border: "1px solid var(--border)",
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    boxShadow: "var(--shadow-sm)",
+  };
+
+  const dangerItemStyle = {
+    border: "1px solid color-mix(in srgb, #ef4444 28%, var(--border))",
+    background: "color-mix(in srgb, #ef4444 10%, var(--card-solid))",
+    color: "#dc2626",
+    boxShadow: "var(--shadow-sm)",
+  };
 
   return (
-    <aside className={containerBase} aria-label="Acciones del módulo de rondas">
-      <div className="mb-5">
-        <div className="font-extrabold tracking-tight text-2xl">SENAF</div>
-        <div className="text-xs opacity-70 -mt-1">Rondas de Vigilancia</div>
+    <aside
+      className={containerBase}
+      aria-label="Acciones del módulo de rondas"
+      style={sectionCardStyle}
+    >
+      <div className="mb-5 px-1">
+        <div
+          className="text-2xl font-extrabold tracking-tight"
+          style={{ color: "var(--text)" }}
+        >
+          SENAF
+        </div>
+        <div
+          className="mt-1 text-xs font-medium uppercase tracking-[0.18em]"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Rondas de Vigilancia
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
-        <button type="button" onClick={handleAlert} className={itemBase}>
-          <AlertTriangle size={18} />
-          <span className="text-[15px] leading-none">Enviar Alerta</span>
+        <button
+          type="button"
+          onClick={handleAlert}
+          className={itemBase}
+          style={neutralItemStyle}
+        >
+          <AlertTriangle
+            size={18}
+            strokeWidth={2.3}
+            style={{ color: "var(--text-muted)" }}
+          />
+          <span className="text-[15px] font-medium leading-none">
+            Enviar Alerta
+          </span>
         </button>
 
-        <button type="button" onClick={handleMsg} className={itemBase}>
-          <MessageSquare size={18} />
-          <span className="text-[15px] leading-none">Mensaje Incidente</span>
+        <button
+          type="button"
+          onClick={handleMsg}
+          className={itemBase}
+          style={neutralItemStyle}
+        >
+          <MessageSquare
+            size={18}
+            strokeWidth={2.3}
+            style={{ color: "var(--text-muted)" }}
+          />
+          <span className="text-[15px] font-medium leading-none">
+            Mensaje Incidente
+          </span>
         </button>
       </div>
 
       <div className="mt-auto pt-4">
+        <div
+          className="mb-3"
+          style={{ borderTop: "1px solid var(--border)" }}
+        />
+
         <button
           type="button"
           onClick={doLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left
-                     bg-red-600/10 hover:bg-red-600/20 text-red-400 font-medium
-                     transition-colors duration-150"
+          className={itemBase}
+          style={dangerItemStyle}
         >
-          <LogOut size={18} />
-          <span className="text-[15px] leading-none">Salir</span>
+          <LogOut size={18} strokeWidth={2.3} />
+          <span className="text-[15px] font-semibold leading-none">Salir</span>
         </button>
       </div>
     </aside>

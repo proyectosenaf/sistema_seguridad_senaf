@@ -104,17 +104,27 @@ function Breadcrumbs() {
   const crumbs = ["/", ...parts.map((_, i) => `/${parts.slice(0, i + 1).join("/")}`)];
 
   return (
-    <nav aria-label="Breadcrumb" className="hidden lg:flex items-center gap-2 text-sm">
+    <nav
+      aria-label="Breadcrumb"
+      className="hidden lg:flex items-center gap-2 text-sm"
+      style={{ color: "var(--text-muted)" }}
+    >
       {crumbs.map((p, i) => {
         const label = getPathLabel(p);
         const last = i === crumbs.length - 1;
         return (
           <span key={p} className="flex items-center gap-2">
-            {i > 0 && <span className="opacity-40">›</span>}
+            {i > 0 && <span style={{ opacity: 0.45 }}>›</span>}
             {last ? (
-              <span className="font-medium opacity-80">{label}</span>
+              <span className="font-medium" style={{ color: "var(--text)", opacity: 0.9 }}>
+                {label}
+              </span>
             ) : (
-              <Link to={p} className="opacity-70 hover:opacity-100 hover:underline">
+              <Link
+                to={p}
+                className="transition-opacity hover:underline"
+                style={{ color: "var(--text-muted)", opacity: 0.9 }}
+              >
                 {label}
               </Link>
             )}
@@ -129,32 +139,38 @@ function Breadcrumbs() {
    UI tokens
    ========= */
 const fxBtn =
-  "inline-flex items-center justify-center p-2 rounded-xl " +
-  "border border-neutral-200/60 dark:border-white/10 " +
-  "bg-white/55 dark:bg-neutral-950/40 " +
-  "backdrop-blur-xl shadow-sm " +
-  "hover:bg-white/70 dark:hover:bg-neutral-900/45 " +
-  "transition";
+  "inline-flex items-center justify-center p-2 rounded-[16px] transition-all duration-150";
 
 const fxBtnText =
-  "inline-flex items-center gap-2 px-3 py-1.5 rounded-xl " +
-  "border border-neutral-200/60 dark:border-white/10 " +
-  "bg-white/55 dark:bg-neutral-950/40 " +
-  "backdrop-blur-xl shadow-sm " +
-  "hover:bg-white/70 dark:hover:bg-neutral-900/45 " +
-  "transition";
+  "inline-flex items-center gap-2 px-3 py-2 rounded-[16px] transition-all duration-150";
 
 const fxPopover =
-  "fixed z-[70] w-80 rounded-2xl " +
-  "border border-neutral-200/60 dark:border-white/10 " +
-  "bg-white/65 dark:bg-neutral-950/45 " +
-  "backdrop-blur-2xl shadow-2xl p-1";
+  "fixed z-[70] w-80 rounded-[20px] p-1";
 
 const fxModal =
-  "w-[min(680px,92vw)] mx-auto rounded-2xl " +
-  "border border-neutral-200/60 dark:border-white/10 " +
-  "bg-white/70 dark:bg-neutral-950/50 " +
-  "backdrop-blur-2xl shadow-2xl p-4";
+  "w-[min(680px,92vw)] mx-auto rounded-[20px] p-4";
+
+function controlStyle() {
+  return {
+    border: "1px solid var(--border)",
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    boxShadow: "var(--shadow-sm)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+  };
+}
+
+function popoverStyle() {
+  return {
+    border: "1px solid var(--border)",
+    background: "color-mix(in srgb, var(--card) 92%, transparent)",
+    color: "var(--text)",
+    boxShadow: "var(--shadow-lg)",
+    backdropFilter: "blur(16px) saturate(135%)",
+    WebkitBackdropFilter: "blur(16px) saturate(135%)",
+  };
+}
 
 export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
   const auth = useAuth();
@@ -300,15 +316,16 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   }, [fetchCounts]);
 
   return (
-    <div className="flex items-center gap-3 px-4 md:px-6 h-14">
+    <div className="flex h-14 items-center gap-3 px-4 md:px-6">
       {/* Hamburguesa móvil */}
       <button
         type="button"
         onClick={onToggleMenu}
         className={"md:hidden " + fxBtn}
         aria-label="Abrir menú"
+        style={controlStyle()}
       >
-        <Menu className="w-5 h-5" />
+        <Menu className="h-5 w-5" />
       </button>
 
       {/* Regresar (opcional) */}
@@ -318,8 +335,9 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           onClick={goBack}
           className={fxBtnText}
           title={back?.label || "Regresar"}
+          style={controlStyle()}
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="h-4 w-4" />
           <span className="hidden sm:inline">{back?.label || "Regresar"}</span>
         </button>
       )}
@@ -336,15 +354,24 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
             onKeyDown={(e) => e.key === "Enter" && runSearch()}
             placeholder="Buscar… (Ctrl/⌘+K)"
             className="input-fx w-64 pl-9 pr-9 py-2"
+            style={{
+              borderColor: "var(--input-border)",
+              background: "var(--input-bg)",
+              color: "var(--text)",
+            }}
           />
-          <Search className="w-4 h-4 opacity-60 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search
+            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
+            style={{ color: "var(--text-muted)", opacity: 0.75 }}
+          />
           {q && (
             <button
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-white/40 dark:hover:bg-white/10"
+              className="absolute right-2 top-1/2 rounded-lg p-1 -translate-y-1/2 transition"
+              style={{ color: "var(--text-muted)" }}
               onClick={() => setQ("")}
               aria-label="Limpiar"
             >
-              <X className="w-4 h-4 opacity-60" />
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>
@@ -371,10 +398,18 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           aria-label="Notificaciones"
           aria-haspopup="menu"
           aria-expanded={bellOpen}
+          style={controlStyle()}
         >
-          <Bell className={"w-5 h-5 " + (hasNew ? "text-rose-500" : "")} />
+          <Bell className="h-5 w-5" style={{ color: hasNew ? "#e11d48" : "var(--text)" }} />
           {hasNew && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] leading-[18px] text-center ring-2 ring-white/80 dark:ring-neutral-950/80">
+            <span
+              className="absolute -right-0.5 -top-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] leading-[18px] text-center"
+              style={{
+                background: "#e11d48",
+                color: "#fff",
+                boxShadow: "0 0 0 2px rgba(255,255,255,.75)",
+              }}
+            >
               {Math.min((counts.unread || 0) + (counts.alerts || 0), 99)}
             </span>
           )}
@@ -415,7 +450,10 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           <ThemeToggle />
         </div>
 
-        <span className="hidden sm:block text-sm opacity-80">
+        <span
+          className="hidden sm:block text-sm"
+          style={{ color: "var(--text-muted)" }}
+        >
           {user?.name || user?.fullName || user?.email || ""}
         </span>
 
@@ -428,10 +466,11 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 nav("/login", { replace: true });
               }
             }}
-            className="btn-outline-neon inline-flex items-center gap-1"
+            className="inline-flex items-center gap-2 rounded-[16px] px-3 py-2 text-sm font-medium transition-all duration-150"
             title="Salir"
+            style={controlStyle()}
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="h-4 w-4" />
             <span className="hidden sm:inline">Salir</span>
           </button>
         )}
@@ -440,11 +479,22 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       {/* Modal búsqueda */}
       {searchOpen && (
         <div
-          className="fixed inset-0 z-[60] grid place-items-start pt-24 bg-black/35"
+          className="fixed inset-0 z-[60] grid place-items-start pt-24"
+          style={{ background: "rgba(2, 6, 23, 0.35)" }}
           onClick={() => setSearchOpen(false)}
         >
-          <div className={fxModal} onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm mb-2 opacity-70">Búsqueda global</div>
+          <div
+            className={fxModal}
+            style={popoverStyle()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="mb-2 text-sm"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Búsqueda global
+            </div>
+
             <div className="relative">
               <input
                 autoFocus
@@ -456,19 +506,32 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 }}
                 placeholder="Escribe y presiona Enter…"
                 className="input-fx w-full pl-10 pr-10 py-3"
+                style={{
+                  borderColor: "var(--input-border)",
+                  background: "var(--input-bg)",
+                  color: "var(--text)",
+                }}
               />
-              <Search className="w-4 h-4 opacity-60 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search
+                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
+                style={{ color: "var(--text-muted)", opacity: 0.75 }}
+              />
               {q && (
                 <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-white/40 dark:hover:bg-white/10"
+                  className="absolute right-2 top-1/2 rounded-lg p-1 -translate-y-1/2 transition"
+                  style={{ color: "var(--text-muted)" }}
                   onClick={() => setQ("")}
                   aria-label="Limpiar"
                 >
-                  <X className="w-4 h-4 opacity-60" />
+                  <X className="h-4 w-4" />
                 </button>
               )}
             </div>
-            <div className="text-xs opacity-60 mt-2">
+
+            <div
+              className="mt-2 text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
               Enter para buscar en el módulo actual · Esc para cerrar
             </div>
           </div>
@@ -502,8 +565,9 @@ function TopbarQuickMenu({
           title="Abrir módulo"
           aria-haspopup="menu"
           aria-expanded={open}
+          style={controlStyle()}
         >
-          <Plus className="w-5 h-5" />
+          <Plus className="h-5 w-5" />
         </button>
       </div>
 
@@ -511,13 +575,25 @@ function TopbarQuickMenu({
         <div
           ref={menuRef}
           className={fxPopover}
-          style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
+          style={{
+            left: `${pos.left}px`,
+            top: `${pos.top}px`,
+            ...popoverStyle(),
+          }}
           role="menu"
         >
-          <div className="px-3 py-2 text-xs font-semibold opacity-70">Abrir módulo</div>
+          <div
+            className="px-3 py-2 text-xs font-semibold"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Abrir módulo
+          </div>
 
           {!modules.length ? (
-            <div className="px-3 py-3 text-sm opacity-70">
+            <div
+              className="px-3 py-3 text-sm"
+              style={{ color: "var(--text-muted)" }}
+            >
               No hay módulos habilitados para tu usuario.
             </div>
           ) : (
@@ -528,10 +604,22 @@ function TopbarQuickMenu({
                   nav(path);
                   toggle();
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/40 dark:hover:bg-white/10 text-left"
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-[14px] text-left transition-all duration-150"
                 role="menuitem"
+                style={{
+                  color: "var(--text)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background =
+                    "color-mix(in srgb, var(--panel) 70%, transparent)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                }}
               >
-                {Icon ? <Icon className="w-4 h-4 opacity-80" /> : null}
+                {Icon ? (
+                  <Icon className="h-4 w-4" style={{ color: "var(--text-muted)" }} />
+                ) : null}
                 <span>{label}</span>
               </button>
             ))
@@ -554,42 +642,77 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos, fxPopove
   return (
     <div
       className={fxPopover + " p-2"}
-      style={{ left: `${pos.left}px`, top: `${pos.top}px` }}
+      style={{
+        left: `${pos.left}px`,
+        top: `${pos.top}px`,
+        ...popoverStyle(),
+      }}
       role="menu"
     >
-      <div className="px-2 py-1 text-sm opacity-70">Notificaciones</div>
+      <div
+        className="px-2 py-1 text-sm"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Notificaciones
+      </div>
 
-      <div className="p-2 text-sm space-y-1">
+      <div className="space-y-1 p-2 text-sm">
         <div className="flex items-center justify-between">
-          <span className="opacity-80">Sin leer</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+          <span style={{ color: "var(--text-muted)" }}>Sin leer</span>
+          <span
+            className="rounded-lg px-2 py-0.5 text-xs"
+            style={{
+              background: "color-mix(in srgb, var(--panel) 75%, transparent)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+            }}
+          >
             {counts.unread || 0}
           </span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="opacity-80">Alertas</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+          <span style={{ color: "var(--text-muted)" }}>Alertas</span>
+          <span
+            className="rounded-lg px-2 py-0.5 text-xs"
+            style={{
+              background: "color-mix(in srgb, var(--panel) 75%, transparent)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+            }}
+          >
             {counts.alerts || 0}
           </span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="opacity-80">Total</span>
-          <span className="text-xs px-2 py-0.5 rounded-lg bg-white/40 dark:bg-white/10">
+          <span style={{ color: "var(--text-muted)" }}>Total</span>
+          <span
+            className="rounded-lg px-2 py-0.5 text-xs"
+            style={{
+              background: "color-mix(in srgb, var(--panel) 75%, transparent)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+            }}
+          >
             {counts.total || 0}
           </span>
         </div>
       </div>
 
-      <div className="p-2 pt-1 flex gap-2">
+      <div className="flex gap-2 p-2 pt-1">
         <button
           onClick={onClear}
-          className="flex-1 px-3 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition"
+          className="flex-1 rounded-[14px] px-3 py-2 text-white transition"
+          style={{
+            background: "linear-gradient(135deg, #e11d48, #f43f5e)",
+            boxShadow: "var(--shadow-sm)",
+          }}
         >
           Marcar todo como leído
         </button>
         <button
           onClick={onClose}
-          className="px-3 py-2 rounded-xl border border-neutral-200/60 dark:border-white/10 bg-white/40 dark:bg-neutral-950/30 hover:bg-white/55 dark:hover:bg-neutral-900/40 transition"
+          className="rounded-[14px] px-3 py-2 transition"
+          style={controlStyle()}
         >
           Cerrar
         </button>

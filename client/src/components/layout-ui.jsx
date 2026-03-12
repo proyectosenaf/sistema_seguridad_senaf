@@ -28,13 +28,17 @@ export function LayoutUIProvider({ children }) {
   );
 
   return (
-    <LayoutUIContext.Provider value={value}>{children}</LayoutUIContext.Provider>
+    <LayoutUIContext.Provider value={value}>
+      {children}
+    </LayoutUIContext.Provider>
   );
 }
 
 export function useLayoutUI() {
   const ctx = React.useContext(LayoutUIContext);
+
   if (ctx) return ctx;
+
   return {
     hideSidebar: false,
     setHideSidebar: () => {},
@@ -60,7 +64,10 @@ export function ModuleFullPage({
 
   React.useEffect(() => {
     setHideSidebar(true);
-    setBack({ label: backLabel, onClick: () => nav(backTo, { replace }) });
+    setBack({
+      label: backLabel,
+      onClick: () => nav(backTo, { replace }),
+    });
 
     return () => {
       setHideSidebar(false);

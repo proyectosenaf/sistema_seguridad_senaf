@@ -22,6 +22,57 @@ function blobToBase64(blob) {
   });
 }
 
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #0891b2, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #0891b2 22%, transparent)",
+    ...extra,
+  };
+}
+
 export default function AudioRecorder({ onCapture, onClose }) {
   const [status, setStatus] = React.useState("idle"); // idle | recording | ready | error
   const [err, setErr] = React.useState("");
@@ -34,13 +85,36 @@ export default function AudioRecorder({ onCapture, onClose }) {
 
   React.useEffect(() => {
     let t = null;
-    if (status === "recording") t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    if (status === "recording") {
+      t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    }
     return () => t && clearInterval(t);
   }, [status]);
+
+  React.useEffect(() => {
+    return () => {
+      try {
+        if (recRef.current?.state === "recording") recRef.current.stop();
+      } catch {}
+      try {
+        streamRef.current?.getTracks()?.forEach((t) => t.stop());
+      } catch {}
+      try {
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+      } catch {}
+    };
+  }, [audioUrl]);
 
   async function start() {
     setErr("");
     setSeconds(0);
+
+    try {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+    } catch {}
+
     setAudioUrl("");
     chunksRef.current = [];
 
@@ -57,10 +131,17 @@ export default function AudioRecorder({ onCapture, onClose }) {
       };
 
       rec.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAudioUrl(url);
-        setStatus("ready");
+        try {
+          const blob = new Blob(chunksRef.current, {
+            type: rec.mimeType || "audio/webm",
+          });
+          const url = URL.createObjectURL(blob);
+          setAudioUrl(url);
+          setStatus("ready");
+        } catch {
+          setErr("No se pudo preparar la previsualización del audio.");
+          setStatus("error");
+        }
       };
 
       rec.start(250);
@@ -100,22 +181,62 @@ export default function AudioRecorder({ onCapture, onClose }) {
     try {
       streamRef.current?.getTracks()?.forEach((t) => t.stop());
     } catch {}
+    try {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    } catch {}
     onClose?.();
   }
 
   return (
-    <div className="fixed inset-0 z-[999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0b1220]/90 p-5 shadow-2xl">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-white">Grabar audio</h3>
-          <button onClick={cancel} className="text-white/70 hover:text-white">✕</button>
+    <div
+      className="fixed inset-0 z-[999] flex items-center justify-center p-4"
+      style={{
+        background: "rgba(2, 6, 23, 0.78)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        className="w-full max-w-lg rounded-[24px] p-5"
+        style={sxCard()}
+      >
+        <div
+          className="mb-3 flex items-center justify-between"
+          style={{ borderBottom: "1px solid var(--border)", paddingBottom: "0.75rem" }}
+        >
+          <h3
+            className="text-lg font-semibold"
+            style={{ color: "var(--text)" }}
+          >
+            Grabar audio
+          </h3>
+
+          <button
+            onClick={cancel}
+            className="transition"
+            style={{ color: "var(--text-muted)" }}
+          >
+            ✕
+          </button>
         </div>
 
-        {err ? <div className="text-sm text-rose-200 mb-2">{err}</div> : null}
+        {err ? (
+          <div
+            className="mb-2 text-sm"
+            style={{ color: "#fecdd3" }}
+          >
+            {err}
+          </div>
+        ) : null}
 
-        <div className="text-sm text-white/70 mb-3">
-          Estado: <span className="text-white">{status}</span>
-          {status === "recording" ? <span className="ml-2">⏺️ {seconds}s</span> : null}
+        <div
+          className="mb-3 text-sm"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Estado: <span style={{ color: "var(--text)" }}>{status}</span>
+          {status === "recording" ? (
+            <span className="ml-2">⏺️ {seconds}s</span>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -123,7 +244,8 @@ export default function AudioRecorder({ onCapture, onClose }) {
             <button
               type="button"
               onClick={start}
-              className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500"
+              className="px-4 py-2 rounded-[14px] transition"
+              style={sxSuccessBtn()}
             >
               🎙️ Iniciar
             </button>
@@ -131,7 +253,8 @@ export default function AudioRecorder({ onCapture, onClose }) {
             <button
               type="button"
               onClick={stop}
-              className="px-4 py-2 rounded-xl bg-rose-600 text-white hover:bg-rose-500"
+              className="px-4 py-2 rounded-[14px] transition"
+              style={sxDangerBtn()}
             >
               ⏹️ Detener
             </button>
@@ -140,7 +263,8 @@ export default function AudioRecorder({ onCapture, onClose }) {
           <button
             type="button"
             onClick={cancel}
-            className="px-4 py-2 rounded-xl bg-white/10 text-white hover:bg-white/15 border border-white/10"
+            className="px-4 py-2 rounded-[14px] transition"
+            style={sxGhostBtn()}
           >
             Cancelar
           </button>
@@ -149,7 +273,8 @@ export default function AudioRecorder({ onCapture, onClose }) {
             <button
               type="button"
               onClick={save}
-              className="ml-auto px-4 py-2 rounded-xl bg-cyan-600 text-white hover:bg-cyan-500"
+              className="ml-auto px-4 py-2 rounded-[14px] transition"
+              style={sxPrimaryBtn()}
             >
               ✅ Guardar audio
             </button>

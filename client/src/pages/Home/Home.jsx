@@ -35,16 +35,17 @@ const ICONS = {
 /* Badge pill UI */
 function Badge({ value }) {
   const v = Number(value || 0);
+
   return (
     <span
-      className={[
-        "ml-auto inline-flex items-center justify-center",
-        "min-w-[34px] h-7 px-2",
-        "rounded-xl text-sm font-extrabold",
-        "bg-slate-500/20 text-slate-200",
-        "ring-1 ring-white/10",
-      ].join(" ")}
+      className="ml-auto inline-flex min-w-[34px] items-center justify-center rounded-[12px] px-2 py-1 text-sm font-extrabold"
       aria-label={`Conteo ${v}`}
+      style={{
+        background: "color-mix(in srgb, var(--panel) 78%, transparent)",
+        color: "var(--text)",
+        border: "1px solid var(--border)",
+        boxShadow: "var(--shadow-sm)",
+      }}
     >
       {v}
     </span>
@@ -83,6 +84,64 @@ function resolvePrincipal(raw) {
     superadmin: raw.superadmin === true || raw.isSuperAdmin === true,
     isSuperAdmin: raw.isSuperAdmin === true || raw.superadmin === true,
   };
+}
+
+function KpiCard({ title, value, tone = "default" }) {
+  const toneMap = {
+    default: {
+      valueColor: "var(--text)",
+      glow: "color-mix(in srgb, #2563eb 10%, transparent)",
+    },
+    danger: {
+      valueColor: "#ef4444",
+      glow: "color-mix(in srgb, #ef4444 12%, transparent)",
+    },
+    info: {
+      valueColor: "#3b82f6",
+      glow: "color-mix(in srgb, #3b82f6 12%, transparent)",
+    },
+    success: {
+      valueColor: "#22c55e",
+      glow: "color-mix(in srgb, #22c55e 12%, transparent)",
+    },
+    warning: {
+      valueColor: "#f59e0b",
+      glow: "color-mix(in srgb, #f59e0b 12%, transparent)",
+    },
+  };
+
+  const ui = toneMap[tone] || toneMap.default;
+
+  return (
+    <div
+      className="rounded-[20px] p-4 md:p-5"
+      style={{
+        background: `linear-gradient(
+            to bottom right,
+            color-mix(in srgb, var(--card) 88%, transparent),
+            color-mix(in srgb, ${ui.glow} 42%, var(--card))
+          )`,
+        border: "1px solid var(--border)",
+        boxShadow: "var(--shadow-md)",
+        backdropFilter: "blur(12px) saturate(130%)",
+        WebkitBackdropFilter: "blur(12px) saturate(130%)",
+      }}
+    >
+      <div
+        className="text-sm font-medium"
+        style={{ color: "var(--text-muted)" }}
+      >
+        {title}
+      </div>
+
+      <div
+        className="mt-2 text-3xl font-extrabold tracking-tight"
+        style={{ color: ui.valueColor }}
+      >
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -182,72 +241,124 @@ export default function Home() {
   );
 
   if (isLoading) {
-    return <div className="p-6">Cargando…</div>;
+    return (
+      <div
+        className="p-6"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Cargando…
+      </div>
+    );
   }
 
   if (!principal) {
-    return <div className="p-6">Cargando sesión…</div>;
+    return (
+      <div
+        className="p-6"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Cargando sesión…
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6 layer-content">
+    <div className="layer-content space-y-6">
       {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-5">
-        <div className="fx-kpi">
-          <div className="text-sm opacity-75">Incidentes</div>
-          <div className="text-3xl font-extrabold">{incStats.total}</div>
-        </div>
-        <div className="fx-kpi">
-          <div className="text-sm opacity-75">Abiertos</div>
-          <div className="text-3xl font-extrabold text-red-400">{incStats.abiertos}</div>
-        </div>
-        <div className="fx-kpi">
-          <div className="text-sm opacity-75">En Proceso</div>
-          <div className="text-3xl font-extrabold text-blue-400">{incStats.enProceso}</div>
-        </div>
-        <div className="fx-kpi">
-          <div className="text-sm opacity-75">Resueltos</div>
-          <div className="text-3xl font-extrabold text-green-400">{incStats.resueltos}</div>
-        </div>
-        <div className="fx-kpi">
-          <div className="text-sm opacity-75">Alta Prioridad</div>
-          <div className="text-3xl font-extrabold text-yellow-400">{incStats.alta}</div>
-        </div>
+        <KpiCard title="Incidentes" value={incStats.total} tone="default" />
+        <KpiCard title="Abiertos" value={incStats.abiertos} tone="danger" />
+        <KpiCard title="En Proceso" value={incStats.enProceso} tone="info" />
+        <KpiCard title="Resueltos" value={incStats.resueltos} tone="success" />
+        <KpiCard title="Alta Prioridad" value={incStats.alta} tone="warning" />
       </div>
 
       {/* Secciones */}
-      <div className="fx-card">
-        <h2 className="font-semibold mb-3">Secciones</h2>
-
-        {SECTIONS.length === 0 ? (
-          <div className="p-4 text-sm opacity-80">
-            No hay secciones habilitadas para tu usuario.
+      <div className="mod-card">
+        <div className="mod-card__head">
+          <div>
+            <h2 className="mod-card__title">Secciones</h2>
+            <p className="mod-card__sub">
+              Acceso rápido a los módulos habilitados para tu usuario.
+            </p>
           </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {SECTIONS.map((s) => {
-              const key = s.key;
-              const Icon = ICONS[key] || null;
-              const badgeValue = BADGES[key] ?? 0;
+        </div>
 
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => nav(s.path)}
-                  className="fx-tile text-left p-4"
-                >
-                  <div className="flex items-center gap-3">
-                    {Icon && <Icon className="w-5 h-5 opacity-80" />}
-                    <div className="font-medium">{s.label}</div>
-                    <Badge value={badgeValue} />
-                  </div>
-                  <div className="text-xs mt-1 opacity-70">Ir a {s.label}</div>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <div className="mod-table-wrap pt-4">
+          {SECTIONS.length === 0 ? (
+            <div
+              className="rounded-[16px] p-4 text-sm"
+              style={{
+                background: "color-mix(in srgb, var(--panel) 72%, transparent)",
+                border: "1px solid var(--border)",
+                color: "var(--text-muted)",
+              }}
+            >
+              No hay secciones habilitadas para tu usuario.
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {SECTIONS.map((s) => {
+                const key = s.key;
+                const Icon = ICONS[key] || null;
+                const badgeValue = BADGES[key] ?? 0;
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => nav(s.path)}
+                    className="text-left transition-all duration-150 hover:-translate-y-[1px]"
+                    style={{
+                      borderRadius: "18px",
+                      border: "1px solid var(--border)",
+                      background:
+                        "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+                      color: "var(--text)",
+                      boxShadow: "var(--shadow-sm)",
+                      padding: "1rem",
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      {Icon && (
+                        <span
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-[14px]"
+                          style={{
+                            background:
+                              "color-mix(in srgb, var(--panel) 78%, transparent)",
+                            border: "1px solid var(--border)",
+                          }}
+                        >
+                          <Icon
+                            className="h-5 w-5"
+                            style={{ color: "var(--text-muted)" }}
+                          />
+                        </span>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="truncate font-semibold"
+                          style={{ color: "var(--text)" }}
+                        >
+                          {s.label}
+                        </div>
+                        <div
+                          className="mt-1 text-xs"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          Ir a {s.label}
+                        </div>
+                      </div>
+
+                      <Badge value={badgeValue} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

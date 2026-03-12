@@ -1,6 +1,37 @@
 // src/components/CameraCapture.jsx
 import React, { useEffect, useRef, useState } from "react";
 
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
 export default function CameraCapture({ onCapture, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -9,6 +40,7 @@ export default function CameraCapture({ onCapture, onClose }) {
 
   useEffect(() => {
     let active = true;
+    let localStream = null;
 
     async function init() {
       try {
@@ -16,11 +48,16 @@ export default function CameraCapture({ onCapture, onClose }) {
           video: { facingMode: "environment" },
           audio: false,
         });
+
+        localStream = s;
+
         if (!active) {
           s.getTracks().forEach((t) => t.stop());
           return;
         }
+
         setStream(s);
+
         if (videoRef.current) {
           videoRef.current.srcObject = s;
         }
@@ -35,7 +72,10 @@ export default function CameraCapture({ onCapture, onClose }) {
 
     return () => {
       active = false;
-      if (stream) {
+
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+      } else if (stream) {
         stream.getTracks().forEach((t) => t.stop());
       }
     };
@@ -68,25 +108,55 @@ export default function CameraCapture({ onCapture, onClose }) {
   };
 
   const handleClose = () => {
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+    }
     onClose?.();
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/95 flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{
+        background: "rgba(2, 6, 23, 0.88)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
       {/* Barra superior */}
-      <div className="flex items-center justify-between px-4 py-3 text-white text-sm">
-        <span className="font-semibold">Tomar foto — SENAF</span>
+      <div
+        className="flex items-center justify-between px-4 py-3 text-sm"
+        style={{
+          borderBottom: "1px solid var(--border)",
+          background: "color-mix(in srgb, var(--panel) 38%, transparent)",
+        }}
+      >
+        <span
+          className="font-semibold"
+          style={{ color: "var(--text)" }}
+        >
+          Tomar foto — SENAF
+        </span>
+
         <button
           onClick={handleClose}
-          className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-xs"
+          className="px-3 py-1 rounded-full text-xs transition"
+          style={sxGhostBtn({
+            borderRadius: "9999px",
+          })}
         >
           Cerrar
         </button>
       </div>
 
       {/* Área de cámara full screen */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 pb-4">
-        <div className="relative w-full max-w-3xl aspect-[9/16] md:aspect-video bg-black overflow-hidden rounded-2xl border border-white/10">
+      <div className="flex flex-1 flex-col items-center justify-center px-4 pb-4">
+        <div
+          className="relative w-full max-w-3xl aspect-[9/16] md:aspect-video overflow-hidden rounded-[24px]"
+          style={sxCard({
+            background: "rgba(2, 6, 23, 0.72)",
+          })}
+        >
           <video
             ref={videoRef}
             autoPlay
@@ -96,16 +166,23 @@ export default function CameraCapture({ onCapture, onClose }) {
               rotated ? "rotate-90" : ""
             }`}
           />
+
           <button
             type="button"
             onClick={() => setRotated((r) => !r)}
-            className="absolute top-3 right-3 bg-black/60 text-white text-xs px-2 py-1 rounded-full hover:bg-black/80"
+            className="absolute top-3 right-3 text-xs px-2 py-1 rounded-full transition"
+            style={sxGhostBtn({
+              borderRadius: "9999px",
+            })}
           >
             ↻ Rotar
           </button>
         </div>
 
-        <p className="mt-3 text-xs text-gray-300 text-center max-w-md">
+        <p
+          className="mt-3 max-w-md text-center text-xs"
+          style={{ color: "var(--text-muted)" }}
+        >
           Gire el dispositivo para modo vertical u horizontal. Use el botón
           “Rotar” si la imagen se ve invertida.
         </p>
@@ -114,14 +191,20 @@ export default function CameraCapture({ onCapture, onClose }) {
         <div className="mt-5 flex items-center gap-4">
           <button
             onClick={takePhoto}
-            className="px-6 py-2 rounded-full bg-cyan-500 hover:bg-cyan-400 text-white font-semibold text-sm shadow-lg"
+            className="px-6 py-2 rounded-full font-semibold text-sm transition"
+            style={sxPrimaryBtn({
+              borderRadius: "9999px",
+            })}
           >
             📷 Capturar foto
           </button>
 
           <button
             onClick={handleClose}
-            className="px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs"
+            className="px-4 py-2 rounded-full text-xs transition"
+            style={sxGhostBtn({
+              borderRadius: "9999px",
+            })}
           >
             Cancelar
           </button>

@@ -2,7 +2,12 @@ import React from "react";
 
 export default function AuthBackground({ children }) {
   return (
-    <div className="min-h-screen relative overflow-hidden flex items-center justify-center bg-white">
+    <div
+      className="relative flex min-h-screen items-center justify-center overflow-hidden"
+      style={{ background: "var(--bg)" }}
+    >
+      {/* Fondo mesh suave */}
+      <div className="app-bg pointer-events-none" aria-hidden />
 
       {/* Logo centrado, visible y limpio */}
       <div
@@ -10,18 +15,33 @@ export default function AuthBackground({ children }) {
         style={{
           backgroundImage: "url('/images/senaf-bg.png')",
           backgroundSize: "900px",
-          opacity: 500.50,
+          opacity: 0.14,
+          filter: "saturate(110%) contrast(102%)",
         }}
       />
 
-      {/* Overlay muy suave solo para suavizar */}
-      <div className="absolute inset-0 bg-white/60" />
+      {/* Overlay suave para limpiar lectura */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(to bottom, color-mix(in srgb, var(--bg) 80%, transparent), color-mix(in srgb, var(--bg) 66%, transparent))",
+        }}
+      />
+
+      {/* Capa central de enfoque */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 0%, color-mix(in srgb, var(--bg) 18%, transparent) 58%, color-mix(in srgb, var(--bg) 42%, transparent) 100%)",
+        }}
+      />
 
       {/* Contenido */}
-      <div className="relative z-10">
+      <div className="relative z-10 w-full">
         {children}
       </div>
-
     </div>
   );
 }

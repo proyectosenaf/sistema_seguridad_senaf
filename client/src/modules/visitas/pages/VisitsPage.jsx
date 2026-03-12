@@ -16,6 +16,139 @@ const ROOT = (
 const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
 const CITAS_API_URL = `${ROOT}/citas`;
 
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardSoft(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxKpi(tone = "default") {
+  const tones = {
+    success: {
+      border: "color-mix(in srgb, #22c55e 40%, transparent)",
+      dot: "#22c55e",
+      label: "#86efac",
+      value: "#4ade80",
+      glow: "color-mix(in srgb, #22c55e 10%, transparent)",
+    },
+    info: {
+      border: "color-mix(in srgb, #3b82f6 40%, transparent)",
+      dot: "#3b82f6",
+      label: "#93c5fd",
+      value: "#60a5fa",
+      glow: "color-mix(in srgb, #3b82f6 10%, transparent)",
+    },
+    purple: {
+      border: "color-mix(in srgb, #a855f7 40%, transparent)",
+      dot: "#a855f7",
+      label: "#d8b4fe",
+      value: "#c084fc",
+      glow: "color-mix(in srgb, #a855f7 10%, transparent)",
+    },
+  };
+
+  const t = tones[tone] || tones.info;
+
+  return {
+    background: `linear-gradient(
+      to bottom right,
+      color-mix(in srgb, var(--card) 88%, transparent),
+      color-mix(in srgb, ${t.glow} 50%, var(--card))
+    )`,
+    border: `1px solid ${t.border}`,
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    "--kpi-dot": t.dot,
+    "--kpi-label": t.label,
+    "--kpi-value": t.value,
+  };
+}
+
+function KpiCard({ title, value, icon, tone }) {
+  return (
+    <div className="rounded-[20px] p-4 flex flex-col gap-1" style={sxKpi(tone)}>
+      <div
+        className="text-sm flex items-center gap-2"
+        style={{ color: "var(--kpi-label)" }}
+      >
+        <span>{icon}</span>
+        {title}
+      </div>
+      <div
+        className="text-2xl font-semibold"
+        style={{ color: "var(--kpi-value)" }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // Rango del día actual
 function getTodayRange() {
   const start = new Date();
@@ -39,33 +172,54 @@ function prettyCitaEstado(value) {
 
 function CitaEstadoPill({ estado }) {
   const val = prettyCitaEstado(estado);
-  let cls =
-    "px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center";
+
+  let style = {
+    background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+    color: "#fde68a",
+    border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
+  };
 
   switch (estado) {
     case "autorizada":
-      cls +=
-        " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
+      style = {
+        background: "color-mix(in srgb, #22c55e 12%, transparent)",
+        color: "#86efac",
+        border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
+      };
       break;
     case "denegada":
-      cls +=
-        " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
+      style = {
+        background: "color-mix(in srgb, #ef4444 12%, transparent)",
+        color: "#fca5a5",
+        border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+      };
       break;
     case "cancelada":
-      cls +=
-        " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
+      style = {
+        background: "color-mix(in srgb, #64748b 18%, transparent)",
+        color: "#cbd5e1",
+        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
+      };
       break;
     case "en_revision":
-      cls +=
-        " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
+      style = {
+        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
+        color: "#93c5fd",
+        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
+      };
       break;
     default:
-      cls +=
-        " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
       break;
   }
 
-  return <span className={cls}>{val}</span>;
+  return (
+    <span
+      className="px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center"
+      style={style}
+    >
+      {val}
+    </span>
+  );
 }
 
 function stripDiacritics(str) {
@@ -706,7 +860,6 @@ export default function VisitsPage() {
     }
   }
 
-  // ========= Render =========
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon" />
@@ -716,29 +869,33 @@ export default function VisitsPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div className="flex flex-col">
-          <h1 className="text-xl md:text-2xl font-bold text-neutral-100 dark:text-neutral-100">
+          <h1
+            className="text-xl md:text-2xl font-bold"
+            style={{ color: "var(--text)" }}
+          >
             Gestión de Visitantes
           </h1>
-          <p className="text-sm text-neutral-400">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             Registra y controla el acceso de visitantes
           </p>
         </div>
 
-        {/* Botones */}
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full md:w-auto">
           <button
             onClick={() => {
               setEditingVisitor(null);
               setShowModal(true);
             }}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full bg-neutral-900/60 border border-cyan-500/60 text-cyan-100 hover:bg-cyan-500 hover:text-neutral-900 transition"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+            style={sxPrimaryBtn({ borderRadius: "9999px" })}
           >
             <span className="font-semibold">+ Registrar Visitante</span>
           </button>
 
           <button
             onClick={() => navigate("/visitas/agenda")}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full border border-sky-400/70 text-sky-100 bg-sky-900/10 hover:bg-sky-700/30 hover:border-sky-300 transition"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+            style={sxGhostBtn({ borderRadius: "9999px" })}
           >
             <span className="font-semibold">Agenda de Citas</span> →
           </button>
@@ -747,58 +904,69 @@ export default function VisitsPage() {
 
       {/* KPI CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="fx-card p-4 flex flex-col gap-1">
-          <div className="text-sm text-neutral-400 flex items-center gap-2">
-            👤 Visitantes Activos
-          </div>
-          <div className="text-2xl font-semibold text-green-400">
-            {loading ? "…" : kpiActivos}
-          </div>
-        </div>
-
-        <div className="fx-card p-4 flex flex-col gap-1">
-          <div className="text-sm text-neutral-400 flex items-center gap-2">
-            ⏰ Total Hoy
-          </div>
-          <div className="text-2xl font-semibold text-blue-400">
-            {loading ? "…" : kpiTotalHoy}
-          </div>
-        </div>
-
-        <div className="fx-card p-4 flex flex-col gap-1">
-          <div className="text-sm text-neutral-400 flex items-center gap-2">
-            🏢 Empresas Visitantes
-          </div>
-          <div className="text-2xl font-semibold text-purple-400">
-            {loading ? "…" : kpiEmpresas}
-          </div>
-        </div>
+        <KpiCard
+          title="Visitantes Activos"
+          value={loading ? "…" : kpiActivos}
+          icon="👤"
+          tone="success"
+        />
+        <KpiCard
+          title="Total Hoy"
+          value={loading ? "…" : kpiTotalHoy}
+          icon="⏰"
+          tone="info"
+        />
+        <KpiCard
+          title="Empresas Visitantes"
+          value={loading ? "…" : kpiEmpresas}
+          icon="🏢"
+          tone="purple"
+        />
       </div>
 
       {/* CONTROLES DE VISTA + BUSCADOR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-400">Ver:</span>
-          <div className="inline-flex items-center rounded-full bg-neutral-900/60 p-1 border border-cyan-500/40">
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Ver:
+          </span>
+          <div
+            className="inline-flex items-center rounded-full p-1"
+            style={sxGhostBtn({ borderRadius: "9999px" })}
+          >
             <button
               type="button"
               onClick={() => setViewMode("citas")}
               className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
-                viewMode === "citas"
-                  ? "bg-cyan-500 text-neutral-900 shadow"
-                  : "text-neutral-300 hover:text-white"
+                viewMode === "citas" ? "" : ""
               }`}
+              style={
+                viewMode === "citas"
+                  ? {
+                      background: "#06b6d4",
+                      color: "#082f49",
+                    }
+                  : {
+                      color: "var(--text-muted)",
+                    }
+              }
             >
               Citas
             </button>
             <button
               type="button"
               onClick={() => setViewMode("visitas")}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
+              className="px-3 py-1 text-xs font-semibold rounded-full transition"
+              style={
                 viewMode === "visitas"
-                  ? "bg-cyan-500 text-neutral-900 shadow"
-                  : "text-neutral-300 hover:text-white"
-              }`}
+                  ? {
+                      background: "#06b6d4",
+                      color: "#082f49",
+                    }
+                  : {
+                      color: "var(--text-muted)",
+                    }
+              }
             >
               Visitas
             </button>
@@ -808,7 +976,8 @@ export default function VisitsPage() {
         <div className="flex flex-col-reverse md:flex-row md:items-center gap-3 w-full md:w-auto">
           <div className="flex-1 md:flex-none">
             <input
-              className="input-fx w-full md:w-[300px]"
+              className="w-full md:w-[300px] rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               placeholder="Buscar por nombre, DNI, empresa o placa…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -818,7 +987,8 @@ export default function VisitsPage() {
           {viewMode === "visitas" && (
             <div>
               <select
-                className="input-fx w-full md:w-[160px]"
+                className="w-full md:w-[160px] rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
@@ -833,19 +1003,23 @@ export default function VisitsPage() {
 
       {/* Citas */}
       {viewMode === "citas" && (
-        <section className="card-rich p-4 md:p-5 text-sm">
+        <section className="p-4 md:p-5 text-sm rounded-[24px]" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
-              <div className="font-semibold text-neutral-200 text-base">
+              <div
+                className="font-semibold text-base"
+                style={{ color: "var(--text)" }}
+              >
                 Solicitudes en línea (pre-registro)
               </div>
-              <p className="text-xs text-neutral-400">
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                 Citas agendadas por los visitantes para revisión del guardia
               </p>
             </div>
             <button
               onClick={() => navigate("/visitas/agenda")}
-              className="text-xs text-blue-400 hover:underline self-start md:self-auto"
+              className="text-xs self-start md:self-auto underline-offset-4 hover:underline"
+              style={{ color: "#60a5fa" }}
             >
               Ver agenda completa →
             </button>
@@ -853,8 +1027,14 @@ export default function VisitsPage() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[1000px]">
-              <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
-                <tr className="[&>th]:py-2 [&>th]:pr-4">
+              <thead
+                className="text-xs uppercase"
+                style={{ color: "var(--text-muted)" }}
+              >
+                <tr
+                  className="[&>th]:py-2 [&>th]:pr-4"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
                   <th>Visitante</th>
                   <th>DNI</th>
                   <th>Empresa</th>
@@ -868,12 +1048,13 @@ export default function VisitsPage() {
                   <th className="text-right">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="text-neutral-200">
+              <tbody style={{ color: "var(--text)" }}>
                 {filteredCitas.length === 0 ? (
                   <tr>
                     <td
                       colSpan={11}
-                      className="py-6 text-center text-neutral-500 text-sm"
+                      className="py-6 text-center text-sm"
+                      style={{ color: "var(--text-muted)" }}
                     >
                       Sin resultados
                     </td>
@@ -890,28 +1071,23 @@ export default function VisitsPage() {
                     return (
                       <tr
                         key={cita._id}
-                        className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                        className="text-sm [&>td]:py-3 [&>td]:pr-4"
+                        style={{ borderBottom: "1px solid var(--border)" }}
                       >
-                        <td className="font-medium text-neutral-100">
+                        <td className="font-medium" style={{ color: "var(--text)" }}>
                           {cita.nombre || cita.visitante}
                         </td>
-                        <td className="text-neutral-300">
+                        <td style={{ color: "var(--text-muted)" }}>
                           {cita.documento || "-"}
                         </td>
-                        <td className="text-neutral-200">
-                          {cita.empresa || "—"}
-                        </td>
-                        <td className="text-neutral-200">
-                          {cita.empleado || "—"}
-                        </td>
-                        <td className="text-neutral-300">
+                        <td>{cita.empresa || "—"}</td>
+                        <td>{cita.empleado || "—"}</td>
+                        <td style={{ color: "var(--text-muted)" }}>
                           {cita.motivo || "—"}
                         </td>
-                        <td className="text-neutral-200">
-                          {cita.telefono || "—"}
-                        </td>
-                        <td className="text-neutral-200">{tipoLegible}</td>
-                        <td className="text-neutral-300">
+                        <td>{cita.telefono || "—"}</td>
+                        <td>{tipoLegible}</td>
+                        <td style={{ color: "var(--text-muted)" }}>
                           {cita.citaAt
                             ? cita.citaAt.toLocaleDateString("es-ES", {
                                 day: "2-digit",
@@ -920,7 +1096,7 @@ export default function VisitsPage() {
                               })
                             : cita.fecha || "—"}
                         </td>
-                        <td className="text-neutral-300">
+                        <td style={{ color: "var(--text-muted)" }}>
                           {cita.citaAt
                             ? cita.citaAt.toLocaleTimeString("es-ES", {
                                 hour: "2-digit",
@@ -937,7 +1113,8 @@ export default function VisitsPage() {
                               <button
                                 type="button"
                                 onClick={() => setQrCita(cita)}
-                                className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+                                className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                style={sxGhostBtn()}
                               >
                                 Ver QR
                               </button>
@@ -948,7 +1125,8 @@ export default function VisitsPage() {
                               onClick={() =>
                                 updateCitaStatus(cita._id, "en_revision")
                               }
-                              className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-700/60 hover:bg-neutral-600"
+                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                              style={sxGhostBtn()}
                             >
                               En revisión
                             </button>
@@ -957,7 +1135,8 @@ export default function VisitsPage() {
                               onClick={() =>
                                 updateCitaStatus(cita._id, "autorizada")
                               }
-                              className="px-2 py-1 rounded-md text-xs font-semibold bg-green-200 text-green-800 hover:bg-green-300 dark:bg-green-600/20 dark:text-green-300 dark:hover:bg-green-600/30"
+                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                              style={sxSuccessBtn()}
                             >
                               Ingresar
                             </button>
@@ -966,7 +1145,8 @@ export default function VisitsPage() {
                               onClick={() =>
                                 updateCitaStatus(cita._id, "denegada")
                               }
-                              className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-800 hover:bg-red-300 dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
+                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                              style={sxDangerBtn()}
                             >
                               Denegar
                             </button>
@@ -975,7 +1155,8 @@ export default function VisitsPage() {
                               onClick={() =>
                                 updateCitaStatus(cita._id, "cancelada")
                               }
-                              className="px-2 py-1 rounded-md text-xs font-semibold bg-neutral-500/40 text-neutral-50 hover:bg-neutral-500/60"
+                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                              style={sxGhostBtn()}
                             >
                               Cancelar
                             </button>
@@ -989,11 +1170,11 @@ export default function VisitsPage() {
             </table>
           </div>
 
-          {/* FOOTER EXPORT Citas */}
           <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
             <button
               onClick={() => exportCitasExcel(filteredCitas)}
-              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              className="px-3 py-2 text-sm rounded-lg transition"
+              style={sxGhostBtn()}
               title="Exportar citas (xlsx)"
             >
               Exportar Excel
@@ -1001,7 +1182,8 @@ export default function VisitsPage() {
 
             <button
               onClick={() => exportCitasPDF(filteredCitas)}
-              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              className="px-3 py-2 text-sm rounded-lg transition"
+              style={sxGhostBtn()}
               title="Exportar citas (PDF)"
             >
               Exportar PDF
@@ -1012,22 +1194,33 @@ export default function VisitsPage() {
 
       {/* TABLA VISITANTES */}
       {viewMode === "visitas" && (
-        <section className="relative z-[2] visits-shell card-rich p-4 md:p-5 overflow-x-auto text-sm">
+        <section
+          className="relative z-[2] p-4 md:p-5 overflow-x-auto text-sm rounded-[24px]"
+          style={sxCard()}
+        >
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-            <div className="font-semibold text-neutral-200 text-base">
+            <div
+              className="font-semibold text-base"
+              style={{ color: "var(--text)" }}
+            >
               Lista de Visitantes
             </div>
           </div>
 
           <table className="w-full text-left border-collapse min-w-[1000px]">
-            <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
-              <tr className="[&>th]:py-2 [&>th]:pr-4">
+            <thead
+              className="text-xs uppercase"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <tr
+                className="[&>th]:py-2 [&>th]:pr-4"
+                style={{ borderBottom: "1px solid var(--border)" }}
+              >
                 <th>Visitante</th>
                 <th>DNI</th>
                 <th>Empresa</th>
                 <th>Empleado</th>
                 <th>Teléfono</th>
-                {/* sin columna correo */}
                 <th>Tipo</th>
                 <th>Vehículo</th>
                 <th>Entrada</th>
@@ -1036,12 +1229,13 @@ export default function VisitsPage() {
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
-            <tbody className="text-neutral-200">
+            <tbody style={{ color: "var(--text)" }}>
               {loading ? (
                 <tr>
                   <td
                     colSpan={11}
-                    className="py-6 text-center text-neutral-500 text-sm"
+                    className="py-6 text-center text-sm"
+                    style={{ color: "var(--text-muted)" }}
                   >
                     Cargando…
                   </td>
@@ -1050,7 +1244,8 @@ export default function VisitsPage() {
                 <tr>
                   <td
                     colSpan={11}
-                    className="py-6 text-center text-neutral-500 text-sm"
+                    className="py-6 text-center text-sm"
+                    style={{ color: "var(--text-muted)" }}
                   >
                     Sin resultados
                   </td>
@@ -1059,28 +1254,41 @@ export default function VisitsPage() {
                 filteredVisitors.map((v) => (
                   <tr
                     key={v.id}
-                    className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                    className="text-sm [&>td]:py-3 [&>td]:pr-4"
+                    style={{ borderBottom: "1px solid var(--border)" }}
                   >
-                    <td className="font-medium text-neutral-100">
-                      <div>{v.name}</div>
-                    </td>
-                    <td className="text-neutral-400">{v.document}</td>
-                    <td className="text-neutral-200">{v.company}</td>
-                    <td className="text-neutral-200">{v.employee}</td>
-                    <td className="text-neutral-200">{v.phone || "—"}</td>
-                    <td className="text-neutral-200">
-                      {v.kind || "Presencial"}
-                    </td>
-                    <td className="text-neutral-200">{v.vehicleSummary}</td>
-                    <td className="text-neutral-200">{v.entry}</td>
-                    <td className="text-neutral-400">{v.exit}</td>
+                    <td className="font-medium">{v.name}</td>
+                    <td style={{ color: "var(--text-muted)" }}>{v.document}</td>
+                    <td>{v.company}</td>
+                    <td>{v.employee}</td>
+                    <td>{v.phone || "—"}</td>
+                    <td>{v.kind || "Presencial"}</td>
+                    <td>{v.vehicleSummary}</td>
+                    <td>{v.entry}</td>
+                    <td style={{ color: "var(--text-muted)" }}>{v.exit}</td>
                     <td>
                       {v.status === "Dentro" ? (
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300">
+                        <span
+                          className="px-2 py-1 rounded-full text-xs font-semibold"
+                          style={{
+                            background: "color-mix(in srgb, #22c55e 12%, transparent)",
+                            color: "#86efac",
+                            border:
+                              "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
+                          }}
+                        >
                           Dentro
                         </span>
                       ) : (
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-neutral-300 text-neutral-700 dark:bg-neutral-500/20 dark:text-neutral-300">
+                        <span
+                          className="px-2 py-1 rounded-full text-xs font-semibold"
+                          style={{
+                            background: "color-mix(in srgb, #64748b 16%, transparent)",
+                            color: "#cbd5e1",
+                            border:
+                              "1px solid color-mix(in srgb, #64748b 36%, transparent)",
+                          }}
+                        >
                           Finalizada
                         </span>
                       )}
@@ -1090,7 +1298,8 @@ export default function VisitsPage() {
                         <button
                           type="button"
                           onClick={() => handleEditVisitor(v)}
-                          className="px-2 py-1 rounded-md text-xs font-semibold bg-blue-500/80 text-neutral-50 hover:bg-blue-400"
+                          className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                          style={sxPrimaryBtn()}
                         >
                           Editar
                         </button>
@@ -1098,12 +1307,16 @@ export default function VisitsPage() {
                           <button
                             disabled={savingExit === v.id}
                             onClick={() => handleExit(v.id)}
-                            className="px-2 py-1 rounded-md text-xs font-semibold bg-red-200 text-red-700 hover:bg-red-300 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-red-600/20 dark:text-red-300 dark:hover:bg-red-600/30"
+                            className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={sxDangerBtn()}
                           >
                             {savingExit === v.id ? "…" : "⏏ Salida"}
                           </button>
                         ) : (
-                          <span className="text-neutral-500 text-xs">
+                          <span
+                            className="text-xs"
+                            style={{ color: "var(--text-muted)" }}
+                          >
                             (cerrada)
                           </span>
                         )}
@@ -1115,11 +1328,11 @@ export default function VisitsPage() {
             </tbody>
           </table>
 
-          {/* FOOTER EXPORT Visitas */}
           <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
             <button
               onClick={() => exportExcel(filteredVisitors)}
-              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              className="px-3 py-2 text-sm rounded-lg transition"
+              style={sxGhostBtn()}
               title="Exportar lista (xlsx)"
             >
               Exportar Excel
@@ -1127,7 +1340,8 @@ export default function VisitsPage() {
 
             <button
               onClick={() => exportPDF(filteredVisitors)}
-              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              className="px-3 py-2 text-sm rounded-lg transition"
+              style={sxGhostBtn()}
               title="Exportar PDF"
             >
               Exportar PDF
@@ -1151,39 +1365,57 @@ export default function VisitsPage() {
       {/* Modal QR */}
       {qrCita && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{
+            background: "rgba(2, 6, 23, 0.62)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+          }}
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setQrCita(null);
           }}
         >
           <div
-            className="card-rich p-4 md:p-6 w-[95%] max-w-[420px]"
+            className="p-4 md:p-6 w-[95%] max-w-[420px] rounded-[24px]"
+            style={sxCard()}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between mb-3">
               <div>
-                <h3 className="text-lg font-semibold text-neutral-100">
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: "var(--text)" }}
+                >
                   Invitación / QR de cita
                 </h3>
-                <p className="text-xs text-neutral-400">
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                   Muestre este código en la entrada para su validación.
                 </p>
               </div>
               <button
                 onClick={() => setQrCita(null)}
-                className="text-neutral-400 hover:text-neutral-200"
+                style={{ color: "var(--text-muted)" }}
               >
                 ✕
               </button>
             </div>
 
             <div className="flex flex-col items-center gap-3">
-              <QRCodeSVG
-                value={buildQrValueForCita(qrCita)}
-                size={200}
-                includeMargin
-              />
-              <div className="text-xs text-neutral-300 text-center">
+              <div
+                className="rounded-[18px] p-4"
+                style={sxCardSoft({ background: "#ffffff" })}
+              >
+                <QRCodeSVG
+                  value={buildQrValueForCita(qrCita)}
+                  size={200}
+                  includeMargin
+                />
+              </div>
+
+              <div
+                className="text-xs text-center"
+                style={{ color: "var(--text)" }}
+              >
                 <div className="font-semibold">
                   {qrCita.nombre || qrCita.visitante}
                 </div>

@@ -211,6 +211,233 @@ function normalizeIncidentMedia(inc) {
   ];
 }
 
+/* =========================
+   UI styles
+========================= */
+const UI = {
+  page: "space-y-6 layer-content",
+  section: "rounded-[24px] overflow-hidden",
+  sectionHeader:
+    "flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-start lg:justify-between",
+  title: "text-2xl font-semibold",
+  subtitle: "text-sm",
+  btn: "inline-flex items-center justify-center rounded-[14px] px-4 py-2 text-sm font-medium transition-all duration-150",
+  btnSm: "inline-flex items-center justify-center rounded-[12px] px-3 py-1.5 text-[11px] font-semibold transition-all duration-150",
+  input: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition",
+  select: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition",
+  textarea: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition resize-none",
+  label: "block mb-2 font-medium text-sm",
+  helper: "text-xs",
+};
+
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardStrong(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxSectionBar(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--panel) 78%, transparent)",
+    color: "var(--text-muted)",
+    borderBottom: "1px solid var(--border)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxInfoBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #0891b2, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #0891b2 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxBadgePriority(priority) {
+  const p = safeLower(priority);
+  if (p === "alta") {
+    return {
+      background: "color-mix(in srgb, #ef4444 12%, transparent)",
+      color: "#fca5a5",
+      border: "1px solid color-mix(in srgb, #ef4444 42%, transparent)",
+    };
+  }
+  if (p === "media") {
+    return {
+      background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+      color: "#fde68a",
+      border: "1px solid color-mix(in srgb, #f59e0b 42%, transparent)",
+    };
+  }
+  return {
+    background: "color-mix(in srgb, #22c55e 12%, transparent)",
+    color: "#86efac",
+    border: "1px solid color-mix(in srgb, #22c55e 42%, transparent)",
+  };
+}
+
+function sxBadgeStatus(status) {
+  const s = normalizeStatus(status);
+  if (s === "resuelto") {
+    return {
+      background: "color-mix(in srgb, #22c55e 12%, transparent)",
+      color: "#86efac",
+      border: "1px solid color-mix(in srgb, #22c55e 42%, transparent)",
+    };
+  }
+  if (s === "en_proceso") {
+    return {
+      background: "color-mix(in srgb, #3b82f6 12%, transparent)",
+      color: "#93c5fd",
+      border: "1px solid color-mix(in srgb, #3b82f6 42%, transparent)",
+    };
+  }
+  return {
+    background: "color-mix(in srgb, #ef4444 12%, transparent)",
+    color: "#fca5a5",
+    border: "1px solid color-mix(in srgb, #ef4444 42%, transparent)",
+  };
+}
+
+function sxKpi(tone = "default") {
+  const tones = {
+    danger: {
+      border: "color-mix(in srgb, #ef4444 40%, transparent)",
+      dot: "#ef4444",
+      label: "#fca5a5",
+      value: "#f87171",
+      glow: "color-mix(in srgb, #ef4444 10%, transparent)",
+    },
+    info: {
+      border: "color-mix(in srgb, #3b82f6 40%, transparent)",
+      dot: "#3b82f6",
+      label: "#93c5fd",
+      value: "#60a5fa",
+      glow: "color-mix(in srgb, #3b82f6 10%, transparent)",
+    },
+    success: {
+      border: "color-mix(in srgb, #22c55e 40%, transparent)",
+      dot: "#22c55e",
+      label: "#86efac",
+      value: "#4ade80",
+      glow: "color-mix(in srgb, #22c55e 10%, transparent)",
+    },
+    warning: {
+      border: "color-mix(in srgb, #f59e0b 40%, transparent)",
+      dot: "#fbbf24",
+      label: "#fde68a",
+      value: "#fcd34d",
+      glow: "color-mix(in srgb, #f59e0b 10%, transparent)",
+    },
+  };
+
+  const t = tones[tone] || tones.info;
+
+  return {
+    background: `linear-gradient(
+      to bottom right,
+      color-mix(in srgb, var(--card) 88%, transparent),
+      color-mix(in srgb, ${t.glow} 50%, var(--card))
+    )`,
+    border: `1px solid ${t.border}`,
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    "--kpi-dot": t.dot,
+    "--kpi-label": t.label,
+    "--kpi-value": t.value,
+  };
+}
+
+function KpiCard({ title, value, tone, dotLabel }) {
+  return (
+    <div className="rounded-[20px] p-4" style={sxKpi(tone)}>
+      <div
+        className="text-xs uppercase font-medium flex items-center gap-2"
+        style={{ color: "var(--kpi-label)" }}
+      >
+        <span
+          className="w-2 h-2 rounded-full"
+          style={{ background: "var(--kpi-dot)" }}
+        />
+        {dotLabel || title}
+      </div>
+      <div
+        className="text-3xl font-semibold mt-1"
+        style={{ color: "var(--kpi-value)" }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export default function IncidentesList() {
   const [incidentes, setIncidentes] = useState([]);
   const [stats, setStats] = useState({
@@ -769,43 +996,46 @@ export default function IncidentesList() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#001a12] via-[#00172a] to-[#000000] text-white p-6 max-w-[1400px] mx-auto space-y-8">
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+    <div className={UI.page}>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-white">Gestión de Incidentes</h1>
-          <p className="text-sm text-gray-400">
+          <h1 className={UI.title} style={{ color: "var(--text)" }}>
+            Gestión de Incidentes
+          </h1>
+          <p className={UI.subtitle} style={{ color: "var(--text-muted)" }}>
             Registra y da seguimiento a incidentes de seguridad
           </p>
         </div>
 
         <button
           onClick={showForm ? closeForm : startCreate}
-          className="self-start bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded px-4 py-2 
-                     border border-red-400/40 
-                     shadow-[0_0_20px_rgba(255,0,0,0.4)] 
-                     hover:shadow-[0_0_40px_rgba(255,0,0,0.8)] 
-                     transition-all duration-300"
+          className={UI.btn}
+          style={showForm ? sxDangerBtn() : sxPrimaryBtn()}
         >
           {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
         </button>
       </div>
 
       {showForm && (
-        <div className="rounded-xl p-6 md:p-8 bg-white/70 dark:bg-white/5 border border-gray-200 dark:border-white/10 shadow-lg backdrop-blur-sm transition-all">
-          <h2 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
+        <div className="rounded-[24px] p-6 md:p-8 transition-all" style={sxCard()}>
+          <h2
+            className="text-xl font-semibold mb-6"
+            style={{ color: "var(--text)" }}
+          >
             {editingId ? "Editar incidente" : "Reportar Nuevo Incidente"}
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-6 text-sm">
             <div>
-              <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+              <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                 Tipo de Incidente
               </label>
               <select
                 name="type"
                 value={form.type}
                 onChange={handleFormChange}
-                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                className={UI.select}
+                style={sxInput()}
               >
                 <option>Acceso no autorizado</option>
                 <option>Falla técnica</option>
@@ -816,14 +1046,14 @@ export default function IncidentesList() {
 
             {/* ✅ Descripción + dictado (INLINE) */}
             <div>
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <label className="block text-gray-700 dark:text-white/80 font-medium">
+              <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                <label className={UI.label} style={{ color: "var(--text-muted)", marginBottom: 0 }}>
                   Descripción del Incidente
                 </label>
 
                 <div className="flex flex-wrap items-center gap-2">
                   {!sttSupported ? (
-                    <span className="text-xs text-gray-500 dark:text-white/45">
+                    <span className={UI.helper} style={{ color: "var(--text-muted)" }}>
                       🎙️ Dictado no disponible en este navegador
                     </span>
                   ) : (
@@ -831,11 +1061,11 @@ export default function IncidentesList() {
                       <button
                         type="button"
                         onClick={sttListening ? stopAndInsert : sttStart}
-                        className={
-                          "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
-                          (sttListening
-                            ? "bg-rose-600 text-white border-rose-500/40 hover:bg-rose-500"
-                            : "bg-white/60 dark:bg-white/10 text-gray-800 dark:text-white border-gray-300 dark:border-white/10 hover:bg-white/80 dark:hover:bg-white/15")
+                        className={UI.btnSm}
+                        style={
+                          sttListening
+                            ? sxDangerBtn()
+                            : sxGhostBtn()
                         }
                         title="Iniciar / detener dictado"
                       >
@@ -846,11 +1076,15 @@ export default function IncidentesList() {
                         type="button"
                         onClick={() => appendTranscriptToDescription()}
                         disabled={!String(sttTranscript || "").trim()}
-                        className={
-                          "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
-                          (!String(sttTranscript || "").trim()
-                            ? "opacity-50 cursor-not-allowed bg-white/40 dark:bg-white/5 text-gray-600 dark:text-white/60 border-gray-300 dark:border-white/10"
-                            : "bg-emerald-600 text-white border-emerald-500/40 hover:bg-emerald-500")
+                        className={UI.btnSm}
+                        style={
+                          !String(sttTranscript || "").trim()
+                            ? {
+                                ...sxGhostBtn(),
+                                opacity: 0.5,
+                                cursor: "not-allowed",
+                              }
+                            : sxSuccessBtn()
                         }
                         title="Insertar lo dictado"
                       >
@@ -860,7 +1094,8 @@ export default function IncidentesList() {
                       <button
                         type="button"
                         onClick={clearDictation}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-300 dark:border-white/10 bg-transparent text-gray-600 dark:text-white/70 hover:text-black dark:hover:text-white hover:border-cyan-400/80 transition-all"
+                        className={UI.btnSm}
+                        style={sxGhostBtn()}
                         title="Limpiar dictado"
                       >
                         🧹 Limpiar dictado
@@ -874,21 +1109,29 @@ export default function IncidentesList() {
                 name="description"
                 value={form.description}
                 onChange={handleFormChange}
-                className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 min-h-[110px] resize-none focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
+                className={UI.textarea + " min-h-[110px]"}
+                style={sxInput()}
                 placeholder="Describa detalladamente lo ocurrido..."
                 required
               />
 
               {sttSupported && (sttError || sttTranscript) ? (
-                <div className="mt-2 rounded-lg border border-white/10 bg-black/10 dark:bg-white/5 p-3">
+                <div
+                  className="mt-2 rounded-[14px] p-3"
+                  style={sxCardStrong()}
+                >
                   {sttError ? (
-                    <div className="text-xs text-rose-600 dark:text-rose-300">
+                    <div className="text-xs" style={{ color: "#fb7185" }}>
                       ⚠️ {sttError}
                     </div>
                   ) : null}
                   {sttTranscript ? (
-                    <div className="mt-1 text-xs text-gray-700 dark:text-white/80 whitespace-pre-wrap">
-                      <span className="opacity-70">Dictado:</span> {sttTranscript}
+                    <div
+                      className="mt-1 text-xs whitespace-pre-wrap"
+                      style={{ color: "var(--text)" }}
+                    >
+                      <span style={{ color: "var(--text-muted)" }}>Dictado:</span>{" "}
+                      {sttTranscript}
                     </div>
                   ) : null}
                 </div>
@@ -897,14 +1140,15 @@ export default function IncidentesList() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                   Reportado por
                 </label>
                 <select
                   name="reportedByGuardId"
                   value={form.reportedByGuardId}
                   onChange={handleReporterChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                  className={UI.select}
+                  style={sxInput()}
                   required
                 >
                   <option value="">Seleccione un guardia…</option>
@@ -917,14 +1161,15 @@ export default function IncidentesList() {
               </div>
 
               <div>
-                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                   Zona / Ubicación
                 </label>
                 <input
                   name="zone"
                   value={form.zone}
                   onChange={handleFormChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 placeholder:text-gray-400 dark:placeholder:text-white/25"
+                  className={UI.input}
+                  style={sxInput()}
                   placeholder="Ej. Entrada Principal / Comayagua / Sala Juntas A"
                   required
                 />
@@ -933,14 +1178,15 @@ export default function IncidentesList() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                   Prioridad
                 </label>
                 <select
                   name="priority"
                   value={form.priority}
                   onChange={handleFormChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                  className={UI.select}
+                  style={sxInput()}
                 >
                   <option value="alta">Alta</option>
                   <option value="media">Media</option>
@@ -949,14 +1195,15 @@ export default function IncidentesList() {
               </div>
 
               <div>
-                <label className="block mb-2 text-gray-700 dark:text-white/80 font-medium">
+                <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                   Estado
                 </label>
                 <select
                   name="status"
                   value={form.status}
                   onChange={handleFormChange}
-                  className="w-full bg-gray-100 dark:bg-black/20 text-gray-800 dark:text-white border border-gray-300 dark:border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
+                  className={UI.select}
+                  style={sxInput()}
                 >
                   <option value="abierto">Abierto</option>
                   <option value="en_proceso">En proceso</option>
@@ -966,7 +1213,7 @@ export default function IncidentesList() {
             </div>
 
             <div className="space-y-2">
-              <label className="block mb-1 text-gray-700 dark:text-white/80 font-medium">
+              <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                 Evidencias (fotos / videos / audio)
               </label>
 
@@ -974,7 +1221,8 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="bg-gradient-to-r from-[#0F6CBD] to-[#00A6FB] px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(0,166,251,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className={UI.btn}
+                  style={sxInfoBtn()}
                 >
                   📁 Seleccionar archivo
                 </button>
@@ -982,7 +1230,8 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowCamera(true)}
-                  className="bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(99,102,241,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className={UI.btn}
+                  style={sxPrimaryBtn()}
                 >
                   📷 Tomar foto
                 </button>
@@ -990,7 +1239,14 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowVideoRecorder(true)}
-                  className="bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(236,72,153,0.35)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className={UI.btn}
+                  style={{
+                    background: "linear-gradient(135deg, #7c3aed, #ec4899)",
+                    color: "#fff",
+                    border: "1px solid transparent",
+                    boxShadow:
+                      "0 10px 20px color-mix(in srgb, #ec4899 22%, transparent)",
+                  }}
                 >
                   🎥 Grabar video
                 </button>
@@ -998,7 +1254,14 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={() => setShowAudioRecorder(true)}
-                  className="bg-gradient-to-r from-amber-600 to-orange-500 px-4 py-2 rounded-lg font-semibold text-white shadow-[0_0_14px_rgba(245,158,11,0.25)] hover:brightness-110 transition-all inline-flex items-center gap-2"
+                  className={UI.btn}
+                  style={{
+                    background: "linear-gradient(135deg, #d97706, #f97316)",
+                    color: "#fff",
+                    border: "1px solid transparent",
+                    boxShadow:
+                      "0 10px 20px color-mix(in srgb, #f59e0b 22%, transparent)",
+                  }}
                 >
                   🎙️ Grabar audio
                 </button>
@@ -1018,11 +1281,14 @@ export default function IncidentesList() {
                     <div
                       key={idx}
                       className={
-                        "relative rounded-lg overflow-hidden border border-cyan-400/25 bg-black/40 " +
+                        "relative rounded-[14px] overflow-hidden " +
                         (item.type === "audio"
                           ? "w-72 h-12 p-2 flex items-center"
                           : "w-28 h-28")
                       }
+                      style={sxCardStrong({
+                        background: "color-mix(in srgb, var(--card-solid) 70%, transparent)",
+                      })}
                     >
                       {item.type === "image" ? (
                         <img
@@ -1043,8 +1309,13 @@ export default function IncidentesList() {
                       <button
                         type="button"
                         onClick={() => removeMedia(idx)}
-                        className="absolute top-1 right-1 bg-black/70 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                        className="absolute top-1 right-1 text-xs rounded-full w-5 h-5 flex items-center justify-center"
                         title="Quitar"
+                        style={{
+                          background: "rgba(2,6,23,.72)",
+                          color: "#fff",
+                          border: "1px solid rgba(255,255,255,.12)",
+                        }}
                       >
                         ✕
                       </button>
@@ -1058,14 +1329,16 @@ export default function IncidentesList() {
               <button
                 type="button"
                 onClick={closeForm}
-                className="text-sm bg-transparent border border-gray-300 dark:border-white/10 text-gray-600 dark:text-white/80 rounded-lg px-4 py-2 hover:border-cyan-400/80 hover:text-black dark:hover:text-white transition-all"
+                className={UI.btn}
+                style={sxGhostBtn()}
               >
                 Cancelar
               </button>
 
               <button
                 type="submit"
-                className="text-sm bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white font-semibold rounded-lg px-4 py-2 shadow-[0_0_14px_rgba(16,185,129,0.35)] transition-all duration-300"
+                className={UI.btn}
+                style={sxSuccessBtn()}
               >
                 {editingId ? "Guardar cambios" : "Guardar incidente"}
               </button>
@@ -1076,55 +1349,48 @@ export default function IncidentesList() {
 
       {/* ----- stats ----- */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="rounded-lg bg-[#0f1b2d] border border-red-400/40 p-4">
-          <div className="text-xs uppercase text-red-300 font-medium flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            Incidentes Abiertos
-          </div>
-          <div className="text-3xl font-semibold text-red-400">{stats.abiertos}</div>
-        </div>
-
-        <div className="rounded-lg bg-[#0f1b2d] border border-blue-400/40 p-4">
-          <div className="text-xs uppercase text-blue-300 font-medium flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
-            En Proceso
-          </div>
-          <div className="text-3xl font-semibold text-blue-400">{stats.enProceso}</div>
-        </div>
-
-        <div className="rounded-lg bg-[#0f1b2d] border border-green-400/40 p-4">
-          <div className="text-xs uppercase text-green-300 font-medium flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500" />
-            Resueltos
-          </div>
-          <div className="text-3xl font-semibold text-green-400">{stats.resueltos}</div>
-        </div>
-
-        <div className="rounded-lg bg-[#0f1b2d] border border-yellow-400/40 p-4">
-          <div className="text-xs uppercase text-yellow-300 font-medium flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-yellow-400" />
-            Alta prioridad
-          </div>
-          <div className="text-3xl font-semibold text-yellow-300">{stats.alta}</div>
-        </div>
+        <KpiCard
+          title="Incidentes Abiertos"
+          value={stats.abiertos}
+          tone="danger"
+          dotLabel="Incidentes Abiertos"
+        />
+        <KpiCard
+          title="En Proceso"
+          value={stats.enProceso}
+          tone="info"
+          dotLabel="En Proceso"
+        />
+        <KpiCard
+          title="Resueltos"
+          value={stats.resueltos}
+          tone="success"
+          dotLabel="Resueltos"
+        />
+        <KpiCard
+          title="Alta prioridad"
+          value={stats.alta}
+          tone="warning"
+          dotLabel="Alta prioridad"
+        />
       </div>
 
       {/* ----- tabla ----- */}
-      <div className="bg-white/5 border border-purple-500/40 rounded-2xl shadow-[0_0_30px_rgba(168,85,247,0.45)] overflow-hidden backdrop-blur-md">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center p-4 border-b border-white/10 gap-3 bg-black/10">
+      <div className={UI.section} style={sxCard()}>
+        <div className={UI.sectionHeader} style={sxSectionBar()}>
           <div>
-            <h2 className="font-semibold text-lg text-white">Lista de Incidentes</h2>
-            <p className="text-xs text-gray-300">
+            <h2 className="font-semibold text-lg" style={{ color: "var(--text)" }}>
+              Lista de Incidentes
+            </h2>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
               Historial de reportes registrados en el sistema
             </p>
           </div>
 
           <div className="w-full lg:w-[620px] flex flex-col gap-2">
             <input
-              className="w-full bg-black/30 text-white text-sm rounded-md px-3 py-2 
-                         border border-purple-400/40 placeholder-gray-500 
-                         focus:outline-none focus:ring-2 focus:ring-purple-400/60 
-                         transition-all duration-200"
+              className={UI.input}
+              style={sxInput()}
               placeholder="Buscar (tipo, descripción, zona, reportado por, estado, prioridad...)"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -1134,7 +1400,8 @@ export default function IncidentesList() {
               <select
                 value={fStatus}
                 onChange={(e) => setFStatus(e.target.value)}
-                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                className={UI.select + " !w-auto text-xs"}
+                style={sxInput()}
                 title="Estado"
               >
                 <option value="all">Estado: Todos</option>
@@ -1146,7 +1413,8 @@ export default function IncidentesList() {
               <select
                 value={fPriority}
                 onChange={(e) => setFPriority(e.target.value)}
-                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                className={UI.select + " !w-auto text-xs"}
+                style={sxInput()}
                 title="Prioridad"
               >
                 <option value="all">Prioridad: Todas</option>
@@ -1159,7 +1427,8 @@ export default function IncidentesList() {
                 type="date"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
-                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                className={UI.input + " !w-auto text-xs"}
+                style={sxInput()}
                 title="Desde"
               />
 
@@ -1167,14 +1436,16 @@ export default function IncidentesList() {
                 type="date"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
-                className="bg-black/30 text-white text-xs rounded-md px-3 py-2 border border-purple-400/40"
+                className={UI.input + " !w-auto text-xs"}
+                style={sxInput()}
                 title="Hasta"
               />
 
               <button
                 type="button"
                 onClick={clearFilters}
-                className="text-xs bg-white/10 hover:bg-white/15 text-white font-medium rounded px-3 py-2 transition-all duration-200 border border-white/10"
+                className={UI.btnSm}
+                style={sxGhostBtn()}
               >
                 Limpiar
               </button>
@@ -1182,7 +1453,8 @@ export default function IncidentesList() {
               <button
                 type="button"
                 onClick={handleExportPDF}
-                className="text-xs bg-indigo-600/90 hover:bg-indigo-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+                className={UI.btnSm}
+                style={sxPrimaryBtn()}
               >
                 Exportar PDF
               </button>
@@ -1190,23 +1462,33 @@ export default function IncidentesList() {
               <button
                 type="button"
                 onClick={handleExportExcel}
-                className="text-xs bg-emerald-600/90 hover:bg-emerald-700 text-white font-medium rounded px-3 py-2 transition-all duration-200"
+                className={UI.btnSm}
+                style={sxSuccessBtn()}
               >
                 Exportar Excel
               </button>
             </div>
 
-            <div className="text-[11px] text-white/50 text-right">
-              Mostrando <span className="text-white/80 font-semibold">{filtered.length}</span> de{" "}
-              <span className="text-white/80 font-semibold">{incidentes.length}</span>
+            <div
+              className="text-[11px] text-right"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Mostrando{" "}
+              <span style={{ color: "var(--text)", fontWeight: 600 }}>
+                {filtered.length}
+              </span>{" "}
+              de{" "}
+              <span style={{ color: "var(--text)", fontWeight: 600 }}>
+                {incidentes.length}
+              </span>
             </div>
           </div>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left text-gray-200">
-            <thead className="bg-white/5 text-gray-300 uppercase text-xs border-b border-white/10">
-              <tr>
+          <table className="w-full text-sm text-left">
+            <thead style={sxSectionBar()}>
+              <tr className="uppercase text-xs">
                 <th className="px-4 py-3 font-medium">TIPO</th>
                 <th className="px-4 py-3 font-medium">DESCRIPCIÓN</th>
                 <th className="px-4 py-3 font-medium">REPORTADO POR</th>
@@ -1222,7 +1504,11 @@ export default function IncidentesList() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center text-gray-400 py-10 text-sm">
+                  <td
+                    colSpan={9}
+                    className="text-center py-10 text-sm"
+                    style={{ color: "var(--text-muted)" }}
+                  >
                     No hay incidentes con los filtros actuales.
                   </td>
                 </tr>
@@ -1240,29 +1526,36 @@ export default function IncidentesList() {
                   return (
                     <tr
                       key={i._id}
-                      className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                      className="transition-colors"
+                      style={{ borderTop: "1px solid var(--border)" }}
                     >
-                      <td className="px-4 py-3 text-white font-medium">{i.type}</td>
-                      <td className="px-4 py-3 text-gray-200 max-w-[320px] truncate">
+                      <td className="px-4 py-3 font-medium" style={{ color: "var(--text)" }}>
+                        {i.type}
+                      </td>
+                      <td
+                        className="px-4 py-3 max-w-[320px] truncate"
+                        style={{ color: "var(--text)" }}
+                      >
                         {i.description}
                       </td>
-                      <td className="px-4 py-3 text-gray-200">{i.reportedBy}</td>
-                      <td className="px-4 py-3 text-gray-200">{i.zone}</td>
+                      <td className="px-4 py-3" style={{ color: "var(--text)" }}>
+                        {i.reportedBy}
+                      </td>
+                      <td className="px-4 py-3" style={{ color: "var(--text)" }}>
+                        {i.zone}
+                      </td>
 
-                      <td className="px-4 py-3 whitespace-nowrap text-gray-300 text-xs">
+                      <td
+                        className="px-4 py-3 whitespace-nowrap text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                      >
                         {fecha}
                       </td>
 
                       <td className="px-4 py-3">
                         <span
-                          className={
-                            "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
-                            (i.priority === "alta"
-                              ? "bg-red-600/25 text-red-300 border border-red-400/60"
-                              : i.priority === "media"
-                              ? "bg-yellow-400/20 text-yellow-200 border border-yellow-300/60"
-                              : "bg-green-600/20 text-green-300 border border-green-400/60")
-                          }
+                          className="px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide"
+                          style={sxBadgePriority(i.priority)}
                         >
                           {i.priority}
                         </span>
@@ -1270,14 +1563,8 @@ export default function IncidentesList() {
 
                       <td className="px-4 py-3">
                         <span
-                          className={
-                            "px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide " +
-                            (normalizeStatus(i.status) === "resuelto"
-                              ? "bg-green-600/20 text-green-300 border border-green-400/60"
-                              : normalizeStatus(i.status) === "en_proceso"
-                              ? "bg-blue-600/20 text-blue-300 border border-blue-400/60"
-                              : "bg-red-600/20 text-red-300 border border-red-400/60")
-                          }
+                          className="px-2 py-1 rounded text-[11px] font-semibold uppercase tracking-wide"
+                          style={sxBadgeStatus(i.status)}
                         >
                           {formatStatus(normalizeStatus(i.status))}
                         </span>
@@ -1288,7 +1575,8 @@ export default function IncidentesList() {
                           <button
                             type="button"
                             onClick={() => openEvidence(i)}
-                            className="inline-flex items-center gap-2 text-xs text-cyan-200 hover:text-cyan-100 underline underline-offset-4"
+                            className="inline-flex items-center gap-2 text-xs underline underline-offset-4"
+                            style={{ color: "#93c5fd" }}
                             title="Ver evidencias"
                           >
                             {photos.length ? <span>📷 {photos.length}</span> : null}
@@ -1296,7 +1584,9 @@ export default function IncidentesList() {
                             {audios.length ? <span>🎙️ {audios.length}</span> : null}
                           </button>
                         ) : (
-                          <span className="text-xs text-gray-500">—</span>
+                          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                            —
+                          </span>
                         )}
                       </td>
 
@@ -1304,7 +1594,8 @@ export default function IncidentesList() {
                         {normalizeStatus(i.status) === "abierto" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "en_proceso")}
-                            className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className={UI.btnSm}
+                            style={sxInfoBtn()}
                           >
                             Procesar
                           </button>
@@ -1313,7 +1604,8 @@ export default function IncidentesList() {
                         {normalizeStatus(i.status) === "en_proceso" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "resuelto")}
-                            className="text-[11px] bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1 transition-all duration-300"
+                            className={UI.btnSm}
+                            style={sxSuccessBtn()}
                           >
                             Resolver
                           </button>
@@ -1322,7 +1614,8 @@ export default function IncidentesList() {
                         <button
                           type="button"
                           onClick={() => startEdit(i)}
-                          className="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className={UI.btnSm}
+                          style={sxPrimaryBtn()}
                         >
                           Editar
                         </button>
@@ -1330,7 +1623,8 @@ export default function IncidentesList() {
                         <button
                           type="button"
                           onClick={() => handleDelete(i._id)}
-                          className="text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded px-3 py-1 transition-all duration-300"
+                          className={UI.btnSm}
+                          style={sxDangerBtn()}
                         >
                           Eliminar
                         </button>
@@ -1344,10 +1638,11 @@ export default function IncidentesList() {
         </div>
       </div>
 
-      <div className="text-xs text-gray-500">
+      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
         <Link
           to="/"
-          className="hover:text-white hover:underline underline-offset-4 transition-colors"
+          className="underline-offset-4 transition-colors hover:underline"
+          style={{ color: "var(--text-muted)" }}
         >
           ← Volver al panel principal
         </Link>
@@ -1356,18 +1651,29 @@ export default function IncidentesList() {
       {/* ===== Modal evidencias: Viewer grande + miniaturas + descargar ===== */}
       {evidenceOpen && (
         <div
-          className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          style={{ background: "rgba(2, 6, 23, 0.8)", backdropFilter: "blur(4px)" }}
           onClick={closeEvidence}
         >
           <div
-            className="w-full max-w-6xl rounded-2xl border border-white/10 bg-[#07111f]/95 shadow-[0_0_80px_rgba(0,0,0,0.7)] overflow-hidden"
+            className="w-full max-w-6xl rounded-[24px] overflow-hidden"
+            style={sxCard({
+              background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+            })}
             onClick={(e) => e.stopPropagation()}
           >
             {/* header */}
-            <div className="p-4 border-b border-white/10 flex items-center justify-between gap-3">
+            <div
+              className="p-4 flex items-center justify-between gap-3 border-b"
+              style={{ borderColor: "var(--border)" }}
+            >
               <div>
-                <div className="text-sm font-semibold text-white">Evidencias</div>
-                <div className="text-xs text-white/60">{evidenceTitle}</div>
+                <div className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+                  Evidencias
+                </div>
+                <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {evidenceTitle}
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1375,11 +1681,11 @@ export default function IncidentesList() {
                   type="button"
                   disabled={!activeEvidence || activeEvidenceIdx === 0}
                   onClick={prevEvidence}
-                  className={
-                    "px-3 py-1.5 rounded-lg text-xs font-semibold border " +
-                    (activeEvidenceIdx === 0
-                      ? "opacity-50 bg-white/5 border-white/10 text-white/60"
-                      : "bg-white/10 hover:bg-white/15 border-white/10 text-white")
+                  className={UI.btnSm}
+                  style={
+                    activeEvidenceIdx === 0
+                      ? { ...sxGhostBtn(), opacity: 0.5, cursor: "not-allowed" }
+                      : sxGhostBtn()
                   }
                 >
                   ◀ Anterior
@@ -1391,11 +1697,11 @@ export default function IncidentesList() {
                     !activeEvidence || activeEvidenceIdx === evidenceItems.length - 1
                   }
                   onClick={nextEvidence}
-                  className={
-                    "px-3 py-1.5 rounded-lg text-xs font-semibold border " +
-                    (activeEvidenceIdx === evidenceItems.length - 1
-                      ? "opacity-50 bg-white/5 border-white/10 text-white/60"
-                      : "bg-white/10 hover:bg-white/15 border-white/10 text-white")
+                  className={UI.btnSm}
+                  style={
+                    activeEvidenceIdx === evidenceItems.length - 1
+                      ? { ...sxGhostBtn(), opacity: 0.5, cursor: "not-allowed" }
+                      : sxGhostBtn()
                   }
                 >
                   Siguiente ▶
@@ -1404,7 +1710,8 @@ export default function IncidentesList() {
                 <button
                   type="button"
                   onClick={closeEvidence}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600/80 hover:bg-rose-600 border border-rose-400/30 text-white"
+                  className={UI.btnSm}
+                  style={sxDangerBtn()}
                 >
                   Cerrar ✕
                 </button>
@@ -1416,11 +1723,13 @@ export default function IncidentesList() {
               {/* viewer grande */}
               <div className="p-4">
                 {!activeEvidence ? (
-                  <div className="text-white/60 text-sm">No hay evidencias.</div>
+                  <div className="text-sm" style={{ color: "var(--text-muted)" }}>
+                    No hay evidencias.
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs text-white/60">
+                      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                         {activeEvidence.type.toUpperCase()} #{activeEvidenceIdx + 1} de{" "}
                         {evidenceItems.length}
                       </div>
@@ -1431,7 +1740,8 @@ export default function IncidentesList() {
                           onClick={() =>
                             window.open(activeEvidence.url, "_blank", "noreferrer")
                           }
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/15 border border-white/10 text-white"
+                          className={UI.btnSm}
+                          style={sxGhostBtn()}
                         >
                           Abrir ↗
                         </button>
@@ -1456,25 +1766,31 @@ export default function IncidentesList() {
                               filename,
                             });
                           }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/80 hover:bg-emerald-600 border border-emerald-400/30 text-white"
+                          className={UI.btnSm}
+                          style={sxSuccessBtn()}
                         >
                           Descargar ⬇
                         </button>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-white/10 bg-black/40 overflow-hidden">
+                    <div
+                      className="rounded-[18px] overflow-hidden"
+                      style={sxCardStrong({
+                        background: "rgba(2,6,23,.45)",
+                      })}
+                    >
                       {activeEvidence.type === "image" ? (
                         <img
                           src={activeEvidence.url}
                           alt="evidencia"
-                          className="w-full h-[70vh] object-contain bg-black/60"
+                          className="w-full h-[70vh] object-contain"
                         />
                       ) : activeEvidence.type === "video" ? (
                         <video
                           src={activeEvidence.url}
                           controls
-                          className="w-full h-[70vh] object-contain bg-black/60"
+                          className="w-full h-[70vh] object-contain"
                         />
                       ) : (
                         <div className="p-4">
@@ -1487,8 +1803,16 @@ export default function IncidentesList() {
               </div>
 
               {/* sidebar miniaturas */}
-              <div className="border-l border-white/10 bg-black/20 p-3">
-                <div className="text-xs text-white/70 mb-2">Miniaturas</div>
+              <div
+                className="p-3 border-l"
+                style={{
+                  borderColor: "var(--border)",
+                  background: "color-mix(in srgb, var(--panel) 30%, transparent)",
+                }}
+              >
+                <div className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>
+                  Miniaturas
+                </div>
                 <div className="space-y-2 max-h-[78vh] overflow-auto pr-1">
                   {evidenceItems.map((m, idx) => {
                     const active = idx === activeEvidenceIdx;
@@ -1497,15 +1821,25 @@ export default function IncidentesList() {
                         key={idx}
                         type="button"
                         onClick={() => setActiveEvidenceIdx(idx)}
-                        className={
-                          "w-full text-left rounded-xl border p-2 transition " +
-                          (active
-                            ? "border-cyan-400/60 bg-cyan-400/10"
-                            : "border-white/10 bg-white/5 hover:bg-white/10")
+                        className="w-full text-left rounded-[16px] p-2 transition"
+                        style={
+                          active
+                            ? {
+                                ...sxCardStrong(),
+                                background:
+                                  "color-mix(in srgb, #06b6d4 12%, var(--card-solid))",
+                                border: "1px solid color-mix(in srgb, #06b6d4 42%, transparent)",
+                              }
+                            : sxCardStrong()
                         }
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-16 h-12 rounded-lg overflow-hidden bg-black/40 border border-white/10 flex items-center justify-center">
+                          <div
+                            className="w-16 h-12 rounded-lg overflow-hidden flex items-center justify-center"
+                            style={sxCardStrong({
+                              background: "rgba(2,6,23,.4)",
+                            })}
+                          >
                             {m.type === "image" ? (
                               <img src={m.url} alt="" className="w-full h-full object-cover" />
                             ) : (
@@ -1514,10 +1848,13 @@ export default function IncidentesList() {
                           </div>
 
                           <div className="min-w-0">
-                            <div className="text-xs font-semibold text-white">
+                            <div className="text-xs font-semibold" style={{ color: "var(--text)" }}>
                               {m.type.toUpperCase()} #{idx + 1}
                             </div>
-                            <div className="text-[11px] text-white/60 truncate">
+                            <div
+                              className="text-[11px] truncate"
+                              style={{ color: "var(--text-muted)" }}
+                            >
                               {String(m.src || "").startsWith("data:")
                                 ? "Capturado (base64)"
                                 : m.url}

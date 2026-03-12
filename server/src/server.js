@@ -12,6 +12,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 
+
 // Importando el middleware para forzar cambio de contraseña
 import forcePasswordChange from "./middleware/forcePasswordChange.js";
 // (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo)
@@ -36,10 +37,11 @@ import rondasOfflineRoutes from "../modules/rondasqr/routes/rondasqr.offline.rou
 
 // Incidentes / Acceso / Visitas
 import incidentesRoutes from "../modules/incidentes/routes/incident.routes.js";
+import accesoCatalogosRoutes from "../modules/controldeacceso/routes/catalogos.routes.js";
+import iamCatalogsRoutes from "../modules/iam/routes/catalogs.routes.js";
 import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
-
 // ✅ Chat
 import chatRoutes from "./routes/chat.routes.js";
 
@@ -60,6 +62,10 @@ app.set("trust proxy", 1);
 
 // ✅ SOLUCIÓN REAL: deshabilita ETag global en Express (evita 304 por If-None-Match)
 app.set("etag", false);
+
+app.use("/api/catalogos", accesoCatalogosRoutes);
+app.use("/api/iam/v1/catalogs", iamCatalogsRoutes);
+app.use("/iam/v1/catalogs", iamCatalogsRoutes);
 
 /* ───────────────────── ENV / MODOS ───────────────────── */
 

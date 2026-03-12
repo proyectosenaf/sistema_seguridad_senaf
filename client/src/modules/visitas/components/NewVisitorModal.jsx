@@ -1,64 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 
-// Lista de marcas
-const VEHICLE_BRANDS = [
-  "Toyota",
-  "Honda",
-  "Nissan",
-  "Hyundai",
-  "Kia",
-  "Chevrolet",
-  "Mazda",
-  "Ford",
-  "Mitsubishi",
-  "Suzuki",
-  "Volkswagen",
-  "Mercedes-Benz",
-  "BMW",
-  "Audi",
-  "Renault",
-  "Peugeot",
-  "Fiat",
-  "Jeep",
-  "Subaru",
-  "Isuzu",
-  "JAC",
-  "Great Wall",
-  "Changan",
-  "Chery",
-  "Otra", // para marcas no listadas
-];
+// 🔹 BASE DEL BACKEND
+const ROOT = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+).replace(/\/$/, "");
 
-// Modelos base por marca (sin año)
-const VEHICLE_MODELS_BASE_BY_BRAND = {
-  Toyota: ["Corolla", "Hilux", "RAV4", "Yaris", "Prado"],
-  Honda: ["Civic", "CR-V", "Fit", "HR-V"],
-  Nissan: ["Versa", "Frontier", "Sentra", "Kicks"],
-  Hyundai: ["Elantra", "Tucson", "Santa Fe", "Accent", "Creta"],
-  Kia: ["Rio", "Sportage", "Sorento", "Picanto"],
-  Chevrolet: ["Aveo", "Onix", "Tracker", "Captiva"],
-  Mazda: ["Mazda 2", "Mazda 3", "CX-5", "CX-30"],
-  Ford: ["Ranger", "Explorer", "Escape", "Fiesta"],
-  Mitsubishi: ["L200", "Outlander", "Montero Sport"],
-  Suzuki: ["Swift", "Vitara", "Jimny"],
-  Volkswagen: ["Jetta", "Gol", "Tiguan", "Amarok"],
-  "Mercedes-Benz": ["Clase C", "Clase E", "GLA"],
-  BMW: ["Serie 3", "Serie 5", "X3", "X5"],
-  Audi: ["A3", "A4", "Q3", "Q5"],
-  Renault: ["Duster", "Koleos", "Logan"],
-  Peugeot: ["208", "3008", "2008"],
-  Fiat: ["Uno", "Argo", "Strada"],
-  Jeep: ["Wrangler", "Renegade", "Cherokee"],
-  Subaru: ["Impreza", "Forester", "Outback"],
-  Isuzu: ["D-MAX"],
-  JAC: ["JS2", "JS4", "T8"],
-  "Great Wall": ["Wingle", "Poer"],
-  Changan: ["CS15", "CS35", "CS55"],
-  Chery: ["Tiggo 2", "Tiggo 4", "Tiggo 7"],
-};
+// 🔹 ENDPOINTS DE CATÁLOGOS
+const VEHICLE_BRANDS_API_URL =
+  import.meta.env.VITE_VEHICLE_BRANDS_API_URL ||
+  `${ROOT}/catalogos/vehiculos/marcas`;
 
-const START_YEAR = 2000;
-const CURRENT_YEAR = new Date().getFullYear();
+const VEHICLE_MODELS_API_URL =
+  import.meta.env.VITE_VEHICLE_MODELS_API_URL ||
+  `${ROOT}/catalogos/vehiculos/modelos`;
 
 // Longitudes / límites
 const DNI_DIGITS = 13; // 0801YYYYXXXXX
@@ -69,11 +23,69 @@ const EMP_MAX = 20;
 const REASON_MAX = 20;
 const EMAIL_MAX = 25;
 
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function normalizeCatalogArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function normalizeBrandItem(item) {
+  if (typeof item === "string") return item;
+  return item?.name || item?.label || item?.marca || item?.value || "";
+}
+
+function normalizeModelItem(item) {
+  if (typeof item === "string") return item;
+  return item?.name || item?.label || item?.modelo || item?.value || "";
+}
+
 export default function NewVisitorModal({
   onClose,
   onSubmit,
   knownVisitors = [],
-  editingVisitor = null, // 👈 NUEVO: para modo edición
+  editingVisitor = null,
 }) {
   const allKnown = Array.isArray(knownVisitors) ? knownVisitors : [];
 
@@ -99,6 +111,12 @@ export default function NewVisitorModal({
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
+  // Catálogos backend
+  const [vehicleBrands, setVehicleBrands] = useState([]);
+  const [vehicleModels, setVehicleModels] = useState([]);
+  const [loadingBrands, setLoadingBrands] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+
   // Errores de validación
   const [errors, setErrors] = useState({});
 
@@ -116,6 +134,89 @@ export default function NewVisitorModal({
   }
   // ==================================
 
+  // 🔹 CARGAR MARCAS DESDE BACKEND
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      setLoadingBrands(true);
+      try {
+        const res = await fetch(VEHICLE_BRANDS_API_URL, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data?.error || "No se pudieron cargar las marcas");
+        }
+
+        const items = normalizeCatalogArray(data)
+          .map(normalizeBrandItem)
+          .map((x) => String(x || "").trim())
+          .filter(Boolean);
+
+        if (!mounted) return;
+        setVehicleBrands(items);
+      } catch (err) {
+        console.warn("[NewVisitorModal] error cargando marcas:", err);
+        if (!mounted) return;
+        setVehicleBrands([]);
+      } finally {
+        if (mounted) setLoadingBrands(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // 🔹 CARGAR MODELOS DESDE BACKEND SEGÚN MARCA
+  useEffect(() => {
+    let mounted = true;
+
+    if (!vehicleBrand || vehicleBrand === "Otra") {
+      setVehicleModels([]);
+      return;
+    }
+
+    (async () => {
+      setLoadingModels(true);
+      try {
+        const url = `${VEHICLE_MODELS_API_URL}?marca=${encodeURIComponent(
+          vehicleBrand
+        )}`;
+
+        const res = await fetch(url, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data?.error || "No se pudieron cargar los modelos");
+        }
+
+        const items = normalizeCatalogArray(data)
+          .map(normalizeModelItem)
+          .map((x) => String(x || "").trim())
+          .filter(Boolean);
+
+        if (!mounted) return;
+        setVehicleModels(items);
+      } catch (err) {
+        console.warn("[NewVisitorModal] error cargando modelos:", err);
+        if (!mounted) return;
+        setVehicleModels([]);
+      } finally {
+        if (mounted) setLoadingModels(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [vehicleBrand]);
+
   // 🔹 PRE-LLENADO CUANDO ESTAMOS EDITANDO UN VISITANTE
   useEffect(() => {
     if (!editingVisitor) return;
@@ -124,13 +225,11 @@ export default function NewVisitorModal({
     setDocument(editingVisitor.document || "");
     setCompany(editingVisitor.company || "");
     setEmployee(editingVisitor.employee || "");
-    setReason(editingVisitor.reason || ""); // puede venir vacío en tus datos actuales
+    setReason(editingVisitor.reason || "");
     setPhone(editingVisitor.phone || "+504 ");
     setEmail(editingVisitor.email || "");
     setVisitType(
-      editingVisitor.visitType ||
-        editingVisitor.kind || // en VisitsPage guardas kind
-        "Personal"
+      editingVisitor.visitType || editingVisitor.kind || "Personal"
     );
     setAcompanado(!!editingVisitor.acompanado);
 
@@ -182,7 +281,6 @@ export default function NewVisitorModal({
     setEmail(visitor.email || "");
     setAcompanado(!!visitor.acompanado);
 
-    // Si ya tenía empresa, asumimos que la visita anterior fue profesional
     if (visitor.company) {
       setVisitType("Profesional");
     } else {
@@ -220,10 +318,8 @@ export default function NewVisitorModal({
     }));
   }
 
-  // ---------- Handlers de cambio + limpieza de errores ----------
-
+  // ---------- Handlers ----------
   const handleNameChange = (e) => {
-    // Solo letras (con tildes) y espacios, máx 40
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, NAME_MAX);
@@ -233,7 +329,6 @@ export default function NewVisitorModal({
 
     const trimmed = val.trim();
 
-    // Si borra todo el nombre, volvemos a permitir autocompletar
     if (!trimmed) {
       setAutoFilledByName(false);
       return;
@@ -241,7 +336,6 @@ export default function NewVisitorModal({
 
     const words = trimmed.split(/\s+/).filter(Boolean);
 
-    // Cuando hay al menos dos nombres y aún no hemos autocompletado
     if (!autoFilledByName && words.length >= 2) {
       const first = words[0].toLowerCase();
       const second = words[1].toLowerCase();
@@ -253,16 +347,13 @@ export default function NewVisitorModal({
       });
 
       if (match) {
-        // Nombre completo según el registro anterior
         setName(match.name || trimmed);
 
-        // DNI también se autocompleta
         if (match.document) {
           setDocument(match.document);
           setErrors((prev) => ({ ...prev, document: undefined }));
         }
 
-        // Resto de campos (empresa, empleado, teléfono, correo, vehículo…)
         autofillFromKnownVisitor(match);
         setAutoFilledByName(true);
       }
@@ -270,7 +361,6 @@ export default function NewVisitorModal({
   };
 
   const handleDocumentChange = (e) => {
-    // Solo dígitos, 13 en total, formateados como 0801-YYYY-XXXXX
     const digits = e.target.value.replace(/\D/g, "").slice(0, DNI_DIGITS);
 
     let formatted = digits;
@@ -285,24 +375,20 @@ export default function NewVisitorModal({
     setDocument(formatted);
     setErrors((prev) => ({ ...prev, document: undefined }));
 
-    // Autocompletar cuando ya tiene los 13 dígitos
     if (digits.length === DNI_DIGITS) {
       const match = allKnown.find((v) => normalizeDni(v.document) === digits);
       if (match) {
-        // Si no hay nombre escrito, llenamos el nombre completo
         if (!name.trim()) {
           setName(match.name || "");
           setErrors((prev) => ({ ...prev, name: undefined }));
         }
 
-        // Resto de campos
         autofillFromKnownVisitor(match);
       }
     }
   };
 
   const handleCompanyChange = (e) => {
-    // Solo letras y espacios, máx 20
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, COMPANY_MAX);
@@ -311,7 +397,6 @@ export default function NewVisitorModal({
   };
 
   const handleEmployeeChange = (e) => {
-    // Solo letras y espacios, máx 20
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, EMP_MAX);
@@ -320,7 +405,6 @@ export default function NewVisitorModal({
   };
 
   const handleReasonChange = (e) => {
-    // Solo letras y espacios, máx 20
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, REASON_MAX);
@@ -329,7 +413,6 @@ export default function NewVisitorModal({
   };
 
   const handlePhoneChange = (e) => {
-    // Mantener prefijo +504 y formatear +504 9999-9999
     let input = e.target.value;
 
     if (input.startsWith("+504")) {
@@ -351,7 +434,6 @@ export default function NewVisitorModal({
   };
 
   const handleEmailChange = (e) => {
-    // Alfanumérico + . _ - y @, sin espacios, máx 25
     let val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
     setEmail(val);
     setErrors((prev) => ({ ...prev, email: undefined }));
@@ -372,7 +454,7 @@ export default function NewVisitorModal({
   const handleVehicleModelChange = (e) => {
     const val = e.target.value;
     setVehicleModel(val);
-    if (val !== "__customBefore2000") {
+    if (val !== "__custom") {
       setVehicleModelCustom("");
     }
     setErrors((prev) => ({ ...prev, vehicleModel: undefined }));
@@ -384,7 +466,6 @@ export default function NewVisitorModal({
   };
 
   const handleVehiclePlateChange = (e) => {
-    // Alfanumérico mayúscula y guion, máx 8 (ej. HAA-1234)
     const val = e.target.value
       .toUpperCase()
       .replace(/[^A-Z0-9-]/g, "")
@@ -393,12 +474,10 @@ export default function NewVisitorModal({
     setErrors((prev) => ({ ...prev, vehiclePlate: undefined }));
   };
 
-  // ---------- Validación del formulario ----------
-
+  // ---------- Validación ----------
   function validateForm() {
     const newErrors = {};
 
-    // Nombre: obligatorio, máx 40, dos nombres y al menos un apellido
     const trimmedName = name.trim();
     const parts = trimmedName.split(/\s+/).filter(Boolean);
     if (!trimmedName) {
@@ -410,7 +489,6 @@ export default function NewVisitorModal({
         "Ingrese el nombre completo: dos nombres y al menos un apellido.";
     }
 
-    // DNI: obligatorio y completo (13 dígitos)
     const dniDigits = document.replace(/\D/g, "");
     if (!dniDigits) {
       newErrors.document = "El DNI es obligatorio.";
@@ -418,7 +496,6 @@ export default function NewVisitorModal({
       newErrors.document = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
-    // Empresa:
     const trimmedCompany = company.trim();
     if (visitType === "Profesional") {
       if (!trimmedCompany) {
@@ -433,7 +510,6 @@ export default function NewVisitorModal({
       }
     }
 
-    // Empleado anfitrión: obligatorio, máx 20
     const trimmedEmp = employee.trim();
     if (!trimmedEmp) {
       newErrors.employee = "El empleado anfitrión es obligatorio.";
@@ -441,7 +517,6 @@ export default function NewVisitorModal({
       newErrors.employee = `El empleado no debe superar ${EMP_MAX} caracteres.`;
     }
 
-    // Motivo: obligatorio, máx 20
     const trimmedReason = reason.trim();
     if (!trimmedReason) {
       newErrors.reason = "El motivo es obligatorio.";
@@ -449,7 +524,6 @@ export default function NewVisitorModal({
       newErrors.reason = `El motivo no debe superar ${REASON_MAX} caracteres.`;
     }
 
-    // Teléfono: opcional, pero si se llena debe tener 8 dígitos después de +504
     const phoneTrimmed = phone.trim();
     if (phoneTrimmed && phoneTrimmed !== "+504") {
       const digits = phone.replace(/\D/g, "");
@@ -460,7 +534,6 @@ export default function NewVisitorModal({
       }
     }
 
-    // Correo: opcional, pero si se llena -> máx 25, con @ y termina en .com o .org
     if (email.trim()) {
       if (email.length > EMAIL_MAX) {
         newErrors.email = `El correo no debe superar ${EMAIL_MAX} caracteres.`;
@@ -476,8 +549,9 @@ export default function NewVisitorModal({
       }
     }
 
-    // Vehículo (si aplica)
-    const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+    const finalModel = vehicleModel === "__custom"
+      ? vehicleModelCustom.trim()
+      : vehicleModel.trim();
 
     if (hasVehicle) {
       if (!vehicleBrand.trim()) {
@@ -490,7 +564,6 @@ export default function NewVisitorModal({
       if (!plate) {
         newErrors.vehiclePlate = "La placa es obligatoria.";
       } else {
-        // Placa: 5–8 caracteres, al menos una letra y un número
         const plateRegex = /^(?=.*[A-Z])(?=.*\d)[A-Z0-9-]{5,8}$/;
         if (!plateRegex.test(plate)) {
           newErrors.vehiclePlate =
@@ -504,7 +577,6 @@ export default function NewVisitorModal({
   }
 
   // ---------- Submit ----------
-
   async function handleSubmit(e) {
     e.preventDefault();
     if (submitting) return;
@@ -514,7 +586,11 @@ export default function NewVisitorModal({
     setSubmitting(true);
 
     try {
-      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+      const finalModel =
+        vehicleModel === "__custom"
+          ? vehicleModelCustom.trim()
+          : vehicleModel.trim();
+
       const now = new Date();
 
       if (!isWithinBusinessHours(now)) {
@@ -533,7 +609,7 @@ export default function NewVisitorModal({
         reason: reason.trim(),
         phone: phone.trim(),
         email: email.trim(),
-        visitType, // 👈 Personal / Profesional
+        visitType,
         acompanado,
         vehicle: hasVehicle
           ? {
@@ -555,28 +631,22 @@ export default function NewVisitorModal({
     if (e.target === e.currentTarget) onClose?.();
   }
 
-  // Modelos según marca seleccionada
-  const modelsForBrand =
-    vehicleBrand && VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
-      ? VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand].flatMap((base) => {
-          const list = [];
-          for (let y = START_YEAR; y <= CURRENT_YEAR; y++) {
-            list.push(`${base} ${y}`);
-          }
-          return list;
-        })
-      : [];
-
   const showCustomModelInput =
-    vehicleBrand === "Otra" || vehicleModel === "__customBefore2000";
+    vehicleBrand === "Otra" || vehicleModel === "__custom";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{
+        background: "rgba(2, 6, 23, 0.68)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
       onMouseDown={handleBackdrop}
     >
       <div
-        className="w-full max-w-[560px] mx-2 card-rich p-4 md:p-5 max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-[560px] max-h-[90vh] overflow-y-auto rounded-[24px] p-4 md:p-5"
+        style={sxCard()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-visitor-title"
@@ -585,44 +655,58 @@ export default function NewVisitorModal({
         <div className="flex items-start justify-between mb-4">
           <h3
             id="new-visitor-title"
-            className="text-lg font-semibold text-neutral-100"
+            className="text-lg font-semibold"
+            style={{ color: "var(--text)" }}
           >
-            Registrar Visitante
+            {editingVisitor ? "Editar visitante" : "Registrar Visitante"}
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="text-neutral-400 hover:text-neutral-200"
             aria-label="Cerrar"
+            style={{ color: "var(--text-muted)" }}
           >
             ✕
           </button>
         </div>
 
-        {/* Formulario */}
         <form
           onSubmit={handleSubmit}
           className="grid grid-cols-1 md:grid-cols-2 gap-3"
         >
           <div className="md:col-span-2">
-            <label className="text-xs text-neutral-400">Nombre completo</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Nombre completo
+            </label>
             <input
               ref={firstInputRef}
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={name}
               onChange={handleNameChange}
               placeholder="Ej. María Fernanda López Pérez"
               required
             />
             {errors.name && (
-              <p className="text-xs text-red-400 mt-1">{errors.name}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.name}
+              </p>
             )}
           </div>
 
           <div>
-            <label className="text-xs text-neutral-400">DNI</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              DNI
+            </label>
             <input
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={document}
               onChange={handleDocumentChange}
               placeholder="0801-YYYY-XXXXX"
@@ -630,15 +714,22 @@ export default function NewVisitorModal({
               inputMode="numeric"
             />
             {errors.document && (
-              <p className="text-xs text-red-400 mt-1">{errors.document}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.document}
+              </p>
             )}
           </div>
 
-          {/* Tipo de visita + Empresa opcional si es profesional */}
           <div>
-            <label className="text-xs text-neutral-400">Tipo de visita</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Tipo de visita
+            </label>
             <select
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={visitType}
               onChange={(e) => {
                 const val = e.target.value;
@@ -655,17 +746,21 @@ export default function NewVisitorModal({
 
             {visitType === "Profesional" && (
               <>
-                <label className="text-xs text-neutral-400 mt-3 block">
+                <label
+                  className="text-xs mt-3 block"
+                  style={{ color: "var(--text-muted)" }}
+                >
                   Empresa
                 </label>
                 <input
-                  className="input-fx w-full"
+                  className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                  style={sxInput()}
                   value={company}
                   onChange={handleCompanyChange}
                   placeholder="Nombre de la empresa"
                 />
                 {errors.company && (
-                  <p className="text-xs text-red-400 mt-1">
+                  <p className="text-xs mt-1" style={{ color: "#f87171" }}>
                     {errors.company}
                   </p>
                 )}
@@ -674,39 +769,59 @@ export default function NewVisitorModal({
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs text-neutral-400">
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
               Empleado anfitrión
             </label>
             <input
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={employee}
               onChange={handleEmployeeChange}
               placeholder="Nombre de la persona que visita"
               required
             />
             {errors.employee && (
-              <p className="text-xs text-red-400 mt-1">{errors.employee}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.employee}
+              </p>
             )}
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs text-neutral-400">Motivo</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Motivo
+            </label>
             <input
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={reason}
               onChange={handleReasonChange}
               placeholder="Reunión / Entrega / Mantenimiento…"
               required
             />
             {errors.reason && (
-              <p className="text-xs text-red-400 mt-1">{errors.reason}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.reason}
+              </p>
             )}
           </div>
 
           <div>
-            <label className="text-xs text-neutral-400">Teléfono</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Teléfono
+            </label>
             <input
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={phone}
               onChange={handlePhoneChange}
               placeholder="+504 9999-9999"
@@ -714,25 +829,34 @@ export default function NewVisitorModal({
               inputMode="tel"
             />
             {errors.phone && (
-              <p className="text-xs text-red-400 mt-1">{errors.phone}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.phone}
+              </p>
             )}
           </div>
 
           <div>
-            <label className="text-xs text-neutral-400">Correo</label>
+            <label
+              className="text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Correo
+            </label>
             <input
               type="email"
-              className="input-fx w-full"
+              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+              style={sxInput()}
               value={email}
               onChange={handleEmailChange}
               placeholder="correo@empresa.com"
             />
             {errors.email && (
-              <p className="text-xs text-red-400 mt-1">{errors.email}</p>
+              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                {errors.email}
+              </p>
             )}
           </div>
 
-          {/* Acompañado */}
           <div className="md:col-span-2 mt-1">
             <div className="flex items-center gap-2">
               <input
@@ -744,15 +868,19 @@ export default function NewVisitorModal({
               />
               <label
                 htmlFor="acompanado"
-                className="text-xs text-neutral-300 cursor-pointer select-none"
+                className="text-xs cursor-pointer select-none"
+                style={{ color: "var(--text)" }}
               >
                 El visitante viene acompañado
               </label>
             </div>
           </div>
 
-          {/* ================== SECCIÓN VEHÍCULO ================== */}
-          <div className="md:col-span-2 mt-1 border-t border-neutral-800/60 pt-3">
+          {/* VEHÍCULO */}
+          <div
+            className="md:col-span-2 mt-1 pt-3"
+            style={{ borderTop: "1px solid var(--border)" }}
+          >
             <div className="flex items-center gap-2">
               <input
                 id="has-vehicle"
@@ -778,7 +906,8 @@ export default function NewVisitorModal({
               />
               <label
                 htmlFor="has-vehicle"
-                className="text-xs text-neutral-300 cursor-pointer select-none"
+                className="text-xs cursor-pointer select-none"
+                style={{ color: "var(--text)" }}
               >
                 El visitante llegó en vehículo
               </label>
@@ -786,80 +915,88 @@ export default function NewVisitorModal({
 
             {hasVehicle && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                {/* Marca */}
                 <div>
-                  <label className="text-xs text-neutral-400">
-                    Marca <span className="text-red-400">*</span>
+                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Marca <span style={{ color: "#f87171" }}>*</span>
                   </label>
                   <select
-                    className="input-fx w-full"
+                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                    style={sxInput()}
                     value={vehicleBrand}
                     onChange={handleVehicleBrandChange}
                   >
-                    <option value="">Seleccione marca…</option>
-                    {VEHICLE_BRANDS.map((b) => (
+                    <option value="">
+                      {loadingBrands ? "Cargando marcas..." : "Seleccione marca…"}
+                    </option>
+                    {vehicleBrands.map((b) => (
                       <option key={b} value={b}>
                         {b}
                       </option>
                     ))}
+                    <option value="Otra">Otra</option>
                   </select>
                   {errors.vehicleBrand && (
-                    <p className="text-xs text-red-400 mt-1">
+                    <p className="text-xs mt-1" style={{ color: "#f87171" }}>
                       {errors.vehicleBrand}
                     </p>
                   )}
                 </div>
 
-                {/* Modelo */}
                 <div>
-                  <label className="text-xs text-neutral-400">
-                    Modelo <span className="text-red-400">*</span>
+                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Modelo <span style={{ color: "#f87171" }}>*</span>
                   </label>
                   <select
-                    className="input-fx w-full"
+                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                    style={sxInput()}
                     value={vehicleModel}
                     onChange={handleVehicleModelChange}
                     disabled={!vehicleBrand || vehicleBrand === "Otra"}
                   >
-                    <option value="">Seleccione modelo (año ≥ 2000)…</option>
-                    {modelsForBrand.map((m) => (
+                    <option value="">
+                      {!vehicleBrand
+                        ? "Seleccione marca primero…"
+                        : loadingModels
+                        ? "Cargando modelos..."
+                        : "Seleccione modelo…"}
+                    </option>
+                    {vehicleModels.map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
                     ))}
-                    <option value="__customBefore2000">
-                      Otro modelo / año &lt; 2000 (escribir)
-                    </option>
+                    <option value="__custom">Otro modelo (escribir)</option>
                   </select>
 
                   {showCustomModelInput && (
                     <input
-                      className="input-fx w-full mt-2"
+                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition mt-2"
+                      style={sxInput()}
                       value={vehicleModelCustom}
                       onChange={handleVehicleModelCustomChange}
-                      placeholder="Escriba modelo y año (ej. Corolla 1998)"
+                      placeholder="Escriba el modelo"
                     />
                   )}
                   {errors.vehicleModel && (
-                    <p className="text-xs text-red-400 mt-1">
+                    <p className="text-xs mt-1" style={{ color: "#f87171" }}>
                       {errors.vehicleModel}
                     </p>
                   )}
                 </div>
 
-                {/* Placa */}
                 <div>
-                  <label className="text-xs text-neutral-400">
-                    Placa <span className="text-red-400">*</span>
+                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Placa <span style={{ color: "#f87171" }}>*</span>
                   </label>
                   <input
-                    className="input-fx w-full"
+                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                    style={sxInput()}
                     value={vehiclePlate}
                     onChange={handleVehiclePlateChange}
                     placeholder="Ej. HAA-1234"
                   />
                   {errors.vehiclePlate && (
-                    <p className="text-xs text-red-400 mt-1">
+                    <p className="text-xs mt-1" style={{ color: "#f87171" }}>
                       {errors.vehiclePlate}
                     </p>
                   )}
@@ -867,23 +1004,30 @@ export default function NewVisitorModal({
               </div>
             )}
           </div>
-          {/* ====================================================== */}
 
           <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-2 text-sm rounded-lg bg-neutral-700/40 hover:bg-neutral-700/60"
+              className="px-3 py-2 text-sm rounded-lg transition"
+              style={sxGhostBtn()}
               disabled={submitting}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="btn-neon px-3 py-2 text-sm rounded-lg font-semibold disabled:opacity-60"
+              className="px-3 py-2 text-sm rounded-lg font-semibold transition disabled:opacity-60"
+              style={sxPrimaryBtn()}
               disabled={submitting}
             >
-              {submitting ? "Registrando…" : "Registrar"}
+              {submitting
+                ? editingVisitor
+                  ? "Guardando…"
+                  : "Registrando…"
+                : editingVisitor
+                ? "Guardar cambios"
+                : "Registrar"}
             </button>
           </div>
         </form>

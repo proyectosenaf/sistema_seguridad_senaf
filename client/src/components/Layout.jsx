@@ -71,18 +71,10 @@ export default function Layout({
     true
   );
 
-  /**
-   * ✅ FIX CLAVE:
-   * Si Layout se está renderizando, es porque el usuario NO es visitante
-   * (tu AppShell ya evita Layout para visitantes).
-   * Por lo tanto: limpiamos cualquier visitorHint viejo para que NO afecte
-   * a admins/supervisores al entrar a /visitas/**.
-   */
   React.useEffect(() => {
     if (getVisitorHint()) clearVisitorHint();
   }, []);
 
-  // ✅ visitorMode SOLO si lo piden explícitamente (no por hint)
   const visitorMode = layoutMode === "visitor";
 
   const modeHideSidebar = layoutMode === "full" || visitorMode;
@@ -117,6 +109,12 @@ export default function Layout({
 
   const showSidebar = !hideSidebar;
 
+  const sidebarTopClass = hideTopbar ? "top-0" : "top-14";
+  const sidebarHeightClass = hideTopbar ? "bottom-0" : "bottom-0";
+  const contentMinHClass = hideTopbar
+    ? "min-h-[100svh]"
+    : "min-h-[calc(100svh-3.5rem)]";
+
   const doVisitorExit = React.useCallback(() => {
     clearToken();
     clearVisitorHint();
@@ -146,7 +144,6 @@ export default function Layout({
     return { label: back?.label || "Regresar", onClick: smartBack };
   }, [visitorMode, doVisitorExit, back?.label, smartBack]);
 
-  // Mostrar back siempre en visitante (flecha “Salir”)
   const showBack =
     !hideTopbar && (visitorMode || pathname !== "/" || !!back?.onClick);
 
@@ -163,23 +160,32 @@ export default function Layout({
   }, [showSidebar, mobileOpen]);
 
   return (
-    <div className="min-h-[100svh] text-neutral-900 dark:text-neutral-100">
+    <div
+      className="relative min-h-[100svh]"
+      style={{ color: "var(--text)", background: "var(--bg)" }}
+    >
       <GlobalPanicListener />
 
       <div className="app-bg pointer-events-none" aria-hidden />
+
       <div
-        className="pointer-events-none fixed inset-0 z-0 bg-white/55 dark:bg-neutral-950/55"
+        className="pointer-events-none fixed inset-0 z-0"
         aria-hidden
+        style={{
+          background:
+            "linear-gradient(to bottom, color-mix(in srgb, var(--bg) 68%, transparent), color-mix(in srgb, var(--bg) 52%, transparent))",
+        }}
       />
 
       {!hideTopbar && (
         <header
-          className="
-            sticky top-0 z-40 h-14
-            bg-white/70 dark:bg-neutral-950/55
-            backdrop-blur-xl
-            border-b border-neutral-200/60 dark:border-white/10
-          "
+          className="sticky top-0 z-40 h-14 backdrop-blur-xl"
+          style={{
+            background:
+              "color-mix(in srgb, var(--card) 86%, transparent)",
+            borderBottom: "1px solid var(--border)",
+            boxShadow: "var(--shadow-sm)",
+          }}
         >
           <Topbar
             onToggleMenu={() => setMobileOpen(true)}
@@ -193,31 +199,38 @@ export default function Layout({
         <aside
           role="complementary"
           aria-label="Barra lateral fija"
-          className="
-            hidden md:block fixed left-0 top-14 bottom-0 w-64 z-40
-            bg-white/60 dark:bg-neutral-950/50
-            backdrop-blur-xl
-            border-r border-neutral-200/60 dark:border-white/10
-            overflow-hidden
-          "
+          className={[
+            "hidden md:block fixed left-0 w-64 z-40 overflow-hidden",
+            sidebarTopClass,
+            sidebarHeightClass,
+          ].join(" ")}
+          style={{
+            background:
+              "color-mix(in srgb, var(--card) 88%, transparent)",
+            borderRight: "1px solid var(--border)",
+            boxShadow: "var(--shadow-md)",
+            backdropFilter: "blur(14px) saturate(130%)",
+            WebkitBackdropFilter: "blur(14px) saturate(130%)",
+          }}
         >
-          <Sidebar />
+          <div className="sidebar-aurora h-full">
+            <Sidebar />
+          </div>
         </aside>
       )}
 
       <div
         className={[
-          "relative z-10",
+          "relative z-10 flex flex-col",
+          contentMinHClass,
           showSidebar ? "md:pl-64" : "",
-          "min-h-[calc(100vh-3.5rem)] flex flex-col",
         ].join(" ")}
       >
         <main id="app-main" className="flex-1">
           <div
             className={[
               showSidebar ? "max-w-7xl" : "max-w-[1600px]",
-              "w-full mx-auto px-4 md:px-6 py-6 space-y-6",
-              "layer-content",
+              "layer-content mx-auto w-full px-4 py-6 md:px-6 md:py-6 space-y-6",
             ].join(" ")}
           >
             {children}
@@ -229,26 +242,36 @@ export default function Layout({
 
       {showSidebar && (
         <div
-          className={`fixed inset-0 z-50 md:hidden transition-opacity ${
-            mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          className={`fixed inset-0 z-50 md:hidden transition-opacity duration-200 ${
+            mobileOpen
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
           }`}
           aria-hidden={!mobileOpen}
         >
           <div
-            className="absolute inset-0 bg-black/35"
+            className="absolute inset-0"
+            style={{ background: "rgba(2, 6, 23, 0.42)" }}
             onClick={() => setMobileOpen(false)}
           />
+
           <div
             role="dialog"
             aria-modal="true"
-            className={`absolute inset-y-0 left-0 w-72 max-w-[85vw]
-              bg-white/70 dark:bg-neutral-950/55
-              backdrop-blur-xl
-              border-r border-neutral-200/60 dark:border-white/10
-              shadow-xl transition-transform duration-300
-              ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
+            className={`absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-2xl transition-transform duration-300 ${
+              mobileOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+            style={{
+              background:
+                "color-mix(in srgb, var(--card) 92%, transparent)",
+              borderRight: "1px solid var(--border)",
+              backdropFilter: "blur(16px) saturate(135%)",
+              WebkitBackdropFilter: "blur(16px) saturate(135%)",
+            }}
           >
-            <Sidebar variant="mobile" onNavigate={() => setMobileOpen(false)} />
+            <div className="sidebar-aurora h-full">
+              <Sidebar variant="mobile" onNavigate={() => setMobileOpen(false)} />
+            </div>
           </div>
         </div>
       )}

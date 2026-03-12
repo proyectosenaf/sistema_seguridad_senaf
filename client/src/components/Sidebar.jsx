@@ -7,7 +7,8 @@ import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import api, { clearToken, getToken } from "../lib/api.js";
 import { getNavSectionsForMe } from "../config/navConfig.js";
 
-const ROUTE_LOGIN = String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+const ROUTE_LOGIN =
+  String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
 
 const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
@@ -35,32 +36,65 @@ function NavItem({ to, label, Icon, onClick, emphasizeDark = false }) {
   const active = isPathActive(pathname, to);
 
   const base =
-    "group relative block rounded-2xl transition-colors " +
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[--ring]";
+    "group relative block rounded-[18px] transition-all duration-150 " +
+    "focus-visible:outline-none focus-visible:ring-2";
 
-  const inactive = "hover:bg-white/40 dark:hover:bg-white/10";
-  const activeCls =
-    "bg-white/55 dark:bg-white/12 ring-1 ring-neutral-200/70 dark:ring-white/10";
+  const inactive =
+    "hover:translate-x-[1px] hover:brightness-[1.01]";
 
-  const emphasizeCls = emphasizeDark ? "dark:bg-white/10 dark:ring-white/12" : "";
+  const activeCls = "shadow-sm";
 
   return (
     <NavLink
       to={to}
       onClick={(e) => onClick?.(e)}
-      className={[base, active ? activeCls : inactive, emphasizeCls]
-        .filter(Boolean)
-        .join(" ")}
+      className={[base, inactive, active ? activeCls : ""].filter(Boolean).join(" ")}
       aria-current={active ? "page" : undefined}
+      style={{
+        background: active
+          ? "color-mix(in srgb, var(--card-solid) 84%, transparent)"
+          : "transparent",
+        border: active ? "1px solid var(--border-strong)" : "1px solid transparent",
+        boxShadow: active ? "var(--shadow-sm)" : "none",
+      }}
     >
       <div className="flex items-center gap-3 px-4 py-3">
         {Icon ? (
-          <Icon className="w-6 h-6 shrink-0 text-neutral-800 dark:text-white" strokeWidth={2} />
+          <Icon
+            className="h-5 w-5 shrink-0"
+            strokeWidth={active ? 2.4 : 2.1}
+            style={{
+              color: active
+                ? "var(--text)"
+                : emphasizeDark
+                ? "var(--text)"
+                : "var(--text-muted)",
+            }}
+          />
         ) : (
-          <span className="w-6 h-6 shrink-0" />
+          <span className="h-5 w-5 shrink-0" />
         )}
-        <span className="text-[16px] leading-none text-neutral-900 dark:text-white">{label}</span>
+
+        <span
+          className="text-[15px] font-medium leading-none"
+          style={{
+            color: active ? "var(--text)" : "var(--text)",
+            opacity: active ? 1 : 0.92,
+          }}
+        >
+          {label}
+        </span>
       </div>
+
+      {active && (
+        <span
+          className="absolute left-2 top-1/2 h-8 w-1 -translate-y-1/2 rounded-full"
+          aria-hidden
+          style={{
+            background: "linear-gradient(180deg, #2563eb, #06b6d4)",
+          }}
+        />
+      )}
     </NavLink>
   );
 }
@@ -326,17 +360,30 @@ export default function Sidebar({ onNavigate, variant }) {
 
   return (
     <div
-      className={[
-        "w-full h-full flex flex-col overflow-y-auto overscroll-contain p-4",
-        "bg-white/55 dark:bg-neutral-950/45 backdrop-blur-2xl",
-        "border-r border-neutral-200/60 dark:border-white/10",
-      ].join(" ")}
+      className="flex h-full w-full flex-col overflow-y-auto overscroll-contain p-4"
       aria-label={variant === "mobile" ? "Barra lateral (móvil)" : "Barra lateral"}
+      style={{
+        background: "transparent",
+        color: "var(--text)",
+      }}
     >
-      <div className="text-2xl font-extrabold mb-6 tracking-tight">SENAF</div>
+      <div className="mb-6 px-2">
+        <div
+          className="text-2xl font-extrabold tracking-tight"
+          style={{ color: "var(--text)" }}
+        >
+          SENAF
+        </div>
+        <div
+          className="mt-1 text-xs font-medium uppercase tracking-[0.18em]"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Plataforma de seguridad
+        </div>
+      </div>
 
       {showNav ? (
-        <nav className="flex flex-col gap-1 text-[15px]">
+        <nav className="flex flex-col gap-1.5 text-[15px]">
           {items.map(({ key, path, label, icon: Icon, emphasizeDark }) => (
             <NavItem
               key={key || path}
@@ -349,26 +396,39 @@ export default function Sidebar({ onNavigate, variant }) {
           ))}
         </nav>
       ) : (
-        <div className="text-sm text-neutral-600 dark:text-neutral-300 px-2">Cargando sesión…</div>
+        <div
+          className="px-2 text-sm"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Cargando sesión…
+        </div>
       )}
 
       <div className="mt-auto pt-6">
-        <div className="border-t border-white/10 mb-3" />
+        <div
+          className="mb-3"
+          style={{ borderTop: "1px solid var(--border)" }}
+        />
 
         {isAuthenticated && (
           <button
             type="button"
             onClick={handleLogoutClick}
             title="Cerrar sesión"
-            className={[
-              "group w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left transition",
-              "border border-neutral-200/60 dark:border-white/10",
-              "bg-white/55 dark:bg-neutral-950/35 backdrop-blur-xl shadow-sm",
-              "hover:bg-white/70 dark:hover:bg-neutral-900/45",
-            ].join(" ")}
+            className="group flex w-full items-center gap-3 rounded-[18px] px-4 py-3 text-left transition-all duration-150 hover:translate-x-[1px]"
+            style={{
+              border: "1px solid var(--border)",
+              background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+              boxShadow: "var(--shadow-sm)",
+              color: "var(--text)",
+            }}
           >
-            <LogOut className="w-5 h-5 text-neutral-900 dark:text-white" strokeWidth={2.5} />
-            <span className="font-medium">Salir</span>
+            <LogOut
+              className="h-5 w-5"
+              strokeWidth={2.4}
+              style={{ color: "var(--text-muted)" }}
+            />
+            <span className="text-[15px] font-medium leading-none">Salir</span>
           </button>
         )}
       </div>

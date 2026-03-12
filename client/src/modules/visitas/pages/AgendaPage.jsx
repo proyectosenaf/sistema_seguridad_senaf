@@ -3,77 +3,26 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 /* ========= ROOT API para backend ========= */
-// 👇 Unificamos con el resto de módulos (usa VITE_API_BASE_URL primero)
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_URL ||
   "http://localhost:8080/api"
 ).replace(/\/$/, "");
 
-// ⬇️ Endpoint del backend para crear / listar CITA (Visitas agendadas)
+// ⬇️ Endpoint del backend para crear / listar CITA
 const CITAS_API_URL = `${API_BASE}/citas`;
 
-/* ================== Vehículos (mismas listas que en NewVisitorModal) ================== */
-const VEHICLE_BRANDS = [
-  "Toyota",
-  "Honda",
-  "Nissan",
-  "Hyundai",
-  "Kia",
-  "Chevrolet",
-  "Mazda",
-  "Ford",
-  "Mitsubishi",
-  "Suzuki",
-  "Volkswagen",
-  "Mercedes-Benz",
-  "BMW",
-  "Audi",
-  "Renault",
-  "Peugeot",
-  "Fiat",
-  "Jeep",
-  "Subaru",
-  "Isuzu",
-  "JAC",
-  "Great Wall",
-  "Changan",
-  "Chery",
-  "Otra",
-];
+// ⬇️ Catálogos backend
+const VEHICLE_BRANDS_API_URL =
+  import.meta.env.VITE_VEHICLE_BRANDS_API_URL ||
+  `${API_BASE}/catalogos/vehiculos/marcas`;
 
-const VEHICLE_MODELS_BASE_BY_BRAND = {
-  Toyota: ["Corolla", "Hilux", "RAV4", "Yaris", "Prado"],
-  Honda: ["Civic", "CR-V", "Fit", "HR-V"],
-  Nissan: ["Versa", "Frontier", "Sentra", "Kicks"],
-  Hyundai: ["Elantra", "Tucson", "Santa Fe", "Accent", "Creta"],
-  Kia: ["Rio", "Sportage", "Sorento", "Picanto"],
-  Chevrolet: ["Aveo", "Onix", "Tracker", "Captiva"],
-  Mazda: ["Mazda 2", "Mazda 3", "CX-5", "CX-30"],
-  Ford: ["Ranger", "Explorer", "Escape", "Fiesta"],
-  Mitsubishi: ["L200", "Outlander", "Montero Sport"],
-  Suzuki: ["Swift", "Vitara", "Jimny"],
-  Volkswagen: ["Jetta", "Gol", "Tiguan", "Amarok"],
-  "Mercedes-Benz": ["Clase C", "Clase E", "GLA"],
-  BMW: ["Serie 3", "Serie 5", "X3", "X5"],
-  Audi: ["A3", "A4", "Q3", "Q5"],
-  Renault: ["Duster", "Koleos", "Logan"],
-  Peugeot: ["208", "3008", "2008"],
-  Fiat: ["Uno", "Argo", "Strada"],
-  Jeep: ["Wrangler", "Renegade", "Cherokee"],
-  Subaru: ["Impreza", "Forester", "Outback"],
-  Isuzu: ["D-MAX"],
-  JAC: ["JS2", "JS4", "T8"],
-  "Great Wall": ["Wingle", "Poer"],
-  Changan: ["CS15", "CS35", "CS55"],
-  Chery: ["Tiggo 2", "Tiggo 4", "Tiggo 7"],
-};
+const VEHICLE_MODELS_API_URL =
+  import.meta.env.VITE_VEHICLE_MODELS_API_URL ||
+  `${API_BASE}/catalogos/vehiculos/modelos`;
 
-const START_YEAR = 2000;
-const CURRENT_YEAR = new Date().getFullYear();
-
-/* ====== Límites y reglas de validación (mismas que NewVisitorModal) ====== */
-const DNI_DIGITS = 13; // 0801YYYYXXXXX
+/* ====== Límites y reglas de validación ====== */
+const DNI_DIGITS = 13;
 const PHONE_MIN_DIGITS = 8;
 const NAME_MAX = 40;
 const COMPANY_MAX = 20;
@@ -82,7 +31,7 @@ const REASON_MAX = 20;
 const EMAIL_MAX = 25;
 
 /* ================== Storage local para citas ================== */
-const CITA_STORAGE_KEY = "citas_demo"; // reutiliza la misma clave para no perder lo que ya tenías
+const CITA_STORAGE_KEY = "citas_demo";
 
 function loadStoredCitas() {
   try {
@@ -90,7 +39,6 @@ function loadStoredCitas() {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    // Normalizar por si acaso
     return arr.map((it) => {
       const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
       let citaAt = it.citaAt;
@@ -113,57 +61,156 @@ function saveStoredCitas(list) {
   }
 }
 
-/* ========= Helpers visuales de estado (mismos colores que VisitsPage) ========= */
+/* ================== Helpers UI ================== */
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardSoft(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function normalizeCatalogArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function normalizeBrandItem(item) {
+  if (typeof item === "string") return item;
+  return item?.name || item?.label || item?.marca || item?.value || "";
+}
+
+function normalizeModelItem(item) {
+  if (typeof item === "string") return item;
+  return item?.name || item?.label || item?.modelo || item?.value || "";
+}
+
+/* ========= Helpers visuales de estado ========= */
 
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada"; // 👈 cambio de texto
+  if (value === "autorizada") return "ingresada";
   return value;
 }
 
 function CitaEstadoPill({ estado }) {
   const val = prettyCitaEstado(estado);
-  let cls =
-    "px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center";
+
+  let style = {
+    background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+    color: "#fde68a",
+    border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
+  };
 
   switch (estado) {
     case "autorizada":
-      cls +=
-        " bg-green-200 text-green-800 dark:bg-green-600/20 dark:text-green-300";
+      style = {
+        background: "color-mix(in srgb, #22c55e 12%, transparent)",
+        color: "#86efac",
+        border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
+      };
       break;
     case "denegada":
-      cls +=
-        " bg-red-200 text-red-800 dark:bg-red-600/20 dark:text-red-300";
+      style = {
+        background: "color-mix(in srgb, #ef4444 12%, transparent)",
+        color: "#fca5a5",
+        border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+      };
       break;
     case "cancelada":
-      cls +=
-        " bg-red-300 text-red-900 dark:bg-red-700/30 dark:text-red-200";
+      style = {
+        background: "color-mix(in srgb, #64748b 18%, transparent)",
+        color: "#cbd5e1",
+        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
+      };
       break;
     case "en_revision":
-      cls +=
-        " bg-blue-200 text-blue-800 dark:bg-blue-600/20 dark:text-blue-300";
+      style = {
+        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
+        color: "#93c5fd",
+        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
+      };
       break;
-    default: // solicitada / Programada / etc.
-      cls +=
-        " bg-yellow-200 text-yellow-800 dark:bg-yellow-500/20 dark:text-yellow-300";
+    default:
       break;
   }
 
-  return <span className={cls}>{val}</span>;
+  return (
+    <span
+      className="px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center"
+      style={style}
+    >
+      {val}
+    </span>
+  );
 }
 
 /* ================== Página ================== */
 
 export default function AgendaPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState("agendar"); // "agendar" | "citas"
+  const [tab, setTab] = useState("agendar");
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
   const initialFormState = {
     visitante: "",
     documento: "",
-    tipoCita: "personal", // tipo de cita
+    tipoCita: "personal",
     empresa: "",
     empleado: "",
     motivo: "",
@@ -189,21 +236,107 @@ export default function AgendaPage() {
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
-  // Cita que se está editando (null si se está creando una nueva)
+  // Catálogos backend
+  const [vehicleBrands, setVehicleBrands] = useState([]);
+  const [vehicleModels, setVehicleModels] = useState([]);
+  const [loadingBrands, setLoadingBrands] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // Cita que se está editando
   const [editingCita, setEditingCita] = useState(null);
+
+  // 🔹 CARGAR MARCAS DESDE BACKEND
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      setLoadingBrands(true);
+      try {
+        const res = await fetch(VEHICLE_BRANDS_API_URL, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data?.error || "No se pudieron cargar las marcas");
+        }
+
+        const items = normalizeCatalogArray(data)
+          .map(normalizeBrandItem)
+          .map((x) => String(x || "").trim())
+          .filter(Boolean);
+
+        if (!mounted) return;
+        setVehicleBrands(items);
+      } catch (err) {
+        console.warn("[AgendaPage] error cargando marcas:", err);
+        if (!mounted) return;
+        setVehicleBrands([]);
+      } finally {
+        if (mounted) setLoadingBrands(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // 🔹 CARGAR MODELOS DESDE BACKEND
+  useEffect(() => {
+    let mounted = true;
+
+    if (!vehicleBrand || vehicleBrand === "Otra") {
+      setVehicleModels([]);
+      return;
+    }
+
+    (async () => {
+      setLoadingModels(true);
+      try {
+        const url = `${VEHICLE_MODELS_API_URL}?marca=${encodeURIComponent(
+          vehicleBrand
+        )}`;
+
+        const res = await fetch(url, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(data?.error || "No se pudieron cargar los modelos");
+        }
+
+        const items = normalizeCatalogArray(data)
+          .map(normalizeModelItem)
+          .map((x) => String(x || "").trim())
+          .filter(Boolean);
+
+        if (!mounted) return;
+        setVehicleModels(items);
+      } catch (err) {
+        console.warn("[AgendaPage] error cargando modelos:", err);
+        if (!mounted) return;
+        setVehicleModels([]);
+      } finally {
+        if (mounted) setLoadingModels(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [vehicleBrand]);
 
   function onChange(e) {
     const { name, value } = e.target;
     let newValue = value;
 
-    // ====== mismas reglas que en NewVisitorModal ======
     if (name === "visitante") {
-      // Solo letras (con tildes) y espacios, máx 40
       newValue = value
         .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
         .slice(0, NAME_MAX);
     } else if (name === "documento") {
-      // DNI con formato 0801-YYYY-XXXXX (13 dígitos)
       const digits = value.replace(/\D/g, "").slice(0, DNI_DIGITS);
       if (digits.length <= 4) {
         newValue = digits;
@@ -228,7 +361,6 @@ export default function AgendaPage() {
         .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
         .slice(0, REASON_MAX);
     } else if (name === "telefono") {
-      // Mantener prefijo +504 y formatear +504 9999-9999
       let input = value;
       if (input.startsWith("+504")) {
         input = input.slice(4).trimStart();
@@ -242,7 +374,6 @@ export default function AgendaPage() {
       }
       newValue = `+504 ${localFormatted}`;
     } else if (name === "correo") {
-      // Sin espacios, máx 25
       newValue = value.replace(/\s/g, "").slice(0, EMAIL_MAX);
     } else if (name === "tipoCita") {
       newValue = value;
@@ -250,7 +381,6 @@ export default function AgendaPage() {
 
     setForm((f) => {
       const next = { ...f, [name]: newValue };
-      // Si cambia a personal, limpiamos empresa
       if (name === "tipoCita" && newValue === "personal") {
         next.empresa = "";
       }
@@ -272,7 +402,6 @@ export default function AgendaPage() {
   function validate() {
     const e = {};
 
-    // Visitante: requerido, máx 40, al menos 3 palabras (2 nombres + 1 apellido)
     const nombre = form.visitante.trim();
     const nombreParts = nombre.split(/\s+/).filter(Boolean);
     if (!nombre) {
@@ -284,7 +413,6 @@ export default function AgendaPage() {
         "Ingrese el nombre completo: dos nombres y al menos un apellido.";
     }
 
-    // Documento: DNI completo (13 dígitos)
     const dniDigits = form.documento.replace(/\D/g, "");
     if (!dniDigits) {
       e.documento = "El DNI es obligatorio.";
@@ -292,13 +420,11 @@ export default function AgendaPage() {
       e.documento = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
-    // Tipo de cita
     const tipo = form.tipoCita || "personal";
     if (!["personal", "profesional"].includes(tipo)) {
       e.tipoCita = "Seleccione el tipo de cita.";
     }
 
-    // Empresa: requerida SOLO si la cita es profesional
     const empresa = form.empresa.trim();
     if (tipo === "profesional") {
       if (!empresa) {
@@ -308,7 +434,6 @@ export default function AgendaPage() {
       }
     }
 
-    // Empleado a visitar: requerido, solo texto, máx 20
     const empleado = form.empleado.trim();
     if (!empleado) {
       e.empleado = "El empleado a visitar es obligatorio.";
@@ -316,7 +441,6 @@ export default function AgendaPage() {
       e.empleado = `El empleado no debe superar ${EMP_MAX} caracteres.`;
     }
 
-    // Motivo: requerido, solo texto, máx 20
     const motivo = form.motivo.trim();
     if (!motivo) {
       e.motivo = "El motivo es obligatorio.";
@@ -327,18 +451,15 @@ export default function AgendaPage() {
     if (!form.fecha) e.fecha = "Requerido";
     if (!form.hora) e.hora = "Requerido";
 
-    // Teléfono: opcional, pero si se escribe debe tener 8 dígitos después de +504
     const phoneTrimmed = form.telefono.trim();
     if (phoneTrimmed && phoneTrimmed !== "+504") {
       const digits = form.telefono.replace(/\D/g, "");
       const localDigits = digits.replace(/^504/, "");
       if (localDigits.length < PHONE_MIN_DIGITS) {
-        e.telefono =
-          "El teléfono debe tener 8 dígitos después de +504.";
+        e.telefono = "El teléfono debe tener 8 dígitos después de +504.";
       }
     }
 
-    // Correo: opcional, máx 25, debe incluir @ y terminar en .com o .org
     const correo = form.correo.trim();
     if (correo) {
       if (correo.length > EMAIL_MAX) {
@@ -354,17 +475,18 @@ export default function AgendaPage() {
       }
     }
 
-    // Vehículo (si aplica)
     if (hasVehicle) {
       if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
-      const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+
+      const finalModel =
+        vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+
       if (!finalModel) e.vehicleModel = "Requerido";
 
       const plate = vehiclePlate.trim();
       if (!plate) {
         e.vehiclePlate = "Requerido";
       } else {
-        // Placa: 5–8 caracteres, mayúsculas, al menos una letra y un número
         const plateRegex = /^(?=.*[A-Z])(?=.*\d)[A-Z0-9-]{5,8}$/;
         if (!plateRegex.test(plate)) {
           e.vehiclePlate =
@@ -385,11 +507,13 @@ export default function AgendaPage() {
     setOkMsg("");
     setErrorMsg("");
 
-    const fecha = form.fecha; // YYYY-MM-DD
-    const hora = form.hora; // HH:mm
+    const fecha = form.fecha;
+    const hora = form.hora;
     const citaAtDate = new Date(`${fecha}T${hora}:00`);
 
-    const finalModel = vehicleModelCustom.trim() || vehicleModel.trim();
+    const finalModel =
+      vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+
     const tipo = form.tipoCita || "personal";
 
     try {
@@ -418,12 +542,10 @@ export default function AgendaPage() {
             : null,
         };
 
-        // Actualizar listado actual
         setItems((prev) =>
           prev.map((it) => (it._id === editingCita._id ? updated : it))
         );
 
-        // Actualizar respaldo local (aunque la cita venga del backend)
         const stored = loadStoredCitas();
         let found = false;
         const storedUpdated = stored.map((it) => {
@@ -443,7 +565,6 @@ export default function AgendaPage() {
         setErrorMsg("");
         setEditingCita(null);
 
-        // Limpiar formulario
         setForm(initialFormState);
         setHasCompanion(false);
         setHasVehicle(false);
@@ -527,15 +648,13 @@ export default function AgendaPage() {
         } else {
           console.warn("[citas] fallo al crear en backend:", data);
           if (data && typeof data.error === "string") {
-            serverError = data.error; // ej. horario de atención
+            serverError = data.error;
           }
         }
       } catch (err) {
         console.warn("[citas] error de red al crear en backend:", err);
       }
 
-      // ⛔ Si el servidor devolvió error (por ejemplo horario fuera de rango),
-      // mostramos ese mensaje y NO guardamos como respaldo local.
       if (serverError) {
         setErrorMsg(serverError);
         setOkMsg("");
@@ -543,7 +662,6 @@ export default function AgendaPage() {
         return;
       }
 
-      // 🔁 Respaldo local (o sincronizado) como antes
       const current = loadStoredCitas();
       const next = [...current, nuevaCita];
       saveStoredCitas(next);
@@ -586,6 +704,7 @@ export default function AgendaPage() {
       day: "2-digit",
     });
   }
+
   function fmtTime(d) {
     const dt = new Date(d);
     return dt.toLocaleTimeString("es-HN", {
@@ -594,29 +713,24 @@ export default function AgendaPage() {
     });
   }
 
-  const todayISO = useMemo(
-    () => new Date().toISOString().slice(0, 10),
-    []
-  );
+  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const thisMonth = useMemo(() => todayISO.slice(0, 7), [todayISO]);
 
-  const [mode, setMode] = useState("day"); // "day" | "month"
-  const [month, setMonth] = useState(thisMonth); // YYYY-MM
-  const [items, setItems] = useState([]); // citas ya filtradas base
+  const [mode, setMode] = useState("day");
+  const [month, setMonth] = useState(thisMonth);
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD
+  const [dateFilter, setDateFilter] = useState("");
   const [showMyCitas, setShowMyCitas] = useState(false);
   const [myDocumento, setMyDocumento] = useState("");
 
-  // 🔎 Filtros locales para la vista de citas
   const [citasSearch, setCitasSearch] = useState("");
-  const [citasEstado, setCitasEstado] = useState("todos"); // solicitada, en_revision, autorizada, denegada, cancelada
+  const [citasEstado, setCitasEstado] = useState("todos");
 
   async function fetchCitas() {
     setLoading(true);
     try {
-      // Primero intentamos leer desde el BACKEND
       const params = new URLSearchParams();
       if (mode === "month" && month) {
         params.set("month", month);
@@ -634,44 +748,31 @@ export default function AgendaPage() {
 
       let list = Array.isArray(data.items) ? data.items : [];
 
-      // 👇 Mezclar con datos del localStorage (no solo estado)
       const stored = loadStoredCitas();
-      const storedMap = new Map(
-        stored.map((c) => [c._id || c.id, c])
-      );
+      const storedMap = new Map(stored.map((c) => [c._id || c.id, c]));
       list = list.map((it) => {
         const key = it._id || it.id;
         const local = storedMap.get(key);
-        if (local) {
-          // local pisa los campos del backend (incluye cambios de edición)
-          return { ...it, ...local };
-        }
+        if (local) return { ...it, ...local };
         return it;
       });
 
-      // Filtro por documento ("Mis citas")
       if (showMyCitas && myDocumento.trim()) {
         const doc = myDocumento.trim();
         list = list.filter((it) => (it.documento || "").includes(doc));
       }
 
-      // Si estamos en modo día y no hay dateFilter, mostramos todas;
-      // si hay dateFilter, filtramos adicionalmente por día exacto.
       if (mode === "day" && dateFilter) {
         list = list.filter(
           (it) => (it.citaAt || "").slice(0, 10) === dateFilter
         );
       }
 
-      list.sort(
-        (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
-      );
-
+      list.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
       setItems(list);
     } catch (e) {
       console.error("[citas] Error leyendo desde backend, usando local:", e);
 
-      // 🔁 Fallback: lo mismo que hacías antes con localStorage
       try {
         const all = loadStoredCitas();
         let list = [...all];
@@ -683,9 +784,7 @@ export default function AgendaPage() {
 
         if (mode === "month") {
           if (month) {
-            list = list.filter(
-              (it) => (it.citaAt || "").slice(0, 7) === month
-            );
+            list = list.filter((it) => (it.citaAt || "").slice(0, 7) === month);
           }
         } else {
           if (dateFilter) {
@@ -695,9 +794,7 @@ export default function AgendaPage() {
           }
         }
 
-        list.sort(
-          (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
-        );
+        list.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
         setItems(list);
       } catch (e2) {
         console.error("[citas] Error leyendo citas local:", e2);
@@ -720,19 +817,13 @@ export default function AgendaPage() {
     setDateFilter("");
   }
 
-  // 👉 Editar cita: cargar en el formulario y cambiar a pestaña "agendar"
   function handleEditCita(it) {
     const fechaInput =
       it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
     const horaInput =
-      it.hora ||
-      (it.citaAt
-        ? new Date(it.citaAt).toISOString().slice(11, 16)
-        : "");
+      it.hora || (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
 
-    const tipo =
-      it.tipoCita ||
-      (it.empresa ? "profesional" : "personal");
+    const tipo = it.tipoCita || (it.empresa ? "profesional" : "personal");
 
     setForm({
       visitante: it.nombre || it.visitante || "",
@@ -748,9 +839,7 @@ export default function AgendaPage() {
     });
 
     setHasCompanion(
-      !!it.tieneAcompanante ||
-        !!it.conAcompanante ||
-        !!it.acompanante
+      !!it.tieneAcompanante || !!it.conAcompanante || !!it.acompanante
     );
 
     const hasVeh = !!it.vehiculo;
@@ -774,7 +863,6 @@ export default function AgendaPage() {
     setTab("agendar");
   }
 
-  // Cargar citas cuando cambian filtros o pestaña
   useEffect(() => {
     if (tab === "citas") {
       fetchCitas();
@@ -782,7 +870,6 @@ export default function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
 
-  // 🔎 Aplicar búsqueda (nombre/DNI) + filtro de estado sobre items
   const filteredItems = useMemo(() => {
     const search = citasSearch.trim().toLowerCase();
     const hasSearch = search.length > 0;
@@ -806,7 +893,6 @@ export default function AgendaPage() {
     });
   }, [items, citasSearch, citasEstado]);
 
-  // Agrupar por día (usando la lista filtrada)
   const grouped = useMemo(() => {
     const map = new Map();
     for (const it of filteredItems) {
@@ -815,20 +901,18 @@ export default function AgendaPage() {
       map.get(key).push(it);
     }
     for (const arr of map.values()) {
-      arr.sort(
-        (a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0)
-      );
+      arr.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
     }
     return Array.from(map.entries()).sort(
       (a, b) => new Date(a[0]) - new Date(b[0])
     );
   }, [filteredItems, todayISO]);
 
-  /* ===================== Render ===================== */
+  const showCustomModelInput =
+    vehicleBrand === "Otra" || vehicleModel === "__custom";
 
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6 pb-10">
-      {/* FX */}
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
@@ -836,17 +920,18 @@ export default function AgendaPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold text-neutral-100">
+          <h1 className="text-xl md:text-2xl font-bold" style={{ color: "var(--text)" }}>
             Agenda de Citas
           </h1>
-          <p className="text-sm text-neutral-400">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             Agendar y consultar citas programadas (pre-registro en línea)
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => navigate("/visitas/control")}
-            className="text-xs text-blue-400 hover:underline"
+            className="text-xs hover:underline"
+            style={{ color: "#60a5fa" }}
           >
             ← Volver a Gestión de Visitantes
           </button>
@@ -860,21 +945,15 @@ export default function AgendaPage() {
             setTab("agendar");
             setEditingCita(null);
           }}
-          className={`px-3 py-2 rounded-lg text-sm ${
-            tab === "agendar"
-              ? "bg-blue-600/80 text-white"
-              : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-          }`}
+          className="px-3 py-2 rounded-lg text-sm transition"
+          style={tab === "agendar" ? sxPrimaryBtn() : sxGhostBtn()}
         >
           Agendar
         </button>
         <button
           onClick={() => setTab("citas")}
-          className={`px-3 py-2 rounded-lg text-sm ${
-            tab === "citas"
-              ? "bg-blue-600/80 text-white"
-              : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-          }`}
+          className="px-3 py-2 rounded-lg text-sm transition"
+          style={tab === "citas" ? sxPrimaryBtn() : sxGhostBtn()}
         >
           Citas
         </button>
@@ -882,7 +961,7 @@ export default function AgendaPage() {
 
       {/* ===================== Sección: Agendar ===================== */}
       {tab === "agendar" && (
-        <section className="card-rich p-4 md:p-6 text-sm">
+        <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <form
             onSubmit={handleSubmit}
             className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6"
@@ -906,24 +985,19 @@ export default function AgendaPage() {
                 placeholder="DNI / Pasaporte"
               />
 
-              {/* Tipo de cita */}
-              <Field
-                label="Tipo de cita *"
-                name="tipoCita"
-                error={errors.tipoCita}
-              >
+              <Field label="Tipo de cita *" name="tipoCita" error={errors.tipoCita}>
                 <select
                   name="tipoCita"
                   value={form.tipoCita}
                   onChange={onChange}
-                  className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                  className="w-full rounded-lg px-3 py-2 focus:outline-none"
+                  style={sxInput()}
                 >
                   <option value="personal">Personal</option>
                   <option value="profesional">Profesional</option>
                 </select>
               </Field>
 
-              {/* Empresa solo si es profesional */}
               {form.tipoCita === "profesional" && (
                 <Field
                   label="Empresa *"
@@ -994,8 +1068,11 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            {/* ===== Acompañante ===== */}
-            <div className="md:col-span-2 border-t border-neutral-800/60 pt-3 mt-1">
+            {/* Acompañante */}
+            <div
+              className="md:col-span-2 pt-3 mt-1"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
               <div className="flex items-center gap-2 mb-1">
                 <input
                   id="has-companion-agenda"
@@ -1006,15 +1083,19 @@ export default function AgendaPage() {
                 />
                 <label
                   htmlFor="has-companion-agenda"
-                  className="text-xs text-neutral-300 cursor-pointer select-none"
+                  className="text-xs cursor-pointer select-none"
+                  style={{ color: "var(--text)" }}
                 >
                   El visitante llegará con acompañante
                 </label>
               </div>
             </div>
 
-            {/* ===== Vehículo, igual que en Registrar Visitante ===== */}
-            <div className="md:col-span-2 border-t border-neutral-800/60 pt-3 mt-1">
+            {/* Vehículo */}
+            <div
+              className="md:col-span-2 pt-3 mt-1"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
               <div className="flex items-center gap-2 mb-3">
                 <input
                   id="has-vehicle-agenda"
@@ -1040,7 +1121,8 @@ export default function AgendaPage() {
                 />
                 <label
                   htmlFor="has-vehicle-agenda"
-                  className="text-xs text-neutral-300 cursor-pointer select-none"
+                  className="text-xs cursor-pointer select-none"
+                  style={{ color: "var(--text)" }}
                 >
                   El visitante llegará en vehículo
                 </label>
@@ -1048,18 +1130,18 @@ export default function AgendaPage() {
 
               {hasVehicle && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Marca */}
                   <Field
                     label={
                       <>
-                        Marca <span className="text-red-400">*</span>
+                        Marca <span style={{ color: "#f87171" }}>*</span>
                       </>
                     }
                     name="vehicleBrand"
                     error={errors.vehicleBrand}
                   >
                     <select
-                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      className="w-full rounded-lg px-3 py-2 focus:outline-none"
+                      style={sxInput()}
                       value={vehicleBrand}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -1069,32 +1151,35 @@ export default function AgendaPage() {
                         setErrors((prev) => ({ ...prev, vehicleBrand: "" }));
                       }}
                     >
-                      <option value="">Seleccione marca…</option>
-                      {VEHICLE_BRANDS.map((b) => (
+                      <option value="">
+                        {loadingBrands ? "Cargando marcas..." : "Seleccione marca…"}
+                      </option>
+                      {vehicleBrands.map((b) => (
                         <option key={b} value={b}>
                           {b}
                         </option>
                       ))}
+                      <option value="Otra">Otra</option>
                     </select>
                   </Field>
 
-                  {/* Modelo */}
                   <Field
                     label={
                       <>
-                        Modelo <span className="text-red-400">*</span>
+                        Modelo <span style={{ color: "#f87171" }}>*</span>
                       </>
                     }
                     name="vehicleModel"
                     error={errors.vehicleModel}
                   >
                     <select
-                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      className="w-full rounded-lg px-3 py-2 focus:outline-none"
+                      style={sxInput()}
                       value={vehicleModel}
                       onChange={(e) => {
                         const val = e.target.value;
                         setVehicleModel(val);
-                        if (val !== "__customBefore2000") {
+                        if (val !== "__custom") {
                           setVehicleModelCustom("");
                         }
                         setErrors((prev) => ({ ...prev, vehicleModel: "" }));
@@ -1102,39 +1187,24 @@ export default function AgendaPage() {
                       disabled={!vehicleBrand || vehicleBrand === "Otra"}
                     >
                       <option value="">
-                        Seleccione modelo (año ≥ 2000)…
+                        {!vehicleBrand
+                          ? "Seleccione marca primero…"
+                          : loadingModels
+                          ? "Cargando modelos..."
+                          : "Seleccione modelo…"}
                       </option>
-                      {(
-                        vehicleBrand &&
-                        VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand]
-                          ? VEHICLE_MODELS_BASE_BY_BRAND[vehicleBrand].flatMap(
-                              (base) => {
-                                const list = [];
-                                for (
-                                  let y = START_YEAR;
-                                  y <= CURRENT_YEAR;
-                                  y++
-                                ) {
-                                  list.push(`${base} ${y}`);
-                                }
-                                return list;
-                              }
-                            )
-                          : []
-                      ).map((m) => (
+                      {vehicleModels.map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
                       ))}
-                      <option value="__customBefore2000">
-                        Otro modelo / año &lt; 2000 (escribir)
-                      </option>
+                      <option value="__custom">Otro modelo (escribir)</option>
                     </select>
 
-                    {(vehicleBrand === "Otra" ||
-                      vehicleModel === "__customBefore2000") && (
+                    {showCustomModelInput && (
                       <input
-                        className="mt-2 w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                        className="mt-2 w-full rounded-lg px-3 py-2 focus:outline-none"
+                        style={sxInput()}
                         value={vehicleModelCustom}
                         onChange={(e) => {
                           setVehicleModelCustom(e.target.value);
@@ -1143,23 +1213,23 @@ export default function AgendaPage() {
                             vehicleModel: "",
                           }));
                         }}
-                        placeholder="Escriba modelo y año (ej. Corolla 1998)"
+                        placeholder="Escriba el modelo"
                       />
                     )}
                   </Field>
 
-                  {/* Placa */}
                   <Field
                     label={
                       <>
-                        Placa <span className="text-red-400">*</span>
+                        Placa <span style={{ color: "#f87171" }}>*</span>
                       </>
                     }
                     name="vehiclePlate"
                     error={errors.vehiclePlate}
                   >
                     <input
-                      className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+                      className="w-full rounded-lg px-3 py-2 focus:outline-none"
+                      style={sxInput()}
                       value={vehiclePlate}
                       onChange={(e) => {
                         const val = e.target.value
@@ -1178,7 +1248,7 @@ export default function AgendaPage() {
 
             {/* Acciones */}
             <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
-              <div className="text-xs text-neutral-400">
+              <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                 Los campos con * son obligatorios
               </div>
               <div className="flex items-center gap-3">
@@ -1187,14 +1257,16 @@ export default function AgendaPage() {
                   onClick={() => {
                     navigate("/visitas/control");
                   }}
-                  className="px-3 py-2 rounded-md text-xs font-semibold bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+                  className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                  style={sxGhostBtn()}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600 disabled:opacity-60"
+                  className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-60"
+                  style={sxPrimaryBtn()}
                 >
                   {submitting
                     ? editingCita
@@ -1208,12 +1280,12 @@ export default function AgendaPage() {
             </div>
 
             {okMsg && (
-              <div className="md:col-span-2 text-green-300 text-sm">
+              <div className="md:col-span-2 text-sm" style={{ color: "#86efac" }}>
                 {okMsg}
               </div>
             )}
             {errorMsg && (
-              <div className="md:col-span-2 text-red-400 text-sm flex items-center gap-2">
+              <div className="md:col-span-2 text-sm flex items-center gap-2" style={{ color: "#f87171" }}>
                 <span>✖</span>
                 <span>{errorMsg}</span>
               </div>
@@ -1224,28 +1296,21 @@ export default function AgendaPage() {
 
       {/* ===================== Sección: Citas ===================== */}
       {tab === "citas" && (
-        <section className="card-rich p-4 md:p-6 text-sm">
-          {/* Toggle modo + filtros */}
+        <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <button
                 onClick={handleModeDay}
-                className={`px-3 py-2 rounded-lg text-xs ${
-                  mode === "day"
-                    ? "bg-neutral-700 text-white"
-                    : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
-                }`}
+                className="px-3 py-2 rounded-lg text-xs transition"
+                style={mode === "day" ? sxPrimaryBtn() : sxGhostBtn()}
                 title="Ver citas (todas las fechas o por día específico)"
               >
                 Por día
               </button>
               <button
                 onClick={handleModeMonth}
-                className={`px-3 py-2 rounded-lg text-xs ${
-                  mode === "month"
-                    ? "bg-neutral-700 text-white"
-                    : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800"
-                }`}
+                className="px-3 py-2 rounded-lg text-xs transition"
+                style={mode === "month" ? sxPrimaryBtn() : sxGhostBtn()}
                 title="Ver todas las citas de un mes"
               >
                 Por mes
@@ -1259,10 +1324,14 @@ export default function AgendaPage() {
                     type="date"
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
-                    className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
+                    className="rounded-lg px-3 py-2 text-xs md:text-sm"
+                    style={sxInput()}
                     title="Filtrar por fecha (opcional)"
                   />
-                  <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <label
+                    className="flex items-center gap-2 text-xs"
+                    style={{ color: "var(--text)" }}
+                  >
                     <input
                       type="checkbox"
                       checked={showMyCitas}
@@ -1279,7 +1348,8 @@ export default function AgendaPage() {
                       placeholder="Documento (ej: 0801...)"
                       value={myDocumento}
                       onChange={(e) => setMyDocumento(e.target.value)}
-                      className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
+                      className="rounded-lg px-3 py-2 text-xs md:text-sm"
+                      style={sxInput()}
                     />
                   )}
                 </>
@@ -1290,25 +1360,26 @@ export default function AgendaPage() {
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
-                  className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
+                  className="rounded-lg px-3 py-2 text-xs md:text-sm"
+                  style={sxInput()}
                   title="Cambiar mes"
                 />
               )}
 
-              {/* 🔎 Buscador de citas (nombre / DNI) */}
               <input
                 type="text"
                 placeholder="Buscar por nombre o DNI…"
                 value={citasSearch}
                 onChange={(e) => setCitasSearch(e.target.value)}
-                className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm min-w-[180px]"
+                className="rounded-lg px-3 py-2 text-xs md:text-sm min-w-[180px]"
+                style={sxInput()}
               />
 
-              {/* 🎛️ Filtro por estado */}
               <select
                 value={citasEstado}
                 onChange={(e) => setCitasEstado(e.target.value)}
-                className="rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 text-xs md:text-sm"
+                className="rounded-lg px-3 py-2 text-xs md:text-sm"
+                style={sxInput()}
                 title="Filtrar por estado"
               >
                 <option value="todos">Todos los estados</option>
@@ -1321,7 +1392,8 @@ export default function AgendaPage() {
 
               <button
                 onClick={fetchCitas}
-                className="px-3 py-2 rounded-md text-xs font-semibold bg-blue-600/80 text-blue-50 hover:bg-blue-600"
+                className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                style={sxPrimaryBtn()}
               >
                 Actualizar
               </button>
@@ -1329,9 +1401,9 @@ export default function AgendaPage() {
           </div>
 
           {loading ? (
-            <div className="text-neutral-400">Cargando…</div>
+            <div style={{ color: "var(--text-muted)" }}>Cargando…</div>
           ) : grouped.length === 0 ? (
-            <div className="text-neutral-400">
+            <div style={{ color: "var(--text-muted)" }}>
               {mode === "day"
                 ? "Sin citas agendadas."
                 : "Sin citas en el mes seleccionado."}
@@ -1341,16 +1413,29 @@ export default function AgendaPage() {
               {grouped.map(([k, arr]) => (
                 <div
                   key={k}
-                  className="rounded-xl border border-neutral-800/60 bg-neutral-900/30"
+                  className="rounded-xl"
+                  style={sxCardSoft()}
                 >
-                  <div className="px-4 py-3 text-neutral-300 text-sm border-b border-neutral-800/60">
+                  <div
+                    className="px-4 py-3 text-sm"
+                    style={{
+                      color: "var(--text)",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
                     <span className="font-semibold">{fmtDate(k)}</span> —{" "}
                     {arr.length} cita(s)
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[900px]">
-                      <thead className="text-xs uppercase text-neutral-400 border-b border-neutral-700/40">
-                        <tr className="[&>th]:py-2 [&>th]:pr-4">
+                      <thead
+                        className="text-xs uppercase"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        <tr
+                          className="[&>th]:py-2 [&>th]:pr-4"
+                          style={{ borderBottom: "1px solid var(--border)" }}
+                        >
                           <th>Visitante</th>
                           <th>Empresa</th>
                           <th>Empleado</th>
@@ -1360,18 +1445,17 @@ export default function AgendaPage() {
                           <th className="text-right">Acciones</th>
                         </tr>
                       </thead>
-                      <tbody className="text-neutral-200">
+                      <tbody style={{ color: "var(--text)" }}>
                         {arr.map((it) => (
                           <tr
                             key={it._id}
-                            className="border-b border-neutral-800/40 text-sm [&>td]:py-3 [&>td]:pr-4"
+                            className="text-sm [&>td]:py-3 [&>td]:pr-4"
+                            style={{ borderBottom: "1px solid var(--border)" }}
                           >
-                            <td className="font-medium text-neutral-100">
-                              {it.nombre}
-                            </td>
+                            <td className="font-medium">{it.nombre}</td>
                             <td>{it.empresa}</td>
                             <td>{it.empleado}</td>
-                            <td className="text-neutral-300">
+                            <td style={{ color: "var(--text-muted)" }}>
                               {it.motivo}
                             </td>
                             <td>{fmtTime(it.citaAt)}</td>
@@ -1382,7 +1466,8 @@ export default function AgendaPage() {
                               <button
                                 type="button"
                                 onClick={() => handleEditCita(it)}
-                                className="px-2 py-1 rounded-md text-xs font-semibold bg-blue-500/80 text-neutral-50 hover:bg-blue-400"
+                                className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                style={sxPrimaryBtn()}
                               >
                                 Editar
                               </button>
@@ -1416,7 +1501,10 @@ function Field({
   return (
     <div>
       {label && (
-        <label className="block text-neutral-300 mb-1 text-xs md:text-sm">
+        <label
+          className="block mb-1 text-xs md:text-sm"
+          style={{ color: "var(--text)" }}
+        >
           {label}
         </label>
       )}
@@ -1430,11 +1518,16 @@ function Field({
           value={value}
           onChange={onChange}
           placeholder={placeholder}
-          className="w-full rounded-lg bg-neutral-900/50 border border-neutral-700/50 px-3 py-2 text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
+          className="w-full rounded-lg px-3 py-2 focus:outline-none"
+          style={sxInput()}
         />
       )}
 
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && (
+        <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }
