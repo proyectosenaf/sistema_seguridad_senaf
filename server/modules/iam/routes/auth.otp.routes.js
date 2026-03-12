@@ -367,7 +367,9 @@ async function resendOtpHandler(req, res) {
   const email = normEmail(req.body?.email);
   if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-  const user = await iam_users.findOne({ email }).select("_id email roles +active +provider name").exec();
+  const user = await IamUser.findOne({ email })
+    .select("_id email roles +active +provider name")
+    .exec();
 
   // No revelar existencia => ok:true
   if (!user) return res.json({ ok: true });
