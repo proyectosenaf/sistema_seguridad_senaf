@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
+import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -15,6 +16,81 @@ const ROOT = (
 // 🔹 ENDPOINTS
 const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
 const CITAS_API_URL = `${ROOT}/citas`;
+
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function resolveAuthPrincipal(auth) {
+  const raw = auth?.me || auth?.user || null;
+  if (!raw || typeof raw !== "object") return null;
+
+  const roles = Array.isArray(raw.roles)
+    ? raw.roles
+    : Array.isArray(raw.user?.roles)
+    ? raw.user.roles
+    : [];
+
+  const email =
+    normalizeEmail(raw.email) ||
+    normalizeEmail(raw.user?.email) ||
+    normalizeEmail(raw.profile?.email) ||
+    "";
+
+  const roleSet = new Set(roles.map((r) => String(r || "").toLowerCase()));
+
+  const hint = (() => {
+    try {
+      return localStorage.getItem("senaf_is_visitor") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+  return {
+    raw,
+    email,
+    roles,
+    isVisitor: hint || roleSet.has("visita") || roleSet.has("visitor"),
+  };
+}
+
+function citaBelongsToVisitor(cita, visitorEmail) {
+  const email = normalizeEmail(visitorEmail);
+  if (!email) return false;
+
+  const candidates = [
+    cita?.correo,
+    cita?.email,
+    cita?.visitorEmail,
+    cita?.visitanteEmail,
+    cita?.createdByEmail,
+    cita?.solicitanteEmail,
+    cita?.userEmail,
+  ]
+    .map(normalizeEmail)
+    .filter(Boolean);
+
+  return candidates.includes(email);
+}
+
+function visitaBelongsToVisitor(visita, visitorEmail) {
+  const email = normalizeEmail(visitorEmail);
+  if (!email) return false;
+
+  const candidates = [
+    visita?.email,
+    visita?.correo,
+    visita?.visitorEmail,
+    visita?.visitanteEmail,
+    visita?.createdByEmail,
+    visita?.userEmail,
+  ]
+    .map(normalizeEmail)
+    .filter(Boolean);
+
+  return candidates.includes(email);
+}
 
 function sxCard(extra = {}) {
   return {
@@ -276,6 +352,11 @@ function buildQrValueForCita(cita) {
 
 export default function VisitsPage() {
   const navigate = useNavigate();
+  const auth = useAuth();
+
+  const principal = useMemo(() => resolveAuthPrincipal(auth), [auth]);
+  const isVisitor = !!principal?.isVisitor;
+  const currentVisitorEmail = principal?.email || "";
 
   const [visitors, setVisitors] = useState([]);
   const [search, setSearch] = useState("");
@@ -292,7 +373,7 @@ export default function VisitsPage() {
   const [editingVisitor, setEditingVisitor] = useState(null);
 
   // Vista actual
-  const [viewMode, setViewMode] = useState("citas");
+  const [viewMode, setViewMode] = useState(isVisitor ? "citas" : "citas");
 
   // ========= Storage VISITAS =========
   function saveToStorage(next) {
@@ -359,6 +440,12 @@ export default function VisitsPage() {
     setLoading(false);
   }, []);
 
+  useEffect(() => {
+    if (isVisitor && viewMode !== "citas") {
+      setViewMode("citas");
+    }
+  }, [isVisitor, viewMode]);
+
   // ========= KPIs =========
   const kpiActivos = useMemo(
     () => visitors.filter((v) => v.status === "Dentro").length,
@@ -386,7 +473,11 @@ export default function VisitsPage() {
   const hasMinSearch = normalizedSearch.length >= 2;
 
   const filteredVisitors = useMemo(() => {
-    return visitors.filter((v) => {
+    const base = isVisitor
+      ? visitors.filter((v) => visitaBelongsToVisitor(v, currentVisitorEmail))
+      : visitors;
+
+    return base.filter((v) => {
       const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
 
       const matchesSearch =
@@ -399,7 +490,15 @@ export default function VisitsPage() {
 
       return matchesSearch && matchesStatus;
     });
-  }, [visitors, normalizedSearch, hasSearch, hasMinSearch, statusFilter]);
+  }, [
+    visitors,
+    normalizedSearch,
+    hasSearch,
+    hasMinSearch,
+    statusFilter,
+    isVisitor,
+    currentVisitorEmail,
+  ]);
 
   const sortedCitas = useMemo(() => {
     const list = [...onlineCitas];
@@ -412,7 +511,11 @@ export default function VisitsPage() {
   }, [onlineCitas]);
 
   const filteredCitas = useMemo(() => {
-    return sortedCitas.filter((c) => {
+    const base = isVisitor
+      ? sortedCitas.filter((c) => citaBelongsToVisitor(c, currentVisitorEmail))
+      : sortedCitas;
+
+    return base.filter((c) => {
       const full = `${c.nombre || c.visitante || ""} ${
         c.documento || ""
       } ${c.empresa || ""} ${c.empleado || ""} ${c.motivo || ""}`
@@ -424,10 +527,19 @@ export default function VisitsPage() {
 
       return matchesSearch;
     });
-  }, [sortedCitas, normalizedSearch, hasSearch, hasMinSearch]);
+  }, [
+    sortedCitas,
+    normalizedSearch,
+    hasSearch,
+    hasMinSearch,
+    isVisitor,
+    currentVisitorEmail,
+  ]);
 
   // ========= Registrar / editar visitante =========
   async function handleAddVisitor(formData) {
+    if (isVisitor) return;
+
     const isEditing = !!editingVisitor;
 
     const vehicleBrand = formData.vehicle?.brand || "";
@@ -511,7 +623,6 @@ export default function VisitsPage() {
       return;
     }
 
-    // Crear nuevo visitante
     const entryDate = new Date();
 
     const fmtEntry = `${entryDate.toLocaleDateString("es-ES", {
@@ -599,7 +710,9 @@ export default function VisitsPage() {
 
   // ========= Marcar salida =========
   async function handleExit(id) {
+    if (isVisitor) return;
     if (!id) return;
+
     setSavingExit(id);
     try {
       const exitDate = new Date();
@@ -627,12 +740,14 @@ export default function VisitsPage() {
 
   // ========= Editar visitante =========
   function handleEditVisitor(visitor) {
+    if (isVisitor) return;
     setEditingVisitor(visitor);
     setShowModal(true);
   }
 
   // ========= Cambiar estado cita =========
   async function updateCitaStatus(citaId, nuevoEstado) {
+    if (isVisitor) return;
     if (!citaId) return;
 
     setOnlineCitas((prev) => {
@@ -873,118 +988,128 @@ export default function VisitsPage() {
             className="text-xl md:text-2xl font-bold"
             style={{ color: "var(--text)" }}
           >
-            Gestión de Visitantes
+            {isVisitor ? "Mis Citas" : "Gestión de Visitantes"}
           </h1>
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            Registra y controla el acceso de visitantes
+            {isVisitor
+              ? "Consulta únicamente tus citas registradas"
+              : "Registra y controla el acceso de visitantes"}
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full md:w-auto">
-          <button
-            onClick={() => {
-              setEditingVisitor(null);
-              setShowModal(true);
-            }}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
-            style={sxPrimaryBtn({ borderRadius: "9999px" })}
-          >
-            <span className="font-semibold">+ Registrar Visitante</span>
-          </button>
+        {!isVisitor && (
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full md:w-auto">
+            <button
+              onClick={() => {
+                setEditingVisitor(null);
+                setShowModal(true);
+              }}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+              style={sxPrimaryBtn({ borderRadius: "9999px" })}
+            >
+              <span className="font-semibold">+ Registrar Visitante</span>
+            </button>
 
-          <button
-            onClick={() => navigate("/visitas/agenda")}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
-            style={sxGhostBtn({ borderRadius: "9999px" })}
-          >
-            <span className="font-semibold">Agenda de Citas</span> →
-          </button>
-        </div>
+            <button
+              onClick={() => navigate("/visitas/agenda")}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
+            >
+              <span className="font-semibold">Agenda de Citas</span> →
+            </button>
+          </div>
+        )}
       </div>
 
       {/* KPI CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KpiCard
-          title="Visitantes Activos"
-          value={loading ? "…" : kpiActivos}
-          icon="👤"
-          tone="success"
-        />
-        <KpiCard
-          title="Total Hoy"
-          value={loading ? "…" : kpiTotalHoy}
-          icon="⏰"
-          tone="info"
-        />
-        <KpiCard
-          title="Empresas Visitantes"
-          value={loading ? "…" : kpiEmpresas}
-          icon="🏢"
-          tone="purple"
-        />
-      </div>
+      {!isVisitor && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <KpiCard
+            title="Visitantes Activos"
+            value={loading ? "…" : kpiActivos}
+            icon="👤"
+            tone="success"
+          />
+          <KpiCard
+            title="Total Hoy"
+            value={loading ? "…" : kpiTotalHoy}
+            icon="⏰"
+            tone="info"
+          />
+          <KpiCard
+            title="Empresas Visitantes"
+            value={loading ? "…" : kpiEmpresas}
+            icon="🏢"
+            tone="purple"
+          />
+        </div>
+      )}
 
       {/* CONTROLES DE VISTA + BUSCADOR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Ver:
-          </span>
-          <div
-            className="inline-flex items-center rounded-full p-1"
-            style={sxGhostBtn({ borderRadius: "9999px" })}
-          >
-            <button
-              type="button"
-              onClick={() => setViewMode("citas")}
-              className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
-                viewMode === "citas" ? "" : ""
-              }`}
-              style={
-                viewMode === "citas"
-                  ? {
-                      background: "#06b6d4",
-                      color: "#082f49",
-                    }
-                  : {
-                      color: "var(--text-muted)",
-                    }
-              }
+        {!isVisitor && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Ver:
+            </span>
+            <div
+              className="inline-flex items-center rounded-full p-1"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
             >
-              Citas
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("visitas")}
-              className="px-3 py-1 text-xs font-semibold rounded-full transition"
-              style={
-                viewMode === "visitas"
-                  ? {
-                      background: "#06b6d4",
-                      color: "#082f49",
-                    }
-                  : {
-                      color: "var(--text-muted)",
-                    }
-              }
-            >
-              Visitas
-            </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("citas")}
+                className="px-3 py-1 text-xs font-semibold rounded-full transition"
+                style={
+                  viewMode === "citas"
+                    ? {
+                        background: "#06b6d4",
+                        color: "#082f49",
+                      }
+                    : {
+                        color: "var(--text-muted)",
+                      }
+                }
+              >
+                Citas
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("visitas")}
+                className="px-3 py-1 text-xs font-semibold rounded-full transition"
+                style={
+                  viewMode === "visitas"
+                    ? {
+                        background: "#06b6d4",
+                        color: "#082f49",
+                      }
+                    : {
+                        color: "var(--text-muted)",
+                      }
+                }
+              >
+                Visitas
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex flex-col-reverse md:flex-row md:items-center gap-3 w-full md:w-auto">
           <div className="flex-1 md:flex-none">
             <input
               className="w-full md:w-[300px] rounded-[14px] px-3 py-2 text-sm outline-none transition"
               style={sxInput()}
-              placeholder="Buscar por nombre, DNI, empresa o placa…"
+              placeholder={
+                isVisitor
+                  ? "Buscar por nombre, DNI, empresa o motivo…"
+                  : "Buscar por nombre, DNI, empresa o placa…"
+              }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
-          {viewMode === "visitas" && (
+          {!isVisitor && viewMode === "visitas" && (
             <div>
               <select
                 className="w-full md:w-[160px] rounded-[14px] px-3 py-2 text-sm outline-none transition"
@@ -1010,19 +1135,26 @@ export default function VisitsPage() {
                 className="font-semibold text-base"
                 style={{ color: "var(--text)" }}
               >
-                Solicitudes en línea (pre-registro)
+                {isVisitor
+                  ? "Mis citas registradas"
+                  : "Solicitudes en línea (pre-registro)"}
               </div>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Citas agendadas por los visitantes para revisión del guardia
+                {isVisitor
+                  ? "Aquí solo ves las citas asociadas a tu correo."
+                  : "Citas agendadas por los visitantes para revisión del guardia"}
               </p>
             </div>
-            <button
-              onClick={() => navigate("/visitas/agenda")}
-              className="text-xs self-start md:self-auto underline-offset-4 hover:underline"
-              style={{ color: "#60a5fa" }}
-            >
-              Ver agenda completa →
-            </button>
+
+            {!isVisitor && (
+              <button
+                onClick={() => navigate("/visitas/agenda")}
+                className="text-xs self-start md:self-auto underline-offset-4 hover:underline"
+                style={{ color: "#60a5fa" }}
+              >
+                Ver agenda completa →
+              </button>
+            )}
           </div>
 
           <div className="overflow-x-auto">
@@ -1056,7 +1188,9 @@ export default function VisitsPage() {
                       className="py-6 text-center text-sm"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Sin resultados
+                      {isVisitor
+                        ? "No tienes citas registradas."
+                        : "Sin resultados"}
                     </td>
                   </tr>
                 ) : (
@@ -1120,46 +1254,50 @@ export default function VisitsPage() {
                               </button>
                             )}
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCitaStatus(cita._id, "en_revision")
-                              }
-                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                              style={sxGhostBtn()}
-                            >
-                              En revisión
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCitaStatus(cita._id, "autorizada")
-                              }
-                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                              style={sxSuccessBtn()}
-                            >
-                              Ingresar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCitaStatus(cita._id, "denegada")
-                              }
-                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                              style={sxDangerBtn()}
-                            >
-                              Denegar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCitaStatus(cita._id, "cancelada")
-                              }
-                              className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                              style={sxGhostBtn()}
-                            >
-                              Cancelar
-                            </button>
+                            {!isVisitor && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "en_revision")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  style={sxGhostBtn()}
+                                >
+                                  En revisión
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "autorizada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  style={sxSuccessBtn()}
+                                >
+                                  Ingresar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "denegada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  style={sxDangerBtn()}
+                                >
+                                  Denegar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "cancelada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  style={sxGhostBtn()}
+                                >
+                                  Cancelar
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1170,30 +1308,32 @@ export default function VisitsPage() {
             </table>
           </div>
 
-          <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
-            <button
-              onClick={() => exportCitasExcel(filteredCitas)}
-              className="px-3 py-2 text-sm rounded-lg transition"
-              style={sxGhostBtn()}
-              title="Exportar citas (xlsx)"
-            >
-              Exportar Excel
-            </button>
+          {!isVisitor && (
+            <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
+              <button
+                onClick={() => exportCitasExcel(filteredCitas)}
+                className="px-3 py-2 text-sm rounded-lg transition"
+                style={sxGhostBtn()}
+                title="Exportar citas (xlsx)"
+              >
+                Exportar Excel
+              </button>
 
-            <button
-              onClick={() => exportCitasPDF(filteredCitas)}
-              className="px-3 py-2 text-sm rounded-lg transition"
-              style={sxGhostBtn()}
-              title="Exportar citas (PDF)"
-            >
-              Exportar PDF
-            </button>
-          </div>
+              <button
+                onClick={() => exportCitasPDF(filteredCitas)}
+                className="px-3 py-2 text-sm rounded-lg transition"
+                style={sxGhostBtn()}
+                title="Exportar citas (PDF)"
+              >
+                Exportar PDF
+              </button>
+            </div>
+          )}
         </section>
       )}
 
       {/* TABLA VISITANTES */}
-      {viewMode === "visitas" && (
+      {!isVisitor && viewMode === "visitas" && (
         <section
           className="relative z-[2] p-4 md:p-5 overflow-x-auto text-sm rounded-[24px]"
           style={sxCard()}
@@ -1350,7 +1490,7 @@ export default function VisitsPage() {
         </section>
       )}
 
-      {showModal && (
+      {showModal && !isVisitor && (
         <NewVisitorModal
           onClose={() => {
             setShowModal(false);
