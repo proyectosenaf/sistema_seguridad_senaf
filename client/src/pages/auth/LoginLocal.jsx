@@ -1,5 +1,5 @@
 // client/src/pages/auth/LoginLocal.jsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import api, { API as API_BASE, getToken, clearToken, setToken } from "../../lib/api.js";
@@ -97,13 +97,6 @@ function humanRegisterError(codeOrMsg) {
   return codeOrMsg || "No se pudo completar el registro.";
 }
 
-/**
- * Política de contraseña (VISITANTES):
- * - mínimo 8
- * - al menos 1 letra
- * - al menos 1 número
- * - al menos 1 carácter especial
- */
 function passwordPolicyErrorLettersNumbersSpecial(pw) {
   const s = String(pw || "");
 
@@ -117,7 +110,6 @@ function passwordPolicyErrorLettersNumbersSpecial(pw) {
   return "";
 }
 
-/* ✅ Visitor hint (para ocultar menú/footer/Chat en /visitas/**) */
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 function setVisitorHint(isVisitor) {
   try {
@@ -153,6 +145,9 @@ export default function LoginLocal() {
   const navigate = useNavigate();
   const loc = useLocation();
   const auth = useAuth();
+
+  const internalSubmitLock = useRef(false);
+  const visitorSubmitLock = useRef(false);
 
   const [mode, setMode] = useState("internal");
 
@@ -197,7 +192,6 @@ export default function LoginLocal() {
     } catch {}
   }
 
-  // Axios limpio SOLO para OTP Public (sin interceptores)
   const publicAuth = useMemo(() => {
     const base = String(API_BASE || "http://localhost:4000/api")
       .trim()
@@ -217,29 +211,31 @@ export default function LoginLocal() {
 
   async function submitInternal(e) {
     e.preventDefault();
-    if (submitting) return;
+
+    if (internalSubmitLock.current) return;
+    internalSubmitLock.current = true;
 
     setError("");
     setInfo("");
 
-    if (!emailNorm || !emailNorm.includes("@")) {
-      return setError("Ingresa tu correo (email).");
-    }
-    if (!password) {
-      return setError("Ingresa tu contraseña.");
-    }
-
-    const returnTo = consumeReturnTo(loc.search);
-
     try {
+      if (!emailNorm || !emailNorm.includes("@")) {
+        setError("Ingresa tu correo (email).");
+        return;
+      }
+      if (!password) {
+        setError("Ingresa tu contraseña.");
+        return;
+      }
+
+      const returnTo = consumeReturnTo(loc.search);
+
       setSubmitting(true);
 
-      // limpia residuos de sesión previa
       clearToken();
       clearOtpContext();
       setVisitorHint(false);
 
-      // ✅ baseURL ya trae /api, por eso aquí va /public/...
       const res = await publicAuth.post("/public/v1/auth/login-otp", {
         email: emailNorm,
         password: String(password || ""),
@@ -248,15 +244,14 @@ export default function LoginLocal() {
       const data = res?.data || {};
 
       if (data?.ok === false) {
-        return setError(humanLoginError(data?.error || data?.message));
+        setError(humanLoginError(data?.error || data?.message));
+        return;
       }
 
       const directToken = readTokenFromPayload(data);
 
       if (data?.otpRequired === false && directToken) {
         setToken(directToken);
-
-        // interno: nunca debe quedar hint visitante
         setVisitorHint(false);
 
         await auth.login({ email: emailNorm }, directToken);
@@ -303,34 +298,49 @@ export default function LoginLocal() {
       }
     } finally {
       setSubmitting(false);
+      internalSubmitLock.current = false;
     }
   }
 
   async function submitVisitor(e) {
     e.preventDefault();
-    if (submitting) return;
+
+    if (visitorSubmitLock.current) return;
+    visitorSubmitLock.current = true;
 
     setError("");
     setInfo("");
 
-    const name = String(fullName || "").trim();
-    if (!name) return setError("Ingresa tu nombre.");
-    if (!visitorEmailNorm || !visitorEmailNorm.includes("@")) {
-      return setError("Ingresa tu correo.");
-    }
-
-    if (!vPassword) return setError("Ingresa tu contraseña.");
-    const policyMsg = passwordPolicyErrorLettersNumbersSpecial(vPassword);
-    if (policyMsg) return setError(policyMsg);
-
-    if (String(vPassword) !== String(vPassword2)) {
-      return setError("Las contraseñas no coinciden.");
-    }
-
-    const returnTo = readReturnTo(loc.search);
-    stashReturnTo(returnTo);
-
     try {
+      const name = String(fullName || "").trim();
+      if (!name) {
+        setError("Ingresa tu nombre.");
+        return;
+      }
+      if (!visitorEmailNorm || !visitorEmailNorm.includes("@")) {
+        setError("Ingresa tu correo.");
+        return;
+      }
+
+      if (!vPassword) {
+        setError("Ingresa tu contraseña.");
+        return;
+      }
+
+      const policyMsg = passwordPolicyErrorLettersNumbersSpecial(vPassword);
+      if (policyMsg) {
+        setError(policyMsg);
+        return;
+      }
+
+      if (String(vPassword) !== String(vPassword2)) {
+        setError("Las contraseñas no coinciden.");
+        return;
+      }
+
+      const returnTo = readReturnTo(loc.search);
+      stashReturnTo(returnTo);
+
       setSubmitting(true);
       clearToken();
       clearOtpContext();
@@ -343,10 +353,10 @@ export default function LoginLocal() {
 
       const data = res?.data || {};
       if (data?.ok === false) {
-        return setError(humanRegisterError(data?.error || data?.message));
+        setError(humanRegisterError(data?.error || data?.message));
+        return;
       }
 
-      // ✅ visitante: activar hint SIEMPRE
       setVisitorHint(true);
 
       const directToken = readTokenFromPayload(data);
@@ -354,7 +364,6 @@ export default function LoginLocal() {
       if (directToken) {
         setToken(directToken);
         await auth.login({ email: visitorEmailNorm }, directToken);
-
         navigate("/visitas/agenda", { replace: true });
         return;
       }
@@ -388,6 +397,7 @@ export default function LoginLocal() {
       setVisitorHint(false);
     } finally {
       setSubmitting(false);
+      visitorSubmitLock.current = false;
     }
   }
 
