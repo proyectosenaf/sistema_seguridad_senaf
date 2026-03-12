@@ -5,6 +5,7 @@ import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { getNavSectionsForMe } from "../config/navConfig.js";
+import { clearToken } from "../lib/api.js";
 import {
   Menu,
   LogOut,
@@ -45,6 +46,41 @@ function useDismissOnOutside(open, refs, onClose) {
 
 function normalizeEmail(v) {
   return String(v || "").trim().toLowerCase();
+}
+
+function getVisitorHint() {
+  try {
+    return localStorage.getItem("senaf_is_visitor") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function clearVisitorSessionSafe() {
+  try {
+    clearToken();
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_user");
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_otp_email");
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_is_visitor");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_pwreset_token");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_mustChange");
+  } catch {}
+  try {
+    sessionStorage.removeItem("auth:returnTo");
+  } catch {}
 }
 
 function resolvePrincipal(auth) {
@@ -180,7 +216,14 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   const nav = useNavigate();
   const { pathname } = useLocation();
 
-  // ✅ módulos desde backend
+  const isVisitor = React.useMemo(() => {
+    const hint = getVisitorHint();
+    const me = auth?.me || auth?.user || null;
+    const roles = Array.isArray(me?.roles) ? me.roles : [];
+    const byRole = roles.map((r) => String(r || "").toLowerCase()).includes("visita");
+    return hint || byRole;
+  }, [auth]);
+
   const modules = React.useMemo(() => {
     const secs = getNavSectionsForMe(principal) || [];
 
@@ -193,11 +236,11 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     return [...secs].sort((a, b) => rank(a.key) - rank(b.key));
   }, [principal]);
 
-  // -------- búsqueda --------
   const [q, setQ] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
 
   React.useEffect(() => {
+    if (isVisitor) return;
     function onKey(e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -206,7 +249,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [isVisitor]);
 
   function runSearch() {
     const base = pathname.startsWith("/visitas")
@@ -225,20 +268,18 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     setSearchOpen(false);
   }
 
-  // ✅ Back soporta callback del Layout
   function goBack() {
     if (back?.onClick) return back.onClick();
     nav("/");
   }
 
-  // -------- menú + --------
   const quickBtnRef = React.useRef(null);
   const quickMenuRef = React.useRef(null);
   const [quickOpen, setQuickOpen] = React.useState(false);
   const [quickPos, setQuickPos] = React.useState({ left: 0, top: 0 });
 
   React.useEffect(() => {
-    if (!quickOpen) return;
+    if (isVisitor || !quickOpen) return;
     const recalc = () => {
       if (!quickBtnRef.current) return;
       const r = quickBtnRef.current.getBoundingClientRect();
@@ -253,11 +294,12 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       window.removeEventListener("resize", recalc);
       window.removeEventListener("scroll", recalc, true);
     };
-  }, [quickOpen]);
+  }, [quickOpen, isVisitor]);
 
   useDismissOnOutside(quickOpen, [quickBtnRef, quickMenuRef], () => setQuickOpen(false));
 
   const toggleQuick = () => {
+    if (isVisitor) return;
     setQuickOpen((next) => {
       const willOpen = !next;
       if (willOpen && quickBtnRef.current) {
@@ -270,7 +312,6 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
     });
   };
 
-  // -------- campana (notificaciones) --------
   const bellBtnRef = React.useRef(null);
   const [bellOpen, setBellOpen] = React.useState(false);
   const [bellPos, setBellPos] = React.useState({ left: 0, top: 0 });
@@ -279,13 +320,14 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   const hasNew = (counts?.unread || 0) > 0 || (counts?.alerts || 0) > 0;
 
   const fetchCounts = React.useCallback(async () => {
+    if (isVisitor) return;
     try {
       const n = await NotificationsAPI.getCount();
       setCounts({ unread: Number(n || 0), alerts: 0, total: Number(n || 0) });
     } catch {
       // silent
     }
-  }, []);
+  }, [isVisitor]);
 
   const clearCounts = React.useCallback(async () => {
     try {
@@ -297,6 +339,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
   }, [fetchCounts]);
 
   React.useEffect(() => {
+    if (isVisitor) return;
     fetchCounts();
     if (!socket) return;
 
@@ -313,11 +356,18 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       socket.off("message:new", update);
       socket.off("appointment:new", update);
     };
-  }, [fetchCounts]);
+  }, [fetchCounts, isVisitor]);
+
+  function handleExit() {
+    try {
+      logout?.();
+    } catch {}
+    clearVisitorSessionSafe();
+    nav("/login", { replace: true });
+  }
 
   return (
     <div className="flex h-14 items-center gap-3 px-4 md:px-6">
-      {/* Hamburguesa móvil */}
       <button
         type="button"
         onClick={onToggleMenu}
@@ -328,7 +378,6 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         <Menu className="h-5 w-5" />
       </button>
 
-      {/* Regresar (opcional) */}
       {showBack && (
         <button
           type="button"
@@ -342,96 +391,98 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         </button>
       )}
 
-      <Breadcrumbs />
+      {!isVisitor && <Breadcrumbs />}
       <div className="flex-1" />
 
-      {/* Búsqueda rápida (desktop) */}
-      <div className="hidden md:flex items-center gap-2">
-        <div className="relative">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && runSearch()}
-            placeholder="Buscar… (Ctrl/⌘+K)"
-            className="input-fx w-64 pl-9 pr-9 py-2"
-            style={{
-              borderColor: "var(--input-border)",
-              background: "var(--input-bg)",
-              color: "var(--text)",
-            }}
-          />
-          <Search
-            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
-            style={{ color: "var(--text-muted)", opacity: 0.75 }}
-          />
-          {q && (
-            <button
-              className="absolute right-2 top-1/2 rounded-lg p-1 -translate-y-1/2 transition"
-              style={{ color: "var(--text-muted)" }}
-              onClick={() => setQ("")}
-              aria-label="Limpiar"
-            >
-              <X className="h-4 w-4" />
-            </button>
+      {!isVisitor && (
+        <div className="hidden md:flex items-center gap-2">
+          <div className="relative">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+              placeholder="Buscar… (Ctrl/⌘+K)"
+              className="input-fx w-64 pl-9 pr-9 py-2"
+              style={{
+                borderColor: "var(--input-border)",
+                background: "var(--input-bg)",
+                color: "var(--text)",
+              }}
+            />
+            <Search
+              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
+              style={{ color: "var(--text-muted)", opacity: 0.75 }}
+            />
+            {q && (
+              <button
+                className="absolute right-2 top-1/2 rounded-lg p-1 -translate-y-1/2 transition"
+                style={{ color: "var(--text-muted)" }}
+                onClick={() => setQ("")}
+                aria-label="Limpiar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!isVisitor && (
+        <TopbarQuickMenu
+          nav={nav}
+          open={quickOpen}
+          toggle={toggleQuick}
+          btnRef={quickBtnRef}
+          menuRef={quickMenuRef}
+          pos={quickPos}
+          fxBtn={fxBtn}
+          fxPopover={fxPopover}
+          modules={modules}
+        />
+      )}
+
+      {!isVisitor && (
+        <div ref={bellBtnRef} className="relative">
+          <button
+            onClick={() => setBellOpen((v) => !v)}
+            className={"relative " + fxBtn}
+            aria-label="Notificaciones"
+            aria-haspopup="menu"
+            aria-expanded={bellOpen}
+            style={controlStyle()}
+          >
+            <Bell className="h-5 w-5" style={{ color: hasNew ? "#e11d48" : "var(--text)" }} />
+            {hasNew && (
+              <span
+                className="absolute -right-0.5 -top-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] leading-[18px] text-center"
+                style={{
+                  background: "#e11d48",
+                  color: "#fff",
+                  boxShadow: "0 0 0 2px rgba(255,255,255,.75)",
+                }}
+              >
+                {Math.min((counts.unread || 0) + (counts.alerts || 0), 99)}
+              </span>
+            )}
+          </button>
+
+          {bellOpen && (
+            <BellMenu
+              anchorRef={bellBtnRef}
+              counts={counts}
+              onClear={() => {
+                clearCounts();
+                setBellOpen(false);
+              }}
+              onClose={() => setBellOpen(false)}
+              setPosFn={setBellPos}
+              pos={bellPos}
+              fxPopover={fxPopover}
+            />
           )}
         </div>
-      </div>
+      )}
 
-      {/* Botón + */}
-      <TopbarQuickMenu
-        nav={nav}
-        open={quickOpen}
-        toggle={toggleQuick}
-        btnRef={quickBtnRef}
-        menuRef={quickMenuRef}
-        pos={quickPos}
-        fxBtn={fxBtn}
-        fxPopover={fxPopover}
-        modules={modules}
-      />
-
-      {/* Campana */}
-      <div ref={bellBtnRef} className="relative">
-        <button
-          onClick={() => setBellOpen((v) => !v)}
-          className={"relative " + fxBtn}
-          aria-label="Notificaciones"
-          aria-haspopup="menu"
-          aria-expanded={bellOpen}
-          style={controlStyle()}
-        >
-          <Bell className="h-5 w-5" style={{ color: hasNew ? "#e11d48" : "var(--text)" }} />
-          {hasNew && (
-            <span
-              className="absolute -right-0.5 -top-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] leading-[18px] text-center"
-              style={{
-                background: "#e11d48",
-                color: "#fff",
-                boxShadow: "0 0 0 2px rgba(255,255,255,.75)",
-              }}
-            >
-              {Math.min((counts.unread || 0) + (counts.alerts || 0), 99)}
-            </span>
-          )}
-        </button>
-
-        {bellOpen && (
-          <BellMenu
-            anchorRef={bellBtnRef}
-            counts={counts}
-            onClear={() => {
-              clearCounts();
-              setBellOpen(false);
-            }}
-            onClose={() => setBellOpen(false)}
-            setPosFn={setBellPos}
-            pos={bellPos}
-            fxPopover={fxPopover}
-          />
-        )}
-      </div>
-
-      {/* MÓVIL */}
       <div className="sm:hidden flex items-center gap-2 shrink-0">
         <div className="shrink-0">
           <ThemeFxPicker />
@@ -441,7 +492,6 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         </div>
       </div>
 
-      {/* ESCRITORIO */}
       <div className="hidden sm:flex items-center gap-2 shrink-0">
         <div className="shrink-0">
           <ThemeFxPicker />
@@ -454,18 +504,12 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           className="hidden sm:block text-sm"
           style={{ color: "var(--text-muted)" }}
         >
-          {user?.name || user?.fullName || user?.email || ""}
+          {user?.name || user?.fullName || user?.email || (isVisitor ? "Visitante" : "")}
         </span>
 
-        {isAuthenticated && (
+        {(isAuthenticated || isVisitor) && (
           <button
-            onClick={() => {
-              try {
-                logout?.();
-              } finally {
-                nav("/login", { replace: true });
-              }
-            }}
+            onClick={handleExit}
             className="inline-flex items-center gap-2 rounded-[16px] px-3 py-2 text-sm font-medium transition-all duration-150"
             title="Salir"
             style={controlStyle()}
@@ -476,8 +520,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         )}
       </div>
 
-      {/* Modal búsqueda */}
-      {searchOpen && (
+      {searchOpen && !isVisitor && (
         <div
           className="fixed inset-0 z-[60] grid place-items-start pt-24"
           style={{ background: "rgba(2, 6, 23, 0.35)" }}

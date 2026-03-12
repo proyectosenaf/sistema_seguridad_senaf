@@ -38,6 +38,33 @@ function clearVisitorHint() {
   }
 }
 
+function clearVisitorSessionSafe() {
+  try {
+    clearToken();
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_user");
+  } catch {}
+  try {
+    localStorage.removeItem("senaf_otp_email");
+  } catch {}
+  try {
+    localStorage.removeItem(VISITOR_HINT_KEY);
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_flow");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_pwreset_token");
+  } catch {}
+  try {
+    sessionStorage.removeItem("senaf_otp_mustChange");
+  } catch {}
+  try {
+    sessionStorage.removeItem("auth:returnTo");
+  } catch {}
+}
+
 export default function Layout({
   children,
   hideSidebar: hideSidebarProp = false,
@@ -71,11 +98,8 @@ export default function Layout({
     true
   );
 
-  React.useEffect(() => {
-    if (getVisitorHint()) clearVisitorHint();
-  }, []);
-
-  const visitorMode = layoutMode === "visitor";
+  const visitorHint = getVisitorHint();
+  const visitorMode = layoutMode === "visitor" || visitorHint;
 
   const modeHideSidebar = layoutMode === "full" || visitorMode;
   const modeHideFooter = visitorMode ? ENV_HIDE_FOOTER_FOR_VISITOR : false;
@@ -116,8 +140,7 @@ export default function Layout({
     : "min-h-[calc(100svh-3.5rem)]";
 
   const doVisitorExit = React.useCallback(() => {
-    clearToken();
-    clearVisitorHint();
+    clearVisitorSessionSafe();
     navigate(DEFAULT_LOGIN_PATH, { replace: true });
   }, [navigate]);
 
