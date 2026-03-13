@@ -35,12 +35,15 @@ export const TOKEN_KEY_LEGACY = "token";
 
 /** ✅ Evento para notificar cambios de token en la MISMA pestaña */
 export const TOKEN_UPDATED_EVENT = "senaf:token_updated";
+
 function emitTokenUpdated() {
   try {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event(TOKEN_UPDATED_EVENT));
     }
-  } catch {}
+  } catch {
+    // ignore
+  }
 }
 
 /* =========================
@@ -53,6 +56,7 @@ function safeStorageGet(key) {
     return "";
   }
 }
+
 function safeStorageSet(key, val) {
   try {
     localStorage.setItem(key, val);
@@ -60,6 +64,7 @@ function safeStorageSet(key, val) {
     // ignore
   }
 }
+
 function safeStorageRemove(key) {
   try {
     localStorage.removeItem(key);
@@ -87,7 +92,7 @@ export function getToken() {
     // migración suave: guarda en canónico y limpia legacy
     safeStorageSet(TOKEN_KEY, legacy);
     safeStorageRemove(TOKEN_KEY_LEGACY);
-    emitTokenUpdated(); // ✅ notifica migración en misma tab
+    emitTokenUpdated();
     return legacy;
   }
 
@@ -104,19 +109,20 @@ export function setToken(token) {
   if (!t) {
     safeStorageRemove(TOKEN_KEY);
     safeStorageRemove(TOKEN_KEY_LEGACY);
-    emitTokenUpdated(); // ✅
+    emitTokenUpdated();
     return;
   }
+
   safeStorageSet(TOKEN_KEY, t);
   safeStorageRemove(TOKEN_KEY_LEGACY);
-  emitTokenUpdated(); // ✅
+  emitTokenUpdated();
 }
 
 /** ✅ Limpia token (canónico + legacy) */
 export function clearToken() {
   safeStorageRemove(TOKEN_KEY);
   safeStorageRemove(TOKEN_KEY_LEGACY);
-  emitTokenUpdated(); // ✅
+  emitTokenUpdated();
 }
 
 /* =========================
@@ -143,7 +149,7 @@ api.interceptors.request.use(
 
     // Evita 304/caches raros (especialmente en dev / proxies)
     config.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
-    config.headers["Pragma"] = "no-cache";
+    config.headers.Pragma = "no-cache";
 
     return config;
   },

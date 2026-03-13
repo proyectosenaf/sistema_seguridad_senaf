@@ -1,3 +1,4 @@
+// server/modules/controldeacceso/routes/catalogos.routes.js
 import { Router } from "express";
 import {
   getAccesoSexos,

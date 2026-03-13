@@ -19,7 +19,7 @@ if (!G.__SENAF_SOCKET__) {
   G.__SENAF_SOCKET__ = io(BASE || FALLBACK, {
     path: "/socket.io",
 
-    // ✅ POLLING primero (evita “websocket error” si tu entorno bloquea WS)
+    // ✅ polling primero, luego upgrade a websocket
     transports: ["polling", "websocket"],
     upgrade: true,
 
@@ -34,7 +34,8 @@ if (!G.__SENAF_SOCKET__) {
 
   // Debug
   G.__SENAF_SOCKET__.on("connect", () => {
-    console.log("[socket] connected:", G.__SENAF_SOCKET__.id, "transport:", G.__SENAF_SOCKET__.io.engine.transport.name);
+    const transport = G.__SENAF_SOCKET__?.io?.engine?.transport?.name || "unknown";
+    console.log("[socket] connected:", G.__SENAF_SOCKET__.id, "transport:", transport);
   });
 
   G.__SENAF_SOCKET__.on("connect_error", (e) => {

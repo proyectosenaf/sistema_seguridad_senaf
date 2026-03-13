@@ -15,8 +15,8 @@ import {
 const r = Router();
 
 /**
- * Público o protegido: tu decides.
- * Si querés protegerlo con tu RBAC, aquí es donde meterías requireAuth/requirePerm.
+ * Público o protegido: tú decides.
+ * Si luego quieres RBAC aquí, este es el lugar para meter requireAuth/requirePerm.
  */
 
 /* ==================================================
@@ -47,7 +47,7 @@ r.get("/all", getAllCatalogs);
  * Devuelve el catálogo de permisos definido en código
  * (no depende de la base de datos)
  */
-r.get("/permissions", (req, res) => {
+r.get("/permissions", (_req, res) => {
   try {
     const items = listCatalogPermissions();
     return res.json({ ok: true, items });
@@ -64,7 +64,7 @@ r.get("/permissions", (req, res) => {
  * Sincroniza catálogo -> MongoDB
  * Crea permisos faltantes y actualiza labels/grupos
  */
-r.post("/permissions/sync", async (req, res) => {
+r.post("/permissions/sync", async (_req, res) => {
   try {
     const result = await syncPermissionsCatalog();
     return res.json({

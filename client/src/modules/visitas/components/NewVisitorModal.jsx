@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 // 🔹 BASE DEL BACKEND
 const ROOT = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080/api"
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api"
 ).replace(/\/$/, "");
 
 // 🔹 ENDPOINTS DE CATÁLOGOS
@@ -15,7 +15,7 @@ const VEHICLE_MODELS_API_URL =
   `${ROOT}/catalogos/vehiculos/modelos`;
 
 // Longitudes / límites
-const DNI_DIGITS = 13; // 0801YYYYXXXXX
+const DNI_DIGITS = 13;
 const PHONE_MIN_DIGITS = 8;
 const NAME_MAX = 40;
 const COMPANY_MAX = 20;
@@ -98,32 +98,25 @@ export default function NewVisitorModal({
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Tipo de visita
   const [visitType, setVisitType] = useState("Personal");
-
-  // Acompañado
   const [acompanado, setAcompanado] = useState(false);
 
-  // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
   const [vehicleBrand, setVehicleBrand] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
-  // Catálogos backend
   const [vehicleBrands, setVehicleBrands] = useState([]);
   const [vehicleModels, setVehicleModels] = useState([]);
   const [loadingBrands, setLoadingBrands] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Errores de validación
   const [errors, setErrors] = useState({});
 
   const firstInputRef = useRef(null);
   const [autoFilledByName, setAutoFilledByName] = useState(false);
 
-  // ===== Horario (modo pruebas) =====
   function isWithinBusinessHours(date) {
     if (!(date instanceof Date) || isNaN(date.getTime())) return false;
     return true;
@@ -132,9 +125,7 @@ export default function NewVisitorModal({
   function businessHoursMessage() {
     return "Modo pruebas: actualmente se permite registrar visitas en cualquier horario.";
   }
-  // ==================================
 
-  // 🔹 CARGAR MARCAS DESDE BACKEND
   useEffect(() => {
     let mounted = true;
 
@@ -171,7 +162,6 @@ export default function NewVisitorModal({
     };
   }, []);
 
-  // 🔹 CARGAR MODELOS DESDE BACKEND SEGÚN MARCA
   useEffect(() => {
     let mounted = true;
 
@@ -217,7 +207,6 @@ export default function NewVisitorModal({
     };
   }, [vehicleBrand]);
 
-  // 🔹 PRE-LLENADO CUANDO ESTAMOS EDITANDO UN VISITANTE
   useEffect(() => {
     if (!editingVisitor) return;
 
@@ -228,9 +217,7 @@ export default function NewVisitorModal({
     setReason(editingVisitor.reason || "");
     setPhone(editingVisitor.phone || "+504 ");
     setEmail(editingVisitor.email || "");
-    setVisitType(
-      editingVisitor.visitType || editingVisitor.kind || "Personal"
-    );
+    setVisitType(editingVisitor.visitType || editingVisitor.kind || "Personal");
     setAcompanado(!!editingVisitor.acompanado);
 
     const hasVeh =
@@ -268,7 +255,6 @@ export default function NewVisitorModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  // ---------- Helpers de autocompletado ----------
   const normalizeDni = (str) => (str || "").replace(/\D/g, "");
   const normalizeName = (str) => (str || "").trim().toLowerCase();
 
@@ -318,7 +304,6 @@ export default function NewVisitorModal({
     }));
   }
 
-  // ---------- Handlers ----------
   const handleNameChange = (e) => {
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
@@ -474,7 +459,6 @@ export default function NewVisitorModal({
     setErrors((prev) => ({ ...prev, vehiclePlate: undefined }));
   };
 
-  // ---------- Validación ----------
   function validateForm() {
     const newErrors = {};
 
@@ -549,9 +533,10 @@ export default function NewVisitorModal({
       }
     }
 
-    const finalModel = vehicleModel === "__custom"
-      ? vehicleModelCustom.trim()
-      : vehicleModel.trim();
+    const finalModel =
+      vehicleModel === "__custom"
+        ? vehicleModelCustom.trim()
+        : vehicleModel.trim();
 
     if (hasVehicle) {
       if (!vehicleBrand.trim()) {
@@ -576,7 +561,6 @@ export default function NewVisitorModal({
     return Object.keys(newErrors).length === 0;
   }
 
-  // ---------- Submit ----------
   async function handleSubmit(e) {
     e.preventDefault();
     if (submitting) return;
@@ -876,7 +860,6 @@ export default function NewVisitorModal({
             </div>
           </div>
 
-          {/* VEHÍCULO */}
           <div
             className="md:col-span-2 mt-1 pt-3"
             style={{ borderTop: "1px solid var(--border)" }}
