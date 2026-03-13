@@ -344,14 +344,18 @@ function useMeSession(authToken) {
 
 /**
  * ✅ AppShell:
- * - Visitante => NO Layout
- * - Sin me => NO Layout
- * - Interno => Layout
+ * - Visitante => Layout visitor
+ * - Sin me => sin Layout
+ * - Interno => Layout normal
  */
 function AppShell({ me, meLoading, children }) {
   if (meLoading) return <>{children}</>;
   if (!me) return <>{children}</>;
-  if (isVisitorMe(me)) return <>{children}</>;
+
+  if (isVisitorMe(me)) {
+    return <Layout layoutMode="visitor">{children}</Layout>;
+  }
+
   return <Layout>{children}</Layout>;
 }
 

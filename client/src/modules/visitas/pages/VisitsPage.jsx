@@ -21,6 +21,10 @@ function normalizeEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
+function normalizeDoc(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+
 function resolveAuthPrincipal(auth) {
   const raw = auth?.me || auth?.user || null;
   if (!raw || typeof raw !== "object") return null;
@@ -37,6 +41,15 @@ function resolveAuthPrincipal(auth) {
     normalizeEmail(raw.profile?.email) ||
     "";
 
+  const document =
+    normalizeDoc(raw.documento) ||
+    normalizeDoc(raw.document) ||
+    normalizeDoc(raw.dni) ||
+    normalizeDoc(raw.user?.documento) ||
+    normalizeDoc(raw.user?.document) ||
+    normalizeDoc(raw.user?.dni) ||
+    "";
+
   const roleSet = new Set(roles.map((r) => String(r || "").toLowerCase()));
 
   const hint = (() => {
@@ -50,16 +63,17 @@ function resolveAuthPrincipal(auth) {
   return {
     raw,
     email,
+    document,
     roles,
     isVisitor: hint || roleSet.has("visita") || roleSet.has("visitor"),
   };
 }
 
-function citaBelongsToVisitor(cita, visitorEmail) {
-  const email = normalizeEmail(visitorEmail);
-  if (!email) return false;
+function citaBelongsToVisitor(cita, principal) {
+  const email = normalizeEmail(principal?.email);
+  const doc = normalizeDoc(principal?.document);
 
-  const candidates = [
+  const candidateEmails = [
     cita?.correo,
     cita?.email,
     cita?.visitorEmail,
@@ -71,14 +85,21 @@ function citaBelongsToVisitor(cita, visitorEmail) {
     .map(normalizeEmail)
     .filter(Boolean);
 
-  return candidates.includes(email);
+  const candidateDocs = [cita?.documento, cita?.document, cita?.dni]
+    .map(normalizeDoc)
+    .filter(Boolean);
+
+  if (email && candidateEmails.includes(email)) return true;
+  if (doc && candidateDocs.includes(doc)) return true;
+
+  return false;
 }
 
-function visitaBelongsToVisitor(visita, visitorEmail) {
-  const email = normalizeEmail(visitorEmail);
-  if (!email) return false;
+function visitaBelongsToVisitor(visita, principal) {
+  const email = normalizeEmail(principal?.email);
+  const doc = normalizeDoc(principal?.document);
 
-  const candidates = [
+  const candidateEmails = [
     visita?.email,
     visita?.correo,
     visita?.visitorEmail,
@@ -89,7 +110,14 @@ function visitaBelongsToVisitor(visita, visitorEmail) {
     .map(normalizeEmail)
     .filter(Boolean);
 
-  return candidates.includes(email);
+  const candidateDocs = [visita?.documento, visita?.document, visita?.dni]
+    .map(normalizeDoc)
+    .filter(Boolean);
+
+  if (email && candidateEmails.includes(email)) return true;
+  if (doc && candidateDocs.includes(doc)) return true;
+
+  return false;
 }
 
 function sxCard(extra = {}) {
@@ -225,7 +253,6 @@ function KpiCard({ title, value, icon, tone }) {
   );
 }
 
-// Rango del día actual
 function getTodayRange() {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -236,8 +263,6 @@ function getTodayRange() {
 
 const STORAGE_KEY = "visitas_demo";
 const CITA_STORAGE_KEY = "citas_demo";
-
-// ===================== Helpers Citas =====================
 
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
@@ -348,15 +373,12 @@ function buildQrValueForCita(cita) {
   return stripDiacritics(text);
 }
 
-// ===================== Componente =====================
-
 export default function VisitsPage() {
   const navigate = useNavigate();
   const auth = useAuth();
 
   const principal = useMemo(() => resolveAuthPrincipal(auth), [auth]);
   const isVisitor = !!principal?.isVisitor;
-  const currentVisitorEmail = principal?.email || "";
 
   const [visitors, setVisitors] = useState([]);
   const [search, setSearch] = useState("");
@@ -365,17 +387,11 @@ export default function VisitsPage() {
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
 
-  // Citas
   const [onlineCitas, setOnlineCitas] = useState([]);
   const [qrCita, setQrCita] = useState(null);
-
-  // Visitante que se está editando
   const [editingVisitor, setEditingVisitor] = useState(null);
+  const [viewMode, setViewMode] = useState("citas");
 
-  // Vista actual
-  const [viewMode, setViewMode] = useState(isVisitor ? "citas" : "citas");
-
-  // ========= Storage VISITAS =========
   function saveToStorage(next) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -402,7 +418,6 @@ export default function VisitsPage() {
     }
   }
 
-  // ========= Storage CITAS =========
   function loadCitasFromStorage() {
     try {
       const raw = localStorage.getItem(CITA_STORAGE_KEY);
@@ -433,7 +448,6 @@ export default function VisitsPage() {
     }
   }
 
-  // Carga inicial
   useEffect(() => {
     setVisitors(loadFromStorage());
     setOnlineCitas(loadCitasFromStorage());
@@ -446,7 +460,6 @@ export default function VisitsPage() {
     }
   }, [isVisitor, viewMode]);
 
-  // ========= KPIs =========
   const kpiActivos = useMemo(
     () => visitors.filter((v) => v.status === "Dentro").length,
     [visitors]
@@ -467,14 +480,13 @@ export default function VisitsPage() {
     return new Set(empresasDeHoy).size;
   }, [visitors]);
 
-  // ========= Filtros =========
   const normalizedSearch = search.toLowerCase().trim();
   const hasSearch = normalizedSearch.length > 0;
   const hasMinSearch = normalizedSearch.length >= 2;
 
   const filteredVisitors = useMemo(() => {
     const base = isVisitor
-      ? visitors.filter((v) => visitaBelongsToVisitor(v, currentVisitorEmail))
+      ? visitors.filter((v) => visitaBelongsToVisitor(v, principal))
       : visitors;
 
     return base.filter((v) => {
@@ -497,7 +509,7 @@ export default function VisitsPage() {
     hasMinSearch,
     statusFilter,
     isVisitor,
-    currentVisitorEmail,
+    principal,
   ]);
 
   const sortedCitas = useMemo(() => {
@@ -512,7 +524,7 @@ export default function VisitsPage() {
 
   const filteredCitas = useMemo(() => {
     const base = isVisitor
-      ? sortedCitas.filter((c) => citaBelongsToVisitor(c, currentVisitorEmail))
+      ? sortedCitas.filter((c) => citaBelongsToVisitor(c, principal))
       : sortedCitas;
 
     return base.filter((c) => {
@@ -533,10 +545,9 @@ export default function VisitsPage() {
     hasSearch,
     hasMinSearch,
     isVisitor,
-    currentVisitorEmail,
+    principal,
   ]);
 
-  // ========= Registrar / editar visitante =========
   async function handleAddVisitor(formData) {
     if (isVisitor) return;
 
@@ -708,7 +719,6 @@ export default function VisitsPage() {
     setShowModal(false);
   }
 
-  // ========= Marcar salida =========
   async function handleExit(id) {
     if (isVisitor) return;
     if (!id) return;
@@ -738,14 +748,12 @@ export default function VisitsPage() {
     }
   }
 
-  // ========= Editar visitante =========
   function handleEditVisitor(visitor) {
     if (isVisitor) return;
     setEditingVisitor(visitor);
     setShowModal(true);
   }
 
-  // ========= Cambiar estado cita =========
   async function updateCitaStatus(citaId, nuevoEstado) {
     if (isVisitor) return;
     if (!citaId) return;
@@ -780,7 +788,6 @@ export default function VisitsPage() {
     }
   }
 
-  // ========= Export VISITAS =========
   function buildExportRows(list) {
     return list.map((v) => ({
       Visitante: v.name || "",
@@ -865,7 +872,6 @@ export default function VisitsPage() {
     }
   }
 
-  // ========= Export CITAS =========
   function buildExportCitasRows(list) {
     return list.map((c) => {
       const tipoLegible =
@@ -977,11 +983,10 @@ export default function VisitsPage() {
 
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
-      <div className="mesh mesh--ribbon" />
-      <div className="mesh mesh--br" />
-      <div className="mesh mesh--lb" />
+      <div className="mesh mesh--ribbon pointer-events-none" aria-hidden />
+      <div className="mesh mesh--br pointer-events-none" aria-hidden />
+      <div className="mesh mesh--lb pointer-events-none" aria-hidden />
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div className="flex flex-col">
           <h1
@@ -1000,19 +1005,21 @@ export default function VisitsPage() {
         {!isVisitor && (
           <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full md:w-auto">
             <button
+              type="button"
               onClick={() => {
                 setEditingVisitor(null);
                 setShowModal(true);
               }}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition relative z-10"
               style={sxPrimaryBtn({ borderRadius: "9999px" })}
             >
               <span className="font-semibold">+ Registrar Visitante</span>
             </button>
 
             <button
+              type="button"
               onClick={() => navigate("/visitas/agenda")}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition relative z-10"
               style={sxGhostBtn({ borderRadius: "9999px" })}
             >
               <span className="font-semibold">Agenda de Citas</span> →
@@ -1021,7 +1028,6 @@ export default function VisitsPage() {
         )}
       </div>
 
-      {/* KPI CARDS */}
       {!isVisitor && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <KpiCard
@@ -1045,7 +1051,6 @@ export default function VisitsPage() {
         </div>
       )}
 
-      {/* CONTROLES DE VISTA + BUSCADOR */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         {!isVisitor && (
           <div className="flex items-center gap-2">
@@ -1126,7 +1131,6 @@ export default function VisitsPage() {
         </div>
       </div>
 
-      {/* Citas */}
       {viewMode === "citas" && (
         <section className="p-4 md:p-5 text-sm rounded-[24px]" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
@@ -1141,15 +1145,16 @@ export default function VisitsPage() {
               </div>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                 {isVisitor
-                  ? "Aquí solo ves las citas asociadas a tu correo."
+                  ? "Aquí solo ves las citas asociadas a tu correo o documento."
                   : "Citas agendadas por los visitantes para revisión del guardia"}
               </p>
             </div>
 
             {!isVisitor && (
               <button
+                type="button"
                 onClick={() => navigate("/visitas/agenda")}
-                className="text-xs self-start md:self-auto underline-offset-4 hover:underline"
+                className="text-xs self-start md:self-auto underline-offset-4 hover:underline relative z-10"
                 style={{ color: "#60a5fa" }}
               >
                 Ver agenda completa →
@@ -1311,6 +1316,7 @@ export default function VisitsPage() {
           {!isVisitor && (
             <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
               <button
+                type="button"
                 onClick={() => exportCitasExcel(filteredCitas)}
                 className="px-3 py-2 text-sm rounded-lg transition"
                 style={sxGhostBtn()}
@@ -1320,6 +1326,7 @@ export default function VisitsPage() {
               </button>
 
               <button
+                type="button"
                 onClick={() => exportCitasPDF(filteredCitas)}
                 className="px-3 py-2 text-sm rounded-lg transition"
                 style={sxGhostBtn()}
@@ -1332,7 +1339,6 @@ export default function VisitsPage() {
         </section>
       )}
 
-      {/* TABLA VISITANTES */}
       {!isVisitor && viewMode === "visitas" && (
         <section
           className="relative z-[2] p-4 md:p-5 overflow-x-auto text-sm rounded-[24px]"
@@ -1445,6 +1451,7 @@ export default function VisitsPage() {
                         </button>
                         {v.status === "Dentro" ? (
                           <button
+                            type="button"
                             disabled={savingExit === v.id}
                             onClick={() => handleExit(v.id)}
                             className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1470,6 +1477,7 @@ export default function VisitsPage() {
 
           <div className="mt-4 flex flex-col sm:flex-row justify-end gap-3">
             <button
+              type="button"
               onClick={() => exportExcel(filteredVisitors)}
               className="px-3 py-2 text-sm rounded-lg transition"
               style={sxGhostBtn()}
@@ -1479,6 +1487,7 @@ export default function VisitsPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => exportPDF(filteredVisitors)}
               className="px-3 py-2 text-sm rounded-lg transition"
               style={sxGhostBtn()}
@@ -1502,7 +1511,6 @@ export default function VisitsPage() {
         />
       )}
 
-      {/* Modal QR */}
       {qrCita && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
@@ -1533,6 +1541,7 @@ export default function VisitsPage() {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setQrCita(null)}
                 style={{ color: "var(--text-muted)" }}
               >
