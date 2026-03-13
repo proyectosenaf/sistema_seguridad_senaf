@@ -12,11 +12,76 @@ import {
   Copy,
 } from "lucide-react";
 
-/**
- * Etiqueta de rol:
- * - Preferir name
- * - Fallback: code
- */
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardSoft(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
+
 function roleLabel(r) {
   const name = String(r?.name || "").trim();
   const code = String(r?.code || "").trim();
@@ -45,8 +110,7 @@ export default function RolesPage() {
   const [msg, setMsg] = useState("");
   const [cloneOpen, setCloneOpen] = useState(false);
 
-  // Catálogo de permisos ANOTADO para el rol seleccionado
-  const [permItems, setPermItems] = useState([]); // [{_id,key,label,group,order,selected}, ...]
+  const [permItems, setPermItems] = useState([]);
   const [permLoading, setPermLoading] = useState(false);
 
   async function loadAll() {
@@ -54,7 +118,6 @@ export default function RolesPage() {
     const items = asListPayload(rRoles);
     setRoles(items);
 
-    // rol por defecto: admin/administrador si existe, si no el primero
     const pick =
       items.find((x) => String(x.code || "").toLowerCase() === "admin")?._id ||
       items.find((x) => String(x.name || "").toLowerCase() === "admin")?._id ||
@@ -126,12 +189,10 @@ export default function RolesPage() {
 
   useEffect(() => {
     loadPermsForRole(roleId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
   const selected = roles.find((r) => r._id === roleId) || null;
 
-  /* Resumen derivado: agrupa SOLO los permisos selected=true */
   const rolePermSummary = useMemo(() => {
     if (!permItems || permItems.length === 0) return { count: 0, byGroup: [] };
 
@@ -160,7 +221,6 @@ export default function RolesPage() {
     return { count: total, byGroup: groups };
   }, [permItems]);
 
-  /* Acciones */
   async function save() {
     if (!selected) return;
     setWorking(true);
@@ -209,7 +269,7 @@ export default function RolesPage() {
       setWorking(true);
       await iamApi.createRole({
         code: code || undefined,
-        key: code || undefined, // compat
+        key: code || undefined,
         name,
         description: name,
       });
@@ -275,127 +335,134 @@ export default function RolesPage() {
 
   return (
     <section className="space-y-6">
-      {/* Header translúcido */}
-      <div
-        className="
-          relative overflow-hidden rounded-3xl border border-indigo-400/40 dark:border-indigo-900/50
-          bg-gradient-to-tr from-indigo-50/80 via-sky-50/80 to-teal-50/80
-          dark:from-slate-950/90 dark:via-slate-950/80 dark:to-slate-900/80
-          shadow-sm backdrop-blur-xl
-        "
-      >
-        <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-500/25 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-sky-500/25 blur-3xl" />
-        <div className="relative p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-300">
-                <ShieldCheck className="h-5 w-5" />
-                <span className="text-xs uppercase tracking-wider font-semibold">
-                  Gestión de roles
-                </span>
-              </div>
-              <div className="mt-2">
-                <label className="text-xs uppercase tracking-wide text-slate-600 dark:text-slate-400">
-                  Rol
-                </label>
-                <div className="relative">
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <select
-                    value={roleId || ""}
-                    onChange={(e) => setRoleId(e.target.value)}
-                    className="
-                      w-full appearance-none rounded-2xl border border-slate-200/70 bg-white/80 pl-3 pr-9 py-2
-                      shadow-inner outline-none transition focus:ring-2 focus:ring-indigo-400
-                      dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100
-                    "
-                  >
-                    <option value="" disabled>
-                      Selecciona un rol…
-                    </option>
-                    {roles.map((r) => (
-                      <option key={r._id} value={r._id}>
-                        {roleLabel(r)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+      <div className="relative overflow-hidden rounded-[24px] p-5" style={sxCard()}>
+        <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-indigo-500/15 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-cyan-500/15 blur-3xl" />
+
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end">
+          <div className="flex-1">
+            <div className="flex items-center gap-2" style={{ color: "#7dd3fc" }}>
+              <ShieldCheck className="h-5 w-5" />
+              <span className="text-xs uppercase tracking-wider font-semibold">
+                Gestión de roles
+              </span>
             </div>
 
-            {/* Botonera */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={createRole}
-                title="Crear nuevo rol"
-                disabled={working}
-                className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
+            <div className="mt-2">
+              <label
+                className="text-xs uppercase tracking-wide"
+                style={{ color: "var(--text-muted)" }}
               >
-                <PlusCircle className="h-4 w-4" />
-                <span className="text-sm font-medium">Crear</span>
-              </button>
+                Rol
+              </label>
 
-              <button
-                onClick={() => setCloneOpen(true)}
-                title="Clonar rol"
-                disabled={!selected || working}
-                className="inline-flex items-center gap-2 rounded-full bg-sky-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
-              >
-                <Copy className="h-4 w-4" />
-                <span className="text-sm font-medium">Clonar</span>
-              </button>
-
-              <button
-                onClick={editRole}
-                title="Editar rol"
-                disabled={!selected || working}
-                className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
-              >
-                <Edit3 className="h-4 w-4" />
-                <span className="text-sm font-medium">Editar</span>
-              </button>
-
-              <button
-                onClick={deleteRole}
-                title="Eliminar rol"
-                disabled={!selected || working}
-                className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99]"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span className="text-sm font-medium">Eliminar</span>
-              </button>
-
-              <button
-                onClick={save}
-                title="Guardar cambios"
-                disabled={!selected || working}
-                className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-white shadow-sm transition hover:brightness-110 disabled:opacity-50 active:scale-[.99] dark:bg-slate-700"
-              >
-                <Save className="h-4 w-4" />
-                <span className="text-sm font-medium">Guardar</span>
-              </button>
+              <div className="relative">
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4"
+                  style={{ color: "var(--text-muted)" }}
+                />
+                <select
+                  value={roleId || ""}
+                  onChange={(e) => setRoleId(e.target.value)}
+                  className="w-full appearance-none rounded-[16px] pl-3 pr-9 py-2 outline-none transition"
+                  style={sxInput()}
+                >
+                  <option value="" disabled>
+                    Selecciona un rol…
+                  </option>
+                  {roles.map((r) => (
+                    <option key={r._id} value={r._id}>
+                      {roleLabel(r)}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
-          {msg && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-400/70 bg-emerald-500/10 px-3 py-2 text-emerald-800 dark:bg-emerald-900/20 dark:border-emerald-700 dark:text-emerald-200">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-sm">{msg}</span>
-            </div>
-          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={createRole}
+              title="Crear nuevo rol"
+              disabled={working}
+              className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition disabled:opacity-50"
+              style={sxSuccessBtn({ borderRadius: "9999px" })}
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span className="font-medium">Crear</span>
+            </button>
+
+            <button
+              onClick={() => setCloneOpen(true)}
+              title="Clonar rol"
+              disabled={!selected || working}
+              className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition disabled:opacity-50"
+              style={sxPrimaryBtn({ borderRadius: "9999px" })}
+            >
+              <Copy className="h-4 w-4" />
+              <span className="font-medium">Clonar</span>
+            </button>
+
+            <button
+              onClick={editRole}
+              title="Editar rol"
+              disabled={!selected || working}
+              className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition disabled:opacity-50"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
+            >
+              <Edit3 className="h-4 w-4" />
+              <span className="font-medium">Editar</span>
+            </button>
+
+            <button
+              onClick={deleteRole}
+              title="Eliminar rol"
+              disabled={!selected || working}
+              className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition disabled:opacity-50"
+              style={sxDangerBtn({ borderRadius: "9999px" })}
+            >
+              <Trash2 className="h-4 w-4" />
+              <span className="font-medium">Eliminar</span>
+            </button>
+
+            <button
+              onClick={save}
+              title="Guardar cambios"
+              disabled={!selected || working}
+              className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition disabled:opacity-50"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
+            >
+              <Save className="h-4 w-4" />
+              <span className="font-medium">Guardar</span>
+            </button>
+          </div>
         </div>
+
+        {msg && (
+          <div
+            className="mt-4 inline-flex items-center gap-2 rounded-xl px-3 py-2"
+            style={{
+              background: "color-mix(in srgb, #22c55e 10%, transparent)",
+              border: "1px solid color-mix(in srgb, #22c55e 28%, transparent)",
+              color: "#bbf7d0",
+            }}
+          >
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="text-sm">{msg}</span>
+          </div>
+        )}
       </div>
 
-      {/* Panel: permisos del rol */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h4 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          <h4 className="text-lg font-semibold" style={{ color: "var(--text)" }}>
             Permisos del rol seleccionado
           </h4>
           <button
             onClick={refreshPermCatalog}
             disabled={!roleId || permLoading}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200/70 bg-white/80 px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:shadow disabled:opacity-60 dark:bg-slate-900/80 dark:text-slate-100 dark:border-slate-700"
+            className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm transition disabled:opacity-60"
+            style={sxGhostBtn()}
             title="Volver a leer permisos desde el servidor"
           >
             <RefreshCw className={`h-4 w-4 ${permLoading ? "animate-spin" : ""}`} />
@@ -403,44 +470,76 @@ export default function RolesPage() {
           </button>
         </div>
 
-        <div
-          className="
-            overflow-hidden rounded-3xl border border-slate-200/70 bg-white/80 shadow-sm
-            dark:bg-slate-950/80 dark:border-slate-800 backdrop-blur-xl
-          "
-        >
+        <div className="overflow-hidden rounded-[24px]" style={sxCard()}>
           {!roleId ? (
-            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
+            <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
               Selecciona un rol para ver sus permisos.
             </div>
           ) : permLoading ? (
-            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">Cargando…</div>
+            <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
+              Cargando…
+            </div>
           ) : rolePermSummary.count === 0 ? (
-            <div className="p-6 text-sm text-slate-600 dark:text-slate-300">
+            <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
               Este rol no tiene permisos asignados.
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-slate-50/80 to-indigo-50/80 dark:from-slate-950/70 dark:to-slate-900/80 border-b border-slate-200/70 dark:border-slate-800">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              <div
+                className="flex items-center justify-between px-5 py-3"
+                style={{
+                  background:
+                    "linear-gradient(to right, color-mix(in srgb, var(--card-solid) 90%, transparent), color-mix(in srgb, #2563eb 10%, var(--card-solid)))",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <div
+                  className="text-xs font-semibold uppercase tracking-wider"
+                  style={{ color: "var(--text-muted)" }}
+                >
                   Total permisos
                 </div>
-                <div className="rounded-full bg-indigo-600/95 px-3 py-1 text-xs font-bold text-white shadow">
+                <div
+                  className="rounded-full px-3 py-1 text-xs font-bold"
+                  style={{
+                    background: "#2563eb",
+                    color: "#fff",
+                    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+                  }}
+                >
                   {rolePermSummary.count}
                 </div>
               </div>
 
-              <div className="divide-y divide-slate-200/70 dark:divide-slate-800">
-                {rolePermSummary.byGroup.map((g) => (
-                  <div key={g.group} className="p-4 sm:p-5">
+              <div style={{ borderTop: "0" }}>
+                {rolePermSummary.byGroup.map((g, idx) => (
+                  <div
+                    key={g.group}
+                    className="p-4 sm:p-5"
+                    style={{
+                      borderTop: idx === 0 ? "0" : "1px solid var(--border)",
+                    }}
+                  >
                     <div className="mb-2 flex items-center gap-2">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                      <span
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-xl"
+                        style={{
+                          background: "color-mix(in srgb, #2563eb 14%, transparent)",
+                          color: "#93c5fd",
+                        }}
+                      >
                         <ChevronDown className="h-4 w-4" />
                       </span>
-                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      <span className="font-semibold" style={{ color: "var(--text)" }}>
                         {g.group}
                       </span>
-                      <span className="rounded-full bg-indigo-600/10 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                      <span
+                        className="rounded-full px-2 py-0.5 text-xs font-semibold"
+                        style={{
+                          background: "color-mix(in srgb, #2563eb 10%, transparent)",
+                          color: "#93c5fd",
+                        }}
+                      >
                         {g.items.length}
                       </span>
                     </div>
@@ -449,17 +548,17 @@ export default function RolesPage() {
                       {g.items.map((it) => (
                         <li
                           key={it.key}
-                          className="
-                            group flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-gradient-to-r from-white/90 to-slate-50/70 px-3 py-2
-                            shadow-sm transition hover:shadow-md
-                            dark:from-slate-950/80 dark:to-slate-900/60 dark:border-slate-800
-                          "
+                          className="group flex items-center gap-2 rounded-[18px] px-3 py-2 transition"
+                          style={sxCardSoft()}
                         >
                           <span className="inline-block h-1.5 w-1.5 flex-none rounded-full bg-indigo-500 group-hover:scale-125 transition" />
-                          <span className="font-mono text-[11px] leading-5 text-slate-500 dark:text-slate-400 truncate">
+                          <span
+                            className="font-mono text-[11px] leading-5 truncate"
+                            style={{ color: "var(--text-muted)" }}
+                          >
                             {it.key}
                           </span>
-                          <span className="text-sm text-slate-800 dark:text-slate-200">
+                          <span className="text-sm" style={{ color: "var(--text)" }}>
                             — {it.label}
                           </span>
                         </li>

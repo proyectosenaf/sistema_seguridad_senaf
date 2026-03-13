@@ -1,4 +1,3 @@
-// client/src/iam/pages/IamAdmin/PermissionCatalog/PermissionCatalog.jsx
 import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
 
 import HeaderRow from "../components/HeaderRow";
@@ -7,6 +6,79 @@ import Modal from "../components/Modal";
 import { Plus, Eye, Minus, Square } from "lucide-react";
 
 import { iamApi } from "../../../api/iamApi.js";
+
+/* =========================
+   UI helpers
+========================= */
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardSoft(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
 
 /* =========================
    Helpers
@@ -167,7 +239,6 @@ function usePermissionCatalogDataInline(onSaved) {
                 []
             );
 
-            // ✅ SOLO keys válidas del catálogo actual
             const keys = rawKeys.filter((k) => validPermKeys.has(k));
 
             const row = {};
@@ -217,7 +288,9 @@ function usePermissionCatalogDataInline(onSaved) {
       setErrorMsg("");
 
       const validPermKeys = new Set(
-        groups.flatMap((g) => (Array.isArray(g.items) ? g.items.map((it) => normalizePermKey(it.key)) : []))
+        groups.flatMap((g) =>
+          Array.isArray(g.items) ? g.items.map((it) => normalizePermKey(it.key)) : []
+        )
       );
 
       for (const r of roles) {
@@ -229,7 +302,6 @@ function usePermissionCatalogDataInline(onSaved) {
 
         if (isSameRow(rowNow, rowOrig)) continue;
 
-        // ✅ SOLO enviar keys válidas del catálogo actual
         const nextPerms = normalizePermList(
           Object.entries(rowNow)
             .filter(([k, v]) => v === true && validPermKeys.has(normalizePermKey(k)))
@@ -415,55 +487,76 @@ export default function PermissionCatalog({ onSaved }) {
         setExpandedGroupsFull(all);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compactView, filtered]);
+  }, [compactView, filtered, expandedGroupsFull]);
 
-  if (loading) return <div className="p-6 text-neutral-300">Cargando permisos…</div>;
-
-  const btnDark =
-    "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium " +
-    "bg-neutral-900/70 text-neutral-100 border border-white/10 " +
-    "hover:bg-neutral-900/90 transition backdrop-blur-sm";
-
-  const btnPrimary =
-    "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold " +
-    "bg-emerald-600 text-white border border-emerald-500/80 " +
-    "hover:bg-emerald-500 transition shadow disabled:opacity-60";
+  if (loading) {
+    return (
+      <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
+        Cargando permisos…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 layer-content">
       {errorMsg && (
-        <div className="rounded-xl border border-rose-400/60 bg-rose-500/10 text-rose-100 px-4 py-3 backdrop-blur-sm">
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{
+            background: "color-mix(in srgb, #ef4444 10%, transparent)",
+            border: "1px solid color-mix(in srgb, #ef4444 26%, transparent)",
+            color: "#fecaca",
+          }}
+        >
           {errorMsg}
         </div>
       )}
 
       {banner && (
         <div
-          className={
-            "rounded-xl px-4 py-3 border backdrop-blur-sm " +
-            (banner.type === "ok"
-              ? "bg-emerald-500/10 text-emerald-100 border-emerald-400/60"
+          className="rounded-xl px-4 py-3"
+          style={
+            banner.type === "ok"
+              ? {
+                  background: "color-mix(in srgb, #22c55e 10%, transparent)",
+                  border: "1px solid color-mix(in srgb, #22c55e 26%, transparent)",
+                  color: "#bbf7d0",
+                }
               : banner.type === "warn"
-              ? "bg-sky-500/10 text-sky-100 border-sky-400/60"
-              : "bg-rose-500/10 text-rose-100 border-rose-400/60")
+              ? {
+                  background: "color-mix(in srgb, #3b82f6 10%, transparent)",
+                  border: "1px solid color-mix(in srgb, #3b82f6 26%, transparent)",
+                  color: "#bfdbfe",
+                }
+              : {
+                  background: "color-mix(in srgb, #ef4444 10%, transparent)",
+                  border: "1px solid color-mix(in srgb, #ef4444 26%, transparent)",
+                  color: "#fecaca",
+                }
           }
         >
           {banner.msg}
         </div>
       )}
 
-      <div className="fx-card">
+      <div className="rounded-[24px] p-4" style={sxCard()}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar por clave, etiqueta o módulo…"
-            className="input-fx"
+            className="w-full sm:max-w-[360px] rounded-xl px-3 py-2 text-sm outline-none"
+            style={sxInput()}
             aria-label="Buscar permisos"
           />
+
           <div className="flex gap-2 flex-wrap justify-end">
-            <button onClick={() => setOpenCreate(true)} className={btnDark} type="button">
+            <button
+              onClick={() => setOpenCreate(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
+              style={sxGhostBtn()}
+              type="button"
+            >
               <Plus className="w-4 h-4 opacity-90" />
               <span>Crear permiso</span>
             </button>
@@ -474,7 +567,8 @@ export default function PermissionCatalog({ onSaved }) {
                 const all = new Set(filtered.map((g, i) => (g.group ? g.group : `g-${i}`)));
                 setExpandedGroupsFull(all);
               }}
-              className={btnDark}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
+              style={sxGhostBtn()}
               type="button"
             >
               <Eye className="w-4 h-4 opacity-90" />
@@ -487,7 +581,8 @@ export default function PermissionCatalog({ onSaved }) {
                 setExpandedGroupsCompact(new Set());
                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
               }}
-              className={btnDark}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
+              style={sxGhostBtn()}
               type="button"
             >
               <Minus className="w-4 h-4 opacity-90" />
@@ -496,7 +591,8 @@ export default function PermissionCatalog({ onSaved }) {
 
             <button
               onClick={onSaveAll}
-              className={btnPrimary}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-60"
+              style={sxSuccessBtn()}
               type="button"
               disabled={saving}
               title={saving ? "Guardando..." : "Guardar cambios"}
@@ -509,34 +605,56 @@ export default function PermissionCatalog({ onSaved }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="p-6 text-neutral-400">No se encontraron permisos para “{query}”.</div>
+        <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
+          No se encontraron permisos para “{query}”.
+        </div>
       ) : compactView ? (
-        <div className="fx-card p-0 overflow-hidden">
+        <div className="rounded-[24px] p-0 overflow-hidden" style={sxCard()}>
           <div className="overflow-auto max-h-[72vh]" ref={scrollRef}>
             <div style={{ minWidth: `${minWidthPx}px` }}>
               <div className="sticky top-0 z-20">
-                <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
+                <div
+                  className="backdrop-blur-md"
+                  style={{
+                    background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
                   <HeaderRow roles={roles} gridCols={gridCols} />
                 </div>
               </div>
 
-              <div className="divide-y divide-neutral-200/40 dark:divide-neutral-800/70">
+              <div style={{ borderTop: "0" }}>
                 {filtered.map((g, idx) => {
                   const groupKey = g.group || `g-${idx}`;
                   const isOpen = expandedGroupsCompact.has(groupKey);
 
                   return (
-                    <div key={`${groupKey}-${idx}`} className="bg-neutral-900/20">
+                    <div
+                      key={`${groupKey}-${idx}`}
+                      style={{
+                        background: "transparent",
+                        borderTop: idx === 0 ? "0" : "1px solid var(--border)",
+                      }}
+                    >
                       <button
                         type="button"
                         onClick={() => toggleGroupCompact(groupKey)}
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 transition"
+                        className="w-full px-4 py-3 flex items-center justify-between transition"
                       >
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
-                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
+                              <span className="font-semibold capitalize" style={{ color: "var(--text)" }}>
+                                {g.group}
+                              </span>
+                              <span
+                                className="text-xs font-bold rounded-md px-2 py-0.5"
+                                style={{
+                                  background: "color-mix(in srgb, #2563eb 12%, transparent)",
+                                  color: "#bfdbfe",
+                                }}
+                              >
                                 {g.items.length}
                               </span>
                             </>
@@ -545,11 +663,12 @@ export default function PermissionCatalog({ onSaved }) {
                         <span
                           className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
                           aria-hidden
+                          style={{ color: "var(--text-muted)" }}
                         />
                       </button>
 
                       {isOpen && (
-                        <div className="divide-y divide-neutral-800/70">
+                        <div style={{ borderTop: "1px solid var(--border)" }}>
                           <GroupSection
                             key={`${g.group}-compact`}
                             group={g}
@@ -572,33 +691,52 @@ export default function PermissionCatalog({ onSaved }) {
           </div>
         </div>
       ) : (
-        <div className="fx-card p-0">
+        <div className="rounded-[24px] p-0 overflow-hidden" style={sxCard()}>
           <div ref={scrollRef} className="overflow-auto max-h-[72vh]">
             <div style={{ minWidth: `${minWidthPx}px` }}>
               <div className="sticky top-0 z-20">
-                <div className="bg-neutral-950/80 border-b border-neutral-800 backdrop-blur-md">
+                <div
+                  className="backdrop-blur-md"
+                  style={{
+                    background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
                   <HeaderRow roles={roles} gridCols={gridCols} />
                 </div>
               </div>
 
-              <div className="divide-y divide-neutral-800/70">
+              <div>
                 {filtered.map((g, idx) => {
                   const groupKey = g.group || `g-${idx}`;
                   const isOpen = expandedGroupsFull.has(groupKey);
 
                   return (
-                    <div key={`${groupKey}-${idx}`} className="bg-transparent">
+                    <div
+                      key={`${groupKey}-${idx}`}
+                      style={{
+                        borderTop: idx === 0 ? "0" : "1px solid var(--border)",
+                      }}
+                    >
                       <button
                         type="button"
                         onClick={() => toggleGroupFull(groupKey)}
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5 transition"
+                        className="w-full px-4 py-3 flex items-center justify-between transition"
                         style={{ gridColumn: "1 / -1" }}
                       >
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize text-neutral-100">{g.group}</span>
-                              <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-500/20 text-blue-200">
+                              <span className="font-semibold capitalize" style={{ color: "var(--text)" }}>
+                                {g.group}
+                              </span>
+                              <span
+                                className="text-xs font-bold rounded-md px-2 py-0.5"
+                                style={{
+                                  background: "color-mix(in srgb, #2563eb 12%, transparent)",
+                                  color: "#bfdbfe",
+                                }}
+                              >
                                 {g.items.length}
                               </span>
                             </>
@@ -607,6 +745,7 @@ export default function PermissionCatalog({ onSaved }) {
                         <span
                           className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
                           aria-hidden
+                          style={{ color: "var(--text-muted)" }}
                         />
                       </button>
 
@@ -639,7 +778,7 @@ export default function PermissionCatalog({ onSaved }) {
         onClose={() => setOpenCreate(false)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenCreate(false)} className={btnDark} type="button">
+            <button onClick={() => setOpenCreate(false)} style={sxGhostBtn()} className="px-4 py-2 rounded-xl text-sm font-medium" type="button">
               Cancelar
             </button>
             <button
@@ -654,7 +793,8 @@ export default function PermissionCatalog({ onSaved }) {
                   });
                 }
               }}
-              className={btnPrimary}
+              style={sxSuccessBtn()}
+              className="px-4 py-2 rounded-xl text-sm font-semibold"
               type="button"
             >
               Crear
@@ -664,27 +804,36 @@ export default function PermissionCatalog({ onSaved }) {
       >
         <div className="space-y-3">
           <div>
-            <label className="block text-sm mb-1 opacity-80">Clave</label>
+            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+              Clave
+            </label>
             <input
-              className="input-fx"
+              className="w-full rounded-xl px-3 py-2 text-sm outline-none"
+              style={sxInput()}
               value={form.key}
               onChange={(e) => setForm((prev) => ({ ...prev, key: e.target.value }))}
               placeholder="modulo.recurso.accion"
             />
           </div>
           <div>
-            <label className="block text-sm mb-1 opacity-80">Etiqueta</label>
+            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+              Etiqueta
+            </label>
             <input
-              className="input-fx"
+              className="w-full rounded-xl px-3 py-2 text-sm outline-none"
+              style={sxInput()}
               value={form.label}
               onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
               placeholder="Módulo · Acción"
             />
           </div>
           <div>
-            <label className="block text-sm mb-1 opacity-80">Módulo</label>
+            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+              Módulo
+            </label>
             <select
-              className="input-fx"
+              className="w-full rounded-xl px-3 py-2 text-sm outline-none"
+              style={sxInput()}
               value={form.moduleValue}
               onChange={(e) => setForm((prev) => ({ ...prev, moduleValue: e.target.value }))}
             >
@@ -707,7 +856,7 @@ export default function PermissionCatalog({ onSaved }) {
         onClose={() => setOpenDelete(null)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenDelete(null)} className={btnDark} type="button">
+            <button onClick={() => setOpenDelete(null)} style={sxGhostBtn()} className="px-4 py-2 rounded-xl text-sm font-medium" type="button">
               Cancelar
             </button>
             <button
@@ -715,7 +864,8 @@ export default function PermissionCatalog({ onSaved }) {
                 await onDeletePerm(openDelete);
                 setOpenDelete(null);
               }}
-              className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition border border-rose-500 shadow"
+              style={sxDangerBtn()}
+              className="px-4 py-2 rounded-xl text-sm font-semibold"
               type="button"
             >
               Eliminar
@@ -724,10 +874,12 @@ export default function PermissionCatalog({ onSaved }) {
         }
       >
         {openDelete && (
-          <p className="text-sm">
+          <p className="text-sm" style={{ color: "var(--text)" }}>
             ¿Seguro que deseas eliminar <span className="font-semibold">{openDelete.label}</span>?
             <br />
-            <span className="font-mono opacity-80">{openDelete.key}</span>
+            <span className="font-mono" style={{ color: "var(--text-muted)" }}>
+              {openDelete.key}
+            </span>
           </p>
         )}
       </Modal>

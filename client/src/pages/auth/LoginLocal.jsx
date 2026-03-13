@@ -1,7 +1,7 @@
-// client/src/pages/auth/LoginLocal.jsx
 import React, { useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { Eye, EyeOff } from "lucide-react";
 import api, { API as API_BASE, getToken, clearToken, setToken } from "../../lib/api.js";
 import { useAuth } from "./AuthProvider.jsx";
 import AuthBackground from "../../components/AuthBackground.jsx";
@@ -141,6 +141,10 @@ function readTokenFromPayload(data) {
   ).trim();
 }
 
+function inputClass() {
+  return "border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full p-2 rounded outline-none focus:ring-2 focus:ring-blue-500/30";
+}
+
 export default function LoginLocal() {
   const navigate = useNavigate();
   const loc = useLocation();
@@ -161,6 +165,7 @@ export default function LoginLocal() {
 
   const [showPassInternal, setShowPassInternal] = useState(false);
   const [showPassVisitor, setShowPassVisitor] = useState(false);
+  const [showPassVisitor2, setShowPassVisitor2] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -453,7 +458,7 @@ export default function LoginLocal() {
               {mode === "internal" ? (
                 <form onSubmit={submitInternal}>
                   <input
-                    className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full mb-3 p-2"
+                    className={`${inputClass()} mb-3`}
                     type="email"
                     placeholder="Correo (email)"
                     value={identifier}
@@ -468,7 +473,7 @@ export default function LoginLocal() {
 
                   <div className="relative mb-3">
                     <input
-                      className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full p-2 pr-10"
+                      className={`${inputClass()} pr-10`}
                       type={showPassInternal ? "text" : "password"}
                       placeholder="Contraseña"
                       autoComplete="current-password"
@@ -487,7 +492,11 @@ export default function LoginLocal() {
                       aria-label={showPassInternal ? "Ocultar contraseña" : "Mostrar contraseña"}
                       title={showPassInternal ? "Ocultar" : "Mostrar"}
                     >
-                      {showPassInternal ? "🙈" : "👁️"}
+                      {showPassInternal ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
 
@@ -518,7 +527,7 @@ export default function LoginLocal() {
               ) : (
                 <form onSubmit={submitVisitor}>
                   <input
-                    className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full mb-3 p-2"
+                    className={`${inputClass()} mb-3`}
                     type="text"
                     placeholder="Nombre completo"
                     value={fullName}
@@ -531,7 +540,7 @@ export default function LoginLocal() {
                   />
 
                   <input
-                    className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full mb-3 p-2"
+                    className={`${inputClass()} mb-3`}
                     type="email"
                     placeholder="Email"
                     value={vEmail}
@@ -546,7 +555,7 @@ export default function LoginLocal() {
 
                   <div className="relative mb-2">
                     <input
-                      className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full p-2 pr-10"
+                      className={`${inputClass()} pr-10`}
                       type={showPassVisitor ? "text" : "password"}
                       placeholder="Contraseña (8+, letras, números y especial)"
                       autoComplete="new-password"
@@ -564,7 +573,11 @@ export default function LoginLocal() {
                       aria-label={showPassVisitor ? "Ocultar contraseña" : "Mostrar contraseña"}
                       title={showPassVisitor ? "Ocultar" : "Mostrar"}
                     >
-                      {showPassVisitor ? "🙈" : "👁️"}
+                      {showPassVisitor ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
 
@@ -572,18 +585,33 @@ export default function LoginLocal() {
                     Mínimo 8 caracteres, debe incluir letras, números y un carácter especial.
                   </div>
 
-                  <input
-                    className="border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full mb-3 p-2"
-                    type={showPassVisitor ? "text" : "password"}
-                    placeholder="Confirmar contraseña"
-                    autoComplete="new-password"
-                    value={vPassword2}
-                    onChange={(e) => {
-                      setVPassword2(e.target.value);
-                      if (error) setError("");
-                      if (info) setInfo("");
-                    }}
-                  />
+                  <div className="relative mb-3">
+                    <input
+                      className={`${inputClass()} pr-10`}
+                      type={showPassVisitor2 ? "text" : "password"}
+                      placeholder="Confirmar contraseña"
+                      autoComplete="new-password"
+                      value={vPassword2}
+                      onChange={(e) => {
+                        setVPassword2(e.target.value);
+                        if (error) setError("");
+                        if (info) setInfo("");
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassVisitor2((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+                      aria-label={showPassVisitor2 ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      title={showPassVisitor2 ? "Ocultar" : "Mostrar"}
+                    >
+                      {showPassVisitor2 ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
 
                   {info && (
                     <div className="text-emerald-700 dark:text-emerald-400 mb-2 text-sm">

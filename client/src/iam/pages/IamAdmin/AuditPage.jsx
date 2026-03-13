@@ -1,4 +1,3 @@
-// client/src/iam/pages/IamAdmin/AuditPage.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { iamApi } from "../../api/iamApi.js";
 
@@ -38,6 +37,76 @@ const KEY_LABEL = {
   provider: "Proveedor",
 };
 
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-md)",
+    backdropFilter: "blur(12px) saturate(130%)",
+    WebkitBackdropFilter: "blur(12px) saturate(130%)",
+    ...extra,
+  };
+}
+
+function sxCardSoft(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg)",
+    color: "var(--text)",
+    border: "1px solid var(--input-border)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
+    ...extra,
+  };
+}
+
 // --- Componente para truncar texto largo ---
 function Truncate({ children, max = 220 }) {
   const [open, setOpen] = useState(false);
@@ -49,7 +118,8 @@ function Truncate({ children, max = 220 }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-sky-300 hover:underline text-[11px]"
+        className="text-[11px] hover:underline"
+        style={{ color: "#60a5fa" }}
       >
         {open ? "ver menos" : "ver más"}
       </button>
@@ -64,11 +134,20 @@ function fmtValue(v) {
   if (typeof v === "boolean") {
     return (
       <span
-        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${
+        className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px]"
+        style={
           v
-            ? "bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-500/30"
-            : "bg-rose-600/20 text-rose-300 ring-1 ring-rose-500/30"
-        }`}
+            ? {
+                background: "color-mix(in srgb, #22c55e 12%, transparent)",
+                color: "#86efac",
+                border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
+              }
+            : {
+                background: "color-mix(in srgb, #ef4444 12%, transparent)",
+                color: "#fca5a5",
+                border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+              }
+        }
       >
         {v ? "Sí" : "No"}
       </span>
@@ -82,7 +161,8 @@ function fmtValue(v) {
         {v.map((x, i) => (
           <span
             key={i}
-            className="px-2 py-0.5 rounded-full text-[11px] bg-white/5 ring-1 ring-white/10"
+            className="px-2 py-0.5 rounded-full text-[11px]"
+            style={sxGhostBtn()}
           >
             {String(x)}
           </span>
@@ -115,14 +195,13 @@ function diffKeys(before = {}, after = {}) {
   return [...keys];
 }
 
-// Caja “bonita” para Antes/Después.
 function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
   if (!obj || (typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).length === 0)) {
-    return <span className="text-slate-400">—</span>;
+    return <span style={{ color: "var(--text-muted)" }}>—</span>;
   }
 
   if (typeof obj !== "object" || Array.isArray(obj)) {
-    return <div className="text-slate-200">{fmtValue(obj)}</div>;
+    return <div style={{ color: "var(--text)" }}>{fmtValue(obj)}</div>;
   }
 
   const keys = diffKeys(compareWith, obj);
@@ -137,14 +216,22 @@ function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
         return (
           <div
             key={k}
-            className={`flex gap-2 ${
+            className="flex gap-2"
+            style={
               changed
-                ? "bg-emerald-500/5 ring-1 ring-emerald-500/20 rounded-md px-2 py-1"
-                : ""
-            }`}
+                ? {
+                    background: "color-mix(in srgb, #22c55e 8%, transparent)",
+                    border: "1px solid color-mix(in srgb, #22c55e 22%, transparent)",
+                    borderRadius: "0.5rem",
+                    padding: "0.375rem 0.5rem",
+                  }
+                : undefined
+            }
           >
-            <span className="shrink-0 text-slate-300">{KEY_LABEL[k] || k}:</span>
-            <div className="text-slate-200">{fmtValue(obj[k])}</div>
+            <span className="shrink-0" style={{ color: "var(--text-muted)" }}>
+              {KEY_LABEL[k] || k}:
+            </span>
+            <div style={{ color: "var(--text)" }}>{fmtValue(obj[k])}</div>
           </div>
         );
       })}
@@ -152,7 +239,6 @@ function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
   );
 }
 
-// Para exportar valores legibles
 const toPlain = (v) =>
   typeof v === "boolean"
     ? v
@@ -175,15 +261,13 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // Filtros
   const [filterAction, setFilterAction] = useState("");
   const [filterEntity, setFilterEntity] = useState("");
   const [filterActor, setFilterActor] = useState("");
-  const [dateFrom, setDateFrom] = useState(""); // YYYY-MM-DD
-  const [dateTo, setDateTo] = useState(""); // YYYY-MM-DD
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [dateErr, setDateErr] = useState("");
 
-  // -------- Fetch real al backend ----------
   const fetchAudits = useCallback(async () => {
     try {
       setErr("");
@@ -248,14 +332,11 @@ export default function AuditPage() {
 
   useEffect(() => {
     fetchAudits();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchAudits]);
 
-  // -------- Helpers de fecha ----------
   const toStartOfDay = (s) => (s ? new Date(`${s}T00:00:00`) : null);
   const toEndOfDay = (s) => (s ? new Date(`${s}T23:59:59.999`) : null);
 
-  // -------- Filters locales ----------
   useEffect(() => {
     let list = [...audits];
 
@@ -277,7 +358,6 @@ export default function AuditPage() {
     setFiltered(list);
   }, [filterAction, filterEntity, filterActor, dateFrom, dateTo, audits]);
 
-  // -------- Export Excel ----------
   const exportExcel = () => {
     const rows = filtered.map((a) => ({
       Fecha: a.createdAt ? new Date(a.createdAt).toLocaleString() : "",
@@ -294,7 +374,6 @@ export default function AuditPage() {
     saveAs(new Blob([buf], { type: "application/octet-stream" }), `Historial_Auditoria_${Date.now()}.xlsx`);
   };
 
-  // -------- Export PDF ----------
   const exportPDF = async () => {
     const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     const marginX = 40;
@@ -332,8 +411,15 @@ export default function AuditPage() {
     doc.save(`Historial_Auditoria_${Date.now()}.pdf`);
   };
 
-  // -------- UI helpers ----------
-  const zebra = useMemo(() => filtered.map((_, i) => (i % 2 === 0 ? "bg-white/5" : "bg-white/[0.03]")), [filtered]);
+  const zebra = useMemo(
+    () =>
+      filtered.map((_, i) =>
+        i % 2 === 0
+          ? "color-mix(in srgb, var(--card-solid) 86%, transparent)"
+          : "color-mix(in srgb, var(--card-solid) 78%, transparent)"
+      ),
+    [filtered]
+  );
 
   return (
     <div className="min-h-[calc(100vh-4rem)] relative">
@@ -342,28 +428,30 @@ export default function AuditPage() {
         className="pointer-events-none absolute inset-0 opacity-70"
         style={{
           background:
-            "radial-gradient(1000px 600px at 10% 10%, rgba(0,255,255,0.08), transparent 60%), radial-gradient(800px 500px at 90% 20%, rgba(168,85,247,0.10), transparent 60%)",
+            "radial-gradient(1000px 600px at 10% 10%, rgba(0,255,255,0.06), transparent 60%), radial-gradient(800px 500px at 90% 20%, rgba(168,85,247,0.08), transparent 60%)",
         }}
       />
 
       <div className="relative z-10 space-y-6 p-4 md:p-6">
-        {/* HEADER */}
-        <div className="rounded-2xl border border-gray-700/40 bg-neutral-900/80 backdrop-blur-md p-6 shadow-[0_0_30px_rgba(0,0,0,0.2)]">
+        <div className="rounded-[24px] p-6" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-semibold text-slate-100">Historial de Auditoría</h1>
-              <p className="text-sm text-slate-400">Bitácora de acciones sobre usuarios, roles y permisos</p>
+              <h1 className="text-3xl font-semibold" style={{ color: "var(--text)" }}>
+                Historial de Auditoría
+              </h1>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                Bitácora de acciones sobre usuarios, roles y permisos
+              </p>
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={fetchAudits}
-                className="px-3 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700"
-              >
+
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={fetchAudits} className="px-3 py-2 rounded-lg text-sm" style={sxGhostBtn()}>
                 Actualizar
               </button>
               <button
                 onClick={exportExcel}
-                className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500"
+                className="px-3 py-2 rounded-lg text-sm"
+                style={sxSuccessBtn()}
                 disabled={!!dateErr}
                 title={dateErr || ""}
               >
@@ -371,7 +459,8 @@ export default function AuditPage() {
               </button>
               <button
                 onClick={exportPDF}
-                className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-500"
+                className="px-3 py-2 rounded-lg text-sm"
+                style={sxDangerBtn()}
                 disabled={!!dateErr}
                 title={dateErr || ""}
               >
@@ -380,10 +469,10 @@ export default function AuditPage() {
             </div>
           </div>
 
-          {/* Filtros */}
           <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
             <select
-              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              style={sxInput()}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
             >
@@ -395,7 +484,8 @@ export default function AuditPage() {
             </select>
 
             <select
-              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              style={sxInput()}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
               value={filterEntity}
               onChange={(e) => setFilterEntity(e.target.value)}
             >
@@ -409,37 +499,47 @@ export default function AuditPage() {
             <input
               type="text"
               placeholder="Buscar actor…"
-              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none"
+              style={sxInput()}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
               value={filterActor}
               onChange={(e) => setFilterActor(e.target.value)}
             />
 
             <input
               type="date"
-              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              style={sxInput()}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
             />
 
             <input
               type="date"
-              className="bg-neutral-800 border border-gray-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none"
+              style={sxInput()}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
 
-          {dateErr && <div className="mt-2 text-xs text-rose-300">{dateErr}</div>}
+          {dateErr && <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>{dateErr}</div>}
         </div>
 
-        {/* TABLA */}
-        <div className="rounded-2xl border border-gray-700/40 bg-neutral-900/80 backdrop-blur-md overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.2)]">
-          {err && <div className="p-3 text-rose-300 text-sm">{err}</div>}
+        <div className="rounded-[24px] overflow-hidden" style={sxCard()}>
+          {err && <div className="p-3 text-sm" style={{ color: "#fca5a5" }}>{err}</div>}
 
           <div className="overflow-auto">
-            <table className="min-w-full text-sm text-slate-200">
-              <thead className="sticky top-0 bg-neutral-800/95 backdrop-blur">
-                <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:font-semibold border-b border-gray-700/60">
+            <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
+              <thead
+                className="sticky top-0 backdrop-blur"
+                style={{
+                  background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                }}
+              >
+                <tr
+                  className="[&>th]:px-3 [&>th]:py-2 [&>th]:font-semibold"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
                   <th>Fecha</th>
                   <th>Acción</th>
                   <th>Entidad</th>
@@ -452,13 +552,13 @@ export default function AuditPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-12 text-slate-400">
+                    <td colSpan="6" className="text-center py-12" style={{ color: "var(--text-muted)" }}>
                       Cargando…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-12 text-slate-400">
+                    <td colSpan="6" className="text-center py-12" style={{ color: "var(--text-muted)" }}>
                       Sin registros
                     </td>
                   </tr>
@@ -466,27 +566,33 @@ export default function AuditPage() {
                   filtered.map((a, i) => (
                     <tr
                       key={a._id || i}
-                      className={`${zebra[i]} hover:bg-slate-800/50 transition-colors border-b border-gray-800`}
+                      className="transition-colors"
+                      style={{
+                        background: zebra[i],
+                        borderBottom: "1px solid var(--border)",
+                      }}
                     >
-                      <td className="px-3 py-2 text-slate-300">
+                      <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
                         {a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}
                       </td>
 
                       <td className="px-3 py-2">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/5 text-slate-200 ring-1 ring-white/10">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={sxGhostBtn()}>
                           {ACTION_LABEL[a.action] || a.action}
                         </span>
                       </td>
 
                       <td className="px-3 py-2">{ENTITY_LABEL[a.entity] || a.entity || "—"}</td>
 
-                      <td className="px-3 py-2 text-slate-300">{a.actorEmail || "—"}</td>
+                      <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
+                        {a.actorEmail || "—"}
+                      </td>
 
-                      <td className="px-3 py-2 text-xs text-slate-300 whitespace-pre-wrap align-top">
+                      <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
                         <PrettyBox obj={a.before} compareWith={a.after} emphasizeChanges={false} />
                       </td>
 
-                      <td className="px-3 py-2 text-xs text-slate-300 whitespace-pre-wrap align-top">
+                      <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
                         <PrettyBox obj={a.after} compareWith={a.before} emphasizeChanges={true} />
                       </td>
                     </tr>
@@ -496,9 +602,15 @@ export default function AuditPage() {
             </table>
           </div>
 
-          <div className="px-4 py-3 text-[12px] text-slate-400 border-t border-gray-800">
-            Mostrando <span className="text-slate-200">{filtered.length}</span> de{" "}
-            <span className="text-slate-200">{audits.length}</span> registros totales
+          <div
+            className="px-4 py-3 text-[12px]"
+            style={{
+              color: "var(--text-muted)",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            Mostrando <span style={{ color: "var(--text)" }}>{filtered.length}</span> de{" "}
+            <span style={{ color: "var(--text)" }}>{audits.length}</span> registros totales
             {dateFrom || dateTo ? (
               <>
                 {" "}

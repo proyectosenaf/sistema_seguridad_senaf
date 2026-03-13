@@ -1,10 +1,10 @@
-// client/src/pages/ForceChangePassword.jsx
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { Eye, EyeOff } from "lucide-react";
 
 import { APP_CONFIG } from "../config/app.config.js";
-import api, { API, setToken } from "../lib/api.js";
+import { API, setToken } from "../lib/api.js";
 import { useAuth } from "./auth/AuthProvider.jsx";
 
 function getParam(name) {
@@ -14,7 +14,9 @@ function getParam(name) {
 
 function getOtpEmailFallback() {
   try {
-    return String(localStorage.getItem("senaf_otp_email") || "").trim().toLowerCase();
+    return String(localStorage.getItem("senaf_otp_email") || "")
+      .trim()
+      .toLowerCase();
   } catch {
     return "";
   }
@@ -40,8 +42,10 @@ function clearOtpResetContext() {
 function humanResetError(codeOrMsg) {
   const s = String(codeOrMsg || "").toLowerCase();
 
-  if (s.includes("missing_fields")) return "Faltan datos para restablecer contraseña.";
-  if (s.includes("password_too_short")) return "La contraseña es muy corta.";
+  if (s.includes("missing_fields"))
+    return "Faltan datos para restablecer contraseña.";
+  if (s.includes("password_too_short"))
+    return "La contraseña es muy corta.";
 
   if (s.includes("reset_token_invalid_or_expired"))
     return "La sesión de restablecimiento venció. Vuelve a iniciar sesión y valida el OTP otra vez.";
@@ -51,40 +55,98 @@ function humanResetError(codeOrMsg) {
     return "Token inválido. Vuelve a iniciar sesión y valida el OTP otra vez.";
 
   if (s.includes("user_not_found")) return "Usuario no encontrado.";
-  if (s.includes("user_inactive")) return "Usuario inactivo. Contacta al administrador.";
-  if (s.includes("not_local_user")) return "Este usuario no es local. No se puede restablecer aquí.";
+  if (s.includes("user_inactive"))
+    return "Usuario inactivo. Contacta al administrador.";
+  if (s.includes("not_local_user"))
+    return "Este usuario no es local. No se puede restablecer aquí.";
   if (s.includes("visitor_reset_not_allowed"))
     return "Los usuarios 'visita' no restablecen contraseña por este flujo.";
 
-  // Si tu backend devuelve otp_* en algún punto
-  if (s.includes("otp")) return "Debes validar OTP otra vez (código vencido o inválido).";
+  if (s.includes("otp"))
+    return "Debes validar OTP otra vez (código vencido o inválido).";
 
-  // Errores HTTP genéricos
-  if (s.includes("forbidden") || s === "403") return "Acceso denegado (403). Repite el OTP e intenta de nuevo.";
-  if (s.includes("unauthorized") || s === "401") return "No autorizado (401). Repite el OTP e intenta de nuevo.";
+  if (s.includes("forbidden") || s === "403")
+    return "Acceso denegado (403). Repite el OTP e intenta de nuevo.";
+  if (s.includes("unauthorized") || s === "401")
+    return "No autorizado (401). Repite el OTP e intenta de nuevo.";
 
   return codeOrMsg || "No se pudo restablecer la contraseña.";
+}
+
+function passwordRules(p = "") {
+  return {
+    length: p.length >= 8,
+    upper: /[A-Z]/.test(p),
+    lower: /[a-z]/.test(p),
+    digit: /\d/.test(p),
+  };
+}
+
+function sxCard(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card, #ffffff) 94%, transparent)",
+    border: "1px solid var(--border, #d4d4d8)",
+    boxShadow: "0 10px 30px rgba(0,0,0,.08)",
+    ...extra,
+  };
+}
+
+function sxInput(extra = {}) {
+  return {
+    background: "var(--input-bg, #ffffff)",
+    color: "var(--text, #0f172a)",
+    border: "1px solid var(--input-border, #cbd5e1)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return {
+    background: "color-mix(in srgb, var(--card-solid, #ffffff) 92%, transparent)",
+    color: "var(--text, #0f172a)",
+    border: "1px solid var(--border, #d4d4d8)",
+    boxShadow: "0 2px 10px rgba(0,0,0,.04)",
+    ...extra,
+  };
+}
+
+function sxPrimaryBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px rgba(37,99,235,.18)",
+    ...extra,
+  };
 }
 
 export default function ForceChangePassword() {
   const navigate = useNavigate();
   const auth = useAuth();
 
-  const loginRoute = String(APP_CONFIG?.routes?.login || "/login").trim() || "/login";
+  const loginRoute =
+    String(APP_CONFIG?.routes?.login || "/login").trim() || "/login";
 
-  // email por query o fallback del OTP flow
   const emailFromQuery = (getParam("email") || "").trim().toLowerCase();
   const email = emailFromQuery || getOtpEmailFallback();
 
-  // resetToken por query o fallback
   const resetTokenFromQuery = (getParam("rt") || "").trim();
   const resetToken = resetTokenFromQuery || getResetTokenFallback();
 
   const [newPassword, setNewPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
 
+  const [showNewPassword, setShowNewPassword] = React.useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
+
   const [status, setStatus] = React.useState("idle"); // idle | saving | ok | error
   const [msg, setMsg] = React.useState("");
+
+  const pwdRules = passwordRules(newPassword);
+  const passwordsMatch =
+    !!newPassword && !!confirmPassword && newPassword === confirmPassword;
+  const showRules = newPassword.length > 0 || confirmPassword.length > 0;
 
   const canSubmit =
     !!email &&
@@ -106,7 +168,9 @@ export default function ForceChangePassword() {
 
     if (!resetToken) {
       setStatus("error");
-      setMsg("No hay sesión de restablecimiento. Vuelve a iniciar sesión y valida el OTP otra vez.");
+      setMsg(
+        "No hay sesión de restablecimiento. Vuelve a iniciar sesión y valida el OTP otra vez."
+      );
       return;
     }
 
@@ -128,15 +192,6 @@ export default function ForceChangePassword() {
     try {
       setStatus("saving");
 
-      /**
-       * ✅ CLAVE:
-       * Usar axios "limpio" para NO mandar Authorization automático.
-       *
-       * API (desde lib/api.js) ya incluye /api
-       * Ej: http://localhost:4000/api
-       * entonces aquí pegamos:
-       * POST {API}/public/v1/auth/reset-password-otp
-       */
       const url = `${String(API).replace(/\/$/, "")}/public/v1/auth/reset-password-otp`;
 
       const res = await axios.post(
@@ -156,17 +211,16 @@ export default function ForceChangePassword() {
       const token = data?.token;
       if (!token) {
         setStatus("error");
-        setMsg("El servidor no devolvió token tras restablecer la contraseña.");
+        setMsg(
+          "El servidor no devolvió token tras restablecer la contraseña."
+        );
         return;
       }
 
-      // limpiar contexto y loguear
       clearOtpResetContext();
 
-      // guarda token en tu capa global (api.js)
       setToken(token);
 
-      // si tu auth local necesita setear estado interno
       await auth.login({ email }, token);
 
       setStatus("ok");
@@ -186,54 +240,176 @@ export default function ForceChangePassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50">
-      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Establecer nueva contraseña</h1>
+    <div
+      className="min-h-screen flex items-center justify-center p-6"
+      style={{ background: "var(--bg, #f5f5f5)" }}
+    >
+      <div className="w-full max-w-md rounded-[24px] p-6" style={sxCard()}>
+        <h1
+          className="text-xl font-semibold"
+          style={{ color: "var(--text, #0f172a)" }}
+        >
+          Establecer nueva contraseña
+        </h1>
 
-        <p className="mt-2 text-sm text-neutral-600">
+        <p
+          className="mt-2 text-sm"
+          style={{ color: "var(--text-muted, #52525b)" }}
+        >
           Verificaste el OTP. Ahora crea tu nueva contraseña para continuar.
         </p>
 
-        <div className="mt-4 rounded-xl border p-3 bg-neutral-50">
-          <div className="text-xs text-neutral-500">Cuenta</div>
-          <div className="text-sm font-medium">{email || "(sin email)"}</div>
+        <div
+          className="mt-4 rounded-xl p-3"
+          style={sxGhostBtn({ background: "var(--input-bg, #fafafa)" })}
+        >
+          <div
+            className="text-xs"
+            style={{ color: "var(--text-muted, #71717a)" }}
+          >
+            Cuenta
+          </div>
+          <div
+            className="text-sm font-medium"
+            style={{ color: "var(--text, #0f172a)" }}
+          >
+            {email || "(sin email)"}
+          </div>
         </div>
 
         {!resetToken && (
-          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-            No hay sesión de restablecimiento (resetToken). Vuelve a iniciar sesión y valida el OTP otra vez.
+          <div
+            className="mt-4 rounded-xl p-3 text-sm"
+            style={{
+              background: "color-mix(in srgb, #ef4444 10%, white)",
+              border: "1px solid color-mix(in srgb, #ef4444 25%, white)",
+              color: "#991b1b",
+            }}
+          >
+            No hay sesión de restablecimiento (resetToken). Vuelve a iniciar
+            sesión y valida el OTP otra vez.
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="mt-4">
-          <label className="block text-sm font-medium mb-1">Nueva contraseña</label>
-          <input
-            className="border w-full p-2 rounded-lg"
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            autoComplete="new-password"
-            placeholder="Mínimo 8 caracteres"
-          />
+          <label
+            className="block text-sm font-medium mb-1"
+            style={{ color: "var(--text, #0f172a)" }}
+          >
+            Nueva contraseña
+          </label>
 
-          <label className="block text-sm font-medium mb-1 mt-3">Confirmar contraseña</label>
-          <input
-            className="border w-full p-2 rounded-lg"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            autoComplete="new-password"
-            placeholder="Repite la contraseña"
-          />
+          <div className="relative">
+            <input
+              className="w-full p-3 pr-12 rounded-xl outline-none"
+              style={sxInput()}
+              type={showNewPassword ? "text" : "password"}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Mínimo 8 caracteres"
+            />
+            <button
+              type="button"
+              onClick={() => setShowNewPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center justify-center"
+              style={{ color: "var(--text-muted, #64748b)" }}
+              aria-label={showNewPassword ? "Ocultar contraseña" : "Ver contraseña"}
+              title={showNewPassword ? "Ocultar contraseña" : "Ver contraseña"}
+            >
+              {showNewPassword ? (
+                <EyeOff className="h-5 w-5" />
+              ) : (
+                <Eye className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          <label
+            className="block text-sm font-medium mb-1 mt-3"
+            style={{ color: "var(--text, #0f172a)" }}
+          >
+            Confirmar contraseña
+          </label>
+
+          <div className="relative">
+            <input
+              className="w-full p-3 pr-12 rounded-xl outline-none"
+              style={sxInput()}
+              type={showConfirmPassword ? "text" : "password"}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Repite la contraseña"
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center justify-center"
+              style={{ color: "var(--text-muted, #64748b)" }}
+              aria-label={
+                showConfirmPassword ? "Ocultar confirmación" : "Ver confirmación"
+              }
+              title={
+                showConfirmPassword ? "Ocultar confirmación" : "Ver confirmación"
+              }
+            >
+              {showConfirmPassword ? (
+                <EyeOff className="h-5 w-5" />
+              ) : (
+                <Eye className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          {showRules && (
+            <div
+              className="mt-3 rounded-xl p-3 text-xs space-y-1"
+              style={sxGhostBtn({ background: "var(--input-bg, #fafafa)" })}
+            >
+              <div className="font-semibold" style={{ color: "#0891b2" }}>
+                Requisitos de contraseña:
+              </div>
+              <div style={{ color: pwdRules.length ? "#16a34a" : "#dc2626" }}>
+                • Al menos 8 caracteres
+              </div>
+              <div style={{ color: pwdRules.upper ? "#16a34a" : "#dc2626" }}>
+                • Una letra mayúscula
+              </div>
+              <div style={{ color: pwdRules.lower ? "#16a34a" : "#dc2626" }}>
+                • Una letra minúscula
+              </div>
+              <div style={{ color: pwdRules.digit ? "#16a34a" : "#dc2626" }}>
+                • Un número
+              </div>
+              <div style={{ color: passwordsMatch ? "#16a34a" : "#dc2626" }}>
+                • Coincidencia entre contraseña y confirmación
+              </div>
+            </div>
+          )}
 
           {status === "error" && (
-            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+            <div
+              className="mt-3 rounded-xl p-3 text-sm"
+              style={{
+                background: "color-mix(in srgb, #ef4444 10%, white)",
+                border: "1px solid color-mix(in srgb, #ef4444 25%, white)",
+                color: "#991b1b",
+              }}
+            >
               {msg || "Ocurrió un error."}
             </div>
           )}
 
           {status === "ok" && (
-            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+            <div
+              className="mt-3 rounded-xl p-3 text-sm"
+              style={{
+                background: "color-mix(in srgb, #22c55e 10%, white)",
+                border: "1px solid color-mix(in srgb, #22c55e 25%, white)",
+                color: "#166534",
+              }}
+            >
               {msg}
             </div>
           )}
@@ -241,7 +417,8 @@ export default function ForceChangePassword() {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="mt-4 w-full h-11 rounded-xl bg-neutral-900 text-white text-sm font-semibold disabled:opacity-60"
+            className="mt-4 w-full h-12 rounded-xl text-sm font-semibold disabled:opacity-60"
+            style={sxPrimaryBtn()}
           >
             {status === "saving" ? "Guardando…" : "Guardar y entrar"}
           </button>
@@ -250,13 +427,19 @@ export default function ForceChangePassword() {
         <div className="mt-5 flex gap-3">
           <a
             href={loginRoute}
-            className="h-11 flex-1 rounded-xl border flex items-center justify-center text-sm font-semibold"
+            className="h-12 flex-1 rounded-xl flex items-center justify-center text-sm font-semibold"
+            style={sxGhostBtn()}
           >
             Volver al login
           </a>
         </div>
 
-        <p className="mt-4 text-xs text-neutral-500">Tip: usa una contraseña fuerte y no la compartas.</p>
+        <p
+          className="mt-4 text-xs"
+          style={{ color: "var(--text-muted, #71717a)" }}
+        >
+          Tip: usa una contraseña fuerte y no la compartas.
+        </p>
       </div>
     </div>
   );

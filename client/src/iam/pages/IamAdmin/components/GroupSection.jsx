@@ -7,7 +7,7 @@ function roleIdOf(r) {
 
 export default function GroupSection({
   group,
-  roles,
+  roles = [],
   gridCols,
   roleMatrix,
   origMatrix,
@@ -15,27 +15,39 @@ export default function GroupSection({
   onDelete,
 }) {
   return (
-    <div className="group-section">
+    <div>
       {/* Cabecera del grupo: nombre del módulo fijo a la izquierda */}
       <div
-        className="
-          grid items-center text-sm font-semibold uppercase tracking-wide
-          bg-neutral-900/90 dark:bg-neutral-900/90 backdrop-blur-sm
-          border-y border-neutral-800 text-neutral-200
-        "
-        style={{ gridTemplateColumns: gridCols }}
+        className="grid items-center text-sm font-semibold uppercase tracking-wide backdrop-blur-sm"
+        style={{
+          gridTemplateColumns: gridCols,
+          background:
+            "linear-gradient(90deg, color-mix(in srgb, var(--card-solid) 92%, transparent), color-mix(in srgb, #2563eb 5%, var(--card-solid)))",
+          borderTop: "1px solid var(--border)",
+          borderBottom: "1px solid var(--border)",
+          color: "var(--text)",
+        }}
       >
         <div
-          className="
-            sticky left-0 z-40 bg-neutral-900/95 dark:bg-neutral-900/95
-            px-4 py-2 flex items-center gap-2 shadow-[2px_0_0_rgba(0,0,0,0.35)]
-          "
+          className="sticky left-0 z-40 px-4 py-2 flex items-center gap-2"
+          style={{
+            background:
+              "linear-gradient(90deg, color-mix(in srgb, var(--card-solid) 94%, transparent), color-mix(in srgb, #2563eb 6%, var(--card-solid)))",
+            boxShadow: "2px 0 0 0 color-mix(in srgb, var(--border) 90%, transparent)",
+          }}
         >
           <span className="text-base font-bold capitalize">{group.group}</span>
-          <span className="text-xs font-bold rounded-md px-2 py-0.5 bg-blue-600/25 text-blue-300">
+          <span
+            className="text-xs font-bold rounded-md px-2 py-0.5"
+            style={{
+              background: "color-mix(in srgb, #2563eb 14%, transparent)",
+              color: "#bfdbfe",
+            }}
+          >
             {group.items.length}
           </span>
         </div>
+
         <div className="col-span-full h-full" />
       </div>
 
@@ -71,4 +83,4 @@ export default function GroupSection({
       })}
     </div>
   );
-} 
+}
