@@ -1,10 +1,10 @@
 // client/src/modules/rondasqr/guard/ScanPage.jsx
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import QrScanner from "../guard/QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
-import { emitLocalPanic, subscribeLocalPanic } from "../utils/panicBus.js";
+import { emitLocalPanic } from "../utils/panicBus.js";
 import { getOutbox, queueCheckin, transmitOutbox, countOutbox } from "../utils/outbox.js";
 
 // ✅ Central: identidad desde AuthProvider /me
@@ -118,63 +118,6 @@ export default function ScanPage() {
         }
       }
     } catch {}
-  }, []);
-
-  /* ===== audio de alerta ===== */
-  const alertAudioRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const [lastPanic, setLastPanic] = useState(null);
-
-  function playAlarmTone() {
-    try {
-      if (typeof window === "undefined") return;
-
-      if (!audioCtxRef.current) {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) throw new Error("No AudioContext");
-        audioCtxRef.current = new Ctx();
-      }
-
-      const ctx = audioCtxRef.current;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sawtooth";
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      const now = ctx.currentTime;
-      osc.frequency.setValueAtTime(500, now);
-      osc.frequency.linearRampToValueAtTime(900, now + 0.4);
-      osc.frequency.linearRampToValueAtTime(500, now + 0.8);
-      osc.frequency.linearRampToValueAtTime(900, now + 1.2);
-      osc.frequency.linearRampToValueAtTime(500, now + 1.6);
-
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(0.4, now + 0.05);
-      gain.gain.linearRampToValueAtTime(0.4, now + 1.6);
-      gain.gain.linearRampToValueAtTime(0.0001, now + 1.9);
-
-      osc.start(now);
-      osc.stop(now + 2.0);
-    } catch {
-      if (alertAudioRef.current) {
-        alertAudioRef.current.currentTime = 0;
-        alertAudioRef.current.play().catch(() => {});
-      }
-    }
-  }
-
-  function handleIncomingPanic(payload) {
-    setLastPanic({ at: new Date().toLocaleTimeString(), ...payload });
-    playAlarmTone();
-  }
-
-  /* ===== bus local: alertas desde otra pestaña ===== */
-  useEffect(() => {
-    const unsub = subscribeLocalPanic((payload) => handleIncomingPanic(payload));
-    return () => unsub?.();
   }, []);
 
   /* ===== qué pestaña ===== */
@@ -376,9 +319,17 @@ export default function ScanPage() {
           );
         });
       }
+
       await rondasqrApi.panic(gps || null);
-      emitLocalPanic({ source: "home-button", user: safeUser?.name || safeUser?.email });
-      playAlarmTone();
+
+      // El sonido/indicador visual local y remoto queda centralizado en GlobalPanicListener
+      emitLocalPanic({
+        source: "home-button",
+        title: "🚨 Alerta de pánico",
+        message: "Alerta de pánico enviada",
+        user: safeUser?.name || safeUser?.email || "",
+      });
+
       alert("🚨 Alerta de pánico enviada.");
       return true;
     } catch (err) {
@@ -678,17 +629,9 @@ export default function ScanPage() {
     .dark .btn-neon {
       box-shadow:0 14px 36px rgba(99,102,241,.38),0 10px 28px rgba(6,182,212,.28);
     }
-    @keyframes panic-blink {
-      0%, 100% { opacity: 1; box-shadow: 0 0 25px rgba(248,113,113,.8); }
-      50% { opacity: .55; box-shadow: 0 0 6px rgba(248,113,113,.2); }
-    }
-    .panic-indicator { animation: panic-blink 1s ease-in-out infinite; }
   `;
 
   const homeCols = "md:grid-cols-2";
-
-  const BEEP_SRC =
-    "data:audio/wav;base64,UklGRo+eAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YZ+eAABW/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///9W/////wAAAP///1b/////AAAA////Vv////8AAAD///w==";
 
   const activeAssignment = useMemo(() => {
     if (!currentAssignmentKey) return null;
@@ -714,19 +657,6 @@ export default function ScanPage() {
   return (
     <div className={pageClass}>
       <style>{neonStyles}</style>
-      <audio ref={alertAudioRef} src={BEEP_SRC} preload="auto" />
-
-      {lastPanic && (
-        <button
-          onClick={() => setLastPanic(null)}
-          className="fixed top-20 right-6 z-[120] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white panic-indicator shadow-lg"
-          title={`Alerta recibida ${lastPanic.at}`}
-          type="button"
-        >
-          <span className="text-[10px] leading-none font-bold">ALERTA</span>
-          <span className="text-[9px] leading-none mt-1">¡NUEVA!</span>
-        </button>
-      )}
 
       <div className={[headerClass, headerFallback].join(" ")}>
         <div>

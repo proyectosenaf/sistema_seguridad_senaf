@@ -2,9 +2,40 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { rondasqrApi } from "../api/rondasqrApi.js";
+import { emitLocalPanic } from "../utils/panicBus.js";
+import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
+
+function resolvePrincipal(user) {
+  if (!user || typeof user !== "object") return null;
+
+  if (user.user && typeof user.user === "object") {
+    return {
+      ...user.user,
+      can:
+        user?.can && typeof user.can === "object"
+          ? user.can
+          : user?.user?.can && typeof user.user.can === "object"
+          ? user.user.can
+          : {},
+      superadmin:
+        user?.superadmin === true ||
+        user?.isSuperAdmin === true ||
+        user?.user?.superadmin === true ||
+        user?.user?.isSuperAdmin === true,
+    };
+  }
+
+  return {
+    ...user,
+    can: user?.can && typeof user.can === "object" ? user.can : {},
+    superadmin: user?.superadmin === true || user?.isSuperAdmin === true,
+  };
+}
 
 export default function PanicButton() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const principal = resolvePrincipal(user) || {};
   const [sending, setSending] = useState(false);
 
   async function sendPanic() {
@@ -29,6 +60,13 @@ export default function PanicButton() {
       }
 
       await rondasqrApi.panic(gps);
+
+      emitLocalPanic({
+        source: "panic_button",
+        title: "🚨 Alerta de pánico",
+        message: "Alerta de pánico enviada",
+        user: principal?.name || principal?.email || "",
+      });
 
       alert("🚨 Alerta de pánico enviada.");
       navigate("/rondasqr/scan", { replace: true });

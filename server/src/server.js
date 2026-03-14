@@ -437,21 +437,132 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`[io] path: ${io?.opts?.path || "/socket.io"}`);
 });
 
+/* ───────────────────────── Socket.IO helpers ──────────────────────────── */
+
+function toArray(v) {
+  if (Array.isArray(v)) return v;
+  if (v == null) return [];
+  return [v];
+}
+
+function normalizeRoleName(role) {
+  if (!role) return "";
+  if (typeof role === "string") return role.trim().toLowerCase();
+
+  if (typeof role === "object") {
+    return String(
+      role.key ||
+        role.code ||
+        role.slug ||
+        role.name ||
+        role.nombre ||
+        role.label ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
+  }
+
+  return String(role).trim().toLowerCase();
+}
+
+function normalizeRoles(input) {
+  const raw = toArray(input)
+    .flatMap((x) => {
+      if (Array.isArray(x)) return x;
+      if (x?.roles && Array.isArray(x.roles)) return x.roles;
+      return [x];
+    })
+    .map(normalizeRoleName)
+    .filter(Boolean);
+
+  return [...new Set(raw)];
+}
+
+function isVisitorRole(role) {
+  return ["visitante", "visitantes", "visita", "visitor", "visitors"].includes(
+    String(role || "").trim().toLowerCase()
+  );
+}
+
+function joinRoomsByIdentity(socket, identity = {}) {
+  const userId = identity?.userId ? String(identity.userId).trim() : "";
+  const email = identity?.email ? String(identity.email).trim().toLowerCase() : "";
+  const roles = normalizeRoles(identity?.roles || identity?.role);
+
+  if (userId) {
+    socket.join(`user-${userId}`);
+    socket.join(`guard-${userId}`); // se mantiene compatibilidad
+  }
+
+  if (email) {
+    socket.join(`email:${email}`);
+  }
+
+  for (const role of roles) {
+    socket.join(`role:${role}`);
+  }
+
+  socket.data = socket.data || {};
+  socket.data.identity = {
+    userId,
+    email,
+    roles,
+    joinedAt: Date.now(),
+  };
+
+  console.log("[io] identity joined:", {
+    socketId: socket.id,
+    userId,
+    email,
+    roles,
+  });
+}
+
+function getSocketIdentity(socket) {
+  return socket?.data?.identity || { userId: "", email: "", roles: [] };
+}
+
 /* ───────────────────────── Socket.IO ──────────────────────────── */
 
 io.on("connection", (s) => {
   console.log("[io] client:", s.id);
   s.emit("hello", { ok: true, ts: Date.now() });
 
-  const joinRooms = (userId) => {
+  const joinRoomsLegacy = (userId) => {
     if (!userId) return;
     s.join(`user-${userId}`);
     s.join(`guard-${userId}`);
     console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
   };
 
-  s.on("join-room", ({ userId }) => joinRooms(userId));
-  s.on("join", ({ userId }) => joinRooms(userId));
+  // Compatibilidad total con lo que ya tienes
+  s.on("join-room", ({ userId }) => joinRoomsLegacy(userId));
+  s.on("join", ({ userId, roles, role, email } = {}) => {
+    joinRoomsLegacy(userId);
+    joinRoomsByIdentity(s, { userId, roles, role, email });
+  });
+
+  // Nuevo: registro explícito de identidad/roles para filtrar alertas
+  s.on("presence:join", (payload = {}) => {
+    joinRoomsByIdentity(s, payload);
+    s.emit("presence:joined", {
+      ok: true,
+      socketId: s.id,
+      identity: getSocketIdentity(s),
+    });
+  });
+
+  s.on("auth:join", (payload = {}) => {
+    joinRoomsByIdentity(s, payload);
+    s.emit("auth:joined", {
+      ok: true,
+      socketId: s.id,
+      identity: getSocketIdentity(s),
+    });
+  });
+
+  /* ───────────────── CHAT ───────────────── */
 
   s.on("chat:join", ({ room = "global" } = {}) => {
     s.join(`chat:${room}`);
@@ -463,7 +574,77 @@ io.on("connection", (s) => {
     s.emit("chat:left", { room });
   });
 
-  s.on("disconnect", () => console.log("[io] bye:", s.id));
+  /* ───────────────── ALERTAS ─────────────────
+     Regla:
+     - el socket que origina NO recibe el evento de sonido
+     - visitantes NO deben recibirlo, siempre que se hayan unido con role(s)
+  */
+
+  const emitEmergencyAlert = (payload = {}, ack) => {
+    const now = Date.now();
+    const identity = getSocketIdentity(s);
+    const roles = normalizeRoles(identity.roles);
+
+    const event = {
+      ok: true,
+      kind: "emergency",
+      ts: now,
+      fromSocketId: s.id,
+      fromUserId: identity.userId || payload.userId || null,
+      fromEmail: identity.email || payload.email || null,
+      fromRoles: roles,
+      source: payload?.source || "rondas",
+      message: payload?.message || payload?.body || "Alerta de emergencia activada",
+      title: payload?.title || "ALERTA",
+      area: payload?.area || payload?.module || "Rondas de Vigilancia",
+      priority: payload?.priority || "critical",
+      playSound: true,
+      ...payload,
+    };
+
+    // Confirmación solo al originador
+    s.emit("alerta:confirmada", {
+      ok: true,
+      ts: now,
+      fromSocketId: s.id,
+      deliveredMode: "broadcast-except-visitors",
+    });
+
+    // Broadcast a todos menos:
+    // 1) el socket origen
+    // 2) sockets unidos a roles de visitantes
+    s.broadcast
+      .except([
+        "role:visitante",
+        "role:visitantes",
+        "role:visita",
+        "role:visitor",
+        "role:visitors",
+      ])
+      .emit("alerta:nueva", event);
+
+    console.log("[io][alerta] emitted:", {
+      bySocket: s.id,
+      byUserId: identity.userId || null,
+      byEmail: identity.email || null,
+      byRoles: roles,
+      title: event.title,
+      message: event.message,
+    });
+
+    if (typeof ack === "function") {
+      ack({ ok: true, sent: true, ts: now });
+    }
+  };
+
+  // Alias para no romper por nombres distintos en frontend
+  s.on("alerta:activar", emitEmergencyAlert);
+  s.on("alerta:emitir", emitEmergencyAlert);
+  s.on("emergency:alert", emitEmergencyAlert);
+
+  s.on("disconnect", (reason) => {
+    console.log("[io] bye:", s.id, "reason:", reason);
+  });
 });
 
 function shutdown(sig) {

@@ -20,6 +20,33 @@ const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 
+function resolvePrincipal(user) {
+  if (!user || typeof user !== "object") return null;
+
+  if (user.user && typeof user.user === "object") {
+    return {
+      ...user.user,
+      can:
+        user?.can && typeof user.can === "object"
+          ? user.can
+          : user?.user?.can && typeof user.user.can === "object"
+          ? user.user.can
+          : {},
+      superadmin:
+        user?.superadmin === true ||
+        user?.isSuperAdmin === true ||
+        user?.user?.superadmin === true ||
+        user?.user?.isSuperAdmin === true,
+    };
+  }
+
+  return {
+    ...user,
+    can: user?.can && typeof user.can === "object" ? user.can : {},
+    superadmin: user?.superadmin === true || user?.isSuperAdmin === true,
+  };
+}
+
 export default function SidebarGuard({
   variant = "desktop", // "desktop" | "mobile"
   onCloseMobile,
@@ -27,7 +54,8 @@ export default function SidebarGuard({
   asGlobal = false,
 }) {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const principal = resolvePrincipal(user) || {};
 
   if (asGlobal) return null;
 
@@ -98,7 +126,9 @@ export default function SidebarGuard({
 
       emitLocalPanic({
         source: "rondas_action_panel",
-        user: "",
+        title: "🚨 Alerta de pánico",
+        message: "Alerta de pánico enviada",
+        user: principal?.name || principal?.email || "",
       });
 
       window.alert("🚨 Alerta de pánico enviada.");
