@@ -22,10 +22,6 @@ function guardLabel(g) {
   return g?.email ? `${name} — ${g.email}` : name;
 }
 
-// arma una URL absoluta para evidencias:
-// - si viene dataURL (base64) -> devuelve igual
-// - si viene "/uploads/..." -> lo pega al host
-// - si ya viene "http..." -> devuelve igual
 function toAbsoluteMediaUrl(src, apiHost) {
   const s = String(src || "").trim();
   if (!s) return "";
@@ -45,7 +41,6 @@ function toAbsoluteMediaUrl(src, apiHost) {
   }
 }
 
-// intenta deducir extensión por mime o por url
 function guessExtFromSrc(src, fallback = "bin") {
   const s = String(src || "");
   const m = s.match(/^data:([^;]+);base64,/);
@@ -91,9 +86,6 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mime });
 }
 
-// descarga:
-// - si es dataURL -> convierte a Blob y baja
-// - si es URL http/https -> intenta por fetch/blob
 async function downloadMedia({ url, rawSrc, filename }) {
   try {
     const src = String(rawSrc || url || "");
@@ -101,7 +93,6 @@ async function downloadMedia({ url, rawSrc, filename }) {
 
     if (!src) throw new Error("Fuente vacía");
 
-    // Caso 1: dataURL/base64
     if (src.startsWith("data:")) {
       const blob = dataUrlToBlob(src);
       const objectUrl = URL.createObjectURL(blob);
@@ -117,7 +108,6 @@ async function downloadMedia({ url, rawSrc, filename }) {
       return;
     }
 
-    // Caso 2: archivo servido por backend
     const fileUrl = String(url || src);
     const res = await fetch(fileUrl, { cache: "no-store" });
     if (!res.ok) {
@@ -141,68 +131,49 @@ async function downloadMedia({ url, rawSrc, filename }) {
   }
 }
 
-function openMediaInNewTab(src, url) {
-  const raw = String(src || url || "");
-  const finalUrl = String(url || src || "");
+function openMediaInNewTab(src, url, kind = "image") {
+  const raw = String(src || url || "").trim();
+  const finalUrl = String(url || src || "").trim();
 
-  if (!raw) return;
-
-  // dataURL: abrir una página temporal para que no falle window.open
-  if (raw.startsWith("data:")) {
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (!w) return;
-
-    const isImage = raw.startsWith("data:image/");
-    const isVideo = raw.startsWith("data:video/");
-    const isAudio = raw.startsWith("data:audio/");
-
-    if (isImage) {
-      w.document.write(`
-        <!doctype html>
-        <html>
-          <head><title>Evidencia</title></head>
-          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
-            <img src="${raw}" style="max-width:100%;max-height:100vh;object-fit:contain;" />
-          </body>
-        </html>
-      `);
-      w.document.close();
-      return;
-    }
-
-    if (isVideo) {
-      w.document.write(`
-        <!doctype html>
-        <html>
-          <head><title>Evidencia</title></head>
-          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
-            <video src="${raw}" controls autoplay style="max-width:100%;max-height:100vh;"></video>
-          </body>
-        </html>
-      `);
-      w.document.close();
-      return;
-    }
-
-    if (isAudio) {
-      w.document.write(`
-        <!doctype html>
-        <html>
-          <head><title>Evidencia</title></head>
-          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
-            <audio src="${raw}" controls autoplay style="width:min(900px,95vw);"></audio>
-          </body>
-        </html>
-      `);
-      w.document.close();
-      return;
-    }
-
-    w.location.href = raw;
+  if (!raw && !finalUrl) {
+    alert("No se pudo abrir la evidencia.");
     return;
   }
 
-  window.open(finalUrl, "_blank", "noopener,noreferrer");
+  try {
+    if (raw.startsWith("data:")) {
+      const blob = dataUrlToBlob(raw);
+      const objectUrl = URL.createObjectURL(blob);
+      const win = window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      if (!win) {
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      return;
+    }
+
+    const opened = window.open(finalUrl, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      const a = document.createElement("a");
+      a.href = finalUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  } catch (e) {
+    console.warn("openMediaInNewTab error:", e);
+    alert(`No se pudo abrir la evidencia de tipo ${kind}.`);
+  }
 }
 
 function safeLower(v) {
@@ -247,14 +218,10 @@ function mediaTypeFromEvidenceKind(kind) {
 }
 
 function normalizeIncidentMedia(inc) {
-  // ✅ Nuevo formato normalizado
   if (Array.isArray(inc?.evidences) && inc.evidences.length > 0) {
     return inc.evidences
       .filter(Boolean)
       .map((ev) => {
-        // ✅ PRIORIDAD CORREGIDA:
-        // base64 primero, luego src, luego url
-        // Así si la URL remota falla en producción, aún se mostrará la evidencia.
         const src = ev?.base64 || ev?.src || ev?.url || "";
         if (!src) return null;
 
@@ -271,7 +238,6 @@ function normalizeIncidentMedia(inc) {
       .filter(Boolean);
   }
 
-  // ✅ Compatibilidad legacy
   const photos = [
     ...(Array.isArray(inc?.photosBase64) ? inc.photosBase64 : []),
     ...(Array.isArray(inc?.photos) ? inc.photos : []),
@@ -498,6 +464,36 @@ function sxKpi(tone = "default") {
   };
 }
 
+function sxViewerShell(extra = {}) {
+  return {
+    height: "62vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    padding: "8px 12px 12px",
+    background:
+      "radial-gradient(circle at center, rgba(255,255,255,.03), rgba(2,6,23,.22) 55%, rgba(2,6,23,.35) 100%)",
+    ...extra,
+  };
+}
+
+function sxViewerFrame(extra = {}) {
+  return {
+    width: "100%",
+    height: "100%",
+    padding: "10px",
+    borderRadius: "20px",
+    background: "rgba(255,255,255,.035)",
+    border: "1px solid rgba(255,255,255,.08)",
+    boxShadow:
+      "0 18px 42px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.05)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    ...extra,
+  };
+}
+
 function KpiCard({ title, value, tone, dotLabel }) {
   return (
     <div className="rounded-[20px] p-4" style={sxKpi(tone)}>
@@ -665,7 +661,6 @@ export default function IncidentesList() {
     sttReset();
     lastInsertedRef.current = "";
   }
-  /* ============================================================ */
 
   function recomputeStats(list) {
     const abiertos = list.filter((i) => i.status === "abierto").length;
@@ -1717,12 +1712,15 @@ export default function IncidentesList() {
 
       {evidenceOpen && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{ background: "rgba(2, 6, 23, 0.8)", backdropFilter: "blur(4px)" }}
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          style={{
+            background: "rgba(2, 6, 23, 0.8)",
+            backdropFilter: "blur(4px)",
+          }}
           onClick={closeEvidence}
         >
           <div
-            className="w-full max-w-6xl rounded-[24px] overflow-hidden"
+            className="relative z-[201] w-full max-w-6xl rounded-[24px] overflow-hidden lg:ml-[300px] lg:mr-6"
             style={sxCard({
               background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
             })}
@@ -1801,7 +1799,11 @@ export default function IncidentesList() {
                         <button
                           type="button"
                           onClick={() =>
-                            openMediaInNewTab(activeEvidence.src, activeEvidence.url)
+                            openMediaInNewTab(
+                              activeEvidence.src,
+                              activeEvidence.url,
+                              activeEvidence.type
+                            )
                           }
                           className={UI.btnSm}
                           style={sxGhostBtn()}
@@ -1844,20 +1846,49 @@ export default function IncidentesList() {
                       })}
                     >
                       {activeEvidence.type === "image" ? (
-                        <img
-                          src={activeEvidence.url}
-                          alt="evidencia"
-                          className="w-full h-[70vh] object-contain"
-                        />
+                        <div style={sxViewerShell()}>
+                          <div style={sxViewerFrame()}>
+                            <img
+                              src={activeEvidence.url}
+                              alt="evidencia"
+                              className="block object-contain"
+                              style={{
+                                maxWidth: "100%",
+                                maxHeight: "calc(62vh - 36px)",
+                                borderRadius: "14px",
+                              }}
+                            />
+                          </div>
+                        </div>
                       ) : activeEvidence.type === "video" ? (
-                        <video
-                          src={activeEvidence.url}
-                          controls
-                          className="w-full h-[70vh] object-contain"
-                        />
+                        <div style={sxViewerShell()}>
+                          <div style={sxViewerFrame()}>
+                            <video
+                              src={activeEvidence.url}
+                              controls
+                              className="block object-contain"
+                              style={{
+                                maxWidth: "100%",
+                                maxHeight: "calc(62vh - 36px)",
+                                borderRadius: "14px",
+                              }}
+                            />
+                          </div>
+                        </div>
                       ) : (
-                        <div className="p-4">
-                          <audio src={activeEvidence.url} controls className="w-full" />
+                        <div style={sxViewerShell()}>
+                          <div
+                            style={sxViewerFrame({
+                              width: "min(820px, 100%)",
+                              padding: "18px",
+                            })}
+                          >
+                            <audio
+                              src={activeEvidence.url}
+                              controls
+                              className="w-full"
+                            />
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1903,7 +1934,13 @@ export default function IncidentesList() {
                             })}
                           >
                             {m.type === "image" ? (
-                              <img src={m.url} alt="" className="w-full h-full object-cover" />
+                              <div className="w-full h-full flex items-center justify-center p-1">
+                                <img
+                                  src={m.url}
+                                  alt=""
+                                  className="max-w-full max-h-full object-contain block rounded-md"
+                                />
+                              </div>
                             ) : (
                               <div className="text-lg">{m.type === "video" ? "🎥" : "🎙️"}</div>
                             )}

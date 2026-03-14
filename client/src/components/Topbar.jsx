@@ -522,10 +522,13 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
 
       {searchOpen && !isVisitor && (
         <div
-          className="fixed inset-0 z-[60] grid place-items-start pt-24"
-          style={{ background: "rgba(2, 6, 23, 0.35)" }}
-          onClick={() => setSearchOpen(false)}
-        >
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+        style={{
+        background: "rgba(2, 6, 23, 0.8)",
+       backdropFilter: "blur(4px)",
+       }}
+       onClick={closeEvidence}
+>
           <div
             className={fxModal}
             style={popoverStyle()}

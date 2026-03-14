@@ -62,7 +62,9 @@ function normalizeIncidentMedia(inc) {
     return inc.evidences
       .filter(Boolean)
       .map((e) => {
-        const src = e?.url || e?.src || e?.base64 || e?.path || "";
+        // ✅ Consistencia con IncidentesList:
+        // priorizar base64 antes que url para no depender de rutas rotas
+        const src = e?.base64 || e?.src || e?.url || e?.path || "";
         if (!src) return null;
 
         return {
