@@ -61,7 +61,6 @@ function resolvePrincipal(user) {
 
 function getRolesFromUser(user) {
   const u = resolvePrincipal(user) || {};
-
   const roles = [
     ...toArray(u?.roles),
     ...toArray(u?.role),
@@ -113,9 +112,6 @@ function normalizeRemotePayload(payload = {}) {
       "",
     source: payload?.source || payload?.kind || item?.type || "socket",
     at: payload?.ts || item?.at || Date.now(),
-    raw: payload,
-    item,
-    meta,
   };
 }
 
@@ -126,54 +122,109 @@ export default function GlobalPanicListener() {
   const visitor = isVisitorUser(principal);
 
   const audioRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const suppressRemoteUntilRef = useRef(0);
+
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
-  const suppressRemoteUntilRef = useRef(0);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   const BEEP_SRC =
     "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
 
-  const unlockAudio = useCallback(async () => {
+  const ensureAudioContext = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    if (!audioCtxRef.current) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      audioCtxRef.current = new Ctx();
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  const playOscillatorAlarm = useCallback(async () => {
     try {
-      const el = audioRef.current;
-      if (!el) return;
+      const ctx = ensureAudioContext();
+      if (!ctx) return false;
 
-      el.muted = true;
-      el.currentTime = 0;
-
-      const p = el.play();
-      if (p && typeof p.then === "function") {
-        await p;
+      if (ctx.state === "suspended") {
+        await ctx.resume();
       }
 
-      el.pause();
-      el.currentTime = 0;
-      el.muted = false;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "square";
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.linearRampToValueAtTime(660, now + 0.18);
+      osc.frequency.linearRampToValueAtTime(880, now + 0.36);
+      osc.frequency.linearRampToValueAtTime(660, now + 0.54);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.25, now + 0.02);
+      gain.gain.linearRampToValueAtTime(0.22, now + 0.50);
+      gain.gain.linearRampToValueAtTime(0.0001, now + 0.62);
+
+      osc.start(now);
+      osc.stop(now + 0.65);
+
+      return true;
+    } catch (e) {
+      console.warn("[GlobalPanicListener] oscillator blocked:", e?.message || e);
+      return false;
+    }
+  }, [ensureAudioContext]);
+
+  const unlockAudio = useCallback(async () => {
+    try {
+      const ctx = ensureAudioContext();
+      if (ctx && ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
+      const el = audioRef.current;
+      if (el) {
+        el.muted = true;
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && typeof p.then === "function") await p;
+        el.pause();
+        el.currentTime = 0;
+        el.muted = false;
+      }
 
       setAudioUnlocked(true);
       console.log("[GlobalPanicListener] audio unlocked");
     } catch (e) {
       console.warn("[GlobalPanicListener] audio unlock blocked:", e?.message || e);
     }
-  }, []);
+  }, [ensureAudioContext]);
 
   const playBeep = useCallback(async () => {
+    // 1) intenta audio normal
     try {
       const el = audioRef.current;
-      if (!el) return;
-
-      el.muted = false;
-      el.currentTime = 0;
-
-      const p = el.play();
-      if (p && typeof p.then === "function") {
-        await p;
+      if (el) {
+        el.muted = false;
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && typeof p.then === "function") {
+          await p;
+        }
+        return true;
       }
     } catch (e) {
-      console.warn("[GlobalPanicListener] audio play blocked:", e?.message || e);
+      console.warn("[GlobalPanicListener] html audio blocked:", e?.message || e);
     }
-  }, []);
+
+    // 2) fallback Web Audio API
+    return await playOscillatorAlarm();
+  }, [playOscillatorAlarm]);
 
   const triggerAlert = useCallback(
     async (payload = {}, opts = {}) => {
@@ -187,7 +238,10 @@ export default function GlobalPanicListener() {
         source: opts?.source || normalized.source || "panic",
       });
 
-      await playBeep();
+      const played = await playBeep();
+      if (!played) {
+        console.warn("[GlobalPanicListener] no se pudo reproducir sonido");
+      }
 
       if (opts?.local === true) {
         suppressRemoteUntilRef.current = Date.now() + 4000;
@@ -196,7 +250,6 @@ export default function GlobalPanicListener() {
     [playBeep]
   );
 
-  // ✅ desbloquea audio con la primera interacción real del usuario
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -227,7 +280,6 @@ export default function GlobalPanicListener() {
     const doPresenceJoin = () => {
       try {
         socket.emit("presence:join", joinPayload);
-        console.log("[GlobalPanicListener] presence:join", joinPayload);
       } catch (e) {
         console.warn("[GlobalPanicListener] presence:join error:", e?.message || e);
       }
@@ -254,8 +306,6 @@ export default function GlobalPanicListener() {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
       if (visitor) return;
-
-      console.log("[GlobalPanicListener] local panic", payload);
       triggerAlert(payload, { local: true, source: "local-bus" });
     });
 
@@ -268,15 +318,10 @@ export default function GlobalPanicListener() {
     if (!isAuthenticated) return;
 
     function onRemotePanic(payload = {}) {
-      console.log("[GlobalPanicListener] remote panic event", payload);
-
       if (visitor) return;
 
       const now = Date.now();
-      if (now < suppressRemoteUntilRef.current) {
-        console.log("[GlobalPanicListener] remote panic suppressed (local already fired)");
-        return;
-      }
+      if (now < suppressRemoteUntilRef.current) return;
 
       triggerAlert(payload, { local: false, source: "socket" });
     }
