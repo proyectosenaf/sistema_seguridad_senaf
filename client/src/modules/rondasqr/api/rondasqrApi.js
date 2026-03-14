@@ -235,24 +235,18 @@ export const rondasqrApi = {
       body.gps = input?.gps ?? null;
     }
 
-    const urls = [
-      `${BASE}/checkin/panic`,
-      `${BASE}/panic`,
-      `${ROOT}/rondasqr/panic`,
-      `${ROOT}/panic`,
-    ];
+    // ✅ UNA SOLA RUTA CANÓNICA
+    // Si tu backend real usa otra, cambia SOLO esta constante.
+    const PANIC_URL =
+      String(import.meta.env.VITE_RONDAS_PANIC_URL || "").trim() ||
+      `${BASE}/checkin/panic`;
 
-    let lastErr;
-    for (const url of urls) {
-      try {
-        return await fetchJson(url, { method: "POST", body: JSON.stringify(body) });
-      } catch (err) {
-        lastErr = err;
-        if (err.status !== 404 && err.status !== 405) break;
-      }
-    }
+    console.log("[rondasqrApi.panic] POST ->", PANIC_URL, body);
 
-    throw lastErr || new Error("No se pudo enviar el pánico: ninguna ruta coincidió");
+    return fetchJson(PANIC_URL, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   async postInactivity(payload) {

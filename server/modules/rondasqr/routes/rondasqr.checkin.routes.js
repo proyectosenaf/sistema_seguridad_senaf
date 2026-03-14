@@ -19,6 +19,32 @@ function getOfficer(req) {
   };
 }
 
+function getNotifier(req) {
+  try {
+    return req.app?.get?.("notifier") || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGps(input) {
+  const gps = input && typeof input === "object" ? input : {};
+  const lat = Number(gps?.lat);
+  const lon = Number(gps?.lon);
+
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return {
+      gps: { lat, lon },
+      loc: { type: "Point", coordinates: [lon, lat] },
+    };
+  }
+
+  return {
+    gps: gps || {},
+    loc: undefined,
+  };
+}
+
 /* =========================================================================
    SCAN (registrar punto)
    Puede vivir como:
@@ -99,7 +125,7 @@ async function handleIncidents(req, res, next) {
     if (!b.text) return res.status(400).json({ ok: false, error: "text_required" });
 
     const { officerEmail, officerName, officerSub } = getOfficer(req);
-    const gps = (b.lat && b.lon) ? { lat: b.lat, lon: b.lon } : (b.gps || {});
+    const gps = b.lat && b.lon ? { lat: b.lat, lon: b.lon } : b.gps || {};
 
     const doc = await RqIncident.create({
       type: "message",
@@ -128,21 +154,51 @@ router.post("/checkin/incidents", handleIncidents);
    ========================================================================= */
 async function handlePanic(req, res, next) {
   try {
-    const { gps } = req.body || {};
+    const { gps: rawGps } = req.body || {};
     const { officerEmail, officerName, officerSub } = getOfficer(req);
+    const { gps, loc } = normalizeGps(rawGps);
 
     const doc = await RqIncident.create({
       type: "panic",
       text: "Botón de pánico",
-      gps: gps || {},
+      gps,
+      loc,
       at: new Date(),
       officerEmail,
       officerName,
       officerSub,
     });
 
-    // el front escucha esto en el socket
+    // ✅ compatibilidad legacy
     req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
+
+    // ✅ nueva vía centralizada
+    const notifier = getNotifier(req);
+    if (notifier?.panic) {
+      await notifier.panic({
+        userId: officerSub || null,
+        email: officerEmail || null,
+        siteName: "",
+        gps,
+      });
+    } else {
+      // fallback por si notifier no está montado
+      const payload = {
+        id: String(doc._id),
+        title: "🚨 Alerta de pánico",
+        body: "Se activó el botón de pánico",
+        meta: { gps },
+        type: "panic",
+        kind: "emergency",
+        priority: "critical",
+        playSound: true,
+        ts: Date.now(),
+        item: doc,
+      };
+
+      req.io?.emit?.("panic:new", payload);
+      req.io?.emit?.("alerta:nueva", payload);
+    }
 
     res.json({ ok: true, item: doc });
   } catch (e) {
