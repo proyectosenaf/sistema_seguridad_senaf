@@ -146,7 +146,6 @@ function devIdentity(req, _res, next) {
     .toLowerCase()
     .trim();
 
-  // ✅ en dev, simulamos identidad (sub/email)
   req.authUser = { sub: "dev|local", email, name: "DEV USER" };
 
   req.auth = req.auth || {};
@@ -168,8 +167,14 @@ if (!fs.existsSync(UPLOADS_ROOT)) {
   fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 }
 
-app.use("/uploads", express.static(UPLOADS_ROOT));
-app.use("/api/uploads", express.static(UPLOADS_ROOT));
+const staticUploadsOptions = {
+  etag: false,
+  maxAge: 0,
+  fallthrough: true,
+};
+
+app.use("/uploads", express.static(UPLOADS_ROOT, staticUploadsOptions));
+app.use("/api/uploads", express.static(UPLOADS_ROOT, staticUploadsOptions));
 
 /* ───────────────────────── Health checks ──────────────────────── */
 
@@ -186,15 +191,7 @@ app.get("/api/health", (_req, res) =>
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── ✅ AUTH OTP PÚBLICO ✅ ───────────────────── */
-/**
- * ✅ SIN DUPLICADOS:
- * OTP PÚBLICO SOLO vive aquí:
- * - /api/public/v1/auth
- * - /public/v1/auth
- *
- * IMPORTANTE: NO lo montes también en /api/iam/v1/auth
- * porque ESO YA lo expone el IAM module en /api/iam/v1/auth/*.
- */
+
 app.use("/api/public/v1/auth", iamOtpAuthRoutes);
 app.use("/public/v1/auth", iamOtpAuthRoutes);
 
@@ -249,7 +246,6 @@ await mongoose
 
 console.log("[db] MongoDB conectado");
 
-// ✅ Recarga automática de permisos desde el catálogo al arrancar
 try {
   const syncResult = await syncPermissionsCatalog();
   console.log("[IAM] permisos sincronizados:", syncResult);
@@ -259,11 +255,6 @@ try {
 
 /* ─────────────────── Auth opcional (GLOBAL) ──────────────────── */
 
-/**
- * ✅ AUTH LOCAL:
- * - Si hay Authorization Bearer => valida y deja req.auth.payload
- * - Si no hay Bearer => visitor (pasa)
- */
 const requireAuth = makeAuthMw();
 
 function optionalAuth(req, res, next) {
@@ -274,9 +265,6 @@ function optionalAuth(req, res, next) {
 }
 app.use(optionalAuth);
 
-/**
- * 1) Adjunta usuario normalizado desde req.auth.payload -> req.user (local)
- */
 function attachAuthUser(req, _res, next) {
   if (req?.auth?.payload) {
     req.user = {
@@ -290,10 +278,6 @@ function attachAuthUser(req, _res, next) {
 }
 app.use(attachAuthUser);
 
-/**
- * 2) Construye contexto IAM en req.iam si hay señales de identidad
- * ✅ roles/perms 100% desde DB (IamUser + IamRole)
- */
 app.use(async (req, _res, next) => {
   try {
     const hasPayload = !!req?.auth?.payload;
@@ -310,10 +294,7 @@ app.use(async (req, _res, next) => {
 });
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
-/**
- * ✅ FIX: tu parámetro era enableDoAlias (NO existe).
- * El nombre correcto es enableLegacyRedirects.
- */
+
 await registerIAMModule({
   app,
   basePath: "/api/iam/v1",
@@ -322,10 +303,8 @@ await registerIAMModule({
 
 /* ───────────────────── ✅ CATÁLOGOS REGISTER ✅ ───────────────────── */
 
-// Catálogos de acceso / visitas / vehículos
 app.use("/api/catalogos", accesoCatalogosRoutes);
 
-// Catálogos IAM
 app.use("/api/iam/v1/catalogs", catalogsRoutes);
 app.use("/iam/v1/catalogs", catalogsRoutes);
 

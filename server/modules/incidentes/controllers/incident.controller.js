@@ -6,41 +6,10 @@ import IncidentGlobal from "../models/incident.model.js";
 const uploadDir = path.resolve(process.cwd(), "uploads", "incidentes");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-function saveBase64ToFile(dataUrlOrB64, prefix, i, defaultExt) {
-  try {
-    if (typeof dataUrlOrB64 !== "string") return null;
-
-    // data:<mime>;base64,<data>
-    const m = dataUrlOrB64.match(/^data:([^;]+);base64,(.+)$/);
-    const mime = m?.[1] || "";
-    const data = m?.[2] || dataUrlOrB64;
-
-    let ext = defaultExt;
-    if (mime.includes("/")) {
-      ext = mime
-        .split("/")[1]
-        .replace("mpeg", "mp3")
-        .replace("jpeg", "jpg");
-    }
-
-    const filename = `${prefix}_${Date.now()}_${i}.${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    fs.writeFileSync(filePath, Buffer.from(data, "base64"));
-
-    return {
-      url: `/uploads/incidentes/${filename}`,
-      mimeType: mime || "",
-    };
-  } catch (e) {
-    console.warn("[incidentes-global] saveBase64ToFile error:", e?.message || e);
-    return null;
-  }
-}
-
 function normalizeList(val) {
   if (!val) return [];
   if (Array.isArray(val)) return val;
+
   if (typeof val === "string") {
     try {
       const parsed = JSON.parse(val);
@@ -49,6 +18,7 @@ function normalizeList(val) {
       return [val];
     }
   }
+
   return [];
 }
 
@@ -66,6 +36,24 @@ function normalizeEvidenceKind(kind) {
   return "photo";
 }
 
+function isDataUrl(value) {
+  return typeof value === "string" && /^data:[^;]+;base64,/.test(value);
+}
+
+function isUploadsIncidentUrl(value) {
+  return typeof value === "string" && value.startsWith("/uploads/incidentes/");
+}
+
+function isHttpUrl(value) {
+  return typeof value === "string" && /^https?:\/\//i.test(value);
+}
+
+function guessMimeFromDataUrl(value, fallback = "") {
+  if (!isDataUrl(value)) return fallback;
+  const m = String(value).match(/^data:([^;]+);base64,/);
+  return m?.[1] || fallback;
+}
+
 function buildEvidenceItem({
   kind,
   url,
@@ -80,54 +68,73 @@ function buildEvidenceItem({
     originalName: String(originalName || "").trim(),
     mimeType: String(mimeType || "").trim(),
     size: Number(size || 0),
-    uploadedAt: uploadedAt instanceof Date ? uploadedAt : new Date(uploadedAt || Date.now()),
+    uploadedAt:
+      uploadedAt instanceof Date ? uploadedAt : new Date(uploadedAt || Date.now()),
   };
 }
 
+/**
+ * Compat legacy:
+ * body.photosBase64 / videosBase64 / audiosBase64
+ *
+ * Ahora se conservan inline como data URL para no depender
+ * del filesystem efímero en producción.
+ */
 function appendLegacyBase64Evidence(body, evidences) {
   const photosBase64 = normalizeList(body.photosBase64);
   for (let i = 0; i < photosBase64.length; i++) {
-    const saved = saveBase64ToFile(photosBase64[i], "img", i, "png");
-    if (saved?.url) {
-      evidences.push(
-        buildEvidenceItem({
-          kind: "photo",
-          url: saved.url,
-          mimeType: saved.mimeType || "image/png",
-        })
-      );
-    }
+    const raw = photosBase64[i];
+    if (!isDataUrl(raw)) continue;
+
+    evidences.push(
+      buildEvidenceItem({
+        kind: "photo",
+        url: raw,
+        mimeType: guessMimeFromDataUrl(raw, "image/jpeg"),
+      })
+    );
   }
 
   const videosBase64 = normalizeList(body.videosBase64);
   for (let i = 0; i < videosBase64.length; i++) {
-    const saved = saveBase64ToFile(videosBase64[i], "vid", i, "webm");
-    if (saved?.url) {
-      evidences.push(
-        buildEvidenceItem({
-          kind: "video",
-          url: saved.url,
-          mimeType: saved.mimeType || "video/webm",
-        })
-      );
-    }
+    const raw = videosBase64[i];
+    if (!isDataUrl(raw)) continue;
+
+    evidences.push(
+      buildEvidenceItem({
+        kind: "video",
+        url: raw,
+        mimeType: guessMimeFromDataUrl(raw, "video/webm"),
+      })
+    );
   }
 
   const audiosBase64 = normalizeList(body.audiosBase64);
   for (let i = 0; i < audiosBase64.length; i++) {
-    const saved = saveBase64ToFile(audiosBase64[i], "aud", i, "webm");
-    if (saved?.url) {
-      evidences.push(
-        buildEvidenceItem({
-          kind: "audio",
-          url: saved.url,
-          mimeType: saved.mimeType || "audio/webm",
-        })
-      );
-    }
+    const raw = audiosBase64[i];
+    if (!isDataUrl(raw)) continue;
+
+    evidences.push(
+      buildEvidenceItem({
+        kind: "audio",
+        url: raw,
+        mimeType: guessMimeFromDataUrl(raw, "audio/webm"),
+      })
+    );
   }
 }
 
+/**
+ * Formato nuevo:
+ * body.evidences = [{ kind, base64|url|src, ... }]
+ *
+ * PRIORIDAD:
+ *   1) base64
+ *   2) url
+ *   3) src
+ *
+ * Si viene data URL, se conserva inline.
+ */
 function appendNormalizedInputEvidence(input, evidences) {
   const list = normalizeList(input);
 
@@ -136,12 +143,21 @@ function appendNormalizedInputEvidence(input, evidences) {
     if (!ev || typeof ev !== "object") continue;
 
     const kind = normalizeEvidenceKind(ev.kind);
-    const raw = ev.base64 || ev.url || ev.src || null;
 
-    if (!raw || typeof raw !== "string") continue;
+    // prioridad explícita
+    const raw =
+      typeof ev.base64 === "string" && ev.base64.trim()
+        ? ev.base64.trim()
+        : typeof ev.url === "string" && ev.url.trim()
+        ? ev.url.trim()
+        : typeof ev.src === "string" && ev.src.trim()
+        ? ev.src.trim()
+        : "";
 
-    // Si ya es URL relativa guardada
-    if (raw.startsWith("/uploads/incidentes/")) {
+    if (!raw) continue;
+
+    // URLs locales ya existentes
+    if (isUploadsIncidentUrl(raw)) {
       evidences.push(
         buildEvidenceItem({
           kind,
@@ -155,27 +171,34 @@ function appendNormalizedInputEvidence(input, evidences) {
       continue;
     }
 
-    // Si viene en dataURL/base64, guardarlo
-    if (!raw.startsWith("data:")) continue;
+    // Data URL inline
+    if (isDataUrl(raw)) {
+      evidences.push(
+        buildEvidenceItem({
+          kind,
+          url: raw,
+          originalName: ev.originalName || "",
+          mimeType: ev.mimeType || guessMimeFromDataUrl(raw, ""),
+          size: ev.size || 0,
+          uploadedAt: ev.uploadedAt || new Date(),
+        })
+      );
+      continue;
+    }
 
-    const saved = saveBase64ToFile(
-      raw,
-      kind === "photo" ? "img" : kind === "video" ? "vid" : "aud",
-      i,
-      kind === "photo" ? "png" : kind === "video" ? "webm" : "webm"
-    );
-
-    if (!saved?.url) continue;
-
-    evidences.push(
-      buildEvidenceItem({
-        kind,
-        url: saved.url,
-        originalName: ev.originalName || "",
-        mimeType: ev.mimeType || saved.mimeType || "",
-        size: ev.size || 0,
-      })
-    );
+    // URL remota
+    if (isHttpUrl(raw)) {
+      evidences.push(
+        buildEvidenceItem({
+          kind,
+          url: raw,
+          originalName: ev.originalName || "",
+          mimeType: ev.mimeType || "",
+          size: ev.size || 0,
+          uploadedAt: ev.uploadedAt || new Date(),
+        })
+      );
+    }
   }
 }
 
@@ -206,13 +229,18 @@ export async function getAllIncidents(req, res) {
     return res.json({ ok: true, items, limit });
   } catch (err) {
     console.error("[incidentes-global] getAllIncidents:", err);
-    return res.status(500).json({ ok: false, error: "Error obteniendo incidentes" });
+    return res.status(500).json({
+      ok: false,
+      error: "Error obteniendo incidentes",
+    });
   }
 }
 
 // POST /api/incidentes
 export async function createIncident(req, res) {
   try {
+    console.log("[INCIDENTES] createIncident INLINE_DATAURL_V3 activo");
+
     const body = req.body || {};
 
     const type = String(body.type || "Incidente").trim();
@@ -227,16 +255,22 @@ export async function createIncident(req, res) {
     const status = String(body.status || "abierto").trim();
 
     if (!description) {
-      return res.status(400).json({ ok: false, error: "description es requerido" });
+      return res.status(400).json({
+        ok: false,
+        error: "description es requerido",
+      });
     }
 
     if (!reportedBy) {
-      return res.status(400).json({ ok: false, error: "reportedBy es requerido" });
+      return res.status(400).json({
+        ok: false,
+        error: "reportedBy es requerido",
+      });
     }
 
     const evidences = [];
 
-    // compat si algún día llega multipart por multer
+    // Compat multipart real (multer)
     if (Array.isArray(req.files)) {
       for (let i = 0; i < req.files.length; i++) {
         const f = req.files[i];
@@ -258,11 +292,20 @@ export async function createIncident(req, res) {
       }
     }
 
-    // compat legacy
+    // Compat legacy
     appendLegacyBase64Evidence(body, evidences);
 
-    // formato nuevo normalizado
+    // Formato nuevo normalizado
     appendNormalizedInputEvidence(body.evidences, evidences);
+
+    console.log(
+      "[INCIDENTES] evidences procesadas:",
+      evidences.map((e) => ({
+        kind: e.kind,
+        urlPreview: String(e.url || "").slice(0, 80),
+        mimeType: e.mimeType,
+      }))
+    );
 
     const created = await IncidentGlobal.create({
       type,
@@ -279,7 +322,11 @@ export async function createIncident(req, res) {
 
     const item = normalizeIncidentOutput(created.toObject());
 
-    return res.status(201).json({ ok: true, item });
+    return res.status(201).json({
+      ok: true,
+      item,
+      debugCreateIncidentVersion: "INLINE_DATAURL_V3",
+    });
   } catch (err) {
     console.error("[incidentes-global] createIncident:", err);
     return res.status(500).json({
@@ -298,7 +345,10 @@ export async function updateIncident(req, res) {
 
     const current = await IncidentGlobal.findById(id);
     if (!current) {
-      return res.status(404).json({ ok: false, error: "Incidente no encontrado" });
+      return res.status(404).json({
+        ok: false,
+        error: "Incidente no encontrado",
+      });
     }
 
     let nextEvidences = Array.isArray(current.evidences) ? [...current.evidences] : [];
@@ -312,17 +362,18 @@ export async function updateIncident(req, res) {
     if (hasNormalizedEvidences || hasLegacyArrays) {
       nextEvidences = [];
 
-      // compat legacy
       appendLegacyBase64Evidence(body, nextEvidences);
-
-      // nuevo formato
       appendNormalizedInputEvidence(body.evidences, nextEvidences);
     }
 
     const updates = {
       ...(body.type != null ? { type: String(body.type).trim() } : {}),
-      ...(body.description != null ? { description: String(body.description).trim() } : {}),
-      ...(body.reportedBy != null ? { reportedBy: String(body.reportedBy).trim() } : {}),
+      ...(body.description != null
+        ? { description: String(body.description).trim() }
+        : {}),
+      ...(body.reportedBy != null
+        ? { reportedBy: String(body.reportedBy).trim() }
+        : {}),
       ...(body.zone != null ? { zone: String(body.zone).trim() || "N/A" } : {}),
       ...(body.priority != null ? { priority: String(body.priority).trim() } : {}),
       ...(body.status != null ? { status: String(body.status).trim() } : {}),
@@ -340,10 +391,17 @@ export async function updateIncident(req, res) {
       new: true,
     }).lean();
 
-    return res.json({ ok: true, item: normalizeIncidentOutput(updated) });
+    return res.json({
+      ok: true,
+      item: normalizeIncidentOutput(updated),
+      debugUpdateIncidentVersion: "INLINE_DATAURL_V3",
+    });
   } catch (err) {
     console.error("[incidentes-global] updateIncident:", err);
-    return res.status(500).json({ ok: false, error: "Error actualizando incidente" });
+    return res.status(500).json({
+      ok: false,
+      error: "Error actualizando incidente",
+    });
   }
 }
 
@@ -354,7 +412,10 @@ export async function deleteIncident(req, res) {
 
     const deleted = await IncidentGlobal.findByIdAndDelete(id).lean();
     if (!deleted) {
-      return res.status(404).json({ ok: false, error: "Incidente no encontrado" });
+      return res.status(404).json({
+        ok: false,
+        error: "Incidente no encontrado",
+      });
     }
 
     const allFiles = Array.isArray(deleted.evidences)
@@ -364,17 +425,32 @@ export async function deleteIncident(req, res) {
     for (const rel of allFiles) {
       try {
         if (typeof rel !== "string") continue;
+        if (!isUploadsIncidentUrl(rel)) continue;
+
         const clean = rel.replace(/^\//, "");
         const abs = path.resolve(process.cwd(), clean);
-        if (abs.startsWith(uploadDir) && fs.existsSync(abs)) fs.unlinkSync(abs);
+
+        if (abs.startsWith(uploadDir) && fs.existsSync(abs)) {
+          fs.unlinkSync(abs);
+        }
       } catch (e) {
-        console.warn("[incidentes-global] error borrando archivo:", e?.message || e);
+        console.warn(
+          "[incidentes-global] error borrando archivo:",
+          e?.message || e
+        );
       }
     }
 
-    return res.json({ ok: true, id });
+    return res.json({
+      ok: true,
+      id,
+      debugDeleteIncidentVersion: "INLINE_DATAURL_V3",
+    });
   } catch (err) {
     console.error("[incidentes-global] deleteIncident:", err);
-    return res.status(500).json({ ok: false, error: "Error eliminando incidente" });
+    return res.status(500).json({
+      ok: false,
+      error: "Error eliminando incidente",
+    });
   }
 }

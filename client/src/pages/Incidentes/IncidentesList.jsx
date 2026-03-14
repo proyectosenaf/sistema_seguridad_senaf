@@ -1,4 +1,3 @@
-// client/src/modules/incidentes/IncidentesList.jsx
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
 
@@ -28,12 +27,22 @@ function guardLabel(g) {
 // - si viene "/uploads/..." -> lo pega al host
 // - si ya viene "http..." -> devuelve igual
 function toAbsoluteMediaUrl(src, apiHost) {
-  const s = String(src || "");
+  const s = String(src || "").trim();
   if (!s) return "";
+
   if (s.startsWith("data:")) return s;
-  if (s.startsWith("http://") || s.startsWith("https://")) return s;
-  if (s.startsWith("/")) return `${apiHost}${s}`;
-  return `${apiHost}/${s}`;
+  if (/^https?:\/\//i.test(s)) return s;
+
+  const host = String(apiHost || "").replace(/\/$/, "");
+  if (!host) return s;
+
+  try {
+    if (s.startsWith("/")) return new URL(s, host).toString();
+    return new URL(`/${s.replace(/^\/+/, "")}`, host).toString();
+  } catch (_) {
+    if (s.startsWith("/")) return `${host}${s}`;
+    return `${host}/${s.replace(/^\/+/, "")}`;
+  }
 }
 
 // intenta deducir extensión por mime o por url
@@ -50,6 +59,7 @@ function guessExtFromSrc(src, fallback = "bin") {
       "image/gif": "gif",
       "video/webm": "webm",
       "video/mp4": "mp4",
+      "video/ogg": "ogv",
       "audio/webm": "webm",
       "audio/mpeg": "mp3",
       "audio/mp3": "mp3",
@@ -64,6 +74,7 @@ function guessExtFromSrc(src, fallback = "bin") {
     const ext = clean.split(".").pop();
     if (ext && ext.length <= 6 && ext !== clean) return ext;
   } catch (_) {}
+
   return fallback;
 }
 
@@ -71,20 +82,24 @@ function dataUrlToBlob(dataUrl) {
   const [meta, b64] = String(dataUrl).split(",");
   const mime =
     meta?.match(/^data:([^;]+);base64$/)?.[1] || "application/octet-stream";
+
   const bin = atob(b64 || "");
   const len = bin.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+
   return new Blob([bytes], { type: mime });
 }
 
 // descarga:
 // - si es dataURL -> convierte a Blob y baja
-// - si es URL http/https -> usa <a download> y abre en nueva pestaña si el server no manda headers
+// - si es URL http/https -> intenta por fetch/blob
 async function downloadMedia({ url, rawSrc, filename }) {
   try {
     const src = String(rawSrc || url || "");
     const name = filename || `evidencia_${Date.now()}`;
+
+    if (!src) throw new Error("Fuente vacía");
 
     // Caso 1: dataURL/base64
     if (src.startsWith("data:")) {
@@ -103,8 +118,8 @@ async function downloadMedia({ url, rawSrc, filename }) {
     }
 
     // Caso 2: archivo servido por backend
-    const fileUrl = url || src;
-    const res = await fetch(fileUrl);
+    const fileUrl = String(url || src);
+    const res = await fetch(fileUrl, { cache: "no-store" });
     if (!res.ok) {
       throw new Error(`No se pudo descargar el archivo (${res.status})`);
     }
@@ -124,6 +139,70 @@ async function downloadMedia({ url, rawSrc, filename }) {
     console.warn("downloadMedia error:", e);
     alert("No se pudo descargar el archivo.");
   }
+}
+
+function openMediaInNewTab(src, url) {
+  const raw = String(src || url || "");
+  const finalUrl = String(url || src || "");
+
+  if (!raw) return;
+
+  // dataURL: abrir una página temporal para que no falle window.open
+  if (raw.startsWith("data:")) {
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) return;
+
+    const isImage = raw.startsWith("data:image/");
+    const isVideo = raw.startsWith("data:video/");
+    const isAudio = raw.startsWith("data:audio/");
+
+    if (isImage) {
+      w.document.write(`
+        <!doctype html>
+        <html>
+          <head><title>Evidencia</title></head>
+          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+            <img src="${raw}" style="max-width:100%;max-height:100vh;object-fit:contain;" />
+          </body>
+        </html>
+      `);
+      w.document.close();
+      return;
+    }
+
+    if (isVideo) {
+      w.document.write(`
+        <!doctype html>
+        <html>
+          <head><title>Evidencia</title></head>
+          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+            <video src="${raw}" controls autoplay style="max-width:100%;max-height:100vh;"></video>
+          </body>
+        </html>
+      `);
+      w.document.close();
+      return;
+    }
+
+    if (isAudio) {
+      w.document.write(`
+        <!doctype html>
+        <html>
+          <head><title>Evidencia</title></head>
+          <body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+            <audio src="${raw}" controls autoplay style="width:min(900px,95vw);"></audio>
+          </body>
+        </html>
+      `);
+      w.document.close();
+      return;
+    }
+
+    w.location.href = raw;
+    return;
+  }
+
+  window.open(finalUrl, "_blank", "noopener,noreferrer");
 }
 
 function safeLower(v) {
@@ -173,12 +252,16 @@ function normalizeIncidentMedia(inc) {
     return inc.evidences
       .filter(Boolean)
       .map((ev) => {
-        const src = ev?.url || ev?.src || ev?.base64 || "";
+        // ✅ PRIORIDAD CORREGIDA:
+        // base64 primero, luego src, luego url
+        // Así si la URL remota falla en producción, aún se mostrará la evidencia.
+        const src = ev?.base64 || ev?.src || ev?.url || "";
         if (!src) return null;
+
         return {
           type: mediaTypeFromEvidenceKind(ev?.kind),
           src,
-          url: src,
+          url: ev?.url || ev?.src || ev?.base64 || "",
           originalName: ev?.originalName || "",
           mimeType: ev?.mimeType || "",
           size: Number(ev?.size || 0),
@@ -449,7 +532,6 @@ export default function IncidentesList() {
 
   const [showForm, setShowForm] = useState(false);
 
-  // form inline (crear / editar)
   const [form, setForm] = useState({
     type: "Acceso no autorizado",
     description: "",
@@ -460,7 +542,6 @@ export default function IncidentesList() {
     status: "abierto",
   });
 
-  // media = [{ type: "image" | "video" | "audio", src }]
   const [media, setMedia] = useState([]);
   const [showCamera, setShowCamera] = useState(false);
   const [showVideoRecorder, setShowVideoRecorder] = useState(false);
@@ -469,23 +550,20 @@ export default function IncidentesList() {
   const fileInputRef = useRef(null);
   const [editingId, setEditingId] = useState(null);
 
-  // ========= API_HOST (solo host, sin /api/...) =========
   const API_HOST = useMemo(() => {
     const raw = String(API || "").trim();
     if (!raw) return "";
     const idx = raw.indexOf("/api");
-    return idx >= 0 ? raw.slice(0, idx) : raw.replace(/\/$/, "");
+    return idx >= 0 ? raw.slice(0, idx).replace(/\/$/, "") : raw.replace(/\/$/, "");
   }, []);
 
-  // 👇 catálogo de guardias (IAM)
   const [guards, setGuards] = useState([]);
 
-  // ======= filtros (UI) =======
   const [q, setQ] = useState("");
-  const [fStatus, setFStatus] = useState("all"); // abierto | en_proceso | resuelto | all
-  const [fPriority, setFPriority] = useState("all"); // alta | media | baja | all
-  const [dateFrom, setDateFrom] = useState(""); // YYYY-MM-DD
-  const [dateTo, setDateTo] = useState(""); // YYYY-MM-DD
+  const [fStatus, setFStatus] = useState("all");
+  const [fPriority, setFPriority] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   function clearFilters() {
     setQ("");
@@ -495,17 +573,22 @@ export default function IncidentesList() {
     setDateTo("");
   }
 
-  // ======= modal evidencias (galería + viewer grande) =======
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const [evidenceItems, setEvidenceItems] = useState([]); // [{type, src, url}]
+  const [evidenceItems, setEvidenceItems] = useState([]);
   const [evidenceTitle, setEvidenceTitle] = useState("");
   const [activeEvidenceIdx, setActiveEvidenceIdx] = useState(0);
 
   function openEvidence(inc) {
-    const items = normalizeIncidentMedia(inc).map((item) => ({
-      ...item,
-      url: toAbsoluteMediaUrl(item.src, API_HOST),
-    }));
+    const items = normalizeIncidentMedia(inc).map((item) => {
+      const finalUrl = item.src?.startsWith("data:")
+        ? item.src
+        : toAbsoluteMediaUrl(item.url || item.src, API_HOST);
+
+      return {
+        ...item,
+        url: finalUrl,
+      };
+    });
 
     setEvidenceItems(items);
     setEvidenceTitle(`${inc?.type || "Incidente"} — ${inc?._id || ""}`);
@@ -523,6 +606,7 @@ export default function IncidentesList() {
   function nextEvidence() {
     setActiveEvidenceIdx((prev) => Math.min(prev + 1, evidenceItems.length - 1));
   }
+
   function prevEvidence() {
     setActiveEvidenceIdx((prev) => Math.max(prev - 1, 0));
   }
@@ -591,7 +675,6 @@ export default function IncidentesList() {
     setStats({ abiertos, enProceso, resueltos, alta });
   }
 
-  // ───────── cargar incidentes ─────────
   useEffect(() => {
     (async () => {
       try {
@@ -611,7 +694,6 @@ export default function IncidentesList() {
     })();
   }, []);
 
-  // ───────── cargar guardias desde IAM (SIN Auth0) ─────────
   useEffect(() => {
     let mounted = true;
 
@@ -619,7 +701,6 @@ export default function IncidentesList() {
       try {
         let items = [];
 
-        // ✅ Preferir endpoint dedicado (backend decide quién es guardia)
         if (typeof iamApi.listGuards === "function") {
           const r = await iamApi.listGuards("", true, undefined);
           items = r.items || r.guards || r.users || [];
@@ -764,7 +845,6 @@ export default function IncidentesList() {
       );
       const label = guard ? guardLabel(guard) : form.reportedBy;
 
-      // ✅ Solo formato normalizado para evitar duplicados
       const evidences = media.map((m) => ({
         kind:
           m.type === "image" ? "photo" : m.type === "video" ? "video" : "audio",
@@ -878,9 +958,6 @@ export default function IncidentesList() {
     }
   };
 
-  /* =========================
-     Filtro completo + fecha
-  ========================== */
   const filtered = useMemo(() => {
     const text = safeLower(q);
 
@@ -915,9 +992,6 @@ export default function IncidentesList() {
     });
   }, [incidentes, q, fStatus, fPriority, dateFrom, dateTo]);
 
-  /* =========================
-     Exportadores (lo filtrado)
-  ========================== */
   const handleExportPDF = () => {
     if (!filtered.length) return alert("No hay incidentes (filtrados) para exportar.");
 
@@ -1044,7 +1118,6 @@ export default function IncidentesList() {
               </select>
             </div>
 
-            {/* ✅ Descripción + dictado (INLINE) */}
             <div>
               <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
                 <label className={UI.label} style={{ color: "var(--text-muted)", marginBottom: 0 }}>
@@ -1062,11 +1135,7 @@ export default function IncidentesList() {
                         type="button"
                         onClick={sttListening ? stopAndInsert : sttStart}
                         className={UI.btnSm}
-                        style={
-                          sttListening
-                            ? sxDangerBtn()
-                            : sxGhostBtn()
-                        }
+                        style={sttListening ? sxDangerBtn() : sxGhostBtn()}
                         title="Iniciar / detener dictado"
                       >
                         {sttListening ? "⏹ Detener" : "🎙 Grabar"}
@@ -1347,7 +1416,6 @@ export default function IncidentesList() {
         </div>
       )}
 
-      {/* ----- stats ----- */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <KpiCard
           title="Incidentes Abiertos"
@@ -1375,7 +1443,6 @@ export default function IncidentesList() {
         />
       </div>
 
-      {/* ----- tabla ----- */}
       <div className={UI.section} style={sxCard()}>
         <div className={UI.sectionHeader} style={sxSectionBar()}>
           <div>
@@ -1648,7 +1715,6 @@ export default function IncidentesList() {
         </Link>
       </div>
 
-      {/* ===== Modal evidencias: Viewer grande + miniaturas + descargar ===== */}
       {evidenceOpen && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center p-4"
@@ -1662,7 +1728,6 @@ export default function IncidentesList() {
             })}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* header */}
             <div
               className="p-4 flex items-center justify-between gap-3 border-b"
               style={{ borderColor: "var(--border)" }}
@@ -1718,9 +1783,7 @@ export default function IncidentesList() {
               </div>
             </div>
 
-            {/* content */}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-0">
-              {/* viewer grande */}
               <div className="p-4">
                 {!activeEvidence ? (
                   <div className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -1738,7 +1801,7 @@ export default function IncidentesList() {
                         <button
                           type="button"
                           onClick={() =>
-                            window.open(activeEvidence.url, "_blank", "noreferrer")
+                            openMediaInNewTab(activeEvidence.src, activeEvidence.url)
                           }
                           className={UI.btnSm}
                           style={sxGhostBtn()}
@@ -1802,7 +1865,6 @@ export default function IncidentesList() {
                 )}
               </div>
 
-              {/* sidebar miniaturas */}
               <div
                 className="p-3 border-l"
                 style={{
