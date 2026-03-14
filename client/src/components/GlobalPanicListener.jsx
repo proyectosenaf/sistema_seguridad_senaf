@@ -12,6 +12,7 @@ function toArray(v) {
 
 function normalizeRoleName(role) {
   if (!role) return "";
+
   if (typeof role === "string") return role.trim().toLowerCase();
 
   if (typeof role === "object") {
@@ -60,6 +61,7 @@ function resolvePrincipal(user) {
 
 function getRolesFromUser(user) {
   const u = resolvePrincipal(user) || {};
+
   const roles = [
     ...toArray(u?.roles),
     ...toArray(u?.role),
@@ -73,6 +75,7 @@ function getRolesFromUser(user) {
 
 function isVisitorUser(user) {
   const roles = getRolesFromUser(user);
+
   if (
     roles.some((r) =>
       ["visitante", "visitantes", "visita", "visitor", "visitors"].includes(r)
@@ -82,11 +85,50 @@ function isVisitorUser(user) {
   }
 
   try {
-    const hint = String(localStorage.getItem("senaf_is_visitor") || "").trim().toLowerCase();
+    const hint = String(localStorage.getItem("senaf_is_visitor") || "")
+      .trim()
+      .toLowerCase();
     return hint === "1" || hint === "true" || hint === "yes";
   } catch {
     return false;
   }
+}
+
+function normalizeRemotePayload(payload = {}) {
+  // Compatibilidad con:
+  // - panic:new
+  // - alerta:nueva
+  // - rondasqr:alert { kind, item }
+  // - notify payload con meta/item
+  const item = payload?.item && typeof payload.item === "object" ? payload.item : null;
+  const meta = payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
+
+  return {
+    title:
+      payload?.title ||
+      (payload?.kind === "panic" ? "🚨 Alerta de pánico" : null) ||
+      (item?.type === "panic" ? "🚨 Alerta de pánico" : null) ||
+      "ALERTA",
+    body:
+      payload?.body ||
+      payload?.message ||
+      item?.text ||
+      meta?.body ||
+      (payload?.kind === "panic" ? "Se activó el botón de pánico" : "") ||
+      "",
+    source:
+      payload?.source ||
+      payload?.kind ||
+      item?.type ||
+      "socket",
+    at:
+      payload?.ts ||
+      item?.at ||
+      Date.now(),
+    raw: payload,
+    item,
+    meta,
+  };
 }
 
 export default function GlobalPanicListener() {
@@ -104,12 +146,14 @@ export default function GlobalPanicListener() {
     "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
 
   const triggerAlert = useCallback((payload = {}, opts = {}) => {
+    const normalized = normalizeRemotePayload(payload);
+
     setHasAlert(true);
     setAlertMeta({
-      title: payload?.title || "ALERTA",
-      body: payload?.body || payload?.message || "",
-      at: new Date().toLocaleTimeString(),
-      source: payload?.source || opts?.source || "panic",
+      title: normalized.title || "ALERTA",
+      body: normalized.body || "",
+      at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
+      source: opts?.source || normalized.source || "panic",
     });
 
     try {
@@ -129,17 +173,30 @@ export default function GlobalPanicListener() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const payload = {
+    const joinPayload = {
       userId: principal?._id || principal?.id || principal?.sub || "",
       email: principal?.email || "",
       roles: principal?.roles || principal?.role || principal?.rol || [],
     };
 
-    try {
-      socket.emit("presence:join", payload);
-    } catch (e) {
-      console.warn("[GlobalPanicListener] presence:join error:", e?.message || e);
-    }
+    const doPresenceJoin = () => {
+      try {
+        socket.emit("presence:join", joinPayload);
+        console.log("[GlobalPanicListener] presence:join", joinPayload);
+      } catch (e) {
+        console.warn("[GlobalPanicListener] presence:join error:", e?.message || e);
+      }
+    };
+
+    // registrar de inmediato
+    doPresenceJoin();
+
+    // y volver a registrar al reconectar
+    socket.on("connect", doPresenceJoin);
+
+    return () => {
+      socket.off("connect", doPresenceJoin);
+    };
   }, [
     isAuthenticated,
     principal?._id,
@@ -155,6 +212,8 @@ export default function GlobalPanicListener() {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
       if (visitor) return;
+
+      console.log("[GlobalPanicListener] local panic", payload);
       triggerAlert(payload, { local: true, source: "local-bus" });
     });
 
@@ -167,22 +226,30 @@ export default function GlobalPanicListener() {
     if (!isAuthenticated) return;
 
     function onRemotePanic(payload = {}) {
+      console.log("[GlobalPanicListener] remote panic event", payload);
+
       if (visitor) return;
 
       const now = Date.now();
       if (now < suppressRemoteUntilRef.current) {
+        console.log("[GlobalPanicListener] remote panic suppressed (local already fired)");
         return;
       }
 
       triggerAlert(payload, { local: false, source: "socket" });
     }
 
+    // ✅ eventos nuevos
     socket.on("panic:new", onRemotePanic);
     socket.on("alerta:nueva", onRemotePanic);
+
+    // ✅ compatibilidad legacy
+    socket.on("rondasqr:alert", onRemotePanic);
 
     return () => {
       socket.off("panic:new", onRemotePanic);
       socket.off("alerta:nueva", onRemotePanic);
+      socket.off("rondasqr:alert", onRemotePanic);
     };
   }, [isAuthenticated, visitor, triggerAlert]);
 

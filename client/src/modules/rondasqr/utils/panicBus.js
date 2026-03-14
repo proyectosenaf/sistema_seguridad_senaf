@@ -1,5 +1,8 @@
 // src/modules/rondasqr/utils/panicBus.js
 
+const PANIC_EVENT = "rondasqr:panic";
+const PANIC_CHANNEL = "rondasqr-panic";
+
 /**
  * Dispara un evento local de pánico.
  * Se propaga a todas las pestañas/componentes abiertos.
@@ -8,20 +11,20 @@
 export function emitLocalPanic(payload = {}) {
   if (typeof window === "undefined") return;
 
-  const event = new CustomEvent("rondasqr:panic", {
-    detail: {
-      at: Date.now(),
-      source: "unknown",
-      ...payload,
-    },
-  });
+  const detail = {
+    at: Date.now(),
+    source: "unknown",
+    ...payload,
+  };
 
   try {
+    const event = new CustomEvent(PANIC_EVENT, { detail });
     window.dispatchEvent(event);
+
     // BroadcastChannel permite notificar a otras pestañas
     if (typeof BroadcastChannel !== "undefined") {
-      const ch = new BroadcastChannel("rondasqr-panic");
-      ch.postMessage(event.detail);
+      const ch = new BroadcastChannel(PANIC_CHANNEL);
+      ch.postMessage(detail);
       ch.close();
     }
   } catch (err) {
@@ -34,22 +37,38 @@ export function emitLocalPanic(payload = {}) {
  * Retorna una función para cancelar la suscripción.
  */
 export function subscribeLocalPanic(handler) {
-  if (typeof window === "undefined") return () => {};
+  if (typeof window === "undefined" || typeof handler !== "function") {
+    return () => {};
+  }
 
-  const fn = (ev) => handler(ev.detail || {});
+  const onWindowPanic = (ev) => {
+    try {
+      handler(ev?.detail || {});
+    } catch (err) {
+      console.error("[panicBus] handler local error:", err);
+    }
+  };
 
-  // 🔊 Eventos dentro de la misma pestaña
-  window.addEventListener("rondasqr:panic", fn);
+  window.addEventListener(PANIC_EVENT, onWindowPanic);
 
-  // 📢 Eventos entre pestañas (opcional, mejora UX)
   let ch = null;
   if (typeof BroadcastChannel !== "undefined") {
-    ch = new BroadcastChannel("rondasqr-panic");
-    ch.onmessage = (msg) => handler(msg.data || {});
+    ch = new BroadcastChannel(PANIC_CHANNEL);
+    ch.onmessage = (msg) => {
+      try {
+        handler(msg?.data || {});
+      } catch (err) {
+        console.error("[panicBus] handler channel error:", err);
+      }
+    };
   }
 
   return () => {
-    window.removeEventListener("rondasqr:panic", fn);
-    if (ch) ch.close();
+    window.removeEventListener(PANIC_EVENT, onWindowPanic);
+    if (ch) {
+      try {
+        ch.close();
+      } catch {}
+    }
   };
 }
