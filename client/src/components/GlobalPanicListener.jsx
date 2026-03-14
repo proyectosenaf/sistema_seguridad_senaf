@@ -95,11 +95,6 @@ function isVisitorUser(user) {
 }
 
 function normalizeRemotePayload(payload = {}) {
-  // Compatibilidad con:
-  // - panic:new
-  // - alerta:nueva
-  // - rondasqr:alert { kind, item }
-  // - notify payload con meta/item
   const item = payload?.item && typeof payload.item === "object" ? payload.item : null;
   const meta = payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
 
@@ -116,15 +111,8 @@ function normalizeRemotePayload(payload = {}) {
       meta?.body ||
       (payload?.kind === "panic" ? "Se activó el botón de pánico" : "") ||
       "",
-    source:
-      payload?.source ||
-      payload?.kind ||
-      item?.type ||
-      "socket",
-    at:
-      payload?.ts ||
-      item?.at ||
-      Date.now(),
+    source: payload?.source || payload?.kind || item?.type || "socket",
+    at: payload?.ts || item?.at || Date.now(),
     raw: payload,
     item,
     meta,
@@ -141,34 +129,91 @@ export default function GlobalPanicListener() {
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
   const suppressRemoteUntilRef = useRef(0);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   const BEEP_SRC =
     "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
 
-  const triggerAlert = useCallback((payload = {}, opts = {}) => {
-    const normalized = normalizeRemotePayload(payload);
-
-    setHasAlert(true);
-    setAlertMeta({
-      title: normalized.title || "ALERTA",
-      body: normalized.body || "",
-      at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
-      source: opts?.source || normalized.source || "panic",
-    });
-
+  const unlockAudio = useCallback(async () => {
     try {
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => {});
-      }
-    } catch {
-      // ignore
-    }
+      const el = audioRef.current;
+      if (!el) return;
 
-    if (opts?.local === true) {
-      suppressRemoteUntilRef.current = Date.now() + 4000;
+      el.muted = true;
+      el.currentTime = 0;
+
+      const p = el.play();
+      if (p && typeof p.then === "function") {
+        await p;
+      }
+
+      el.pause();
+      el.currentTime = 0;
+      el.muted = false;
+
+      setAudioUnlocked(true);
+      console.log("[GlobalPanicListener] audio unlocked");
+    } catch (e) {
+      console.warn("[GlobalPanicListener] audio unlock blocked:", e?.message || e);
     }
   }, []);
+
+  const playBeep = useCallback(async () => {
+    try {
+      const el = audioRef.current;
+      if (!el) return;
+
+      el.muted = false;
+      el.currentTime = 0;
+
+      const p = el.play();
+      if (p && typeof p.then === "function") {
+        await p;
+      }
+    } catch (e) {
+      console.warn("[GlobalPanicListener] audio play blocked:", e?.message || e);
+    }
+  }, []);
+
+  const triggerAlert = useCallback(
+    async (payload = {}, opts = {}) => {
+      const normalized = normalizeRemotePayload(payload);
+
+      setHasAlert(true);
+      setAlertMeta({
+        title: normalized.title || "ALERTA",
+        body: normalized.body || "",
+        at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
+        source: opts?.source || normalized.source || "panic",
+      });
+
+      await playBeep();
+
+      if (opts?.local === true) {
+        suppressRemoteUntilRef.current = Date.now() + 4000;
+      }
+    },
+    [playBeep]
+  );
+
+  // ✅ desbloquea audio con la primera interacción real del usuario
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const onceUnlock = () => {
+      unlockAudio().catch(() => {});
+    };
+
+    window.addEventListener("pointerdown", onceUnlock, { once: true });
+    window.addEventListener("keydown", onceUnlock, { once: true });
+    window.addEventListener("touchstart", onceUnlock, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", onceUnlock);
+      window.removeEventListener("keydown", onceUnlock);
+      window.removeEventListener("touchstart", onceUnlock);
+    };
+  }, [isAuthenticated, unlockAudio]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -188,10 +233,7 @@ export default function GlobalPanicListener() {
       }
     };
 
-    // registrar de inmediato
     doPresenceJoin();
-
-    // y volver a registrar al reconectar
     socket.on("connect", doPresenceJoin);
 
     return () => {
@@ -239,11 +281,8 @@ export default function GlobalPanicListener() {
       triggerAlert(payload, { local: false, source: "socket" });
     }
 
-    // ✅ eventos nuevos
     socket.on("panic:new", onRemotePanic);
     socket.on("alerta:nueva", onRemotePanic);
-
-    // ✅ compatibilidad legacy
     socket.on("rondasqr:alert", onRemotePanic);
 
     return () => {
@@ -257,12 +296,17 @@ export default function GlobalPanicListener() {
 
   return (
     <>
-      <audio ref={audioRef} src={BEEP_SRC} preload="auto" />
+      <audio ref={audioRef} src={BEEP_SRC} preload="auto" playsInline />
 
       {hasAlert && !visitor && (
         <button
           type="button"
-          onClick={() => setHasAlert(false)}
+          onClick={async () => {
+            if (!audioUnlocked) {
+              await unlockAudio();
+            }
+            setHasAlert(false);
+          }}
           className="fixed top-4 right-4 z-[9999] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white text-[10px] font-bold animate-pulse shadow-lg"
           title={
             alertMeta?.body
