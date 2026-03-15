@@ -17,12 +17,37 @@ const ROOT = (
 const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
 const CITAS_API_URL = `${ROOT}/citas`;
 
+const QR_PREFIX = "SENAF_CITA_QR::";
+
 function normalizeEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
 function normalizeDoc(v) {
   return String(v || "").replace(/\D/g, "");
+}
+
+function formatDni(v) {
+  const digits = normalizeDoc(v).slice(0, 13);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
+}
+
+function encodeBase64Utf8(value) {
+  try {
+    return btoa(unescape(encodeURIComponent(String(value || ""))));
+  } catch {
+    return "";
+  }
+}
+
+function decodeBase64Utf8(value) {
+  try {
+    return decodeURIComponent(escape(atob(String(value || ""))));
+  } catch {
+    return "";
+  }
 }
 
 function resolveAuthPrincipal(auth) {
@@ -267,7 +292,7 @@ const CITA_STORAGE_KEY = "citas_demo";
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada";
+  if (value === "autorizada") return "autorizada";
   return value;
 }
 
@@ -328,8 +353,71 @@ function stripDiacritics(str) {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+function buildQrPayloadForCita(cita) {
+  if (!cita) return null;
+
+  const citaAt =
+    cita?.citaAt instanceof Date && !isNaN(cita.citaAt.getTime())
+      ? cita.citaAt
+      : cita?.fecha && cita?.hora
+      ? new Date(`${cita.fecha}T${cita.hora}:00`)
+      : null;
+
+  return {
+    type: "senaf.cita.autorizada",
+    version: 1,
+    citaId: cita._id || cita.id || null,
+    estado: cita.estado || "autorizada",
+    autorizadoAt: cita.autorizadoAt || new Date().toISOString(),
+    visitante: {
+      nombre: cita.nombre || cita.visitante || "",
+      documento: formatDni(cita.documento || cita.document || cita.dni || ""),
+      empresa: cita.empresa || "",
+      telefono: cita.telefono || "",
+      correo: cita.correo || cita.email || "",
+      acompanado: !!cita.acompanado,
+    },
+    visita: {
+      tipo:
+        cita.tipoCita === "profesional"
+          ? "Profesional"
+          : cita.tipoCita === "personal"
+          ? "Personal"
+          : cita.empresa
+          ? "Profesional"
+          : "Personal",
+      empleado: cita.empleado || "",
+      motivo: cita.motivo || "",
+      fecha: citaAt
+        ? citaAt.toLocaleDateString("es-ES", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          })
+        : cita.fecha || "",
+      hora: citaAt
+        ? citaAt.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : cita.hora || "",
+      citaAtIso: citaAt?.toISOString?.() || null,
+    },
+    vehiculo: cita.vehiculo ||
+      cita.vehicle || {
+        brand: cita.vehicleBrand || "",
+        model: cita.vehicleModel || "",
+        plate: cita.vehiclePlate || "",
+      },
+  };
+}
+
 function buildQrValueForCita(cita) {
-  if (!cita) return "";
+  const payload = buildQrPayloadForCita(cita);
+  if (!payload) return "";
+
+  const encoded = encodeBase64Utf8(JSON.stringify(payload));
+  if (encoded) return `${QR_PREFIX}${encoded}`;
 
   const nombre = cita.nombre || cita.visitante || "Visitante";
   const documento = cita.documento || "No especificado";
@@ -371,6 +459,19 @@ function buildQrValueForCita(cita) {
   ].join("\n");
 
   return stripDiacritics(text);
+}
+
+function enrichCitaWithQr(cita) {
+  if (!cita) return cita;
+  const qrPayload = buildQrPayloadForCita(cita);
+  const qrValue = buildQrValueForCita(cita);
+  return {
+    ...cita,
+    qrPayload,
+    qrValue,
+    autorizadoAt:
+      cita.autorizadoAt || (cita.estado === "autorizada" ? new Date().toISOString() : null),
+  };
 }
 
 export default function VisitsPage() {
@@ -432,7 +533,11 @@ export default function VisitsPage() {
         } else if (c.fecha && c.hora) {
           citaAt = new Date(`${c.fecha}T${c.hora}:00`);
         }
-        return { ...c, _id: baseId, id: baseId, citaAt };
+
+        const normalized = { ...c, _id: baseId, id: baseId, citaAt };
+        return normalized.estado === "autorizada"
+          ? enrichCitaWithQr(normalized)
+          : normalized;
       });
     } catch (e) {
       console.warn("[citas] no se pudo leer de localStorage:", e);
@@ -490,7 +595,8 @@ export default function VisitsPage() {
       : visitors;
 
     return base.filter((v) => {
-      const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
+      const full =
+        `${v.name} ${v.document} ${v.company} ${v.vehiclePlate} ${v.reason || ""}`.toLowerCase();
 
       const matchesSearch =
         !hasSearch || !hasMinSearch ? true : full.includes(normalizedSearch);
@@ -577,6 +683,9 @@ export default function VisitsPage() {
           telefono: formData.phone?.trim() || null,
           correo: formData.email?.trim() || null,
           kind: formData.visitType || editingVisitor.kind || "Presencial",
+          acompanado: !!formData.acompanado,
+          citaId: formData.citaId || null,
+          qrSource: formData.qrSource || null,
           vehicle:
             vehicleBrand || vehicleModel || vehiclePlate
               ? {
@@ -615,9 +724,13 @@ export default function VisitsPage() {
                 document: formData.document?.trim(),
                 company: formData.company?.trim() || "—",
                 employee: formData.employee?.trim() || "—",
+                reason: formData.reason?.trim() || "",
                 phone: formData.phone?.trim() || "",
                 email: formData.email?.trim() || "",
                 kind: formData.visitType || row.kind || "Presencial",
+                acompanado: !!formData.acompanado,
+                citaId: formData.citaId || row.citaId || null,
+                qrSource: formData.qrSource || row.qrSource || null,
                 vehicleBrand,
                 vehicleModel,
                 vehiclePlate,
@@ -657,6 +770,9 @@ export default function VisitsPage() {
         kind: formData.visitType || "Presencial",
         estado: "Dentro",
         entryAt: entryDate.toISOString(),
+        acompanado: !!formData.acompanado,
+        citaId: formData.citaId || null,
+        qrSource: formData.qrSource || null,
         vehicle:
           vehicleBrand || vehicleModel || vehiclePlate
             ? {
@@ -698,8 +814,12 @@ export default function VisitsPage() {
       document: formData.document?.trim(),
       company: formData.company?.trim() || "—",
       employee: formData.employee?.trim() || "—",
+      reason: formData.reason?.trim() || "",
       phone: formData.phone?.trim() || "",
       email: formData.email?.trim() || "",
+      acompanado: !!formData.acompanado,
+      citaId: formData.citaId || null,
+      qrSource: formData.qrSource || null,
       entry: fmtEntry,
       exit: "-",
       status: "Dentro",
@@ -758,21 +878,53 @@ export default function VisitsPage() {
     if (isVisitor) return;
     if (!citaId) return;
 
+    let citaActual = null;
+    let nextForStorage = [];
+
     setOnlineCitas((prev) => {
-      const next = prev.map((c) =>
-        c._id === citaId ? { ...c, estado: nuevoEstado } : c
-      );
+      const next = prev.map((c) => {
+        if (c._id !== citaId) return c;
+
+        citaActual = {
+          ...c,
+          estado: nuevoEstado,
+          autorizadoAt:
+            nuevoEstado === "autorizada"
+              ? c.autorizadoAt || new Date().toISOString()
+              : c.autorizadoAt || null,
+        };
+
+        return nuevoEstado === "autorizada"
+          ? enrichCitaWithQr(citaActual)
+          : citaActual;
+      });
+
+      nextForStorage = next;
       saveCitasToStorage(next);
       return next;
     });
 
+    if (nuevoEstado === "autorizada" && citaActual) {
+      setQrCita(enrichCitaWithQr(citaActual));
+    }
+
     try {
       const url = `${CITAS_API_URL}/${encodeURIComponent(citaId)}/estado`;
+
+      const citaToSend =
+        nuevoEstado === "autorizada" && citaActual
+          ? enrichCitaWithQr(citaActual)
+          : citaActual;
 
       const res = await fetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ estado: nuevoEstado }),
+        body: JSON.stringify({
+          estado: nuevoEstado,
+          qrValue: citaToSend?.qrValue || null,
+          qrPayload: citaToSend?.qrPayload || null,
+          autorizadoAt: citaToSend?.autorizadoAt || null,
+        }),
       });
 
       const data = await res.json().catch(() => null);
@@ -794,7 +946,9 @@ export default function VisitsPage() {
       DNI: v.document || "",
       Empresa: v.company || "",
       Empleado: v.employee || "",
+      Motivo: v.reason || "",
       Tipo: v.kind || "",
+      Acompanado: v.acompanado ? "Sí" : "No",
       VehiculoMarca: v.vehicleBrand || "",
       VehiculoModelo: v.vehicleModel || "",
       VehiculoPlaca: v.vehiclePlate || "",
@@ -879,7 +1033,9 @@ export default function VisitsPage() {
           ? "Profesional"
           : c.tipoCita === "personal"
           ? "Personal"
-          : "";
+          : c.empresa
+          ? "Profesional"
+          : "Personal";
 
       let fecha = "";
       let hora = "";
@@ -1205,7 +1361,12 @@ export default function VisitsPage() {
                         ? "Profesional"
                         : cita.tipoCita === "personal"
                         ? "Personal"
-                        : "—";
+                        : cita.empresa
+                        ? "Profesional"
+                        : "Personal";
+
+                    const citaWithQr =
+                      cita.estado === "autorizada" ? enrichCitaWithQr(cita) : cita;
 
                     return (
                       <tr
@@ -1251,7 +1412,7 @@ export default function VisitsPage() {
                             {cita.estado === "autorizada" && (
                               <button
                                 type="button"
-                                onClick={() => setQrCita(cita)}
+                                onClick={() => setQrCita(citaWithQr)}
                                 className="px-2 py-1 rounded-md text-xs font-semibold transition"
                                 style={sxGhostBtn()}
                               >
@@ -1279,7 +1440,7 @@ export default function VisitsPage() {
                                   className="px-2 py-1 rounded-md text-xs font-semibold transition"
                                   style={sxSuccessBtn()}
                                 >
-                                  Ingresar
+                                  Autorizar
                                 </button>
                                 <button
                                   type="button"
@@ -1508,6 +1669,7 @@ export default function VisitsPage() {
           onSubmit={handleAddVisitor}
           knownVisitors={visitors}
           editingVisitor={editingVisitor}
+          qrCitas={onlineCitas.filter((c) => c.estado === "autorizada")}
         />
       )}
 
@@ -1555,7 +1717,7 @@ export default function VisitsPage() {
                 style={sxCardSoft({ background: "#ffffff" })}
               >
                 <QRCodeSVG
-                  value={buildQrValueForCita(qrCita)}
+                  value={qrCita.qrValue || buildQrValueForCita(qrCita)}
                   size={200}
                   includeMargin
                 />

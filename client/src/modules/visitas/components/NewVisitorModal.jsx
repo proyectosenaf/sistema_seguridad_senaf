@@ -23,6 +23,8 @@ const EMP_MAX = 20;
 const REASON_MAX = 20;
 const EMAIL_MAX = 25;
 
+const QR_PREFIX = "SENAF_CITA_QR::";
+
 function sxCard(extra = {}) {
   return {
     background: "color-mix(in srgb, var(--card) 90%, transparent)",
@@ -64,6 +66,16 @@ function sxPrimaryBtn(extra = {}) {
   };
 }
 
+function sxSuccessBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #16a34a, #22c55e)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
 function normalizeCatalogArray(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.items)) return data.items;
@@ -81,13 +93,335 @@ function normalizeModelItem(item) {
   return item?.name || item?.label || item?.modelo || item?.value || "";
 }
 
+function normalizeDniDigits(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+
+function formatDni(v) {
+  const digits = normalizeDniDigits(v).slice(0, DNI_DIGITS);
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
+}
+
+function decodeBase64Utf8(value) {
+  try {
+    return decodeURIComponent(escape(atob(String(value || ""))));
+  } catch {
+    return "";
+  }
+}
+
+function parseLegacyQrText(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+
+  const extract = (label) => {
+    const re = new RegExp(`${label}:\\s*(.+)`, "i");
+    const match = text.match(re);
+    return match?.[1]?.trim?.() || "";
+  };
+
+  const nombre = extract("Visitante");
+  const documento = extract("Documento");
+  const empresa = extract("Empresa");
+  const empleado = extract("Visita a");
+  const motivo = extract("Motivo");
+  const fecha = extract("Fecha");
+  const hora = extract("Hora");
+  const estado = extract("Estado");
+
+  if (!nombre && !documento && !empleado) return null;
+
+  return {
+    type: "senaf.cita.legacy",
+    estado: estado?.toLowerCase?.() || "autorizada",
+    visitante: {
+      nombre,
+      documento,
+      empresa: empresa === "—" ? "" : empresa,
+    },
+    visita: {
+      empleado: empleado === "—" ? "" : empleado,
+      motivo: motivo === "—" ? "" : motivo,
+      fecha: fecha === "—" ? "" : fecha,
+      hora: hora === "—" ? "" : hora,
+      tipo: empresa && empresa !== "—" ? "Profesional" : "Personal",
+    },
+    vehiculo: null,
+  };
+}
+
+function parseQrPayload(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+
+  if (text.startsWith(QR_PREFIX)) {
+    const encoded = text.slice(QR_PREFIX.length);
+    const decoded = decodeBase64Utf8(encoded);
+    if (!decoded) return null;
+
+    try {
+      return JSON.parse(decoded);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const maybeJson = JSON.parse(text);
+    if (maybeJson && typeof maybeJson === "object") return maybeJson;
+  } catch {
+    // ignore
+  }
+
+  return parseLegacyQrText(text);
+}
+
+function ScannerModal({
+  open,
+  onClose,
+  onDetected,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const loopRef = useRef(null);
+  const detectorRef = useRef(null);
+
+  const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [supported, setSupported] = useState(true);
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+
+    async function start() {
+      setStarting(true);
+      setError("");
+
+      try {
+        if (
+          typeof window === "undefined" ||
+          typeof navigator === "undefined" ||
+          !navigator.mediaDevices?.getUserMedia
+        ) {
+          throw new Error("Tu navegador no permite acceso a cámara.");
+        }
+
+        if (typeof window.BarcodeDetector === "undefined") {
+          setSupported(false);
+          throw new Error(
+            "Este navegador no soporta escaneo nativo de QR con BarcodeDetector."
+          );
+        }
+
+        const formats = await window.BarcodeDetector.getSupportedFormats?.();
+        if (Array.isArray(formats) && !formats.includes("qr_code")) {
+          setSupported(false);
+          throw new Error("El detector nativo no soporta formato QR.");
+        }
+
+        detectorRef.current = new window.BarcodeDetector({
+          formats: ["qr_code"],
+        });
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+
+        loopRef.current = window.setInterval(async () => {
+          try {
+            if (!videoRef.current || !detectorRef.current) return;
+            if (videoRef.current.readyState < 2) return;
+
+            const codes = await detectorRef.current.detect(videoRef.current);
+            if (!codes || !codes.length) return;
+
+            const rawValue = codes[0]?.rawValue || "";
+            if (!rawValue) return;
+
+            stopScanner();
+            onDetected?.(rawValue);
+          } catch {
+            // silencioso
+          }
+        }, 450);
+      } catch (err) {
+        setError(err?.message || "No se pudo iniciar el escáner.");
+      } finally {
+        setStarting(false);
+      }
+    }
+
+    start();
+
+    return () => {
+      cancelled = true;
+      stopScanner();
+    };
+  }, [open, onDetected]);
+
+  function stopScanner() {
+    if (loopRef.current) {
+      window.clearInterval(loopRef.current);
+      loopRef.current = null;
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // ignore
+        }
+      });
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {
+        // ignore
+      }
+      videoRef.current.srcObject = null;
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+      style={{
+        background: "rgba(2, 6, 23, 0.72)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          stopScanner();
+          onClose?.();
+        }
+      }}
+    >
+      <div
+        className="w-full max-w-[560px] rounded-[24px] p-4 md:p-5"
+        style={sxCard()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3
+              className="text-lg font-semibold"
+              style={{ color: "var(--text)" }}
+            >
+              Escanear código QR
+            </h3>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              Coloca el QR de la cita frente a la cámara para autocompletar el formulario.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              stopScanner();
+              onClose?.();
+            }}
+            aria-label="Cerrar escáner"
+            style={{ color: "var(--text-muted)" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div
+          className="rounded-[18px] overflow-hidden border"
+          style={{
+            borderColor: "var(--border)",
+            background: "#020617",
+            minHeight: 300,
+          }}
+        >
+          <video
+            ref={videoRef}
+            className="w-full h-[320px] object-cover"
+            playsInline
+            muted
+            autoPlay
+          />
+        </div>
+
+        {starting && (
+          <p className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>
+            Iniciando cámara…
+          </p>
+        )}
+
+        {error && (
+          <div
+            className="mt-3 rounded-[14px] px-3 py-2 text-xs"
+            style={{
+              background: "color-mix(in srgb, #ef4444 12%, transparent)",
+              color: "#fca5a5",
+              border: "1px solid color-mix(in srgb, #ef4444 28%, transparent)",
+            }}
+          >
+            {error}
+            {!supported && (
+              <div className="mt-1">
+                Usa Chrome o Edge actualizado para escanear QR desde cámara.
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              stopScanner();
+              onClose?.();
+            }}
+            className="px-3 py-2 text-sm rounded-lg transition"
+            style={sxGhostBtn()}
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function NewVisitorModal({
   onClose,
   onSubmit,
   knownVisitors = [],
   editingVisitor = null,
+  qrCitas = [],
 }) {
   const allKnown = Array.isArray(knownVisitors) ? knownVisitors : [];
+  const allQrCitas = Array.isArray(qrCitas) ? qrCitas : [];
 
   const [name, setName] = useState("");
   const [document, setDocument] = useState("");
@@ -113,6 +447,8 @@ export default function NewVisitorModal({
   const [loadingModels, setLoadingModels] = useState(false);
 
   const [errors, setErrors] = useState({});
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [qrFillInfo, setQrFillInfo] = useState(null);
 
   const firstInputRef = useRef(null);
   const [autoFilledByName, setAutoFilledByName] = useState(false);
@@ -219,6 +555,14 @@ export default function NewVisitorModal({
     setEmail(editingVisitor.email || "");
     setVisitType(editingVisitor.visitType || editingVisitor.kind || "Personal");
     setAcompanado(!!editingVisitor.acompanado);
+    setQrFillInfo(
+      editingVisitor.citaId
+        ? {
+            citaId: editingVisitor.citaId,
+            qrSource: editingVisitor.qrSource || "edit",
+          }
+        : null
+    );
 
     const hasVeh =
       !!editingVisitor.vehiclePlate ||
@@ -255,7 +599,6 @@ export default function NewVisitorModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const normalizeDni = (str) => (str || "").replace(/\D/g, "");
   const normalizeName = (str) => (str || "").trim().toLowerCase();
 
   function autofillFromKnownVisitor(visitor) {
@@ -304,6 +647,90 @@ export default function NewVisitorModal({
     }));
   }
 
+  function applyQrPayload(payload, rawValue = "") {
+    if (!payload || typeof payload !== "object") {
+      alert("El QR no contiene un formato válido de cita.");
+      return;
+    }
+
+    const citaId = payload?.citaId || null;
+    const estado = String(payload?.estado || "").toLowerCase();
+
+    if (estado && !["autorizada", "autorizado", "ingresada"].includes(estado)) {
+      alert("Este QR no corresponde a una cita autorizada.");
+      return;
+    }
+
+    if (citaId && allQrCitas.length > 0) {
+      const match = allQrCitas.find(
+        (c) => String(c._id || c.id || "") === String(citaId)
+      );
+      if (!match) {
+        console.warn("[NewVisitorModal] cita del QR no encontrada en lista local:", citaId);
+      }
+    }
+
+    const visitante = payload.visitante || {};
+    const visita = payload.visita || {};
+    const vehiculo = payload.vehiculo || {};
+
+    const nombre = String(
+      visitante.nombre || payload.nombre || payload.visitante || ""
+    ).trim();
+
+    const documento = formatDni(
+      visitante.documento || payload.documento || payload.document || payload.dni || ""
+    );
+
+    const empresa = String(visitante.empresa || payload.empresa || "").trim();
+    const empleado = String(visita.empleado || payload.empleado || "").trim();
+    const motivo = String(visita.motivo || payload.motivo || "").trim();
+    const telefono = String(visitante.telefono || payload.telefono || "").trim();
+    const correo = String(visitante.correo || payload.correo || payload.email || "").trim();
+
+    const tipoQr = String(visita.tipo || payload.tipoCita || "").toLowerCase();
+    const nextVisitType =
+      tipoQr === "profesional" || empresa ? "Profesional" : "Personal";
+
+    const brand = String(vehiculo.brand || vehiculo.marca || "").trim();
+    const model = String(vehiculo.model || vehiculo.modelo || "").trim();
+    const plate = String(vehiculo.plate || vehiculo.placa || "").trim().toUpperCase();
+
+    setName(nombre);
+    setDocument(documento);
+    setCompany(empresa);
+    setEmployee(empleado);
+    setReason(motivo);
+    setPhone(telefono || "+504 ");
+    setEmail(correo);
+    setVisitType(nextVisitType);
+    setAcompanado(!!visitante.acompanado || !!payload.acompanado);
+
+    if (brand || model || plate) {
+      setHasVehicle(true);
+      setVehicleBrand(brand);
+      setVehicleModel(model);
+      setVehicleModelCustom("");
+      setVehiclePlate(plate);
+    } else {
+      setHasVehicle(false);
+      setVehicleBrand("");
+      setVehicleModel("");
+      setVehicleModelCustom("");
+      setVehiclePlate("");
+    }
+
+    setQrFillInfo({
+      citaId: citaId || null,
+      qrSource: rawValue ? "scanner" : "scanner-legacy",
+      qrPayload: payload,
+    });
+
+    setErrors({});
+    setAutoFilledByName(false);
+    setScannerOpen(false);
+  }
+
   const handleNameChange = (e) => {
     let val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
@@ -347,21 +774,11 @@ export default function NewVisitorModal({
 
   const handleDocumentChange = (e) => {
     const digits = e.target.value.replace(/\D/g, "").slice(0, DNI_DIGITS);
-
-    let formatted = digits;
-    if (digits.length > 4 && digits.length <= 8) {
-      formatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    } else if (digits.length > 8) {
-      formatted = `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(
-        8
-      )}`;
-    }
-
-    setDocument(formatted);
+    setDocument(formatDni(digits));
     setErrors((prev) => ({ ...prev, document: undefined }));
 
     if (digits.length === DNI_DIGITS) {
-      const match = allKnown.find((v) => normalizeDni(v.document) === digits);
+      const match = allKnown.find((v) => normalizeDniDigits(v.document) === digits);
       if (match) {
         if (!name.trim()) {
           setName(match.name || "");
@@ -595,6 +1012,9 @@ export default function NewVisitorModal({
         email: email.trim(),
         visitType,
         acompanado,
+        citaId: qrFillInfo?.citaId || null,
+        qrSource: qrFillInfo?.qrSource || null,
+        qrPayload: qrFillInfo?.qrPayload || null,
         vehicle: hasVehicle
           ? {
               brand: vehicleBrand.trim(),
@@ -619,402 +1039,450 @@ export default function NewVisitorModal({
     vehicleBrand === "Otra" || vehicleModel === "__custom";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        background: "rgba(2, 6, 23, 0.68)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-      }}
-      onMouseDown={handleBackdrop}
-    >
+    <>
       <div
-        className="w-full max-w-[560px] max-h-[90vh] overflow-y-auto rounded-[24px] p-4 md:p-5"
-        style={sxCard()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="new-visitor-title"
-        onMouseDown={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{
+          background: "rgba(2, 6, 23, 0.68)",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
+        }}
+        onMouseDown={handleBackdrop}
       >
-        <div className="flex items-start justify-between mb-4">
-          <h3
-            id="new-visitor-title"
-            className="text-lg font-semibold"
-            style={{ color: "var(--text)" }}
-          >
-            {editingVisitor ? "Editar visitante" : "Registrar Visitante"}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cerrar"
-            style={{ color: "var(--text-muted)" }}
-          >
-            ✕
-          </button>
-        </div>
-
-        <form
-          onSubmit={handleSubmit}
-          className="grid grid-cols-1 md:grid-cols-2 gap-3"
+        <div
+          className="w-full max-w-[560px] max-h-[90vh] overflow-y-auto rounded-[24px] p-4 md:p-5"
+          style={sxCard()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-visitor-title"
+          onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="md:col-span-2">
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Nombre completo
-            </label>
-            <input
-              ref={firstInputRef}
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={name}
-              onChange={handleNameChange}
-              placeholder="Ej. María Fernanda López Pérez"
-              required
-            />
-            {errors.name && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.name}
-              </p>
-            )}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h3
+                id="new-visitor-title"
+                className="text-lg font-semibold"
+                style={{ color: "var(--text)" }}
+              >
+                {editingVisitor ? "Editar visitante" : "Registrar Visitante"}
+              </h3>
+              {!editingVisitor && (
+                <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                  Puedes llenar manualmente o escanear el QR de una cita autorizada.
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {!editingVisitor && (
+                <button
+                  type="button"
+                  onClick={() => setScannerOpen(true)}
+                  className="px-3 py-2 text-xs rounded-lg font-semibold transition"
+                  style={sxSuccessBtn()}
+                >
+                  Escanear QR
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Cerrar"
+                style={{ color: "var(--text-muted)" }}
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
-          <div>
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              DNI
-            </label>
-            <input
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={document}
-              onChange={handleDocumentChange}
-              placeholder="0801-YYYY-XXXXX"
-              required
-              inputMode="numeric"
-            />
-            {errors.document && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.document}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Tipo de visita
-            </label>
-            <select
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={visitType}
-              onChange={(e) => {
-                const val = e.target.value;
-                setVisitType(val);
-                if (val === "Personal") {
-                  setCompany("");
-                }
-                setErrors((prev) => ({ ...prev, company: undefined }));
+          {qrFillInfo?.citaId && !editingVisitor && (
+            <div
+              className="mb-4 rounded-[14px] px-3 py-2 text-xs"
+              style={{
+                background: "color-mix(in srgb, #22c55e 10%, transparent)",
+                color: "#86efac",
+                border: "1px solid color-mix(in srgb, #22c55e 28%, transparent)",
               }}
             >
-              <option value="Personal">Personal</option>
-              <option value="Profesional">Profesional</option>
-            </select>
-
-            {visitType === "Profesional" && (
-              <>
-                <label
-                  className="text-xs mt-3 block"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  Empresa
-                </label>
-                <input
-                  className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-                  style={sxInput()}
-                  value={company}
-                  onChange={handleCompanyChange}
-                  placeholder="Nombre de la empresa"
-                />
-                {errors.company && (
-                  <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                    {errors.company}
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="md:col-span-2">
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Empleado anfitrión
-            </label>
-            <input
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={employee}
-              onChange={handleEmployeeChange}
-              placeholder="Nombre de la persona que visita"
-              required
-            />
-            {errors.employee && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.employee}
-              </p>
-            )}
-          </div>
-
-          <div className="md:col-span-2">
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Motivo
-            </label>
-            <input
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={reason}
-              onChange={handleReasonChange}
-              placeholder="Reunión / Entrega / Mantenimiento…"
-              required
-            />
-            {errors.reason && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.reason}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Teléfono
-            </label>
-            <input
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={phone}
-              onChange={handlePhoneChange}
-              placeholder="+504 9999-9999"
-              type="tel"
-              inputMode="tel"
-            />
-            {errors.phone && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.phone}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label
-              className="text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Correo
-            </label>
-            <input
-              type="email"
-              className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-              style={sxInput()}
-              value={email}
-              onChange={handleEmailChange}
-              placeholder="correo@empresa.com"
-            />
-            {errors.email && (
-              <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                {errors.email}
-              </p>
-            )}
-          </div>
-
-          <div className="md:col-span-2 mt-1">
-            <div className="flex items-center gap-2">
-              <input
-                id="acompanado"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={acompanado}
-                onChange={(e) => setAcompanado(e.target.checked)}
-              />
-              <label
-                htmlFor="acompanado"
-                className="text-xs cursor-pointer select-none"
-                style={{ color: "var(--text)" }}
-              >
-                El visitante viene acompañado
-              </label>
+              Formulario autocompletado desde QR de cita autorizada.
             </div>
-          </div>
+          )}
 
-          <div
-            className="md:col-span-2 mt-1 pt-3"
-            style={{ borderTop: "1px solid var(--border)" }}
+          <form
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 md:grid-cols-2 gap-3"
           >
-            <div className="flex items-center gap-2">
-              <input
-                id="has-vehicle"
-                type="checkbox"
-                className="h-4 w-4"
-                checked={hasVehicle}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setHasVehicle(checked);
-                  if (!checked) {
-                    setVehicleBrand("");
-                    setVehicleModel("");
-                    setVehicleModelCustom("");
-                    setVehiclePlate("");
-                    setErrors((prev) => ({
-                      ...prev,
-                      vehicleBrand: undefined,
-                      vehicleModel: undefined,
-                      vehiclePlate: undefined,
-                    }));
-                  }
-                }}
-              />
+            <div className="md:col-span-2">
               <label
-                htmlFor="has-vehicle"
-                className="text-xs cursor-pointer select-none"
-                style={{ color: "var(--text)" }}
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
               >
-                El visitante llegó en vehículo
+                Nombre completo
               </label>
+              <input
+                ref={firstInputRef}
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={name}
+                onChange={handleNameChange}
+                placeholder="Ej. María Fernanda López Pérez"
+                required
+              />
+              {errors.name && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.name}
+                </p>
+              )}
             </div>
 
-            {hasVehicle && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                <div>
-                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Marca <span style={{ color: "#f87171" }}>*</span>
-                  </label>
-                  <select
-                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-                    style={sxInput()}
-                    value={vehicleBrand}
-                    onChange={handleVehicleBrandChange}
+            <div>
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                DNI
+              </label>
+              <input
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={document}
+                onChange={handleDocumentChange}
+                placeholder="0801-YYYY-XXXXX"
+                required
+                inputMode="numeric"
+              />
+              {errors.document && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.document}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Tipo de visita
+              </label>
+              <select
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={visitType}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setVisitType(val);
+                  if (val === "Personal") {
+                    setCompany("");
+                  }
+                  setErrors((prev) => ({ ...prev, company: undefined }));
+                }}
+              >
+                <option value="Personal">Personal</option>
+                <option value="Profesional">Profesional</option>
+              </select>
+
+              {visitType === "Profesional" && (
+                <>
+                  <label
+                    className="text-xs mt-3 block"
+                    style={{ color: "var(--text-muted)" }}
                   >
-                    <option value="">
-                      {loadingBrands ? "Cargando marcas..." : "Seleccione marca…"}
-                    </option>
-                    {vehicleBrands.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                    <option value="Otra">Otra</option>
-                  </select>
-                  {errors.vehicleBrand && (
-                    <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                      {errors.vehicleBrand}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Modelo <span style={{ color: "#f87171" }}>*</span>
-                  </label>
-                  <select
-                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-                    style={sxInput()}
-                    value={vehicleModel}
-                    onChange={handleVehicleModelChange}
-                    disabled={!vehicleBrand || vehicleBrand === "Otra"}
-                  >
-                    <option value="">
-                      {!vehicleBrand
-                        ? "Seleccione marca primero…"
-                        : loadingModels
-                        ? "Cargando modelos..."
-                        : "Seleccione modelo…"}
-                    </option>
-                    {vehicleModels.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value="__custom">Otro modelo (escribir)</option>
-                  </select>
-
-                  {showCustomModelInput && (
-                    <input
-                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition mt-2"
-                      style={sxInput()}
-                      value={vehicleModelCustom}
-                      onChange={handleVehicleModelCustomChange}
-                      placeholder="Escriba el modelo"
-                    />
-                  )}
-                  {errors.vehicleModel && (
-                    <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                      {errors.vehicleModel}
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Placa <span style={{ color: "#f87171" }}>*</span>
+                    Empresa
                   </label>
                   <input
                     className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
                     style={sxInput()}
-                    value={vehiclePlate}
-                    onChange={handleVehiclePlateChange}
-                    placeholder="Ej. HAA-1234"
+                    value={company}
+                    onChange={handleCompanyChange}
+                    placeholder="Nombre de la empresa"
                   />
-                  {errors.vehiclePlate && (
+                  {errors.company && (
                     <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-                      {errors.vehiclePlate}
+                      {errors.company}
                     </p>
                   )}
-                </div>
-              </div>
-            )}
-          </div>
+                </>
+              )}
+            </div>
 
-          <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-2 text-sm rounded-lg transition"
-              style={sxGhostBtn()}
-              disabled={submitting}
+            <div className="md:col-span-2">
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Empleado anfitrión
+              </label>
+              <input
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={employee}
+                onChange={handleEmployeeChange}
+                placeholder="Nombre de la persona que visita"
+                required
+              />
+              {errors.employee && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.employee}
+                </p>
+              )}
+            </div>
+
+            <div className="md:col-span-2">
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Motivo
+              </label>
+              <input
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={reason}
+                onChange={handleReasonChange}
+                placeholder="Reunión / Entrega / Mantenimiento…"
+                required
+              />
+              {errors.reason && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.reason}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Teléfono
+              </label>
+              <input
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={phone}
+                onChange={handlePhoneChange}
+                placeholder="+504 9999-9999"
+                type="tel"
+                inputMode="tel"
+              />
+              {errors.phone && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.phone}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label
+                className="text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Correo
+              </label>
+              <input
+                type="email"
+                className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                style={sxInput()}
+                value={email}
+                onChange={handleEmailChange}
+                placeholder="correo@empresa.com"
+              />
+              {errors.email && (
+                <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                  {errors.email}
+                </p>
+              )}
+            </div>
+
+            <div className="md:col-span-2 mt-1">
+              <div className="flex items-center gap-2">
+                <input
+                  id="acompanado"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={acompanado}
+                  onChange={(e) => setAcompanado(e.target.checked)}
+                />
+                <label
+                  htmlFor="acompanado"
+                  className="text-xs cursor-pointer select-none"
+                  style={{ color: "var(--text)" }}
+                >
+                  El visitante viene acompañado
+                </label>
+              </div>
+            </div>
+
+            <div
+              className="md:col-span-2 mt-1 pt-3"
+              style={{ borderTop: "1px solid var(--border)" }}
             >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              className="px-3 py-2 text-sm rounded-lg font-semibold transition disabled:opacity-60"
-              style={sxPrimaryBtn()}
-              disabled={submitting}
-            >
-              {submitting
-                ? editingVisitor
-                  ? "Guardando…"
-                  : "Registrando…"
-                : editingVisitor
-                ? "Guardar cambios"
-                : "Registrar"}
-            </button>
-          </div>
-        </form>
+              <div className="flex items-center gap-2">
+                <input
+                  id="has-vehicle"
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={hasVehicle}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setHasVehicle(checked);
+                    if (!checked) {
+                      setVehicleBrand("");
+                      setVehicleModel("");
+                      setVehicleModelCustom("");
+                      setVehiclePlate("");
+                      setErrors((prev) => ({
+                        ...prev,
+                        vehicleBrand: undefined,
+                        vehicleModel: undefined,
+                        vehiclePlate: undefined,
+                      }));
+                    }
+                  }}
+                />
+                <label
+                  htmlFor="has-vehicle"
+                  className="text-xs cursor-pointer select-none"
+                  style={{ color: "var(--text)" }}
+                >
+                  El visitante llegó en vehículo
+                </label>
+              </div>
+
+              {hasVehicle && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                  <div>
+                    <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Marca <span style={{ color: "#f87171" }}>*</span>
+                    </label>
+                    <select
+                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                      style={sxInput()}
+                      value={vehicleBrand}
+                      onChange={handleVehicleBrandChange}
+                    >
+                      <option value="">
+                        {loadingBrands ? "Cargando marcas..." : "Seleccione marca…"}
+                      </option>
+                      {vehicleBrands.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                      <option value="Otra">Otra</option>
+                    </select>
+                    {errors.vehicleBrand && (
+                      <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                        {errors.vehicleBrand}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Modelo <span style={{ color: "#f87171" }}>*</span>
+                    </label>
+                    <select
+                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                      style={sxInput()}
+                      value={vehicleModel}
+                      onChange={handleVehicleModelChange}
+                      disabled={!vehicleBrand || vehicleBrand === "Otra"}
+                    >
+                      <option value="">
+                        {!vehicleBrand
+                          ? "Seleccione marca primero…"
+                          : loadingModels
+                          ? "Cargando modelos..."
+                          : "Seleccione modelo…"}
+                      </option>
+                      {vehicleModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                      <option value="__custom">Otro modelo (escribir)</option>
+                    </select>
+
+                    {showCustomModelInput && (
+                      <input
+                        className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition mt-2"
+                        style={sxInput()}
+                        value={vehicleModelCustom}
+                        onChange={handleVehicleModelCustomChange}
+                        placeholder="Escriba el modelo"
+                      />
+                    )}
+                    {errors.vehicleModel && (
+                      <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                        {errors.vehicleModel}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      Placa <span style={{ color: "#f87171" }}>*</span>
+                    </label>
+                    <input
+                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                      style={sxInput()}
+                      value={vehiclePlate}
+                      onChange={handleVehiclePlateChange}
+                      placeholder="Ej. HAA-1234"
+                    />
+                    {errors.vehiclePlate && (
+                      <p className="text-xs mt-1" style={{ color: "#f87171" }}>
+                        {errors.vehiclePlate}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="md:col-span-2 flex items-center justify-end gap-2 mt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-2 text-sm rounded-lg transition"
+                style={sxGhostBtn()}
+                disabled={submitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="px-3 py-2 text-sm rounded-lg font-semibold transition disabled:opacity-60"
+                style={sxPrimaryBtn()}
+                disabled={submitting}
+              >
+                {submitting
+                  ? editingVisitor
+                    ? "Guardando…"
+                    : "Registrando…"
+                  : editingVisitor
+                  ? "Guardar cambios"
+                  : "Registrar"}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+
+      <ScannerModal
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onDetected={(rawValue) => {
+          const payload = parseQrPayload(rawValue);
+          if (!payload) {
+            alert("No se pudo leer un QR válido de cita.");
+            return;
+          }
+          applyQrPayload(payload, rawValue);
+        }}
+      />
+    </>
   );
 }

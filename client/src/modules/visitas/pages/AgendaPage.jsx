@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
+import { QRCodeSVG } from "qrcode.react";
 
 /* ========= ROOT API para backend ========= */
 const API_BASE = (
@@ -24,11 +25,11 @@ const VEHICLE_MODELS_API_URL =
 /* ====== Límites y reglas de validación ====== */
 const DNI_DIGITS = 13;
 const PHONE_MIN_DIGITS = 8;
-const NAME_MAX = 40;
-const COMPANY_MAX = 20;
-const EMP_MAX = 20;
-const REASON_MAX = 20;
-const EMAIL_MAX = 25;
+const NAME_MAX = 80;
+const COMPANY_MAX = 40;
+const EMP_MAX = 40;
+const REASON_MAX = 80;
+const EMAIL_MAX = 80;
 
 /* ================== Storage local para citas ================== */
 const CITA_STORAGE_KEY = "citas_demo";
@@ -218,12 +219,160 @@ function normalizeModelItem(item) {
   return item?.name || item?.label || item?.modelo || item?.value || "";
 }
 
-/* ========= Helpers visuales de estado ========= */
+function normalizeNameInput(value, max = NAME_MAX) {
+  return String(value || "")
+    .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ' -]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .slice(0, max);
+}
+
+function validatePersonName(value, label = "nombre") {
+  const name = String(value || "").trim().replace(/\s+/g, " ");
+
+  if (!name) return `El ${label} es obligatorio.`;
+  if (name.length < 2) return `El ${label} es demasiado corto.`;
+  if (name.length > NAME_MAX) {
+    return `El ${label} no debe superar ${NAME_MAX} caracteres.`;
+  }
+
+  const validNameRegex = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ' -]+$/;
+  if (!validNameRegex.test(name)) {
+    return `El ${label} contiene caracteres no válidos.`;
+  }
+
+  return "";
+}
+
+function stripDiacritics(str) {
+  if (!str) return str;
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada";
+  if (value === "autorizada") return "autorizada";
   return value;
+}
+
+function buildQrPayloadForCita(cita) {
+  if (!cita) return null;
+
+  const citaDate = cita?.citaAt ? new Date(cita.citaAt) : null;
+
+  const fecha =
+    citaDate instanceof Date && !isNaN(citaDate.getTime())
+      ? citaDate.toISOString().slice(0, 10)
+      : cita?.fecha || "";
+
+  const hora =
+    citaDate instanceof Date && !isNaN(citaDate.getTime())
+      ? citaDate.toISOString().slice(11, 16)
+      : cita?.hora || "";
+
+  return {
+    kind: "senaf.cita.qr",
+    version: 2,
+    citaId: cita?._id || cita?.id || "",
+    estado: cita?.estado || "solicitada",
+    generatedAt: new Date().toISOString(),
+    visitante: {
+      nombre: cita?.nombre || cita?.visitante || "",
+      documento: cita?.documento || "",
+      telefono: cita?.telefono || "",
+      correo: cita?.correo || cita?.email || "",
+    },
+    cita: {
+      tipoCita: cita?.tipoCita || (cita?.empresa ? "profesional" : "personal"),
+      empresa: cita?.empresa || "",
+      empleado: cita?.empleado || "",
+      motivo: cita?.motivo || "",
+      fecha,
+      hora,
+      citaAt:
+        citaDate instanceof Date && !isNaN(citaDate.getTime())
+          ? citaDate.toISOString()
+          : cita?.citaAt || "",
+    },
+    acompanante: cita?.acompanante
+      ? {
+          nombre: cita?.acompanante?.nombre || "",
+          documento: cita?.acompanante?.documento || "",
+          telefono: cita?.acompanante?.telefono || "",
+        }
+      : null,
+    vehiculo: cita?.vehiculo
+      ? {
+          marca: cita?.vehiculo?.marca || "",
+          modelo: cita?.vehiculo?.modelo || "",
+          placa: cita?.vehiculo?.placa || "",
+        }
+      : null,
+  };
+}
+
+function buildQrValueForCita(cita) {
+  const payload = buildQrPayloadForCita(cita);
+  if (payload) {
+    return JSON.stringify(payload);
+  }
+
+  const nombre = cita?.nombre || cita?.visitante || "Visitante";
+  const documento = cita?.documento || "No especificado";
+  const empresa = cita?.empresa || "—";
+  const empleado = cita?.empleado || "—";
+  const motivo = cita?.motivo || "—";
+
+  const citaDate = cita?.citaAt ? new Date(cita.citaAt) : null;
+
+  let fecha = "—";
+  let hora = "—";
+
+  if (citaDate instanceof Date && !isNaN(citaDate.getTime())) {
+    fecha = citaDate.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+    hora = citaDate.toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } else {
+    if (cita?.fecha) fecha = cita.fecha;
+    if (cita?.hora) hora = cita.hora;
+  }
+
+  const estadoLegible = prettyCitaEstado(cita?.estado);
+
+  const text = [
+    "INVITACION DE VISITA",
+    "------------------------",
+    `Visitante: ${nombre}`,
+    `Documento: ${documento}`,
+    `Empresa: ${empresa}`,
+    `Visita a: ${empleado}`,
+    `Motivo: ${motivo}`,
+    `Fecha: ${fecha}`,
+    `Hora: ${hora}`,
+    `Estado: ${estadoLegible}`,
+  ].join("\n");
+
+  return stripDiacritics(text);
+}
+
+function getQrPayloadForDisplay(cita) {
+  const raw = buildQrValueForCita(cita);
+  const parsed = safeJsonParse(raw);
+  return parsed || null;
 }
 
 function CitaEstadoPill({ estado }) {
@@ -300,6 +449,9 @@ export default function AgendaPage() {
     hora: "",
     telefono: "+504 ",
     correo: "",
+    companionNombre: "",
+    companionDocumento: "",
+    companionTelefono: "+504 ",
   };
 
   const [form, setForm] = useState(initialFormState);
@@ -307,27 +459,24 @@ export default function AgendaPage() {
   const [submitting, setSubmitting] = useState(false);
   const [okMsg, setOkMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [qrCita, setQrCita] = useState(null);
+  const shownAuthorizedQrIds = useRef(new Set());
 
-  // Acompañante
   const [hasCompanion, setHasCompanion] = useState(false);
 
-  // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
   const [vehicleBrand, setVehicleBrand] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
-  // Catálogos backend
   const [vehicleBrands, setVehicleBrands] = useState([]);
   const [vehicleModels, setVehicleModels] = useState([]);
   const [loadingBrands, setLoadingBrands] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Cita que se está editando
   const [editingCita, setEditingCita] = useState(null);
 
-  // 🔹 CARGAR MARCAS DESDE BACKEND
   useEffect(() => {
     let mounted = true;
 
@@ -364,7 +513,6 @@ export default function AgendaPage() {
     };
   }, []);
 
-  // 🔹 CARGAR MODELOS DESDE BACKEND
   useEffect(() => {
     let mounted = true;
 
@@ -414,11 +562,13 @@ export default function AgendaPage() {
     const { name, value } = e.target;
     let newValue = value;
 
-    if (name === "visitante") {
-      newValue = value
-        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-        .slice(0, NAME_MAX);
-    } else if (name === "documento") {
+    if (
+      name === "visitante" ||
+      name === "empleado" ||
+      name === "companionNombre"
+    ) {
+      newValue = normalizeNameInput(value);
+    } else if (name === "documento" || name === "companionDocumento") {
       const digits = value.replace(/\D/g, "").slice(0, DNI_DIGITS);
       if (digits.length <= 4) {
         newValue = digits;
@@ -431,18 +581,10 @@ export default function AgendaPage() {
         )}-${digits.slice(8)}`;
       }
     } else if (name === "empresa") {
-      newValue = value
-        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-        .slice(0, COMPANY_MAX);
-    } else if (name === "empleado") {
-      newValue = value
-        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-        .slice(0, EMP_MAX);
+      newValue = normalizeNameInput(value, COMPANY_MAX);
     } else if (name === "motivo") {
-      newValue = value
-        .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-        .slice(0, REASON_MAX);
-    } else if (name === "telefono") {
+      newValue = normalizeNameInput(value, REASON_MAX);
+    } else if (name === "telefono" || name === "companionTelefono") {
       let input = value;
       if (input.startsWith("+504")) {
         input = input.slice(4).trimStart();
@@ -481,25 +623,37 @@ export default function AgendaPage() {
     setErrorMsg("");
   }
 
+  function resetCompanionFields() {
+    setForm((prev) => ({
+      ...prev,
+      companionNombre: "",
+      companionDocumento: "",
+      companionTelefono: "+504 ",
+    }));
+    setErrors((prev) => ({
+      ...prev,
+      companionNombre: "",
+      companionDocumento: "",
+      companionTelefono: "",
+    }));
+  }
+
   function validate() {
     const e = {};
 
-    const nombre = form.visitante.trim();
-    const nombreParts = nombre.split(/\s+/).filter(Boolean);
-    if (!nombre) {
-      e.visitante = "El nombre es obligatorio.";
-    } else if (nombre.length > NAME_MAX) {
-      e.visitante = `El nombre no debe superar ${NAME_MAX} caracteres.`;
-    } else if (nombreParts.length < 3) {
-      e.visitante =
-        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+    const visitanteError = validatePersonName(
+      form.visitante,
+      "nombre del visitante"
+    );
+    if (visitanteError) {
+      e.visitante = visitanteError;
     }
 
     const dniDigits = form.documento.replace(/\D/g, "");
     if (!dniDigits) {
-      e.documento = "El DNI es obligatorio.";
+      e.documento = "El documento es obligatorio.";
     } else if (dniDigits.length !== DNI_DIGITS) {
-      e.documento = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
+      e.documento = `El documento debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
     const tipo = form.tipoCita || "personal";
@@ -549,10 +703,38 @@ export default function AgendaPage() {
       } else if (!correo.includes("@")) {
         e.correo = "El correo debe incluir el símbolo @.";
       } else {
-        const emailRegex = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        const emailRegex =
+          /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/i;
         if (!emailRegex.test(correo)) {
-          e.correo =
-            "El correo debe tener un dominio válido y terminar en .com o .org.";
+          e.correo = "Ingrese un correo válido.";
+        }
+      }
+    }
+
+    if (hasCompanion) {
+      const companionNameError = validatePersonName(
+        form.companionNombre,
+        "nombre del acompañante"
+      );
+      if (companionNameError) {
+        e.companionNombre = companionNameError;
+      }
+
+      const companionDocDigits = form.companionDocumento.replace(/\D/g, "");
+      if (
+        form.companionDocumento.trim() &&
+        companionDocDigits.length !== DNI_DIGITS
+      ) {
+        e.companionDocumento = `El documento del acompañante debe tener ${DNI_DIGITS} dígitos o quedar vacío.`;
+      }
+
+      const companionPhoneTrimmed = form.companionTelefono.trim();
+      if (companionPhoneTrimmed && companionPhoneTrimmed !== "+504") {
+        const digits = form.companionTelefono.replace(/\D/g, "");
+        const localDigits = digits.replace(/^504/, "");
+        if (localDigits.length < PHONE_MIN_DIGITS) {
+          e.companionTelefono =
+            "El teléfono del acompañante debe tener 8 dígitos después de +504.";
         }
       }
     }
@@ -561,7 +743,9 @@ export default function AgendaPage() {
       if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
 
       const finalModel =
-        vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+        vehicleModel === "__custom"
+          ? vehicleModelCustom.trim()
+          : vehicleModel.trim();
 
       if (!finalModel) e.vehicleModel = "Requerido";
 
@@ -594,12 +778,21 @@ export default function AgendaPage() {
     const citaAtDate = new Date(`${fecha}T${hora}:00`);
 
     const finalModel =
-      vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+      vehicleModel === "__custom"
+        ? vehicleModelCustom.trim()
+        : vehicleModel.trim();
 
     const tipo = form.tipoCita || "personal";
 
+    const companionData = hasCompanion
+      ? {
+          nombre: form.companionNombre.trim(),
+          documento: form.companionDocumento.trim() || null,
+          telefono: form.companionTelefono.trim() || null,
+        }
+      : null;
+
     try {
-      // ========== MODO EDICIÓN ==========
       if (editingCita && !isVisitor) {
         const updated = {
           ...editingCita,
@@ -615,6 +808,7 @@ export default function AgendaPage() {
           hora,
           citaAt: citaAtDate.toISOString(),
           tieneAcompanante: !!hasCompanion,
+          acompanante: companionData,
           vehiculo: hasVehicle
             ? {
                 marca: vehicleBrand.trim(),
@@ -659,7 +853,6 @@ export default function AgendaPage() {
         return;
       }
 
-      // ========== CREAR NUEVA CITA ==========
       const nuevaCita = {
         _id: `local-${Date.now()}`,
         nombre: form.visitante.trim(),
@@ -675,6 +868,7 @@ export default function AgendaPage() {
         citaAt: citaAtDate.toISOString(),
         estado: "solicitada",
         tieneAcompanante: !!hasCompanion,
+        acompanante: companionData,
         vehiculo: hasVehicle
           ? {
               marca: vehicleBrand.trim(),
@@ -703,6 +897,7 @@ export default function AgendaPage() {
           : null,
         tipoCita: tipo,
         tieneAcompanante: !!hasCompanion,
+        acompanante: companionData,
       };
 
       let syncedWithServer = false;
@@ -727,6 +922,8 @@ export default function AgendaPage() {
           nuevaCita._id = data.item._id || nuevaCita._id;
           nuevaCita.citaAt = data.item.citaAt || nuevaCita.citaAt;
           nuevaCita.estado = data.item.estado || nuevaCita.estado;
+          nuevaCita.acompanante = data.item.acompanante || nuevaCita.acompanante;
+          nuevaCita.vehiculo = data.item.vehiculo || nuevaCita.vehiculo;
         } else {
           console.warn("[citas] fallo al crear en backend:", data);
           if (data && typeof data.error === "string") {
@@ -777,7 +974,6 @@ export default function AgendaPage() {
     }
   }
 
-  /* ===================== LISTADO: CITAS ===================== */
   function fmtDate(d) {
     const dt = new Date(d);
     return dt.toLocaleDateString("es-HN", {
@@ -909,7 +1105,8 @@ export default function AgendaPage() {
     const fechaInput =
       it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
     const horaInput =
-      it.hora || (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
+      it.hora ||
+      (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
 
     const tipo = it.tipoCita || (it.empresa ? "profesional" : "personal");
 
@@ -924,6 +1121,9 @@ export default function AgendaPage() {
       hora: horaInput || "",
       telefono: it.telefono || "+504 ",
       correo: it.correo || "",
+      companionNombre: it.acompanante?.nombre || "",
+      companionDocumento: it.acompanante?.documento || "",
+      companionTelefono: it.acompanante?.telefono || "+504 ",
     });
 
     setHasCompanion(
@@ -955,8 +1155,42 @@ export default function AgendaPage() {
     if (tab === "citas") {
       fetchCitas();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento, isVisitor, principal?.email, principal?.document]);
+  }, [
+    tab,
+    mode,
+    month,
+    dateFilter,
+    showMyCitas,
+    myDocumento,
+    isVisitor,
+    principal?.email,
+    principal?.document,
+  ]);
+
+  useEffect(() => {
+    if (!(isVisitor && tab === "citas")) return;
+
+    const id = setInterval(() => {
+      fetchCitas();
+    }, 15000);
+
+    return () => clearInterval(id);
+  }, [isVisitor, tab, mode, month, dateFilter, principal?.email, principal?.document]);
+
+  useEffect(() => {
+    if (!isVisitor || tab !== "citas" || !items.length) return;
+
+    const firstAuthorized = items.find(
+      (it) =>
+        it.estado === "autorizada" &&
+        !shownAuthorizedQrIds.current.has(String(it._id || it.id))
+    );
+
+    if (firstAuthorized) {
+      shownAuthorizedQrIds.current.add(String(firstAuthorized._id || firstAuthorized.id));
+      setQrCita(firstAuthorized);
+    }
+  }, [items, isVisitor, tab]);
 
   const filteredItems = useMemo(() => {
     const search = citasSearch.trim().toLowerCase();
@@ -999,13 +1233,14 @@ export default function AgendaPage() {
   const showCustomModelInput =
     vehicleBrand === "Otra" || vehicleModel === "__custom";
 
+  const qrPayload = useMemo(() => getQrPayloadForDisplay(qrCita), [qrCita]);
+
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6 pb-10">
       <div className="mesh mesh--ribbon" />
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-xl md:text-2xl font-bold" style={{ color: "var(--text)" }}>
@@ -1031,7 +1266,6 @@ export default function AgendaPage() {
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => {
@@ -1052,14 +1286,12 @@ export default function AgendaPage() {
         </button>
       </div>
 
-      {/* ===================== Sección: Agendar ===================== */}
       {tab === "agendar" && (
         <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <form
             onSubmit={handleSubmit}
             className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6"
           >
-            {/* Columna izquierda */}
             <div className="flex flex-col gap-4">
               <Field
                 label="Visitante *"
@@ -1067,7 +1299,7 @@ export default function AgendaPage() {
                 value={form.visitante}
                 onChange={onChange}
                 error={errors.visitante}
-                placeholder="Nombre y apellido"
+                placeholder="Nombre del visitante"
               />
               <Field
                 label="Documento *"
@@ -1112,7 +1344,6 @@ export default function AgendaPage() {
               />
             </div>
 
-            {/* Columna derecha */}
             <div className="flex flex-col gap-4">
               <Field
                 label="Motivo *"
@@ -1161,18 +1392,23 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            {/* Acompañante */}
             <div
               className="md:col-span-2 pt-3 mt-1"
               style={{ borderTop: "1px solid var(--border)" }}
             >
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-3">
                 <input
                   id="has-companion-agenda"
                   type="checkbox"
                   className="h-4 w-4"
                   checked={hasCompanion}
-                  onChange={(e) => setHasCompanion(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setHasCompanion(checked);
+                    if (!checked) {
+                      resetCompanionFields();
+                    }
+                  }}
                 />
                 <label
                   htmlFor="has-companion-agenda"
@@ -1182,9 +1418,40 @@ export default function AgendaPage() {
                   El visitante llegará con acompañante
                 </label>
               </div>
+
+              {hasCompanion && (
+                <div
+                  className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-2xl p-4"
+                  style={sxCardSoft()}
+                >
+                  <Field
+                    label="Nombre del acompañante *"
+                    name="companionNombre"
+                    value={form.companionNombre}
+                    onChange={onChange}
+                    error={errors.companionNombre}
+                    placeholder="Nombre del acompañante"
+                  />
+                  <Field
+                    label="Documento del acompañante"
+                    name="companionDocumento"
+                    value={form.companionDocumento}
+                    onChange={onChange}
+                    error={errors.companionDocumento}
+                    placeholder="DNI / Pasaporte"
+                  />
+                  <Field
+                    label="Teléfono del acompañante"
+                    name="companionTelefono"
+                    value={form.companionTelefono}
+                    onChange={onChange}
+                    error={errors.companionTelefono}
+                    placeholder="+504 9999-9999"
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Vehículo */}
             <div
               className="md:col-span-2 pt-3 mt-1"
               style={{ borderTop: "1px solid var(--border)" }}
@@ -1339,7 +1606,6 @@ export default function AgendaPage() {
               )}
             </div>
 
-            {/* Acciones */}
             <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                 Los campos con * son obligatorios
@@ -1404,7 +1670,10 @@ export default function AgendaPage() {
               </div>
             )}
             {errorMsg && (
-              <div className="md:col-span-2 text-sm flex items-center gap-2" style={{ color: "#f87171" }}>
+              <div
+                className="md:col-span-2 text-sm flex items-center gap-2"
+                style={{ color: "#f87171" }}
+              >
                 <span>✖</span>
                 <span>{errorMsg}</span>
               </div>
@@ -1413,7 +1682,6 @@ export default function AgendaPage() {
         </section>
       )}
 
-      {/* ===================== Sección: Citas ===================== */}
       {tab === "citas" && (
         <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
@@ -1498,7 +1766,11 @@ export default function AgendaPage() {
 
               <input
                 type="text"
-                placeholder={isVisitor ? "Buscar mis citas por nombre o DNI…" : "Buscar por nombre o DNI…"}
+                placeholder={
+                  isVisitor
+                    ? "Buscar mis citas por nombre o DNI…"
+                    : "Buscar por nombre o DNI…"
+                }
                 value={citasSearch}
                 onChange={(e) => setCitasSearch(e.target.value)}
                 className="rounded-lg px-3 py-2 text-xs md:text-sm min-w-[180px]"
@@ -1515,7 +1787,7 @@ export default function AgendaPage() {
                 <option value="todos">Todos los estados</option>
                 <option value="solicitada">Solicitada</option>
                 <option value="en_revision">En revisión</option>
-                <option value="autorizada">Ingresada</option>
+                <option value="autorizada">Autorizada</option>
                 <option value="denegada">Denegada</option>
                 <option value="cancelada">Cancelada</option>
               </select>
@@ -1543,11 +1815,7 @@ export default function AgendaPage() {
           ) : (
             <div className="flex flex-col gap-6">
               {grouped.map(([k, arr]) => (
-                <div
-                  key={k}
-                  className="rounded-xl"
-                  style={sxCardSoft()}
-                >
+                <div key={k} className="rounded-xl" style={sxCardSoft()}>
                   <div
                     className="px-4 py-3 text-sm"
                     style={{
@@ -1559,7 +1827,7 @@ export default function AgendaPage() {
                     {arr.length} cita(s)
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[900px]">
+                    <table className="w-full text-left border-collapse min-w-[980px]">
                       <thead
                         className="text-xs uppercase"
                         style={{ color: "var(--text-muted)" }}
@@ -1574,7 +1842,7 @@ export default function AgendaPage() {
                           <th>Motivo</th>
                           <th>Hora</th>
                           <th>Estado</th>
-                          {!isVisitor && <th className="text-right">Acciones</th>}
+                          <th className="text-right">Acciones</th>
                         </tr>
                       </thead>
                       <tbody style={{ color: "var(--text)" }}>
@@ -1594,18 +1862,31 @@ export default function AgendaPage() {
                             <td>
                               <CitaEstadoPill estado={it.estado} />
                             </td>
-                            {!isVisitor && (
-                              <td className="text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => handleEditCita(it)}
-                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                                  style={sxPrimaryBtn()}
-                                >
-                                  Editar
-                                </button>
-                              </td>
-                            )}
+                            <td className="text-right">
+                              <div className="flex flex-wrap gap-2 justify-end">
+                                {isVisitor && it.estado === "autorizada" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setQrCita(it)}
+                                    className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                    style={sxSuccessBtn()}
+                                  >
+                                    Ver QR
+                                  </button>
+                                )}
+
+                                {!isVisitor && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditCita(it)}
+                                    className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                    style={sxPrimaryBtn()}
+                                  >
+                                    Editar
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1616,6 +1897,102 @@ export default function AgendaPage() {
             </div>
           )}
         </section>
+      )}
+
+      {qrCita && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{
+            background: "rgba(2, 6, 23, 0.62)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setQrCita(null);
+          }}
+        >
+          <div
+            className="p-4 md:p-6 w-[95%] max-w-[420px] rounded-[24px]"
+            style={sxCard()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: "var(--text)" }}
+                >
+                  Invitación / QR de cita
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Muestre este código en la guardia para validar su ingreso.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQrCita(null)}
+                style={{ color: "var(--text-muted)" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center gap-3">
+              <div
+                className="rounded-[18px] p-4"
+                style={sxCardSoft({ background: "#ffffff" })}
+              >
+                <QRCodeSVG
+                  value={buildQrValueForCita(qrCita)}
+                  size={200}
+                  includeMargin
+                />
+              </div>
+
+              <div
+                className="text-xs text-center"
+                style={{ color: "var(--text)" }}
+              >
+                <div className="font-semibold">
+                  {qrPayload?.visitante?.nombre || qrCita.nombre || qrCita.visitante}
+                </div>
+                <div>
+                  {qrPayload?.visitante?.documento ||
+                    qrCita.documento ||
+                    "Documento no especificado"}
+                </div>
+                <div>
+                  {qrPayload?.cita?.fecha
+                    ? new Date(
+                        qrPayload.cita.citaAt || `${qrPayload.cita.fecha}T${qrPayload.cita.hora || "00:00"}:00`
+                      ).toLocaleDateString("es-ES", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })
+                    : qrCita.citaAt
+                    ? new Date(qrCita.citaAt).toLocaleDateString("es-ES", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })
+                    : qrCita.fecha}{" "}
+                  {" · "}
+                  {qrPayload?.cita?.hora ||
+                    (qrCita.citaAt
+                      ? new Date(qrCita.citaAt).toLocaleTimeString("es-ES", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : qrCita.hora)}
+                </div>
+                <div className="mt-1">
+                  Estado: <CitaEstadoPill estado={qrCita.estado} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
