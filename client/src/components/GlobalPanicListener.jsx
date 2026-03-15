@@ -1,5 +1,6 @@
 // client/src/components/GlobalPanicListener.jsx
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { socket } from "../lib/socket.js";
@@ -117,6 +118,7 @@ function normalizeRemotePayload(payload = {}) {
 
 export default function GlobalPanicListener() {
   const { isAuthenticated, user } = useAuth();
+  const { pathname } = useLocation();
 
   const principal = resolvePrincipal(user) || {};
   const visitor = isVisitorUser(principal);
@@ -128,6 +130,9 @@ export default function GlobalPanicListener() {
   const [alertMeta, setAlertMeta] = useState(null);
   const [audioReady, setAudioReady] = useState(false);
   const [audioError, setAudioError] = useState("");
+
+  // ✅ solo mostrar UI visible dentro de rondas
+  const showRondasUI = pathname.startsWith("/rondasqr");
 
   const AUDIO_SRC = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
@@ -148,11 +153,6 @@ export default function GlobalPanicListener() {
       const el = audioRef.current;
       if (!el) {
         setAudioError("No se encontró el elemento de audio.");
-        return false;
-      }
-
-      if (!el.src) {
-        setAudioError("La fuente de audio está vacía.");
         return false;
       }
 
@@ -228,6 +228,25 @@ export default function GlobalPanicListener() {
     },
     [playAlarm]
   );
+
+  // ✅ desbloqueo silencioso con primera interacción, sin botones globales
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const autoUnlock = () => {
+      unlockAudio().catch(() => {});
+    };
+
+    window.addEventListener("pointerdown", autoUnlock, { once: true });
+    window.addEventListener("keydown", autoUnlock, { once: true });
+    window.addEventListener("touchstart", autoUnlock, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", autoUnlock);
+      window.removeEventListener("keydown", autoUnlock);
+      window.removeEventListener("touchstart", autoUnlock);
+    };
+  }, [isAuthenticated, unlockAudio]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -311,19 +330,14 @@ export default function GlobalPanicListener() {
           console.log("[GlobalPanicListener] audio cargado:", AUDIO_SRC);
         }}
         onError={() => {
-          const el = audioRef.current;
           const msg = `No se pudo cargar el audio: ${AUDIO_SRC}`;
           setAudioError(msg);
-          console.error("[GlobalPanicListener] audio error", {
-            src: AUDIO_SRC,
-            currentSrc: el?.currentSrc,
-            networkState: el?.networkState,
-            readyState: el?.readyState,
-          });
+          console.error("[GlobalPanicListener] audio error:", msg);
         }}
       />
 
-      {!visitor && !audioReady && (
+      {/* ✅ UI solo en Rondas */}
+      {!visitor && showRondasUI && !audioReady && (
         <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
           <button
             type="button"
@@ -357,7 +371,7 @@ export default function GlobalPanicListener() {
         </div>
       )}
 
-      {hasAlert && !visitor && (
+      {!visitor && hasAlert && (
         <button
           type="button"
           onClick={() => {
