@@ -65,6 +65,8 @@ const KEY_LABEL = {
   actorId: "Actor ID",
 };
 
+const INITIAL_VISIBLE_ROWS = 10;
+
 function humanizeToken(v) {
   const s = String(v || "").trim();
   if (!s) return "—";
@@ -368,13 +370,26 @@ export default function AuditPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [dateErr, setDateErr] = useState("");
+  const [showAllRows, setShowAllRows] = useState(false);
 
   const actionsOptions = useMemo(() => {
-    const set = new Set();
+    const map = new Map();
+
     for (const a of audits) {
-      if (a.action) set.add(a.action);
+      if (!a.action) continue;
+
+      const label = humanizeToken(a.action);
+      if (!map.has(label)) {
+        map.set(label, a.action);
+      }
     }
-    return ["", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+
+    return [
+      "",
+      ...Array.from(map.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, value]) => value),
+    ];
   }, [audits]);
 
   const entityOptions = useMemo(() => {
@@ -462,6 +477,7 @@ export default function AuditPage() {
 
       setAudits(unique);
       setFiltered(unique);
+      setShowAllRows(false);
     } catch (e) {
       setErr(
         e?.response?.data?.error ||
@@ -470,6 +486,7 @@ export default function AuditPage() {
       );
       setAudits([]);
       setFiltered([]);
+      setShowAllRows(false);
     } finally {
       setLoading(false);
     }
@@ -488,8 +505,11 @@ export default function AuditPage() {
     const from = toStartOfDay(dateFrom);
     const to = toEndOfDay(dateTo);
 
-    if (from && to && from > to) setDateErr("La fecha 'desde' no puede ser mayor que 'hasta'.");
-    else setDateErr("");
+    if (from && to && from > to) {
+      setDateErr("La fecha 'desde' no puede ser mayor que 'hasta'.");
+    } else {
+      setDateErr("");
+    }
 
     if (from) {
       list = list.filter((a) => {
@@ -514,7 +534,14 @@ export default function AuditPage() {
     }
 
     setFiltered(list);
+    setShowAllRows(false);
   }, [filterAction, filterEntity, filterActor, dateFrom, dateTo, audits]);
+
+  const visibleRows = useMemo(() => {
+    return showAllRows ? filtered : filtered.slice(0, INITIAL_VISIBLE_ROWS);
+  }, [filtered, showAllRows]);
+
+  const hiddenCount = Math.max(0, filtered.length - INITIAL_VISIBLE_ROWS);
 
   const exportExcel = () => {
     const rows = filtered.map((a) => ({
@@ -589,12 +616,12 @@ export default function AuditPage() {
 
   const zebra = useMemo(
     () =>
-      filtered.map((_, i) =>
+      visibleRows.map((_, i) =>
         i % 2 === 0
           ? "color-mix(in srgb, var(--card-solid) 86%, transparent)"
           : "color-mix(in srgb, var(--card-solid) 78%, transparent)"
       ),
-    [filtered]
+    [visibleRows]
   );
 
   return (
@@ -750,7 +777,7 @@ export default function AuditPage() {
                       Cargando…
                     </td>
                   </tr>
-                ) : filtered.length === 0 ? (
+                ) : visibleRows.length === 0 ? (
                   <tr>
                     <td
                       colSpan="6"
@@ -761,9 +788,9 @@ export default function AuditPage() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((a, i) => (
+                  visibleRows.map((a, i) => (
                     <tr
-                      key={a._id || i}
+                      key={a._id || `${a.createdAt}-${i}`}
                       className="transition-colors"
                       style={{
                         background: zebra[i],
@@ -814,19 +841,45 @@ export default function AuditPage() {
           </div>
 
           <div
-            className="px-4 py-3 text-[12px]"
+            className="px-4 py-3 text-[12px] flex flex-col md:flex-row md:items-center md:justify-between gap-3"
             style={{
               color: "var(--text-muted)",
               borderTop: "1px solid var(--border)",
             }}
           >
-            Mostrando <span style={{ color: "var(--text)" }}>{filtered.length}</span> de{" "}
-            <span style={{ color: "var(--text)" }}>{audits.length}</span> registros cargados
-            {dateFrom || dateTo ? (
-              <>
-                {" "}
-                · rango aplicado {dateFrom || "—"} → {dateTo || "—"}
-              </>
+            <div>
+              Mostrando <span style={{ color: "var(--text)" }}>{visibleRows.length}</span> de{" "}
+              <span style={{ color: "var(--text)" }}>{filtered.length}</span> registros filtrados
+              {" · "}total cargados{" "}
+              <span style={{ color: "var(--text)" }}>{audits.length}</span>
+              {dateFrom || dateTo ? (
+                <>
+                  {" "}
+                  · rango aplicado {dateFrom || "—"} → {dateTo || "—"}
+                </>
+              ) : null}
+            </div>
+
+            {hiddenCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowAllRows((v) => !v)}
+                className="px-3 py-2 rounded-lg text-sm"
+                style={sxGhostBtn()}
+              >
+                {showAllRows
+                  ? "Mostrar solo las últimas 10"
+                  : `Mostrar ${hiddenCount} más`}
+              </button>
+            ) : filtered.length > INITIAL_VISIBLE_ROWS ? (
+              <button
+                type="button"
+                onClick={() => setShowAllRows((v) => !v)}
+                className="px-3 py-2 rounded-lg text-sm"
+                style={sxGhostBtn()}
+              >
+                {showAllRows ? "Mostrar solo las últimas 10" : "Mostrar todos"}
+              </button>
             ) : null}
           </div>
         </div>
