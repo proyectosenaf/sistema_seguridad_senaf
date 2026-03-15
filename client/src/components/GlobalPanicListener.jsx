@@ -122,109 +122,68 @@ export default function GlobalPanicListener() {
   const visitor = isVisitorUser(principal);
 
   const audioRef = useRef(null);
-  const audioCtxRef = useRef(null);
   const suppressRemoteUntilRef = useRef(0);
 
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
 
-  const BEEP_SRC =
-    "data:audio/wav;base64,UklGRlCZAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YTmZAACAgICAgICAgICAgP//////AAD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP///////wD///8AAAAAAP////8=";
+  // ✅ archivo real desde /public/audio
+  const AUDIO_SRC = "/audio/panic-alarm.mp3";
 
-  const ensureAudioContext = useCallback(() => {
-    if (typeof window === "undefined") return null;
-    if (!audioCtxRef.current) {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return null;
-      audioCtxRef.current = new Ctx();
-    }
-    return audioCtxRef.current;
-  }, []);
-
-  const playOscillatorAlarm = useCallback(async () => {
+  const stopAlarm = useCallback(() => {
     try {
-      const ctx = ensureAudioContext();
-      if (!ctx) return false;
-
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-      }
-
-      const now = ctx.currentTime;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = "square";
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.linearRampToValueAtTime(660, now + 0.18);
-      osc.frequency.linearRampToValueAtTime(880, now + 0.36);
-      osc.frequency.linearRampToValueAtTime(660, now + 0.54);
-
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(0.25, now + 0.02);
-      gain.gain.linearRampToValueAtTime(0.22, now + 0.50);
-      gain.gain.linearRampToValueAtTime(0.0001, now + 0.62);
-
-      osc.start(now);
-      osc.stop(now + 0.65);
-
-      return true;
-    } catch (e) {
-      console.warn("[GlobalPanicListener] oscillator blocked:", e?.message || e);
-      return false;
-    }
-  }, [ensureAudioContext]);
+      const el = audioRef.current;
+      if (!el) return;
+      el.pause();
+      el.currentTime = 0;
+    } catch {}
+  }, []);
 
   const unlockAudio = useCallback(async () => {
     try {
-      const ctx = ensureAudioContext();
-      if (ctx && ctx.state === "suspended") {
-        await ctx.resume();
-      }
-
       const el = audioRef.current;
-      if (el) {
-        el.muted = true;
-        el.currentTime = 0;
-        const p = el.play();
-        if (p && typeof p.then === "function") await p;
-        el.pause();
-        el.currentTime = 0;
-        el.muted = false;
-      }
+      if (!el) return false;
 
-      setAudioUnlocked(true);
-      console.log("[GlobalPanicListener] audio unlocked");
+      el.volume = 1;
+      el.loop = false;
+      el.muted = false;
+      el.currentTime = 0;
+
+      const p = el.play();
+      if (p && typeof p.then === "function") await p;
+
+      el.pause();
+      el.currentTime = 0;
+
+      setAudioReady(true);
+      console.log("[GlobalPanicListener] audio ready");
+      return true;
     } catch (e) {
-      console.warn("[GlobalPanicListener] audio unlock blocked:", e?.message || e);
+      console.warn("[GlobalPanicListener] audio unlock failed:", e?.message || e);
+      return false;
     }
-  }, [ensureAudioContext]);
+  }, []);
 
-  const playBeep = useCallback(async () => {
-    // 1) intenta audio normal
+  const playAlarm = useCallback(async () => {
     try {
       const el = audioRef.current;
-      if (el) {
-        el.muted = false;
-        el.currentTime = 0;
-        const p = el.play();
-        if (p && typeof p.then === "function") {
-          await p;
-        }
-        return true;
-      }
-    } catch (e) {
-      console.warn("[GlobalPanicListener] html audio blocked:", e?.message || e);
-    }
+      if (!el) return false;
 
-    // 2) fallback Web Audio API
-    return await playOscillatorAlarm();
-  }, [playOscillatorAlarm]);
+      el.volume = 1;
+      el.loop = true;
+      el.muted = false;
+      el.currentTime = 0;
+
+      const p = el.play();
+      if (p && typeof p.then === "function") await p;
+
+      return true;
+    } catch (e) {
+      console.warn("[GlobalPanicListener] playAlarm blocked:", e?.message || e);
+      return false;
+    }
+  }, []);
 
   const triggerAlert = useCallback(
     async (payload = {}, opts = {}) => {
@@ -238,35 +197,17 @@ export default function GlobalPanicListener() {
         source: opts?.source || normalized.source || "panic",
       });
 
-      const played = await playBeep();
-      if (!played) {
-        console.warn("[GlobalPanicListener] no se pudo reproducir sonido");
+      const ok = await playAlarm();
+      if (!ok) {
+        console.warn("[GlobalPanicListener] alerta recibida, pero sin audio habilitado");
       }
 
       if (opts?.local === true) {
         suppressRemoteUntilRef.current = Date.now() + 4000;
       }
     },
-    [playBeep]
+    [playAlarm]
   );
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const onceUnlock = () => {
-      unlockAudio().catch(() => {});
-    };
-
-    window.addEventListener("pointerdown", onceUnlock, { once: true });
-    window.addEventListener("keydown", onceUnlock, { once: true });
-    window.addEventListener("touchstart", onceUnlock, { once: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", onceUnlock);
-      window.removeEventListener("keydown", onceUnlock);
-      window.removeEventListener("touchstart", onceUnlock);
-    };
-  }, [isAuthenticated, unlockAudio]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -341,18 +282,42 @@ export default function GlobalPanicListener() {
 
   return (
     <>
-      <audio ref={audioRef} src={BEEP_SRC} preload="auto" playsInline />
+      <audio ref={audioRef} src={AUDIO_SRC} preload="auto" playsInline />
+
+      {!visitor && !audioReady && (
+        <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={unlockAudio}
+            className="rounded-xl bg-amber-500 text-black font-semibold px-4 py-3 shadow-lg"
+            title="Haz clic una vez para habilitar el sonido de alertas"
+          >
+            Activar sonido
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await unlockAudio();
+              if (ok) await playAlarm();
+              setTimeout(() => stopAlarm(), 1500);
+            }}
+            className="rounded-xl bg-sky-500 text-white font-semibold px-4 py-3 shadow-lg"
+            title="Probar alarma"
+          >
+            Probar sonido
+          </button>
+        </div>
+      )}
 
       {hasAlert && !visitor && (
         <button
           type="button"
-          onClick={async () => {
-            if (!audioUnlocked) {
-              await unlockAudio();
-            }
+          onClick={() => {
+            stopAlarm();
             setHasAlert(false);
           }}
-          className="fixed top-4 right-4 z-[9999] w-16 h-16 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white text-[10px] font-bold animate-pulse shadow-lg"
+          className="fixed top-4 right-4 z-[9999] w-20 h-20 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white text-[10px] font-bold animate-pulse shadow-lg"
           title={
             alertMeta?.body
               ? `${alertMeta?.title || "ALERTA"} • ${alertMeta.body}`
