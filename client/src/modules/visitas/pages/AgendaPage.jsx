@@ -1,6 +1,6 @@
-// client/src/pages/AgendaPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
 /* ========= ROOT API para backend ========= */
 const API_BASE = (
@@ -59,6 +59,85 @@ function saveStoredCitas(list) {
   } catch (e) {
     console.warn("[citas] No se pudo guardar en localStorage:", e);
   }
+}
+
+/* ================== Helpers auth / visitor ================== */
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normalizeDoc(v) {
+  return String(v || "").replace(/\D/g, "");
+}
+
+function resolveAuthPrincipal(auth) {
+  const raw = auth?.me || auth?.user || null;
+  if (!raw || typeof raw !== "object") return null;
+
+  const roles = Array.isArray(raw.roles)
+    ? raw.roles
+    : Array.isArray(raw.user?.roles)
+    ? raw.user.roles
+    : [];
+
+  const email =
+    normalizeEmail(raw.email) ||
+    normalizeEmail(raw.user?.email) ||
+    normalizeEmail(raw.profile?.email) ||
+    "";
+
+  const document =
+    normalizeDoc(raw.documento) ||
+    normalizeDoc(raw.document) ||
+    normalizeDoc(raw.dni) ||
+    normalizeDoc(raw.user?.documento) ||
+    normalizeDoc(raw.user?.document) ||
+    normalizeDoc(raw.user?.dni) ||
+    "";
+
+  const roleSet = new Set(roles.map((r) => String(r || "").toLowerCase()));
+
+  const hint = (() => {
+    try {
+      return localStorage.getItem("senaf_is_visitor") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+  return {
+    raw,
+    email,
+    document,
+    roles,
+    isVisitor: hint || roleSet.has("visita") || roleSet.has("visitor"),
+  };
+}
+
+function citaBelongsToVisitor(cita, principal) {
+  const email = normalizeEmail(principal?.email);
+  const doc = normalizeDoc(principal?.document);
+
+  const candidateEmails = [
+    cita?.correo,
+    cita?.email,
+    cita?.visitorEmail,
+    cita?.visitanteEmail,
+    cita?.createdByEmail,
+    cita?.solicitanteEmail,
+    cita?.userEmail,
+  ]
+    .map(normalizeEmail)
+    .filter(Boolean);
+
+  const candidateDocs = [cita?.documento, cita?.document, cita?.dni]
+    .map(normalizeDoc)
+    .filter(Boolean);
+
+  if (email && candidateEmails.includes(email)) return true;
+  if (doc && candidateDocs.includes(doc)) return true;
+
+  return false;
 }
 
 /* ================== Helpers UI ================== */
@@ -140,7 +219,6 @@ function normalizeModelItem(item) {
 }
 
 /* ========= Helpers visuales de estado ========= */
-
 function prettyCitaEstado(value) {
   if (!value) return "solicitada";
   if (value === "en_revision") return "en revisión";
@@ -201,9 +279,13 @@ function CitaEstadoPill({ estado }) {
 }
 
 /* ================== Página ================== */
-
 export default function AgendaPage() {
   const navigate = useNavigate();
+  const auth = useAuth();
+
+  const principal = useMemo(() => resolveAuthPrincipal(auth), [auth]);
+  const isVisitor = !!principal?.isVisitor;
+
   const [tab, setTab] = useState("agendar");
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
@@ -518,7 +600,7 @@ export default function AgendaPage() {
 
     try {
       // ========== MODO EDICIÓN ==========
-      if (editingCita) {
+      if (editingCita && !isVisitor) {
         const updated = {
           ...editingCita,
           nombre: form.visitante.trim(),
@@ -757,7 +839,9 @@ export default function AgendaPage() {
         return it;
       });
 
-      if (showMyCitas && myDocumento.trim()) {
+      if (isVisitor) {
+        list = list.filter((it) => citaBelongsToVisitor(it, principal));
+      } else if (showMyCitas && myDocumento.trim()) {
         const doc = myDocumento.trim();
         list = list.filter((it) => (it.documento || "").includes(doc));
       }
@@ -777,7 +861,9 @@ export default function AgendaPage() {
         const all = loadStoredCitas();
         let list = [...all];
 
-        if (showMyCitas && myDocumento.trim()) {
+        if (isVisitor) {
+          list = list.filter((it) => citaBelongsToVisitor(it, principal));
+        } else if (showMyCitas && myDocumento.trim()) {
           const doc = myDocumento.trim();
           list = list.filter((it) => (it.documento || "").includes(doc));
         }
@@ -818,6 +904,8 @@ export default function AgendaPage() {
   }
 
   function handleEditCita(it) {
+    if (isVisitor) return;
+
     const fechaInput =
       it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
     const horaInput =
@@ -868,7 +956,7 @@ export default function AgendaPage() {
       fetchCitas();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
+  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento, isVisitor, principal?.email, principal?.document]);
 
   const filteredItems = useMemo(() => {
     const search = citasSearch.trim().toLowerCase();
@@ -921,21 +1009,26 @@ export default function AgendaPage() {
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-xl md:text-2xl font-bold" style={{ color: "var(--text)" }}>
-            Agenda de Citas
+            {isVisitor ? "Mis Citas" : "Agenda de Citas"}
           </h1>
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            Agendar y consultar citas programadas (pre-registro en línea)
+            {isVisitor
+              ? "Aquí solo puedes consultar el estado de tus propias citas."
+              : "Agendar y consultar citas programadas (pre-registro en línea)"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate("/visitas/control")}
-            className="text-xs hover:underline"
-            style={{ color: "#60a5fa" }}
-          >
-            ← Volver a Gestión de Visitantes
-          </button>
-        </div>
+
+        {!isVisitor && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate("/visitas/control")}
+              className="text-xs hover:underline"
+              style={{ color: "#60a5fa" }}
+            >
+              ← Volver a Gestión de Visitantes
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -955,7 +1048,7 @@ export default function AgendaPage() {
           className="px-3 py-2 rounded-lg text-sm transition"
           style={tab === "citas" ? sxPrimaryBtn() : sxGhostBtn()}
         >
-          Citas
+          {isVisitor ? "Mis citas" : "Citas"}
         </button>
       </div>
 
@@ -1252,16 +1345,42 @@ export default function AgendaPage() {
                 Los campos con * son obligatorios
               </div>
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate("/visitas/control");
-                  }}
-                  className="px-3 py-2 rounded-md text-xs font-semibold transition"
-                  style={sxGhostBtn()}
-                >
-                  Cancelar
-                </button>
+                {!isVisitor && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate("/visitas/control");
+                    }}
+                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                    style={sxGhostBtn()}
+                  >
+                    Cancelar
+                  </button>
+                )}
+
+                {isVisitor && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingCita(null);
+                      setForm(initialFormState);
+                      setHasCompanion(false);
+                      setHasVehicle(false);
+                      setVehicleBrand("");
+                      setVehicleModel("");
+                      setVehicleModelCustom("");
+                      setVehiclePlate("");
+                      setErrors({});
+                      setOkMsg("");
+                      setErrorMsg("");
+                    }}
+                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                    style={sxGhostBtn()}
+                  >
+                    Limpiar
+                  </button>
+                )}
+
                 <button
                   type="submit"
                   disabled={submitting}
@@ -1269,10 +1388,10 @@ export default function AgendaPage() {
                   style={sxPrimaryBtn()}
                 >
                   {submitting
-                    ? editingCita
+                    ? editingCita && !isVisitor
                       ? "Actualizando..."
                       : "Agendando..."
-                    : editingCita
+                    : editingCita && !isVisitor
                     ? "Guardar cambios"
                     : "Agendar cita"}
                 </button>
@@ -1318,7 +1437,7 @@ export default function AgendaPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {mode === "day" && (
+              {mode === "day" && !isVisitor && (
                 <>
                   <input
                     type="date"
@@ -1355,6 +1474,17 @@ export default function AgendaPage() {
                 </>
               )}
 
+              {mode === "day" && isVisitor && (
+                <input
+                  type="date"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="rounded-lg px-3 py-2 text-xs md:text-sm"
+                  style={sxInput()}
+                  title="Filtrar por fecha (opcional)"
+                />
+              )}
+
               {mode === "month" && (
                 <input
                   type="month"
@@ -1368,7 +1498,7 @@ export default function AgendaPage() {
 
               <input
                 type="text"
-                placeholder="Buscar por nombre o DNI…"
+                placeholder={isVisitor ? "Buscar mis citas por nombre o DNI…" : "Buscar por nombre o DNI…"}
                 value={citasSearch}
                 onChange={(e) => setCitasSearch(e.target.value)}
                 className="rounded-lg px-3 py-2 text-xs md:text-sm min-w-[180px]"
@@ -1404,7 +1534,9 @@ export default function AgendaPage() {
             <div style={{ color: "var(--text-muted)" }}>Cargando…</div>
           ) : grouped.length === 0 ? (
             <div style={{ color: "var(--text-muted)" }}>
-              {mode === "day"
+              {isVisitor
+                ? "No tienes citas registradas."
+                : mode === "day"
                 ? "Sin citas agendadas."
                 : "Sin citas en el mes seleccionado."}
             </div>
@@ -1442,7 +1574,7 @@ export default function AgendaPage() {
                           <th>Motivo</th>
                           <th>Hora</th>
                           <th>Estado</th>
-                          <th className="text-right">Acciones</th>
+                          {!isVisitor && <th className="text-right">Acciones</th>}
                         </tr>
                       </thead>
                       <tbody style={{ color: "var(--text)" }}>
@@ -1462,16 +1594,18 @@ export default function AgendaPage() {
                             <td>
                               <CitaEstadoPill estado={it.estado} />
                             </td>
-                            <td className="text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleEditCita(it)}
-                                className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                                style={sxPrimaryBtn()}
-                              >
-                                Editar
-                              </button>
-                            </td>
+                            {!isVisitor && (
+                              <td className="text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditCita(it)}
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  style={sxPrimaryBtn()}
+                                >
+                                  Editar
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
