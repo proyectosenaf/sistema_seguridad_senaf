@@ -405,7 +405,7 @@ function RoundsTab() {
       <div className="p-5 space-y-4">
         <div className={ctrlWrap}>
           <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
-            <option value="">-- Ciudad --</option>
+            <option value="">-- Ciudad o Sucursal --</option>
             {sites.map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
