@@ -131,10 +131,15 @@ export default function GlobalPanicListener() {
   const [audioReady, setAudioReady] = useState(false);
   const [audioError, setAudioError] = useState("");
 
-  // ✅ solo mostrar UI visible dentro de rondas
+  // Solo mostrar UI auxiliar dentro de Rondas
   const showRondasUI = pathname.startsWith("/rondasqr");
 
-  const AUDIO_SRC = useMemo(() => {
+  const audioWavSrc = useMemo(() => {
+    const base = String(import.meta.env.BASE_URL || "/");
+    return `${base}audio/panic-alarm.wav`;
+  }, []);
+
+  const audioMp3Src = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
     return `${base}audio/panic-alarm.mp3`;
   }, []);
@@ -169,7 +174,7 @@ export default function GlobalPanicListener() {
 
       setAudioReady(true);
       setAudioError("");
-      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || el.src);
+      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || "(source tag)");
       return true;
     } catch (e) {
       const msg = e?.message || "No se pudo habilitar el audio.";
@@ -229,7 +234,7 @@ export default function GlobalPanicListener() {
     [playAlarm]
   );
 
-  // ✅ desbloqueo silencioso con primera interacción, sin botones globales
+  // Auto-desbloqueo silencioso con primera interacción real del usuario
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -248,6 +253,7 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, unlockAudio]);
 
+  // Registro de identidad/roles al socket y en reconexión
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -282,6 +288,7 @@ export default function GlobalPanicListener() {
     principal?.rol,
   ]);
 
+  // Pánico local / otras pestañas
   useEffect(() => {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
@@ -294,6 +301,7 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, visitor, triggerAlert]);
 
+  // Pánico remoto socket
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -323,20 +331,23 @@ export default function GlobalPanicListener() {
     <>
       <audio
         ref={audioRef}
-        src={AUDIO_SRC}
         preload="auto"
         playsInline
         onCanPlayThrough={() => {
-          console.log("[GlobalPanicListener] audio cargado:", AUDIO_SRC);
+          console.log("[GlobalPanicListener] audio cargado");
+          setAudioError("");
         }}
         onError={() => {
-          const msg = `No se pudo cargar el audio: ${AUDIO_SRC}`;
+          const msg = `No se pudo cargar el audio. Probadas fuentes: ${audioWavSrc} , ${audioMp3Src}`;
           setAudioError(msg);
           console.error("[GlobalPanicListener] audio error:", msg);
         }}
-      />
+      >
+        <source src={audioWavSrc} type="audio/wav" />
+        <source src={audioMp3Src} type="audio/mpeg" />
+      </audio>
 
-      {/* ✅ UI solo en Rondas */}
+      {/* UI auxiliar solo en Rondas */}
       {!visitor && showRondasUI && !audioReady && (
         <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
           <button
@@ -364,13 +375,14 @@ export default function GlobalPanicListener() {
           </button>
 
           {audioError ? (
-            <div className="max-w-[260px] rounded-xl bg-red-600 text-white text-xs px-3 py-2 shadow-lg">
+            <div className="max-w-[280px] rounded-xl bg-red-600 text-white text-xs px-3 py-2 shadow-lg">
               {audioError}
             </div>
           ) : null}
         </div>
       )}
 
+      {/* Alerta visible global */}
       {!visitor && hasAlert && (
         <button
           type="button"
