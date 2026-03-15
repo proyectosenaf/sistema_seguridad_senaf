@@ -129,10 +129,8 @@ export default function GlobalPanicListener() {
   const [audioReady, setAudioReady] = useState(false);
   const [audioError, setAudioError] = useState("");
 
-  // Solo mostrar botones auxiliares dentro de Rondas
   const showRondasUI = pathname.startsWith("/rondasqr");
 
-  // ✅ usa uno de tus archivos reales de alarma
   const audioSrc = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
     return `${base}audio/mixkit-alert-alarm-1005.wav`;
@@ -204,31 +202,44 @@ export default function GlobalPanicListener() {
     }
   }, []);
 
-  const triggerAlert = useCallback(
-    async (payload = {}, opts = {}) => {
-      const normalized = normalizeRemotePayload(payload);
+  const showVisualAlert = useCallback((payload = {}, source = "panic") => {
+    const normalized = normalizeRemotePayload(payload);
 
-      setHasAlert(true);
-      setAlertMeta({
-        title: normalized.title || "ALERTA",
-        body: normalized.body || "",
-        at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
-        source: opts?.source || normalized.source || "panic",
-      });
+    setHasAlert(true);
+    setAlertMeta({
+      title: normalized.title || "ALERTA",
+      body: normalized.body || "",
+      at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
+      source,
+    });
+  }, []);
+
+  const triggerRemoteAlert = useCallback(
+    async (payload = {}, source = "socket") => {
+      showVisualAlert(payload, source);
 
       const ok = await playAlarm();
       if (!ok) {
-        console.warn("[GlobalPanicListener] alerta recibida, pero sin audio");
-      }
-
-      if (opts?.local === true) {
-        suppressRemoteUntilRef.current = Date.now() + 4000;
+        console.warn("[GlobalPanicListener] alerta remota recibida, pero sin audio");
       }
     },
-    [playAlarm]
+    [playAlarm, showVisualAlert]
   );
 
-  // Auto-desbloqueo silencioso con la primera interacción real
+  const triggerLocalAlert = useCallback(
+    async (payload = {}, source = "local-bus") => {
+      // ✅ Emisor: solo visual, sin sonido
+      showVisualAlert(payload, source);
+
+      // Evita que el eco remoto vuelva a sonar en esta misma máquina
+      suppressRemoteUntilRef.current = Date.now() + 4000;
+
+      // Por si estaba sonando algo anterior, lo detenemos
+      stopAlarm();
+    },
+    [showVisualAlert, stopAlarm]
+  );
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -247,7 +258,6 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, unlockAudio]);
 
-  // Registro de identidad/roles al socket y en reconexión
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -282,20 +292,20 @@ export default function GlobalPanicListener() {
     principal?.rol,
   ]);
 
-  // Pánico local / otras pestañas
+  // ✅ Evento local del emisor: solo visual
   useEffect(() => {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
       if (visitor) return;
-      triggerAlert(payload, { local: true, source: "local-bus" });
+      triggerLocalAlert(payload, "local-bus");
     });
 
     return () => {
       if (typeof unsub === "function") unsub();
     };
-  }, [isAuthenticated, visitor, triggerAlert]);
+  }, [isAuthenticated, visitor, triggerLocalAlert]);
 
-  // Pánico remoto por socket
+  // ✅ Evento remoto: visual + sonido
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -303,9 +313,11 @@ export default function GlobalPanicListener() {
       if (visitor) return;
 
       const now = Date.now();
-      if (now < suppressRemoteUntilRef.current) return;
+      if (now < suppressRemoteUntilRef.current) {
+        return;
+      }
 
-      triggerAlert(payload, { local: false, source: "socket" });
+      triggerRemoteAlert(payload, "socket");
     }
 
     socket.on("panic:new", onRemotePanic);
@@ -317,7 +329,7 @@ export default function GlobalPanicListener() {
       socket.off("alerta:nueva", onRemotePanic);
       socket.off("rondasqr:alert", onRemotePanic);
     };
-  }, [isAuthenticated, visitor, triggerAlert]);
+  }, [isAuthenticated, visitor, triggerRemoteAlert]);
 
   if (!isAuthenticated) return null;
 
@@ -339,7 +351,6 @@ export default function GlobalPanicListener() {
         }}
       />
 
-      {/* Botones auxiliares solo en Rondas */}
       {!visitor && showRondasUI && !audioReady && (
         <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
           <button
@@ -374,7 +385,6 @@ export default function GlobalPanicListener() {
         </div>
       )}
 
-      {/* Alerta visible */}
       {!visitor && hasAlert && (
         <button
           type="button"
