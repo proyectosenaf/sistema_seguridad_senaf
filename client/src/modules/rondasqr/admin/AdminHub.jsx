@@ -395,7 +395,7 @@ function RoundsTab() {
   return (
     <Section
       title="Rondas"
-      subtitle="Selecciona un sitio y administra sus rondas."
+      subtitle="Selecciona una Ciudad o Sucursal y administra sus rondas."
       actions={
         <button type="button" onClick={loadRounds} className={fxBtnPrimary} disabled={!siteId}>
           Actualizar
