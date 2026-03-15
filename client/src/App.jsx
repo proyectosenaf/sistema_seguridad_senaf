@@ -348,15 +348,19 @@ function useMeSession(authToken) {
  * - Sin me => sin Layout
  * - Interno => Layout normal
  */
-function AppShell({ me, meLoading, children }) {
+function AppShell({ me, meLoading, children, shellProps = {} }) {
   if (meLoading) return <>{children}</>;
   if (!me) return <>{children}</>;
 
   if (isVisitorMe(me)) {
-    return <Layout layoutMode="visitor">{children}</Layout>;
+    return (
+      <Layout layoutMode="visitor" {...shellProps}>
+        {children}
+      </Layout>
+    );
   }
 
-  return <Layout>{children}</Layout>;
+  return <Layout {...shellProps}>{children}</Layout>;
 }
 
 /* ───────────────── ProtectedRoute ───────────────── */
@@ -779,7 +783,18 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <SessionGate me={me} meLoading={meLoading}>
-                    <AppShell me={me} meLoading={meLoading}>
+                    <AppShell
+                      me={me}
+                      meLoading={meLoading}
+                      shellProps={
+                        isVisitorMe(me)
+                          ? {
+                              hideFooter: true,
+                              hideChatDock: true,
+                            }
+                          : {}
+                      }
+                    >
                       <AgendaPageCore />
                     </AppShell>
                   </SessionGate>

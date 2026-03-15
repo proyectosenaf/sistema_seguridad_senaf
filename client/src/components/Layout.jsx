@@ -30,14 +30,6 @@ function getVisitorHint() {
   }
 }
 
-function clearVisitorHint() {
-  try {
-    localStorage.removeItem(VISITOR_HINT_KEY);
-  } catch {
-    // ignore
-  }
-}
-
 function clearVisitorSessionSafe() {
   try {
     clearToken();
