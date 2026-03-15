@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Html5Qrcode } from "html5-qrcode";
 
 // 🔹 BASE DEL BACKEND
 const ROOT = (
@@ -178,26 +179,20 @@ function parseQrPayload(raw) {
   return parseLegacyQrText(text);
 }
 
-function ScannerModal({
-  open,
-  onClose,
-  onDetected,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const loopRef = useRef(null);
-  const detectorRef = useRef(null);
+function ScannerModal({ open, onClose, onDetected }) {
+  const regionIdRef = useRef(`qr-reader-${Math.random().toString(36).slice(2)}`);
+  const scannerRef = useRef(null);
+  const closingRef = useRef(false);
 
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
-  const [supported, setSupported] = useState(true);
 
   useEffect(() => {
     if (!open) return;
 
-    let cancelled = false;
+    let mounted = true;
 
-    async function start() {
+    async function startScanner() {
       setStarting(true);
       setError("");
 
@@ -210,101 +205,79 @@ function ScannerModal({
           throw new Error("Tu navegador no permite acceso a cámara.");
         }
 
-        if (typeof window.BarcodeDetector === "undefined") {
-          setSupported(false);
-          throw new Error(
-            "Este navegador no soporta escaneo nativo de QR con BarcodeDetector."
-          );
-        }
+        const scanner = new Html5Qrcode(regionIdRef.current);
+        scannerRef.current = scanner;
 
-        const formats = await window.BarcodeDetector.getSupportedFormats?.();
-        if (Array.isArray(formats) && !formats.includes("qr_code")) {
-          setSupported(false);
-          throw new Error("El detector nativo no soporta formato QR.");
-        }
-
-        detectorRef.current = new window.BarcodeDetector({
-          formats: ["qr_code"],
-        });
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+        await scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.777778,
           },
-          audio: false,
-        });
+          async (decodedText) => {
+            if (!mounted || closingRef.current) return;
+            closingRef.current = true;
 
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-
-        loopRef.current = window.setInterval(async () => {
-          try {
-            if (!videoRef.current || !detectorRef.current) return;
-            if (videoRef.current.readyState < 2) return;
-
-            const codes = await detectorRef.current.detect(videoRef.current);
-            if (!codes || !codes.length) return;
-
-            const rawValue = codes[0]?.rawValue || "";
-            if (!rawValue) return;
-
-            stopScanner();
-            onDetected?.(rawValue);
-          } catch {
-            // silencioso
+            try {
+              await stopScanner();
+            } finally {
+              onDetected?.(decodedText);
+            }
+          },
+          () => {
+            // silencioso mientras sigue buscando
           }
-        }, 450);
+        );
       } catch (err) {
-        setError(err?.message || "No se pudo iniciar el escáner.");
+        console.error("[ScannerModal] error iniciando escáner:", err);
+        if (!mounted) return;
+
+        setError(
+          err?.message ||
+            "No se pudo iniciar la cámara o el lector QR. Verifica permisos e inténtalo de nuevo."
+        );
       } finally {
-        setStarting(false);
+        if (mounted) setStarting(false);
       }
     }
 
-    start();
+    startScanner();
 
     return () => {
-      cancelled = true;
+      mounted = false;
       stopScanner();
     };
   }, [open, onDetected]);
 
-  function stopScanner() {
-    if (loopRef.current) {
-      window.clearInterval(loopRef.current);
-      loopRef.current = null;
-    }
+  async function stopScanner() {
+    const scanner = scannerRef.current;
+    if (!scanner) return;
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        try {
-          track.stop();
-        } catch {
-          // ignore
-        }
-      });
-      streamRef.current = null;
-    }
-
-    if (videoRef.current) {
-      try {
-        videoRef.current.pause();
-      } catch {
-        // ignore
+    try {
+      if (scanner.isScanning) {
+        await scanner.stop();
       }
-      videoRef.current.srcObject = null;
+    } catch {
+      // ignore
     }
+
+    try {
+      await scanner.clear();
+    } catch {
+      // ignore
+    }
+
+    scannerRef.current = null;
+  }
+
+  async function handleClose() {
+    closingRef.current = true;
+    await stopScanner();
+    onClose?.();
+    setTimeout(() => {
+      closingRef.current = false;
+    }, 0);
   }
 
   if (!open) return null;
@@ -319,8 +292,7 @@ function ScannerModal({
       }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
-          stopScanner();
-          onClose?.();
+          handleClose();
         }
       }}
     >
@@ -341,12 +313,10 @@ function ScannerModal({
               Coloca el QR de la cita frente a la cámara para autocompletar el formulario.
             </p>
           </div>
+
           <button
             type="button"
-            onClick={() => {
-              stopScanner();
-              onClose?.();
-            }}
+            onClick={handleClose}
             aria-label="Cerrar escáner"
             style={{ color: "var(--text-muted)" }}
           >
@@ -359,16 +329,10 @@ function ScannerModal({
           style={{
             borderColor: "var(--border)",
             background: "#020617",
-            minHeight: 300,
+            minHeight: 320,
           }}
         >
-          <video
-            ref={videoRef}
-            className="w-full h-[320px] object-cover"
-            playsInline
-            muted
-            autoPlay
-          />
+          <div id={regionIdRef.current} className="w-full min-h-[320px]" />
         </div>
 
         {starting && (
@@ -387,21 +351,13 @@ function ScannerModal({
             }}
           >
             {error}
-            {!supported && (
-              <div className="mt-1">
-                Usa Chrome o Edge actualizado para escanear QR desde cámara.
-              </div>
-            )}
           </div>
         )}
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             type="button"
-            onClick={() => {
-              stopScanner();
-              onClose?.();
-            }}
+            onClick={handleClose}
             className="px-3 py-2 text-sm rounded-lg transition"
             style={sxGhostBtn()}
           >
@@ -666,7 +622,10 @@ export default function NewVisitorModal({
         (c) => String(c._id || c.id || "") === String(citaId)
       );
       if (!match) {
-        console.warn("[NewVisitorModal] cita del QR no encontrada en lista local:", citaId);
+        console.warn(
+          "[NewVisitorModal] cita del QR no encontrada en lista local:",
+          citaId
+        );
       }
     }
 
@@ -679,14 +638,22 @@ export default function NewVisitorModal({
     ).trim();
 
     const documento = formatDni(
-      visitante.documento || payload.documento || payload.document || payload.dni || ""
+      visitante.documento ||
+        payload.documento ||
+        payload.document ||
+        payload.dni ||
+        ""
     );
 
     const empresa = String(visitante.empresa || payload.empresa || "").trim();
     const empleado = String(visita.empleado || payload.empleado || "").trim();
     const motivo = String(visita.motivo || payload.motivo || "").trim();
-    const telefono = String(visitante.telefono || payload.telefono || "").trim();
-    const correo = String(visitante.correo || payload.correo || payload.email || "").trim();
+    const telefono = String(
+      visitante.telefono || payload.telefono || ""
+    ).trim();
+    const correo = String(
+      visitante.correo || payload.correo || payload.email || ""
+    ).trim();
 
     const tipoQr = String(visita.tipo || payload.tipoCita || "").toLowerCase();
     const nextVisitType =
@@ -694,7 +661,9 @@ export default function NewVisitorModal({
 
     const brand = String(vehiculo.brand || vehiculo.marca || "").trim();
     const model = String(vehiculo.model || vehiculo.modelo || "").trim();
-    const plate = String(vehiculo.plate || vehiculo.placa || "").trim().toUpperCase();
+    const plate = String(vehiculo.plate || vehiculo.placa || "")
+      .trim()
+      .toUpperCase();
 
     setName(nombre);
     setDocument(documento);
