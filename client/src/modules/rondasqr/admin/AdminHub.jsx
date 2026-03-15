@@ -295,7 +295,7 @@ function SitesTab() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Nuevo sitio"
+              placeholder="Nueva Ciudad o Sucursal"
               className={ctrlClass}
             />
           </div>
@@ -405,7 +405,7 @@ function RoundsTab() {
       <div className="p-5 space-y-4">
         <div className={ctrlWrap}>
           <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
-            <option value="">-- Sitio --</option>
+            <option value="">-- Ciudad --</option>
             {sites.map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
@@ -645,7 +645,7 @@ function PointsTab() {
           <div className={ctrlWrap}>
             <label className={"block text-xs mb-1 " + fxTextMuted}>Sitio</label>
             <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
-              <option value="">-- Sitio --</option>
+              <option value="">-- Ciudad o Sucursal --</option>
               {sites.map((s) => (
                 <option key={s._id} value={s._id}>
                   {s.name}
@@ -956,9 +956,9 @@ function PlansTab() {
       <div className="p-5 space-y-4">
         <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
           <div>
-            <label className={"block text-xs mb-1 " + fxTextMuted}>Sitio</label>
+            <label className={"block text-xs mb-1 " + fxTextMuted}>Ciudad o Sucursal</label>
             <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={ctrlClass}>
-              <option value="">-- Sitio --</option>
+              <option value="">-- Ciudad o Sucursal --</option>
               {sites.map((s) => (
                 <option key={s._id} value={s._id}>
                   {s.name}
