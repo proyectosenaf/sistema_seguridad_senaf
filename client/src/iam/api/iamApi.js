@@ -5,8 +5,6 @@ const API_ROOT = String(API || "").replace(/\/$/, "");
 const V1 = `${API_ROOT}/iam/v1`;
 
 // ✅ Base para endpoints públicos (OTP)
-// Server monta: /api/public/v1/auth  y también /public/v1/auth
-// Si API_ROOT = http://localhost:4000/api  => PUBLIC_AUTH_BASE = http://localhost:4000/api/public/v1/auth
 const PUBLIC_AUTH_BASE = `${API_ROOT.replace(/\/api\/?$/, "")}/api/public/v1/auth`;
 
 /* =========================
@@ -44,7 +42,6 @@ function buildUrl(path) {
   return `${V1}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-// ✅ construir URL para rutas públicas (OTP)
 function buildPublicAuthUrl(path) {
   return `${PUBLIC_AUTH_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
@@ -63,15 +60,6 @@ function makeError(r, payload, fallbackText = "") {
   return err;
 }
 
-/**
- * req()
- * - token: param > localStorage (getToken)
- * - json=true: set Content-Type + stringify
- * - si body es FormData/Blob/ArrayBuffer: no setear Content-Type
- * - timeoutMs: abort fetch si excede
- *
- * - isPublicAuth=true => llama a /api/public/v1/auth (OTP)
- */
 async function req(
   path,
   {
@@ -90,11 +78,9 @@ async function req(
   headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
   headers["Pragma"] = "no-cache";
 
-  // Token: param > storage
   const bearer = token || getToken() || null;
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
 
-  // Content-Type solo si es JSON y body es serializable
   const sendingForm = isFormData(body);
   const sendingBinary = isBlob(body) || isArrayBuffer(body);
   const shouldJson = json && !sendingForm && !sendingBinary && body !== undefined && body !== null;
@@ -134,7 +120,6 @@ async function req(
     clearTimeout(timer);
   }
 
-  // workaround para caches/proxies que devuelven 304
   if (r.status === 304) {
     const sep = urlBase.includes("?") ? "&" : "?";
     const urlNoCache = `${urlBase}${sep}_ts=${Date.now()}`;
@@ -157,10 +142,8 @@ async function req(
     }
   }
 
-  // 204 No Content
   if (r.status === 204) return { ok: true };
 
-  // intenta JSON, si no hay, intenta texto
   const payload = await toJson(r);
   const textFallback = payload ? "" : await toText(r);
 
@@ -170,7 +153,7 @@ async function req(
 }
 
 /* =========================
-   Helpers: catálogos (compat /catalogos vs /catalogs)
+   Helpers: catálogos
 ========================= */
 async function reqCatalogs(pathEs, pathEn, token) {
   try {
@@ -186,10 +169,20 @@ async function reqCatalogs(pathEs, pathEn, token) {
 
 function buildQueryString(params = {}) {
   const qs = new URLSearchParams();
+
   Object.entries(params || {}).forEach(([k, v]) => {
     if (v === "" || v == null) return;
+
+    if (Array.isArray(v)) {
+      const clean = v.map((x) => String(x || "").trim()).filter(Boolean);
+      if (!clean.length) return;
+      qs.set(k, clean.join(","));
+      return;
+    }
+
     qs.set(k, String(v));
   });
+
   const s = qs.toString();
   return s ? `?${s}` : "";
 }
@@ -218,12 +211,10 @@ function normalizePermissionKeys(list = []) {
    API
 ========================= */
 export const iamApi = {
-  // Auth / Session
   me(token) {
     return req("/me", { token, method: "GET", credentials: "omit" });
   },
 
-  // Login local clásico IAM: /api/iam/v1/auth/login
   async loginLocal({ email, password }) {
     const data = await req("/auth/login", {
       method: "POST",
@@ -238,15 +229,6 @@ export const iamApi = {
     return data;
   },
 
-  /* =========================
-     ✅ OTP PUBLIC AUTH (REAL, según tu backend)
-     Server:
-       POST /api/public/v1/auth/login-otp
-       POST /api/public/v1/auth/verify-otp   (body: { email, otp })
-       POST /api/public/v1/auth/resend-otp
-  ========================= */
-
-  // 1) Login con password -> si requiere OTP, envía correo y responde otpRequired:true
   loginOtp(email, password) {
     return req("/login-otp", {
       method: "POST",
@@ -259,13 +241,12 @@ export const iamApi = {
     });
   },
 
-  // 2) Verificar OTP -> devuelve token (y lo guardamos)
   async verifyOtp(email, otp) {
     const data = await req("/verify-otp", {
       method: "POST",
       body: {
         email: String(email || "").trim().toLowerCase(),
-        otp: String(otp || "").trim(), // ✅ backend espera "otp"
+        otp: String(otp || "").trim(),
       },
       credentials: "omit",
       isPublicAuth: true,
@@ -275,7 +256,6 @@ export const iamApi = {
     return data;
   },
 
-  // 3) Reenviar OTP
   resendOtp(email) {
     return req("/resend-otp", {
       method: "POST",
@@ -285,7 +265,6 @@ export const iamApi = {
     });
   },
 
-  // (Opcional) Reset password OTP flow (si tu UI lo usa)
   async resetPasswordOtp({ email, resetToken, newPassword }) {
     const data = await req("/reset-password-otp", {
       method: "POST",
@@ -302,7 +281,6 @@ export const iamApi = {
     return data;
   },
 
-  // (Opcional) Change password OTP flow (si tu UI lo usa)
   changePasswordOtp({ email, newPassword }) {
     return req("/change-password", {
       method: "POST",
@@ -315,7 +293,6 @@ export const iamApi = {
     });
   },
 
-  // set password (IAM private) - si existe en tu backend
   setPassword(newPassword, token) {
     return req("/auth/set-password", {
       method: "POST",
@@ -325,7 +302,6 @@ export const iamApi = {
     });
   },
 
-  // Logout
   async logout() {
     const out = await req("/auth/logout", {
       method: "POST",
@@ -336,9 +312,6 @@ export const iamApi = {
     return out;
   },
 
-  /* =========================
-     Catálogos
-  ========================= */
   getCivilStatusCatalog(token) {
     return reqCatalogs("/catalogos/estado-civil", "/catalogs/civil-status", token);
   },
@@ -389,7 +362,6 @@ export const iamApi = {
     }
   },
 
-  // Roles
   listRoles(token) {
     return req("/roles", { token });
   },
@@ -403,7 +375,6 @@ export const iamApi = {
     return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
-  // Permisos por rol
   getRolePerms(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
@@ -416,7 +387,6 @@ export const iamApi = {
     });
   },
 
-  // ✅ método directo para la matriz de permisos
   updateRolePermissions(id, body = {}, token) {
     const permissionKeys = normalizePermissionKeys(
       body?.permissionKeys ?? body?.permissions ?? []
@@ -429,7 +399,6 @@ export const iamApi = {
     });
   },
 
-  // Aliases (compat)
   listPermsForRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
@@ -442,7 +411,6 @@ export const iamApi = {
     });
   },
 
-  // Permisos
   listPerms(params = {}, token) {
     return req(`/permissions${buildQueryString(params)}`, { token });
   },
@@ -460,9 +428,6 @@ export const iamApi = {
     return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
-  // =========================
-  // Usuarios
-  // =========================
   listUsers(qOrParams = "", token) {
     const DEFAULT_ONLY_ACTIVE = 1;
     const DEFAULT_LIMIT = 5;
@@ -528,9 +493,18 @@ export const iamApi = {
     return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
 
-  // Audit
   listAudit(params = {}, token) {
-    return req(`/audit${buildQueryString(params)}`, { token });
+    const safe = {
+      action: params?.action ?? "",
+      entity: params?.entity ?? "",
+      actor: params?.actor ?? "",
+      from: params?.from ?? "",
+      to: params?.to ?? "",
+      limit: params?.limit ?? "",
+      skip: params?.skip ?? "",
+    };
+
+    return req(`/audit${buildQueryString(safe)}`, { token });
   },
 };
 

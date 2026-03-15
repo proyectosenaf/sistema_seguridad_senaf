@@ -6,12 +6,11 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// Valores que puede traer el backend (compat)
-const ACTIONS = ["", "create", "update", "enable", "disable", "activate", "deactivate", "delete"];
-const ENTITIES = ["", "user", "role", "permission"];
+/* =========================================================
+   ETIQUETAS / HELPERS
+========================================================= */
 
-// Etiquetas en español
-const ACTION_LABEL = {
+const DEFAULT_ACTION_LABEL = {
   create: "creación",
   update: "actualización",
   enable: "activación",
@@ -19,23 +18,66 @@ const ACTION_LABEL = {
   activate: "activación",
   deactivate: "desactivación",
   delete: "eliminación",
+  remove: "eliminación",
+  assign: "asignación",
+  unassign: "desasignación",
+  grant: "otorgamiento",
+  revoke: "revocación",
+  login: "inicio de sesión",
+  logout: "cierre de sesión",
+  reset_password: "reinicio de contraseña",
+  change_password: "cambio de contraseña",
+  verify_otp: "verificación OTP",
+  resend_otp: "reenvío OTP",
+  import: "importación",
+  export: "exportación",
+  read: "lectura",
+  view: "visualización",
 };
 
-const ENTITY_LABEL = {
+const DEFAULT_ENTITY_LABEL = {
   user: "Usuario",
+  users: "Usuarios",
   role: "Rol",
+  roles: "Roles",
   permission: "Permiso",
+  permissions: "Permisos",
+  audit: "Auditoría",
+  session: "Sesión",
+  policy: "Política",
+  module: "Módulo",
 };
 
 const KEY_LABEL = {
   name: "Nombre",
+  fullName: "Nombre",
   email: "Correo",
   active: "Activo",
+  enabled: "Activo",
   roles: "Roles",
   perms: "Permisos",
   permissions: "Permisos",
   provider: "Proveedor",
+  status: "Estado",
+  entity: "Entidad",
+  action: "Acción",
+  actorEmail: "Actor",
+  actorId: "Actor ID",
 };
+
+function humanizeToken(v) {
+  const s = String(v || "").trim();
+  if (!s) return "—";
+
+  if (DEFAULT_ACTION_LABEL[s]) return DEFAULT_ACTION_LABEL[s];
+  if (DEFAULT_ENTITY_LABEL[s]) return DEFAULT_ENTITY_LABEL[s];
+
+  return s
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/, (m) => m.toUpperCase());
+}
 
 function sxCard(extra = {}) {
   return {
@@ -44,15 +86,6 @@ function sxCard(extra = {}) {
     boxShadow: "var(--shadow-md)",
     backdropFilter: "blur(12px) saturate(130%)",
     WebkitBackdropFilter: "blur(12px) saturate(130%)",
-    ...extra,
-  };
-}
-
-function sxCardSoft(extra = {}) {
-  return {
-    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
-    border: "1px solid var(--border)",
-    boxShadow: "var(--shadow-sm)",
     ...extra,
   };
 }
@@ -77,16 +110,6 @@ function sxGhostBtn(extra = {}) {
   };
 }
 
-function sxPrimaryBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
-    ...extra,
-  };
-}
-
 function sxSuccessBtn(extra = {}) {
   return {
     background: "linear-gradient(135deg, #16a34a, #22c55e)",
@@ -107,7 +130,58 @@ function sxDangerBtn(extra = {}) {
   };
 }
 
-// --- Componente para truncar texto largo ---
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return value;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+}
+
+function normalizeActor(x) {
+  const candidate =
+    x?.actorEmail ??
+    x?.actor?.email ??
+    x?.actor?.sub ??
+    x?.actorId ??
+    x?.userEmail ??
+    x?.actor ??
+    "";
+
+  if (!candidate) return "";
+
+  if (typeof candidate === "string") return candidate.trim();
+
+  if (typeof candidate === "object") {
+    return String(
+      candidate.email ||
+        candidate.sub ||
+        candidate.id ||
+        candidate._id ||
+        candidate.name ||
+        ""
+    ).trim();
+  }
+
+  return String(candidate).trim();
+}
+
+/* =========================================================
+   UI HELPERS
+========================================================= */
+
 function Truncate({ children, max = 220 }) {
   const [open, setOpen] = useState(false);
   const text = typeof children === "string" ? children : String(children ?? "");
@@ -127,7 +201,6 @@ function Truncate({ children, max = 220 }) {
   );
 }
 
-// --- Render de valores bonitos ---
 function fmtValue(v) {
   if (v === null || v === undefined) return "—";
 
@@ -164,7 +237,7 @@ function fmtValue(v) {
             className="px-2 py-0.5 rounded-full text-[11px]"
             style={sxGhostBtn()}
           >
-            {String(x)}
+            {typeof x === "object" ? safeJsonStringify(x) : String(x)}
           </span>
         ))}
       </div>
@@ -174,11 +247,12 @@ function fmtValue(v) {
   if (typeof v === "object") {
     const entries = Object.entries(v);
     if (entries.length === 0) return "—";
+
     return (
       <Truncate max={260}>
         {entries
           .map(([k, val]) => {
-            const vv = typeof val === "object" ? JSON.stringify(val) : String(val);
+            const vv = typeof val === "object" ? safeJsonStringify(val) : String(val);
             return `${KEY_LABEL[k] || k}: ${vv}`;
           })
           .join(" · ")}
@@ -189,14 +263,19 @@ function fmtValue(v) {
   return String(v);
 }
 
-// --- Detección de cambios campo a campo ---
 function diffKeys(before = {}, after = {}) {
-  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  const b = normalizeObject(before) || {};
+  const a = normalizeObject(after) || {};
+  const keys = new Set([...Object.keys(b), ...Object.keys(a)]);
   return [...keys];
 }
 
 function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
-  if (!obj || (typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).length === 0)) {
+  if (
+    obj === null ||
+    obj === undefined ||
+    (typeof obj === "object" && !Array.isArray(obj) && Object.keys(obj).length === 0)
+  ) {
     return <span style={{ color: "var(--text-muted)" }}>—</span>;
   }
 
@@ -211,7 +290,7 @@ function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
       {keys.map((k) => {
         const changed =
           emphasizeChanges &&
-          JSON.stringify((compareWith || {})[k]) !== JSON.stringify(obj[k]);
+          safeJsonStringify((compareWith || {})[k]) !== safeJsonStringify(obj[k]);
 
         return (
           <div
@@ -245,15 +324,37 @@ const toPlain = (v) =>
       ? "Sí"
       : "No"
     : Array.isArray(v)
-    ? v.join(", ")
+    ? v
+        .map((x) => (typeof x === "object" ? safeJsonStringify(x) : String(x)))
+        .join(", ")
     : v && typeof v === "object"
     ? Object.entries(v)
         .map(([k, val]) => {
-          const vv = typeof val === "object" ? JSON.stringify(val) : String(val);
+          const vv = typeof val === "object" ? safeJsonStringify(val) : String(val);
           return `${KEY_LABEL[k] || k}: ${vv}`;
         })
         .join(" | ")
     : v ?? "—";
+
+function normalizeAuditItem(x) {
+  const createdAt =
+    x?.createdAt ||
+    x?.ts ||
+    x?.timestamp ||
+    x?.date ||
+    null;
+
+  return {
+    _id: x?._id || "",
+    createdAt,
+    action: String(x?.action || "").trim(),
+    entity: String(x?.entity || "").trim(),
+    actorEmail: normalizeActor(x),
+    before: x?.before ?? null,
+    after: x?.after ?? null,
+    raw: x,
+  };
+}
 
 export default function AuditPage() {
   const [audits, setAudits] = useState([]);
@@ -268,61 +369,105 @@ export default function AuditPage() {
   const [dateTo, setDateTo] = useState("");
   const [dateErr, setDateErr] = useState("");
 
+  const actionsOptions = useMemo(() => {
+    const set = new Set();
+    for (const a of audits) {
+      if (a.action) set.add(a.action);
+    }
+    return ["", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [audits]);
+
+  const entityOptions = useMemo(() => {
+    const set = new Set();
+    for (const a of audits) {
+      if (a.entity) set.add(a.entity);
+    }
+    return ["", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [audits]);
+
   const fetchAudits = useCallback(async () => {
     try {
       setErr("");
       setLoading(true);
 
-      if (dateFrom && dateTo && new Date(dateFrom) > new Date(dateTo)) {
+      if (
+        dateFrom &&
+        dateTo &&
+        new Date(`${dateFrom}T00:00:00`) > new Date(`${dateTo}T23:59:59.999`)
+      ) {
         setDateErr("La fecha 'desde' no puede ser mayor que 'hasta'.");
         setAudits([]);
         setFiltered([]);
         return;
       }
+
       setDateErr("");
 
-      const params = {
-        limit: 500,
-        skip: 0,
-        ...(filterAction ? { action: filterAction } : {}),
-        ...(filterEntity ? { entity: filterEntity } : {}),
-        ...(filterActor ? { actor: filterActor } : {}),
-        ...(dateFrom ? { from: dateFrom } : {}),
-        ...(dateTo ? { to: dateTo } : {}),
-      };
+      const pageSize = 500;
+      let skip = 0;
+      let total = Infinity;
+      let acc = [];
 
-      const res = await iamApi.listAudit(params);
-
-      const raw =
-        (Array.isArray(res?.items) && res.items) ||
-        (Array.isArray(res?.data?.items) && res.data.items) ||
-        (Array.isArray(res?.data) && res.data) ||
-        [];
-
-      const items = raw.map((x) => {
-        const actorEmail =
-          x?.actorEmail ||
-          x?.actor ||
-          x?.actorId ||
-          x?.actor?.email ||
-          x?.actor?.sub ||
-          "";
-
-        return {
-          _id: x._id,
-          createdAt: x.createdAt || x.ts || null,
-          action: x.action || "",
-          entity: x.entity || "",
-          actorEmail,
-          before: x.before ?? null,
-          after: x.after ?? null,
+      while (skip < total) {
+        const params = {
+          limit: pageSize,
+          skip,
+          ...(filterAction ? { action: filterAction } : {}),
+          ...(filterEntity ? { entity: filterEntity } : {}),
+          ...(filterActor ? { actor: filterActor } : {}),
+          ...(dateFrom ? { from: dateFrom } : {}),
+          ...(dateTo ? { to: dateTo } : {}),
         };
+
+        const res = await iamApi.listAudit(params);
+
+        const raw =
+          (Array.isArray(res?.items) && res.items) ||
+          (Array.isArray(res?.data?.items) && res.data.items) ||
+          (Array.isArray(res?.data) && res.data) ||
+          [];
+
+        const batch = raw.map(normalizeAuditItem);
+        acc = acc.concat(batch);
+
+        const reportedTotal =
+          Number(res?.total) ||
+          Number(res?.data?.total) ||
+          raw.length;
+
+        total = reportedTotal;
+
+        if (raw.length < pageSize) break;
+        skip += pageSize;
+      }
+
+      const unique = [];
+      const seen = new Set();
+
+      for (const item of acc) {
+        const k =
+          item._id ||
+          `${item.createdAt}|${item.action}|${item.entity}|${item.actorEmail}|${safeJsonStringify(item.before)}|${safeJsonStringify(item.after)}`;
+
+        if (seen.has(k)) continue;
+        seen.add(k);
+        unique.push(item);
+      }
+
+      unique.sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
       });
 
-      setAudits(items);
-      setFiltered(items);
+      setAudits(unique);
+      setFiltered(unique);
     } catch (e) {
-      setErr(e?.message || "No se pudo cargar el historial de auditoría");
+      setErr(
+        e?.response?.data?.error ||
+          e?.message ||
+          "No se pudo cargar el historial de auditoría"
+      );
       setAudits([]);
       setFiltered([]);
     } finally {
@@ -346,32 +491,50 @@ export default function AuditPage() {
     if (from && to && from > to) setDateErr("La fecha 'desde' no puede ser mayor que 'hasta'.");
     else setDateErr("");
 
-    if (from)
-      list = list.filter((a) => (a.createdAt ? new Date(a.createdAt).getTime() : 0) >= from.getTime());
-    if (to)
-      list = list.filter((a) => (a.createdAt ? new Date(a.createdAt).getTime() : 0) <= to.getTime());
+    if (from) {
+      list = list.filter((a) => {
+        const t = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        return t >= from.getTime();
+      });
+    }
+
+    if (to) {
+      list = list.filter((a) => {
+        const t = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        return t <= to.getTime();
+      });
+    }
+
     if (filterAction) list = list.filter((a) => a.action === filterAction);
     if (filterEntity) list = list.filter((a) => a.entity === filterEntity);
-    if (filterActor)
-      list = list.filter((a) => (a.actorEmail || "").toLowerCase().includes(filterActor.toLowerCase()));
+
+    if (filterActor) {
+      const q = filterActor.toLowerCase();
+      list = list.filter((a) => String(a.actorEmail || "").toLowerCase().includes(q));
+    }
 
     setFiltered(list);
   }, [filterAction, filterEntity, filterActor, dateFrom, dateTo, audits]);
 
   const exportExcel = () => {
     const rows = filtered.map((a) => ({
-      Fecha: a.createdAt ? new Date(a.createdAt).toLocaleString() : "",
-      Acción: ACTION_LABEL[a.action] || a.action,
-      Entidad: ENTITY_LABEL[a.entity] || a.entity,
+      Fecha: formatDateTime(a.createdAt),
+      Acción: humanizeToken(a.action),
+      Entidad: humanizeToken(a.entity),
       Actor: a.actorEmail || "",
       Antes: a.before ? toPlain(a.before) : "",
       Después: a.after ? toPlain(a.after) : "",
     }));
+
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Auditoría");
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    saveAs(new Blob([buf], { type: "application/octet-stream" }), `Historial_Auditoria_${Date.now()}.xlsx`);
+
+    saveAs(
+      new Blob([buf], { type: "application/octet-stream" }),
+      `Historial_Auditoria_${Date.now()}.xlsx`
+    );
   };
 
   const exportPDF = async () => {
@@ -390,12 +553,16 @@ export default function AuditPage() {
     else if (dateFrom) rango = `Desde: ${dateFrom}`;
     else if (dateTo) rango = `Hasta: ${dateTo}`;
 
-    if (rango) doc.text(rango, doc.internal.pageSize.getWidth() - marginX, marginY + 12, { align: "right" });
+    if (rango) {
+      doc.text(rango, doc.internal.pageSize.getWidth() - marginX, marginY + 12, {
+        align: "right",
+      });
+    }
 
     const body = filtered.map((a) => [
-      a.createdAt ? new Date(a.createdAt).toLocaleString() : "",
-      ACTION_LABEL[a.action] || a.action,
-      ENTITY_LABEL[a.entity] || a.entity,
+      formatDateTime(a.createdAt),
+      humanizeToken(a.action),
+      humanizeToken(a.entity),
       a.actorEmail || "",
       a.before ? toPlain(a.before) : "",
       a.after ? toPlain(a.after) : "",
@@ -405,7 +572,16 @@ export default function AuditPage() {
       startY: marginY + 22,
       head: [["Fecha", "Acción", "Entidad", "Actor", "Antes", "Después"]],
       body,
-      styles: { fontSize: 9, cellPadding: 4 },
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fontStyle: "bold" },
+      columnStyles: {
+        0: { cellWidth: 90 },
+        1: { cellWidth: 80 },
+        2: { cellWidth: 80 },
+        3: { cellWidth: 130 },
+        4: { cellWidth: 180 },
+        5: { cellWidth: 180 },
+      },
     });
 
     doc.save(`Historial_Auditoria_${Date.now()}.pdf`);
@@ -445,9 +621,14 @@ export default function AuditPage() {
             </div>
 
             <div className="flex gap-2 flex-wrap">
-              <button onClick={fetchAudits} className="px-3 py-2 rounded-lg text-sm" style={sxGhostBtn()}>
+              <button
+                onClick={fetchAudits}
+                className="px-3 py-2 rounded-lg text-sm"
+                style={sxGhostBtn()}
+              >
                 Actualizar
               </button>
+
               <button
                 onClick={exportExcel}
                 className="px-3 py-2 rounded-lg text-sm"
@@ -457,6 +638,7 @@ export default function AuditPage() {
               >
                 Excel
               </button>
+
               <button
                 onClick={exportPDF}
                 className="px-3 py-2 rounded-lg text-sm"
@@ -476,9 +658,9 @@ export default function AuditPage() {
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
             >
-              {ACTIONS.map((a, idx) => (
+              {actionsOptions.map((a, idx) => (
                 <option key={idx} value={a}>
-                  {a ? ACTION_LABEL[a] || a : "Todas las acciones"}
+                  {a ? humanizeToken(a) : "Todas las acciones"}
                 </option>
               ))}
             </select>
@@ -489,9 +671,9 @@ export default function AuditPage() {
               value={filterEntity}
               onChange={(e) => setFilterEntity(e.target.value)}
             >
-              {ENTITIES.map((e, idx) => (
+              {entityOptions.map((e, idx) => (
                 <option key={idx} value={e}>
-                  {e ? ENTITY_LABEL[e] || e : "Todas las entidades"}
+                  {e ? humanizeToken(e) : "Todas las entidades"}
                 </option>
               ))}
             </select>
@@ -522,11 +704,19 @@ export default function AuditPage() {
             />
           </div>
 
-          {dateErr && <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>{dateErr}</div>}
+          {dateErr ? (
+            <div className="mt-2 text-xs" style={{ color: "#fca5a5" }}>
+              {dateErr}
+            </div>
+          ) : null}
         </div>
 
         <div className="rounded-[24px] overflow-hidden" style={sxCard()}>
-          {err && <div className="p-3 text-sm" style={{ color: "#fca5a5" }}>{err}</div>}
+          {err ? (
+            <div className="p-3 text-sm" style={{ color: "#fca5a5" }}>
+              {err}
+            </div>
+          ) : null}
 
           <div className="overflow-auto">
             <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
@@ -552,13 +742,21 @@ export default function AuditPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-12" style={{ color: "var(--text-muted)" }}>
+                    <td
+                      colSpan="6"
+                      className="text-center py-12"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       Cargando…
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-12" style={{ color: "var(--text-muted)" }}>
+                    <td
+                      colSpan="6"
+                      className="text-center py-12"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       Sin registros
                     </td>
                   </tr>
@@ -573,27 +771,40 @@ export default function AuditPage() {
                       }}
                     >
                       <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
-                        {a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}
+                        {formatDateTime(a.createdAt)}
                       </td>
 
                       <td className="px-3 py-2">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={sxGhostBtn()}>
-                          {ACTION_LABEL[a.action] || a.action}
+                        <span
+                          className="px-2 py-0.5 rounded-full text-xs font-medium"
+                          style={sxGhostBtn()}
+                        >
+                          {humanizeToken(a.action)}
                         </span>
                       </td>
 
-                      <td className="px-3 py-2">{ENTITY_LABEL[a.entity] || a.entity || "—"}</td>
+                      <td className="px-3 py-2">
+                        {a.entity ? humanizeToken(a.entity) : "—"}
+                      </td>
 
                       <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
                         {a.actorEmail || "—"}
                       </td>
 
                       <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
-                        <PrettyBox obj={a.before} compareWith={a.after} emphasizeChanges={false} />
+                        <PrettyBox
+                          obj={a.before}
+                          compareWith={a.after}
+                          emphasizeChanges={false}
+                        />
                       </td>
 
                       <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
-                        <PrettyBox obj={a.after} compareWith={a.before} emphasizeChanges={true} />
+                        <PrettyBox
+                          obj={a.after}
+                          compareWith={a.before}
+                          emphasizeChanges={true}
+                        />
                       </td>
                     </tr>
                   ))
@@ -610,7 +821,7 @@ export default function AuditPage() {
             }}
           >
             Mostrando <span style={{ color: "var(--text)" }}>{filtered.length}</span> de{" "}
-            <span style={{ color: "var(--text)" }}>{audits.length}</span> registros totales
+            <span style={{ color: "var(--text)" }}>{audits.length}</span> registros cargados
             {dateFrom || dateTo ? (
               <>
                 {" "}
