@@ -62,15 +62,13 @@ function resolvePrincipal(user) {
 
 function getRolesFromUser(user) {
   const u = resolvePrincipal(user) || {};
-  const roles = [
-    ...toArray(u?.roles),
-    ...toArray(u?.role),
-    ...toArray(u?.rol),
-  ]
-    .map(normalizeRoleName)
-    .filter(Boolean);
-
-  return [...new Set(roles)];
+  return [
+    ...new Set(
+      [...toArray(u?.roles), ...toArray(u?.role), ...toArray(u?.rol)]
+        .map(normalizeRoleName)
+        .filter(Boolean)
+    ),
+  ];
 }
 
 function isVisitorUser(user) {
@@ -131,17 +129,13 @@ export default function GlobalPanicListener() {
   const [audioReady, setAudioReady] = useState(false);
   const [audioError, setAudioError] = useState("");
 
-  // Solo mostrar UI auxiliar dentro de Rondas
+  // Solo mostrar botones auxiliares dentro de Rondas
   const showRondasUI = pathname.startsWith("/rondasqr");
 
-  const audioWavSrc = useMemo(() => {
+  // ✅ usa uno de tus archivos reales de alarma
+  const audioSrc = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
-    return `${base}audio/panic-alarm.wav`;
-  }, []);
-
-  const audioMp3Src = useMemo(() => {
-    const base = String(import.meta.env.BASE_URL || "/");
-    return `${base}audio/panic-alarm.mp3`;
+    return `${base}audio/mixkit-alert-alarm-1005.wav`;
   }, []);
 
   const stopAlarm = useCallback(() => {
@@ -174,7 +168,7 @@ export default function GlobalPanicListener() {
 
       setAudioReady(true);
       setAudioError("");
-      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || "(source tag)");
+      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || el.src);
       return true;
     } catch (e) {
       const msg = e?.message || "No se pudo habilitar el audio.";
@@ -234,7 +228,7 @@ export default function GlobalPanicListener() {
     [playAlarm]
   );
 
-  // Auto-desbloqueo silencioso con primera interacción real del usuario
+  // Auto-desbloqueo silencioso con la primera interacción real
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -301,7 +295,7 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, visitor, triggerAlert]);
 
-  // Pánico remoto socket
+  // Pánico remoto por socket
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -331,23 +325,21 @@ export default function GlobalPanicListener() {
     <>
       <audio
         ref={audioRef}
+        src={audioSrc}
         preload="auto"
         playsInline
         onCanPlayThrough={() => {
-          console.log("[GlobalPanicListener] audio cargado");
+          console.log("[GlobalPanicListener] audio cargado:", audioSrc);
           setAudioError("");
         }}
         onError={() => {
-          const msg = `No se pudo cargar el audio. Probadas fuentes: ${audioWavSrc} , ${audioMp3Src}`;
+          const msg = `No se pudo cargar el audio: ${audioSrc}`;
           setAudioError(msg);
           console.error("[GlobalPanicListener] audio error:", msg);
         }}
-      >
-        <source src={audioWavSrc} type="audio/wav" />
-        <source src={audioMp3Src} type="audio/mpeg" />
-      </audio>
+      />
 
-      {/* UI auxiliar solo en Rondas */}
+      {/* Botones auxiliares solo en Rondas */}
       {!visitor && showRondasUI && !audioReady && (
         <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
           <button
@@ -382,7 +374,7 @@ export default function GlobalPanicListener() {
         </div>
       )}
 
-      {/* Alerta visible global */}
+      {/* Alerta visible */}
       {!visitor && hasAlert && (
         <button
           type="button"
