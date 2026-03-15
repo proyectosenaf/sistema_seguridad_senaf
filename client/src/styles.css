@@ -1020,3 +1020,18 @@ html.dark[data-fx] .fx-card {
   padding: 0 !important;
   border: 0 !important;
 }
+[id^="qr-reader-"] video {
+  width: 100% !important;
+  height: 320px !important;
+  object-fit: cover !important;
+  border-radius: 18px !important;
+}
+
+[id^="qr-reader-"]__scan_region {
+  background: transparent !important;
+}
+
+[id^="qr-reader-"]__dashboard {
+  padding: 0 !important;
+  border: 0 !important;
+}

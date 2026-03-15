@@ -42,14 +42,6 @@ function encodeBase64Utf8(value) {
   }
 }
 
-function decodeBase64Utf8(value) {
-  try {
-    return decodeURIComponent(escape(atob(String(value || ""))));
-  } catch {
-    return "";
-  }
-}
-
 function resolveAuthPrincipal(auth) {
   const raw = auth?.me || auth?.user || null;
   if (!raw || typeof raw !== "object") return null;
@@ -403,7 +395,8 @@ function buildQrPayloadForCita(cita) {
         : cita.hora || "",
       citaAtIso: citaAt?.toISOString?.() || null,
     },
-    vehiculo: cita.vehiculo ||
+    vehiculo:
+      cita.vehiculo ||
       cita.vehicle || {
         brand: cita.vehicleBrand || "",
         model: cita.vehicleModel || "",
@@ -463,14 +456,17 @@ function buildQrValueForCita(cita) {
 
 function enrichCitaWithQr(cita) {
   if (!cita) return cita;
+
   const qrPayload = buildQrPayloadForCita(cita);
   const qrValue = buildQrValueForCita(cita);
+
   return {
     ...cita,
     qrPayload,
     qrValue,
     autorizadoAt:
-      cita.autorizadoAt || (cita.estado === "autorizada" ? new Date().toISOString() : null),
+      cita.autorizadoAt ||
+      (cita.estado === "autorizada" ? new Date().toISOString() : null),
   };
 }
 
@@ -525,9 +521,11 @@ export default function VisitsPage() {
       if (!raw) return [];
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr)) return [];
+
       return arr.map((c, idx) => {
         const baseId = c._id || c.id || `local-cita-${idx}`;
         let citaAt = null;
+
         if (c.citaAt) {
           citaAt = new Date(c.citaAt);
         } else if (c.fecha && c.hora) {
@@ -535,6 +533,7 @@ export default function VisitsPage() {
         }
 
         const normalized = { ...c, _id: baseId, id: baseId, citaAt };
+
         return normalized.estado === "autorizada"
           ? enrichCitaWithQr(normalized)
           : normalized;
@@ -758,6 +757,7 @@ export default function VisitsPage() {
     })}`;
 
     let backendId = null;
+
     try {
       const payload = {
         nombre: formData.name?.trim(),
@@ -836,6 +836,7 @@ export default function VisitsPage() {
       saveToStorage(next);
       return next;
     });
+
     setShowModal(false);
   }
 
@@ -879,7 +880,6 @@ export default function VisitsPage() {
     if (!citaId) return;
 
     let citaActual = null;
-    let nextForStorage = [];
 
     setOnlineCitas((prev) => {
       const next = prev.map((c) => {
@@ -899,7 +899,6 @@ export default function VisitsPage() {
           : citaActual;
       });
 
-      nextForStorage = next;
       saveCitasToStorage(next);
       return next;
     });
@@ -964,6 +963,7 @@ export default function VisitsPage() {
       alert("No hay datos para exportar.");
       return;
     }
+
     try {
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -1039,6 +1039,7 @@ export default function VisitsPage() {
 
       let fecha = "";
       let hora = "";
+
       if (c.citaAt instanceof Date && !isNaN(c.citaAt.getTime())) {
         fecha = c.citaAt.toLocaleDateString("es-ES", {
           day: "2-digit",
@@ -1075,6 +1076,7 @@ export default function VisitsPage() {
       alert("No hay citas para exportar.");
       return;
     }
+
     try {
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -1341,6 +1343,7 @@ export default function VisitsPage() {
                   <th className="text-right">Acciones</th>
                 </tr>
               </thead>
+
               <tbody style={{ color: "var(--text)" }}>
                 {filteredCitas.length === 0 ? (
                   <tr>
@@ -1366,7 +1369,9 @@ export default function VisitsPage() {
                         : "Personal";
 
                     const citaWithQr =
-                      cita.estado === "autorizada" ? enrichCitaWithQr(cita) : cita;
+                      cita.estado === "autorizada"
+                        ? enrichCitaWithQr(cita)
+                        : cita;
 
                     return (
                       <tr
@@ -1432,6 +1437,7 @@ export default function VisitsPage() {
                                 >
                                   En revisión
                                 </button>
+
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1442,6 +1448,7 @@ export default function VisitsPage() {
                                 >
                                   Autorizar
                                 </button>
+
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1452,6 +1459,7 @@ export default function VisitsPage() {
                                 >
                                   Denegar
                                 </button>
+
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1536,6 +1544,7 @@ export default function VisitsPage() {
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
+
             <tbody style={{ color: "var(--text)" }}>
               {loading ? (
                 <tr>
@@ -1610,6 +1619,7 @@ export default function VisitsPage() {
                         >
                           Editar
                         </button>
+
                         {v.status === "Dentro" ? (
                           <button
                             type="button"

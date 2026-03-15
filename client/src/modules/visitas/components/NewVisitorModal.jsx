@@ -182,7 +182,7 @@ function parseQrPayload(raw) {
 function ScannerModal({ open, onClose, onDetected }) {
   const regionIdRef = useRef(`qr-reader-${Math.random().toString(36).slice(2)}`);
   const scannerRef = useRef(null);
-  const closingRef = useRef(false);
+  const detectedRef = useRef(false);
 
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
@@ -191,6 +191,7 @@ function ScannerModal({ open, onClose, onDetected }) {
     if (!open) return;
 
     let mounted = true;
+    detectedRef.current = false;
 
     async function startScanner() {
       setStarting(true);
@@ -205,28 +206,37 @@ function ScannerModal({ open, onClose, onDetected }) {
           throw new Error("Tu navegador no permite acceso a cámara.");
         }
 
-        const scanner = new Html5Qrcode(regionIdRef.current);
+        const scanner = new Html5Qrcode(regionIdRef.current, {
+          verbose: false,
+        });
+
         scannerRef.current = scanner;
 
         await scanner.start(
           { facingMode: "environment" },
           {
-            fps: 10,
-            qrbox: { width: 250, height: 250 },
+            fps: 12,
+            qrbox: { width: 280, height: 280 },
             aspectRatio: 1.777778,
+            disableFlip: false,
           },
           async (decodedText) => {
-            if (!mounted || closingRef.current) return;
-            closingRef.current = true;
+            if (!mounted || detectedRef.current) return;
+
+            detectedRef.current = true;
+
+            console.log("[ScannerModal] QR detectado:", decodedText);
 
             try {
               await stopScanner();
-            } finally {
-              onDetected?.(decodedText);
+            } catch (err) {
+              console.warn("[ScannerModal] stopScanner warning:", err);
             }
+
+            onDetected?.(decodedText);
           },
           () => {
-            // silencioso mientras sigue buscando
+            // sin ruido por frame
           }
         );
       } catch (err) {
@@ -272,12 +282,8 @@ function ScannerModal({ open, onClose, onDetected }) {
   }
 
   async function handleClose() {
-    closingRef.current = true;
     await stopScanner();
     onClose?.();
-    setTimeout(() => {
-      closingRef.current = false;
-    }, 0);
   }
 
   if (!open) return null;
@@ -695,6 +701,9 @@ export default function NewVisitorModal({
       qrPayload: payload,
     });
 
+    console.log("[NewVisitorModal] applyQrPayload payload:", payload);
+    console.log("[NewVisitorModal] applyQrPayload citaId:", citaId);
+
     setErrors({});
     setAutoFilledByName(false);
     setScannerOpen(false);
@@ -850,6 +859,7 @@ export default function NewVisitorModal({
 
     const trimmedName = name.trim();
     const parts = trimmedName.split(/\s+/).filter(Boolean);
+
     if (!trimmedName) {
       newErrors.name = "El nombre es obligatorio.";
     } else if (trimmedName.length > NAME_MAX) {
@@ -874,10 +884,8 @@ export default function NewVisitorModal({
       } else if (trimmedCompany.length > COMPANY_MAX) {
         newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
       }
-    } else {
-      if (trimmedCompany && trimmedCompany.length > COMPANY_MAX) {
-        newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
-      }
+    } else if (trimmedCompany && trimmedCompany.length > COMPANY_MAX) {
+      newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
     }
 
     const trimmedEmp = employee.trim();
@@ -910,8 +918,7 @@ export default function NewVisitorModal({
       } else if (!email.includes("@")) {
         newErrors.email = "El correo debe incluir el símbolo @.";
       } else {
-        const emailRegex =
-          /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        const emailRegex = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
         if (!emailRegex.test(email.trim())) {
           newErrors.email =
             "El correo debe tener un dominio válido y terminar en .com o .org.";
@@ -931,6 +938,7 @@ export default function NewVisitorModal({
       if (!finalModel) {
         newErrors.vehicleModel = "El modelo es obligatorio.";
       }
+
       const plate = vehiclePlate.trim();
       if (!plate) {
         newErrors.vehiclePlate = "La placa es obligatoria.";
@@ -1444,11 +1452,16 @@ export default function NewVisitorModal({
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
         onDetected={(rawValue) => {
+          console.log("[NewVisitorModal] rawValue escaneado:", rawValue);
+
           const payload = parseQrPayload(rawValue);
+          console.log("[NewVisitorModal] payload parseado:", payload);
+
           if (!payload) {
-            alert("No se pudo leer un QR válido de cita.");
+            alert("Se detectó el QR, pero su contenido no tiene un formato válido.");
             return;
           }
+
           applyQrPayload(payload, rawValue);
         }}
       />
