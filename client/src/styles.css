@@ -1009,3 +1009,14 @@ html.dark[data-fx] .fx-card {
 .mod-table tbody tr:hover td {
   background: color-mix(in srgb, var(--panel) 60%, transparent);
 }
+
+#reader__scan_region,
+[id^="qr-reader-"]__scan_region {
+  background: transparent !important;
+}
+
+#reader__dashboard,
+[id^="qr-reader-"]__dashboard {
+  padding: 0 !important;
+  border: 0 !important;
+}
