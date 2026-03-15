@@ -1,5 +1,3 @@
-// client/src/modules/rondasqr/api/rondasqrApi.js
-
 import { API, getToken } from "../../../lib/api.js";
 
 // Convención: API YA incluye /api
@@ -115,6 +113,7 @@ async function fetchJson(url, opts = {}) {
     e.status = r.status;
     e.payload = err;
     e.text = text;
+    e.url = url;
     throw e;
   }
 
@@ -235,8 +234,6 @@ export const rondasqrApi = {
       body.gps = input?.gps ?? null;
     }
 
-    // ✅ UNA SOLA RUTA CANÓNICA
-    // Si tu backend real usa otra, cambia SOLO esta constante.
     const PANIC_URL =
       String(import.meta.env.VITE_RONDAS_PANIC_URL || "").trim() ||
       `${BASE}/checkin/panic`;
@@ -386,7 +383,10 @@ export const rondasqrApi = {
   async deletePointQr(id) {
     if (!id) throw new Error("id requerido");
 
-    return fetchJson(`${BASE}/admin/points/${encodeURIComponent(id)}/qr`, {
+    const url = `${BASE}/admin/points/${encodeURIComponent(id)}/qr`;
+    console.log("[rondasqrApi.deletePointQr] DELETE ->", url);
+
+    return fetchJson(url, {
       method: "DELETE",
     });
   },

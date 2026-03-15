@@ -1,4 +1,3 @@
-// client/src/modules/rondasqr/admin/QrRepoPage.jsx
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
@@ -30,11 +29,33 @@ const btnDangerSmall =
   "bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-60 disabled:cursor-not-allowed";
 
 function pointIdOf(p) {
-  return p?.id || p?._id || null;
+  return p?.pointId || p?.id || p?._id || null;
 }
 
 function qrValueOf(p) {
-  return String(p?.qr || p?.qrNo || p?.code || "").trim();
+  return String(
+    p?.qr ||
+      p?.qrNo ||
+      p?.qrValue ||
+      p?.qrCode ||
+      p?.code ||
+      p?.token ||
+      ""
+  ).trim();
+}
+
+function rowKeyOf(p) {
+  return (
+    p?.pointId ||
+    p?._id ||
+    p?.id ||
+    p?.qr ||
+    p?.qrNo ||
+    p?.qrValue ||
+    p?.code ||
+    p?.name ||
+    Math.random().toString(36).slice(2)
+  );
 }
 
 /**
@@ -71,7 +92,11 @@ export default function QrRepoPage() {
     } catch (e) {
       console.error("[QrRepoPage] listQrRepo error", e);
       setItems([]);
-      setErrorMsg("No se pudo cargar el repositorio de QRs.");
+      setErrorMsg(
+        e?.payload?.message ||
+          e?.message ||
+          "No se pudo cargar el repositorio de QRs."
+      );
     } finally {
       setLoading(false);
     }
@@ -94,7 +119,9 @@ export default function QrRepoPage() {
         console.error("[QrRepoPage] listSites error", e);
         if (!mounted) return;
         setSites([]);
-        setErrorMsg("No se pudieron cargar los sitios.");
+        setErrorMsg(
+          e?.payload?.message || e?.message || "No se pudieron cargar los sitios."
+        );
       } finally {
         if (mounted) setLoadingSites(false);
       }
@@ -137,7 +164,9 @@ export default function QrRepoPage() {
 
         setRounds([]);
         setRoundId("");
-        setErrorMsg("No se pudieron cargar las rondas.");
+        setErrorMsg(
+          e?.payload?.message || e?.message || "No se pudieron cargar las rondas."
+        );
       } finally {
         if (mounted) setLoadingRounds(false);
       }
@@ -224,7 +253,31 @@ export default function QrRepoPage() {
 
     try {
       setErrorMsg("");
+
+      console.log("[QrRepoPage] deletePointQr -> pointId:", pointId, "qr:", qrValue, "row:", p);
+
       await api.deletePointQr(pointId);
+
+      // actualización optimista local para que la UI refleje el cambio aunque el backend tarde
+      setItems((prev) =>
+        prev.map((row) => {
+          const samePoint =
+            String(pointIdOf(row) || "") === String(pointId || "");
+
+          if (!samePoint) return row;
+
+          return {
+            ...row,
+            qr: "",
+            qrNo: "",
+            qrValue: "",
+            qrCode: "",
+            code: "",
+          };
+        })
+      );
+
+      // recarga canónica desde servidor
       await loadRepo();
     } catch (e) {
       console.error("[QrRepoPage] deletePointQr error", e);
@@ -368,7 +421,7 @@ export default function QrRepoPage() {
 
                 return (
                   <tr
-                    key={pointId || qrValue || p.name}
+                    key={rowKeyOf(p)}
                     className="border-b border-slate-200/80 dark:border-white/10"
                   >
                     <td className="px-3 py-2">

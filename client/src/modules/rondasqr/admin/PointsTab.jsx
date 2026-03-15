@@ -16,6 +16,10 @@ function asItems(res) {
   return [];
 }
 
+function pointQrValue(p) {
+  return String(p?.qr || p?.qrNo || p?.code || "").trim();
+}
+
 function Select({ value, onChange, children, className = "", disabled = false }) {
   return (
     <select
@@ -231,6 +235,39 @@ export default function PointsTab() {
     }
   }
 
+  async function handleDeleteQr(p) {
+    const id = toId(p);
+    const qrValue = pointQrValue(p);
+
+    if (!id) {
+      alert("No se encontró el identificador del punto.");
+      return;
+    }
+
+    if (!qrValue) {
+      alert("Este punto no tiene QR para eliminar.");
+      return;
+    }
+
+    if (!window.confirm(`¿Eliminar solo el QR del punto "${p.name}"?`)) return;
+
+    try {
+      setLoading(true);
+      await rondasqrApi.deletePointQr(id);
+      await loadPoints(siteId, roundId);
+
+      if (repoOpen) {
+        const res = await rondasqrApi.listQrRepo({ siteId, roundId });
+        setRepoItems(asItems(res));
+      }
+    } catch (e) {
+      console.error("[PointsTab] deletePointQr error", e);
+      alert(e?.payload?.message || e?.message || "No se pudo eliminar el QR");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleRotateQr(p) {
     const id = toId(p);
     if (!id) return;
@@ -239,6 +276,11 @@ export default function PointsTab() {
       setLoading(true);
       await rondasqrApi.rotatePointQr(id);
       await loadPoints(siteId, roundId);
+
+      if (repoOpen) {
+        const res = await rondasqrApi.listQrRepo({ siteId, roundId });
+        setRepoItems(asItems(res));
+      }
     } catch (e) {
       console.error("[PointsTab] rotatePointQr error", e);
       alert(e?.payload?.message || e?.message || "No se pudo rotar el QR");
@@ -263,8 +305,7 @@ export default function PointsTab() {
         return;
       }
 
-      // fallback: usar puntos ya cargados
-      setRepoItems(points.filter((p) => !!p.qr));
+      setRepoItems(points.filter((p) => !!pointQrValue(p)));
       setRepoOpen(true);
     } catch (e) {
       console.error("[PointsTab] listQrRepo error", e);
@@ -361,9 +402,9 @@ export default function PointsTab() {
       </div>
 
       <div className="text-xs text-white/60">
-        <span className="font-semibold">Sitio:</span> {selectedSite?.name || "—"}{" "}
-        · <span className="font-semibold">Ronda:</span> {selectedRound?.name || "—"}{" "}
-        · <span className="font-semibold">Puntos:</span> {points.length}
+        <span className="font-semibold">Sitio:</span> {selectedSite?.name || "—"} ·{" "}
+        <span className="font-semibold">Ronda:</span> {selectedRound?.name || "—"} ·{" "}
+        <span className="font-semibold">Puntos:</span> {points.length}
       </div>
 
       <div className="rounded-xl bg-black/40 border border-white/10 overflow-hidden">
@@ -393,10 +434,11 @@ export default function PointsTab() {
 
               {points.map((p) => {
                 const id = toId(p);
-                const qrValue = p.qr || p.qrNo || p.code || "";
-                const qrUrl = qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
-                  ? rondasqrApi.pointQrPngUrl(id)
-                  : null;
+                const qrValue = pointQrValue(p);
+                const qrUrl =
+                  qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
+                    ? rondasqrApi.pointQrPngUrl(id)
+                    : null;
 
                 return (
                   <tr key={id} className="border-t border-white/5 hover:bg-white/5">
@@ -445,12 +487,22 @@ export default function PointsTab() {
                           </a>
                         )}
 
+                        {qrValue && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteQr(p)}
+                            className="px-2 py-1 rounded-md bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white"
+                          >
+                            Eliminar QR
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => handleDeletePoint(p)}
                           className="px-2 py-1 rounded-md bg-rose-500 hover:bg-rose-400 text-xs font-semibold text-white"
                         >
-                          Eliminar
+                          Eliminar punto
                         </button>
                       </div>
                     </td>
@@ -486,10 +538,11 @@ export default function PointsTab() {
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {repoItems.map((item) => {
                   const id = toId(item);
-                  const qrValue = item.qr || item.qrNo || item.code || "";
-                  const qrUrl = qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
-                    ? rondasqrApi.pointQrPngUrl(id)
-                    : null;
+                  const qrValue = pointQrValue(item);
+                  const qrUrl =
+                    qrValue && typeof rondasqrApi.pointQrPngUrl === "function"
+                      ? rondasqrApi.pointQrPngUrl(id)
+                      : null;
 
                   return (
                     <div

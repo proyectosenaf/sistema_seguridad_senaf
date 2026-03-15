@@ -457,10 +457,10 @@ admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
     }
 
     point.qr = qrToken();
-    if ("qrNo" in point) point.qrNo = point.qr;
-    if ("code" in point) point.code = point.qr;
-    if ("qrVersion" in point) point.qrVersion = Number(point.qrVersion || 1) + 1;
-    if ("qrRotatedAt" in point) point.qrRotatedAt = new Date();
+    if (RqPoint.schema.path("qrNo")) point.qrNo = point.qr;
+    if (RqPoint.schema.path("code")) point.code = point.qr;
+    if (RqPoint.schema.path("qrVersion")) point.qrVersion = Number(point.qrVersion || 1) + 1;
+    if (RqPoint.schema.path("qrRotatedAt")) point.qrRotatedAt = new Date();
 
     await point.save();
     return res.json({ ok: true, item: point.toJSON ? point.toJSON() : point });
@@ -476,7 +476,7 @@ admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
   }
 });
 
-// ✅ NUEVO: eliminar solo el QR del punto, no el punto
+// ✅ eliminar solo el QR del punto, no el punto
 admin.delete("/points/:id/qr", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -484,7 +484,7 @@ admin.delete("/points/:id/qr", auth, async (req, res, next) => {
       return res.status(400).json({ ok: false, error: "invalid_pointId" });
     }
 
-    const point = await RqPoint.findById(id);
+    const point = await RqPoint.findById(id).lean();
     if (!point) {
       return res.status(404).json({ ok: false, error: "point_not_found" });
     }
@@ -494,16 +494,26 @@ admin.delete("/points/:id/qr", auth, async (req, res, next) => {
       return res.status(400).json({ ok: false, error: "point_qr_not_found" });
     }
 
-    if ("qr" in point) point.qr = null;
-    if ("qrNo" in point) point.qrNo = null;
-    if ("code" in point) point.code = null;
-    if ("qrDeletedAt" in point) point.qrDeletedAt = new Date();
+    const unset = {};
+    if (RqPoint.schema.path("qr")) unset.qr = 1;
+    if (RqPoint.schema.path("qrNo")) unset.qrNo = 1;
+    if (RqPoint.schema.path("code")) unset.code = 1;
 
-    await point.save();
+    const set = {};
+    if (RqPoint.schema.path("qrDeletedAt")) set.qrDeletedAt = new Date();
+
+    const update = {};
+    if (Object.keys(unset).length) update.$unset = unset;
+    if (Object.keys(set).length) update.$set = set;
+
+    const updated = await RqPoint.findByIdAndUpdate(id, update, {
+      new: true,
+      runValidators: false,
+    }).lean();
 
     return res.json({
       ok: true,
-      item: point.toJSON ? point.toJSON() : point,
+      item: updated,
       oldQr,
       message: "QR eliminado correctamente",
     });
@@ -668,20 +678,22 @@ admin.get("/qr-repo", auth, async (req, res, next) => {
     const siteMap = new Map(sites.map((s) => [String(s._id), s]));
     const roundMap = new Map(rounds.map((r) => [String(r._id), r]));
 
-    const items = points.map((p) => {
-      const site = siteMap.get(String(p.siteId)) || null;
-      const round = roundMap.get(String(p.roundId)) || null;
-      const qrValue = pointQrValue(p);
+    const items = points
+      .map((p) => {
+        const site = siteMap.get(String(p.siteId)) || null;
+        const round = roundMap.get(String(p.roundId)) || null;
+        const qrValue = pointQrValue(p);
 
-      return {
-        ...p,
-        id: p._id,
-        siteName: site?.name || "",
-        roundName: round?.name || "",
-        qr: qrValue,
-        active: p.active !== false,
-      };
-    });
+        return {
+          ...p,
+          id: p._id,
+          siteName: site?.name || "",
+          roundName: round?.name || "",
+          qr: qrValue,
+          active: p.active !== false,
+        };
+      })
+      .filter((p) => !!String(p.qr || "").trim());
 
     if (format === "html") {
       res.setHeader("content-type", "text/html; charset=utf-8");

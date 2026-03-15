@@ -1,4 +1,3 @@
-// server/modules/rondasqr/routes/rondasqr.admin.routes.js
 import express from "express";
 import mongoose from "mongoose";
 import QRCode from "qrcode";
@@ -37,6 +36,9 @@ const normShift = (s) => {
   if (v === "día") return "dia";
   return v;
 };
+
+const pointQrValue = (p) =>
+  String(p?.qr || p?.qrNo || p?.code || "").trim();
 
 /* =================================================================
    SITES
@@ -354,6 +356,8 @@ router.get("/points", async (req, res, next) => {
       filter.$or = [
         { name: { $regex: norm(q), $options: "i" } },
         { qr: { $regex: norm(q), $options: "i" } },
+        { qrNo: { $regex: norm(q), $options: "i" } },
+        { code: { $regex: norm(q), $options: "i" } },
       ];
     }
 
@@ -412,6 +416,7 @@ router.put("/points/:id", async (req, res, next) => {
 
     const { siteId, roundId, name, qr, order, gps, active } = req.body || {};
     const $set = {};
+    const $unset = {};
 
     if (siteId != null) {
       const sid = toId(siteId);
@@ -426,7 +431,19 @@ router.put("/points/:id", async (req, res, next) => {
     }
 
     if (name != null) $set.name = norm(name);
-    if (qr != null) $set.qr = norm(qr) || null;
+
+    if (qr != null) {
+      const cleanQr = norm(qr);
+      if (cleanQr) {
+        $set.qr = cleanQr;
+        $set.qrNo = cleanQr;
+        $set.code = cleanQr;
+      } else {
+        $unset.qr = 1;
+        $unset.qrNo = 1;
+        $unset.code = 1;
+      }
+    }
 
     if (order != null && Number.isFinite(Number(order))) {
       $set.order = Number(order);
@@ -440,18 +457,21 @@ router.put("/points/:id", async (req, res, next) => {
         $set.gps = { lat, lon };
         $set.loc = { type: "Point", coordinates: [lon, lat] };
       } else {
-        $set.gps = undefined;
-        $set.loc = undefined;
+        $unset.gps = 1;
+        $unset.loc = 1;
       }
     }
 
     if (active != null) $set.active = !!active;
 
-    const item = await RqPoint.findByIdAndUpdate(
-      id,
-      { $set },
-      { new: true, lean: true }
-    );
+    const update = {};
+    if (Object.keys($set).length) update.$set = $set;
+    if (Object.keys($unset).length) update.$unset = $unset;
+
+    const item = await RqPoint.findByIdAndUpdate(id, update, {
+      new: true,
+      lean: true,
+    });
 
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
@@ -468,6 +488,7 @@ router.patch("/points/:id", async (req, res, next) => {
 
     const { siteId, roundId, name, qr, order, gps, active } = req.body || {};
     const $set = {};
+    const $unset = {};
 
     if (siteId != null) {
       const sid = toId(siteId);
@@ -482,7 +503,19 @@ router.patch("/points/:id", async (req, res, next) => {
     }
 
     if (name != null) $set.name = norm(name);
-    if (qr != null) $set.qr = norm(qr) || null;
+
+    if (qr != null) {
+      const cleanQr = norm(qr);
+      if (cleanQr) {
+        $set.qr = cleanQr;
+        $set.qrNo = cleanQr;
+        $set.code = cleanQr;
+      } else {
+        $unset.qr = 1;
+        $unset.qrNo = 1;
+        $unset.code = 1;
+      }
+    }
 
     if (order != null && Number.isFinite(Number(order))) {
       $set.order = Number(order);
@@ -496,18 +529,21 @@ router.patch("/points/:id", async (req, res, next) => {
         $set.gps = { lat, lon };
         $set.loc = { type: "Point", coordinates: [lon, lat] };
       } else {
-        $set.gps = undefined;
-        $set.loc = undefined;
+        $unset.gps = 1;
+        $unset.loc = 1;
       }
     }
 
     if (active != null) $set.active = !!active;
 
-    const item = await RqPoint.findByIdAndUpdate(
-      id,
-      { $set },
-      { new: true, lean: true }
-    );
+    const update = {};
+    if (Object.keys($set).length) update.$set = $set;
+    if (Object.keys($unset).length) update.$unset = $unset;
+
+    const item = await RqPoint.findByIdAndUpdate(id, update, {
+      new: true,
+      lean: true,
+    });
 
     if (!item) return res.status(404).json({ error: "no encontrado" });
     res.json({ item });
@@ -579,7 +615,7 @@ router.get("/points/:id/qr.png", async (req, res, next) => {
     const point = await RqPoint.findById(id).lean();
     if (!point) return res.status(404).json({ error: "punto no encontrado" });
 
-    const text = String(point.qr || "");
+    const text = pointQrValue(point);
     if (!text) {
       return res.status(400).json({ error: "el punto no tiene QR asignado" });
     }
@@ -614,7 +650,7 @@ router.get("/points/:id/qr.pdf", async (req, res, next) => {
 
     if (!point) return res.status(404).json({ error: "punto no encontrado" });
 
-    const text = String(point.qr || "");
+    const text = pointQrValue(point);
     if (!text) {
       return res.status(400).json({ error: "el punto no tiene QR asignado" });
     }
@@ -686,7 +722,7 @@ router.post("/points/:id/rotate-qr", async (req, res, next) => {
     const point = await RqPoint.findById(id);
     if (!point) return res.status(404).json({ error: "punto no encontrado" });
 
-    const oldQr = point.qr || null;
+    const oldQr = pointQrValue(point) || null;
 
     let saved = false;
     let attempts = 0;
@@ -701,6 +737,8 @@ router.post("/points/:id/rotate-qr", async (req, res, next) => {
         .toUpperCase()}`;
 
       point.qr = newQr;
+      if ("qrNo" in point) point.qrNo = newQr;
+      if ("code" in point) point.code = newQr;
 
       try {
         await point.save();
@@ -734,21 +772,33 @@ router.delete("/points/:id/qr", async (req, res, next) => {
     const id = toId(req.params.id);
     if (!id) return res.status(400).json({ error: "id inválido" });
 
-    const point = await RqPoint.findById(id);
-    if (!point) return res.status(404).json({ error: "punto no encontrado" });
+    const current = await RqPoint.findById(id).lean();
+    if (!current) return res.status(404).json({ error: "punto no encontrado" });
 
-    const oldQr = point.qr || point.qrNo || point.code || null;
+    const oldQr = pointQrValue(current) || null;
+    if (!oldQr) {
+      return res.status(400).json({ error: "el punto no tiene QR asignado" });
+    }
 
-    point.qr = null;
+    const update = {
+      $unset: {
+        qr: 1,
+        qrNo: 1,
+        code: 1,
+      },
+      $set: {
+        qrDeletedAt: new Date(),
+      },
+    };
 
-    if ("qrNo" in point) point.qrNo = null;
-    if ("code" in point) point.code = null;
-
-    await point.save();
+    const item = await RqPoint.findByIdAndUpdate(id, update, {
+      new: true,
+      lean: true,
+    });
 
     res.json({
       ok: true,
-      item: point.toJSON(),
+      item,
       oldQr,
       message: "QR eliminado correctamente",
     });
@@ -781,23 +831,30 @@ router.get("/qr-repo", async (req, res, next) => {
       .sort({ siteId: 1, roundId: 1, order: 1 })
       .lean();
 
-    const items = raw.map((p) => ({
-      id: p._id,
-      name: p.name,
-      order: p.order,
-      qr: p.qr,
-      qrNo: p.qrNo,
-      code: p.code,
-      active: p.active,
-      siteId: p.siteId?._id || p.siteId,
-      siteName: p.siteId?.name,
-      siteCode: p.siteId?.code,
-      roundId: p.roundId?._id || p.roundId,
-      roundName: p.roundId?.name,
-      roundCode: p.roundId?.code,
-      updatedAt: p.updatedAt,
-      createdAt: p.createdAt,
-    }));
+    const items = raw
+      .map((p) => {
+        const qrValue = pointQrValue(p);
+
+        return {
+          id: p._id,
+          _id: p._id,
+          name: p.name,
+          order: p.order,
+          qr: qrValue || "",
+          qrNo: p.qrNo,
+          code: p.code,
+          active: p.active,
+          siteId: p.siteId?._id || p.siteId,
+          siteName: p.siteId?.name,
+          siteCode: p.siteId?.code,
+          roundId: p.roundId?._id || p.roundId,
+          roundName: p.roundId?.name,
+          roundCode: p.roundId?.code,
+          updatedAt: p.updatedAt,
+          createdAt: p.createdAt,
+        };
+      })
+      .filter((p) => !!String(p.qr || "").trim());
 
     res.json({ items });
   } catch (e) {

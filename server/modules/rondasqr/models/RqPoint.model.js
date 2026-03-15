@@ -1,4 +1,3 @@
-// server/modules/rondasqr/models/RqPoint.model.js
 import mongoose from "mongoose";
 import crypto from "crypto";
 
@@ -24,6 +23,11 @@ function buildQrCode({ order, name }) {
   const initial = String(name || "P").trim().charAt(0).toUpperCase() || "P";
   const token = randomToken(6);
   return `${initial}${ordStr}-${token}`;
+}
+
+function cleanStr(v) {
+  if (typeof v !== "string") return "";
+  return v.trim();
 }
 
 const RqPointSchema = new Schema(
@@ -66,6 +70,7 @@ const RqPointSchema = new Schema(
     },
 
     qrRotatedAt: { type: Date },
+    qrDeletedAt: { type: Date },
 
     order: {
       type: Number,
@@ -220,22 +225,55 @@ RqPointSchema.pre("save", async function preSave(next) {
       this.order = 0;
     }
 
-    if (!this.qr) {
-      this.qr = buildQrCode({
-        order: this.order,
-        name: this.name,
-      });
+    const qr = cleanStr(this.qr);
+    const qrNo = cleanStr(this.qrNo);
+    const code = cleanStr(this.code);
+
+    if (this.isNew) {
+      const canonical =
+        qr ||
+        qrNo ||
+        code ||
+        buildQrCode({
+          order: this.order,
+          name: this.name,
+        });
+
+      this.qr = canonical;
+      this.qrNo = qrNo || canonical;
+      this.code = code || canonical;
+
+      if (!this.qrSecret) {
+        this.qrSecret = randomToken(24);
+      }
+
+      if (!Number.isFinite(this.qrVersion)) {
+        this.qrVersion = 1;
+      }
+
+      return next();
     }
 
-    if (!this.qrNo) this.qrNo = this.qr;
-    if (!this.code) this.code = this.qr;
+    // ✅ En documentos existentes NO regenerar QR si ya fue eliminado.
+    const canonical = qr || qrNo || code;
 
-    if (!this.qrSecret) {
-      this.qrSecret = randomToken(24);
-    }
+    if (canonical) {
+      this.qr = qr || canonical;
+      this.qrNo = qrNo || canonical;
+      this.code = code || canonical;
 
-    if (!Number.isFinite(this.qrVersion)) {
-      this.qrVersion = 1;
+      if (!this.qrSecret) {
+        this.qrSecret = randomToken(24);
+      }
+
+      if (!Number.isFinite(this.qrVersion)) {
+        this.qrVersion = 1;
+      }
+    } else {
+      // Mantener realmente vacío cuando el QR fue eliminado
+      this.qr = undefined;
+      this.qrNo = undefined;
+      this.code = undefined;
     }
 
     next();
@@ -298,16 +336,23 @@ RqPointSchema.statics.ensureQrForRound = async function ensureQrForRound(roundId
   for (const p of points) {
     let changed = false;
 
-    if (!p.qr) {
+    if (!cleanStr(p.qr) && !cleanStr(p.qrNo) && !cleanStr(p.code)) {
       p.qr = buildQrCode({ order: p.order, name: p.name });
       changed = true;
     }
-    if (!p.qrNo) {
-      p.qrNo = p.qr;
+
+    const canonical = cleanStr(p.qr) || cleanStr(p.qrNo) || cleanStr(p.code);
+
+    if (canonical && !cleanStr(p.qr)) {
+      p.qr = canonical;
       changed = true;
     }
-    if (!p.code) {
-      p.code = p.qr;
+    if (canonical && !cleanStr(p.qrNo)) {
+      p.qrNo = canonical;
+      changed = true;
+    }
+    if (canonical && !cleanStr(p.code)) {
+      p.code = canonical;
       changed = true;
     }
     if (!p.qrSecret) {

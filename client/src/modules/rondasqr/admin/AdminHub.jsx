@@ -785,6 +785,7 @@ function PlansTab() {
     () => [
       { value: "dia", label: "Diurno" },
       { value: "noche", label: "Nocturno" },
+      { value: "noche y dia", label: "Mixto" },
     ],
     []
   );
