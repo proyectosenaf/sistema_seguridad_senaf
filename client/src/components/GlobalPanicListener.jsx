@@ -1,5 +1,5 @@
 // client/src/components/GlobalPanicListener.jsx
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { socket } from "../lib/socket.js";
@@ -127,9 +127,12 @@ export default function GlobalPanicListener() {
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
   const [audioReady, setAudioReady] = useState(false);
+  const [audioError, setAudioError] = useState("");
 
-  // ✅ archivo real desde /public/audio
-  const AUDIO_SRC = "/audio/panic-alarm.mp3";
+  const AUDIO_SRC = useMemo(() => {
+    const base = String(import.meta.env.BASE_URL || "/");
+    return `${base}audio/panic-alarm.mp3`;
+  }, []);
 
   const stopAlarm = useCallback(() => {
     try {
@@ -143,7 +146,15 @@ export default function GlobalPanicListener() {
   const unlockAudio = useCallback(async () => {
     try {
       const el = audioRef.current;
-      if (!el) return false;
+      if (!el) {
+        setAudioError("No se encontró el elemento de audio.");
+        return false;
+      }
+
+      if (!el.src) {
+        setAudioError("La fuente de audio está vacía.");
+        return false;
+      }
 
       el.volume = 1;
       el.loop = false;
@@ -157,10 +168,13 @@ export default function GlobalPanicListener() {
       el.currentTime = 0;
 
       setAudioReady(true);
-      console.log("[GlobalPanicListener] audio ready");
+      setAudioError("");
+      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || el.src);
       return true;
     } catch (e) {
-      console.warn("[GlobalPanicListener] audio unlock failed:", e?.message || e);
+      const msg = e?.message || "No se pudo habilitar el audio.";
+      setAudioError(msg);
+      console.warn("[GlobalPanicListener] audio unlock failed:", msg);
       return false;
     }
   }, []);
@@ -168,7 +182,10 @@ export default function GlobalPanicListener() {
   const playAlarm = useCallback(async () => {
     try {
       const el = audioRef.current;
-      if (!el) return false;
+      if (!el) {
+        setAudioError("No se encontró el elemento de audio.");
+        return false;
+      }
 
       el.volume = 1;
       el.loop = true;
@@ -178,9 +195,12 @@ export default function GlobalPanicListener() {
       const p = el.play();
       if (p && typeof p.then === "function") await p;
 
+      setAudioError("");
       return true;
     } catch (e) {
-      console.warn("[GlobalPanicListener] playAlarm blocked:", e?.message || e);
+      const msg = e?.message || "El navegador bloqueó la reproducción.";
+      setAudioError(msg);
+      console.warn("[GlobalPanicListener] playAlarm blocked:", msg);
       return false;
     }
   }, []);
@@ -199,7 +219,7 @@ export default function GlobalPanicListener() {
 
       const ok = await playAlarm();
       if (!ok) {
-        console.warn("[GlobalPanicListener] alerta recibida, pero sin audio habilitado");
+        console.warn("[GlobalPanicListener] alerta recibida, pero sin audio");
       }
 
       if (opts?.local === true) {
@@ -282,7 +302,26 @@ export default function GlobalPanicListener() {
 
   return (
     <>
-      <audio ref={audioRef} src={AUDIO_SRC} preload="auto" playsInline />
+      <audio
+        ref={audioRef}
+        src={AUDIO_SRC}
+        preload="auto"
+        playsInline
+        onCanPlayThrough={() => {
+          console.log("[GlobalPanicListener] audio cargado:", AUDIO_SRC);
+        }}
+        onError={() => {
+          const el = audioRef.current;
+          const msg = `No se pudo cargar el audio: ${AUDIO_SRC}`;
+          setAudioError(msg);
+          console.error("[GlobalPanicListener] audio error", {
+            src: AUDIO_SRC,
+            currentSrc: el?.currentSrc,
+            networkState: el?.networkState,
+            readyState: el?.readyState,
+          });
+        }}
+      />
 
       {!visitor && !audioReady && (
         <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
@@ -299,14 +338,22 @@ export default function GlobalPanicListener() {
             type="button"
             onClick={async () => {
               const ok = await unlockAudio();
-              if (ok) await playAlarm();
-              setTimeout(() => stopAlarm(), 1500);
+              if (ok) {
+                await playAlarm();
+                setTimeout(() => stopAlarm(), 1500);
+              }
             }}
             className="rounded-xl bg-sky-500 text-white font-semibold px-4 py-3 shadow-lg"
             title="Probar alarma"
           >
             Probar sonido
           </button>
+
+          {audioError ? (
+            <div className="max-w-[260px] rounded-xl bg-red-600 text-white text-xs px-3 py-2 shadow-lg">
+              {audioError}
+            </div>
+          ) : null}
         </div>
       )}
 
