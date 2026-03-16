@@ -44,7 +44,7 @@ const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 // Visitas
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
-
+import CitasQrScannerPage from "./pages/CitasQrScannerPage.jsx";
 /* ───────────────── ENV helpers ───────────────── */
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
@@ -801,6 +801,22 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+              
+              <Route
+              path="/visitas/scan-qr"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                        <CitasQrScannerPage />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
 
             <Route
               path="/bitacora"

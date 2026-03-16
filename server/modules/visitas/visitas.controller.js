@@ -1,7 +1,100 @@
-// server/src/modules/visitas/visitas.controller.js
-
-
+import crypto from "crypto";
+import QRCode from "qrcode";
 import Visita from "./visitas.model.js";
+
+const QR_PREFIX = "SENAF_CITA_QR::";
+
+function hasVehicleData(vehiculo) {
+  if (!vehiculo || typeof vehiculo !== "object") return false;
+
+  return !!(
+    (vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
+    (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
+    (vehiculo.modelo && String(vehiculo.modelo).trim() !== "")
+  );
+}
+
+function normalizeVehiculoInput(vehiculo) {
+  if (!hasVehicleData(vehiculo)) return null;
+
+  return {
+    marca: String(vehiculo?.marca || "").trim(),
+    modelo: String(vehiculo?.modelo || "").trim(),
+    placa: String(vehiculo?.placa || "").trim().toUpperCase(),
+  };
+}
+
+function buildDayRange(day) {
+  const d = new Date(day);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const start = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+
+  const end = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + 1,
+    0,
+    0,
+    0,
+    0
+  );
+
+  return { start, end };
+}
+
+function buildMonthRange(month) {
+  if (!month || typeof month !== "string") return null;
+
+  const parts = month.split("-");
+  if (parts.length !== 2) return null;
+
+  const yyyy = parseInt(parts[0], 10);
+  const mm = parseInt(parts[1], 10);
+
+  if (Number.isNaN(yyyy) || Number.isNaN(mm) || mm < 1 || mm > 12) {
+    return null;
+  }
+
+  const start = new Date(yyyy, mm - 1, 1, 0, 0, 0, 0);
+  const end = new Date(yyyy, mm, 1, 0, 0, 0, 0);
+
+  return { start, end };
+}
+
+function getActorId(req) {
+  return req?.user?._id || req?.user?.id || null;
+}
+
+function normalizeEstadoInput(estado) {
+  const raw = String(estado || "").trim().toLowerCase();
+
+  const map = {
+    solicitada: "Programada",
+    programada: "Programada",
+    "en revisión": "En revisión",
+    en_revision: "En revisión",
+    autorizada: "Autorizada",
+    denegada: "Denegada",
+    cancelada: "Cancelada",
+    dentro: "Dentro",
+    finalizada: "Finalizada",
+  };
+
+  return map[raw] || estado;
+}
+
+function canEnterByEstado(estado) {
+  return ["Programada", "En revisión", "Autorizada"].includes(estado);
+}
 
 /**
  * GET /api/visitas
@@ -13,10 +106,10 @@ export async function getVisitas(req, res) {
       .sort({ fechaEntrada: -1, createdAt: -1 })
       .lean();
 
-    res.json({ ok: true, items: visitas });
+    return res.json({ ok: true, items: visitas });
   } catch (err) {
     console.error("[visitas] getVisitas", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
@@ -34,18 +127,14 @@ export async function createVisita(req, res) {
       motivo,
       telefono,
       correo,
-      tipo, // "Ingreso" | "Agendada" (por compatibilidad)
+      tipo, // compatibilidad
       llegoEnVehiculo,
       vehiculo,
       citaAt,
-    } = req.body;
+    } = req.body || {};
 
-    // Detectamos si realmente viene info de vehículo
-    const hasVehiculo =
-      vehiculo &&
-      ((vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
-        (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
-        (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
+    const normalizedVehiculo = normalizeVehiculoInput(vehiculo);
+    const hasVehiculo = !!normalizedVehiculo;
 
     const visita = new Visita({
       nombre,
@@ -56,28 +145,28 @@ export async function createVisita(req, res) {
       telefono: telefono || null,
       correo: correo || null,
       tipo: tipo || "Ingreso",
-      // Si el frontend manda llegoEnVehiculo lo respetamos,
-      // si no lo manda pero hay vehículo → true
       llegoEnVehiculo:
         typeof llegoEnVehiculo !== "undefined"
           ? !!llegoEnVehiculo
-          : !!hasVehiculo,
-      vehiculo: hasVehiculo
-        ? {
-            marca: vehiculo.marca || "",
-            modelo: vehiculo.modelo || "",
-            placa: (vehiculo.placa || "").toUpperCase(),
-          }
-        : null,
+          : hasVehiculo,
+      vehiculo:
+        typeof llegoEnVehiculo !== "undefined"
+          ? !!llegoEnVehiculo
+            ? normalizedVehiculo
+            : null
+          : normalizedVehiculo,
       citaAt: citaAt || null,
-      // fechaEntrada: el pre("save") del modelo la llena si tipo = "Ingreso"
     });
 
     await visita.save();
-    res.status(201).json({ ok: true, item: visita });
+
+    return res.status(201).json({
+      ok: true,
+      item: visita,
+    });
   } catch (err) {
     console.error("[visitas] createVisita", err);
-    res.status(400).json({ ok: false, error: err.message });
+    return res.status(400).json({ ok: false, error: err.message });
   }
 }
 
@@ -91,29 +180,34 @@ export async function closeVisita(req, res) {
 
     const visita = await Visita.findById(id);
     if (!visita) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "Visita no encontrada" });
+      return res.status(404).json({
+        ok: false,
+        error: "Visita no encontrada",
+      });
     }
 
     if (!visita.fechaSalida) {
       visita.fechaSalida = new Date();
     }
+
     visita.estado = "Finalizada";
 
     await visita.save();
 
-    res.json({ ok: true, item: visita });
+    return res.json({ ok: true, item: visita });
   } catch (err) {
     console.error("[visitas] closeVisita", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
 /**
  * POST /api/citas
- * Crear una CITA (visita agendada futura)
- * (valida horario con enforceBusinessHours en el router)
+ * Crear una cita agendada futura
+ * Genera:
+ * - qrToken
+ * - qrPayload
+ * - qrDataUrl
  */
 export async function createCita(req, res) {
   try {
@@ -125,16 +219,24 @@ export async function createCita(req, res) {
       motivo,
       telefono,
       correo,
-      citaAt, // fecha/hora de la cita
+      citaAt,
       llegoEnVehiculo,
       vehiculo,
-    } = req.body;
+    } = req.body || {};
 
-    const hasVehiculo =
-      vehiculo &&
-      ((vehiculo.placa && String(vehiculo.placa).trim() !== "") ||
-        (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
-        (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
+    const normalizedVehiculo = normalizeVehiculoInput(vehiculo);
+    const hasVehiculo = !!normalizedVehiculo;
+
+    const citaDate = citaAt ? new Date(citaAt) : null;
+    if (!citaDate || Number.isNaN(citaDate.getTime())) {
+      return res.status(400).json({
+        ok: false,
+        error: "Debe indicar una fecha/hora de cita válida",
+      });
+    }
+
+    const qrToken = crypto.randomUUID();
+    const qrPayload = `${QR_PREFIX}${qrToken}`;
 
     const visita = new Visita({
       nombre,
@@ -145,84 +247,112 @@ export async function createCita(req, res) {
       telefono: telefono || null,
       correo: correo || null,
       tipo: "Agendada",
-      // el default de estado en el modelo: "Programada"
-      citaAt: citaAt ? new Date(citaAt) : null,
+      estado: "Programada",
+      citaAt: citaDate,
       llegoEnVehiculo:
         typeof llegoEnVehiculo !== "undefined"
           ? !!llegoEnVehiculo
-          : !!hasVehiculo,
-      vehiculo: hasVehiculo
-        ? {
-            marca: vehiculo.marca || "",
-            modelo: vehiculo.modelo || "",
-            placa: (vehiculo.placa || "").toUpperCase(),
-          }
-        : null,
+          : hasVehiculo,
+      vehiculo:
+        typeof llegoEnVehiculo !== "undefined"
+          ? !!llegoEnVehiculo
+            ? normalizedVehiculo
+            : null
+          : normalizedVehiculo,
+      qrToken,
+      qrPayload,
     });
 
     await visita.save();
-    res.status(201).json({ ok: true, item: visita });
+
+    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+      width: 320,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    });
+
+    const item = visita.toObject ? visita.toObject() : visita;
+    item.qrDataUrl = qrDataUrl;
+    item.qrPayload = qrPayload;
+    item.qrToken = qrToken;
+
+    return res.status(201).json({
+      ok: true,
+      item,
+      qrDataUrl,
+      qrPayload,
+      qrToken,
+    });
   } catch (err) {
     console.error("[visitas] createCita", err);
-    res.status(400).json({ ok: false, error: err.message });
+    return res.status(400).json({ ok: false, error: err.message });
   }
 }
 
 /**
  * GET /api/citas
- * Listar citas programadas (Agenda)
+ * Listar citas programadas
  * Soporta:
  *  - ?day=YYYY-MM-DD
  *  - ?month=YYYY-MM
+ *  - ?estado=Programada
+ *  - ?q=texto
  */
 export async function listCitas(req, res) {
   try {
-    const { day, month } = req.query;
+    const { day, month, estado, q } = req.query || {};
 
     const match = { tipo: "Agendada" };
 
     if (day) {
-      const d = new Date(day);
-      const start = new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate(),
-        0,
-        0,
-        0
-      );
-      const end = new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate() + 1,
-        0,
-        0,
-        0
-      );
-      match.citaAt = { $gte: start, $lt: end };
-    } else if (month) {
-      // month = "YYYY-MM"
-      const [yyyy, mm] = month.split("-").map((x) => parseInt(x, 10));
-      if (!isNaN(yyyy) && !isNaN(mm)) {
-        const start = new Date(yyyy, mm - 1, 1, 0, 0, 0);
-        const end = new Date(yyyy, mm, 1, 0, 0, 0);
-        match.citaAt = { $gte: start, $lt: end };
+      const range = buildDayRange(day);
+      if (!range) {
+        return res.status(400).json({
+          ok: false,
+          error: "Parámetro day inválido. Use YYYY-MM-DD",
+        });
       }
+      match.citaAt = { $gte: range.start, $lt: range.end };
+    } else if (month) {
+      const range = buildMonthRange(month);
+      if (!range) {
+        return res.status(400).json({
+          ok: false,
+          error: "Parámetro month inválido. Use YYYY-MM",
+        });
+      }
+      match.citaAt = { $gte: range.start, $lt: range.end };
     }
 
-    const citas = await Visita.find(match).sort({ citaAt: 1 }).lean();
+    if (estado) {
+      match.estado = normalizeEstadoInput(estado);
+    }
 
-    res.json({ ok: true, items: citas });
+    if (q && String(q).trim() !== "") {
+      const rx = new RegExp(String(q).trim(), "i");
+      match.$or = [
+        { nombre: rx },
+        { documento: rx },
+        { empresa: rx },
+        { empleado: rx },
+        { motivo: rx },
+      ];
+    }
+
+    const citas = await Visita.find(match)
+      .sort({ citaAt: 1, createdAt: -1 })
+      .lean();
+
+    return res.json({ ok: true, items: citas });
   } catch (err) {
     console.error("[visitas] listCitas", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
 /**
  * PATCH /api/citas/:id/checkin
- * Registrar check-in de una cita (la visita llegó)
- * → estado: "Dentro", fechaEntrada: now
+ * Registrar check-in de una cita
  */
 export async function checkinCita(req, res) {
   try {
@@ -230,28 +360,87 @@ export async function checkinCita(req, res) {
 
     const visita = await Visita.findById(id);
     if (!visita) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "Cita/visita no encontrada" });
+      return res.status(404).json({
+        ok: false,
+        error: "Cita/visita no encontrada",
+      });
     }
 
+    if (visita.tipo !== "Agendada") {
+      return res.status(400).json({
+        ok: false,
+        error: "El registro indicado no corresponde a una cita agendada",
+      });
+    }
+
+    const estadoActual = normalizeEstadoInput(visita.estado);
+
+    if (estadoActual === "Dentro") {
+      return res.json({
+        ok: true,
+        item: visita,
+        message: "La cita ya estaba registrada como dentro",
+      });
+    }
+
+    if (estadoActual === "Finalizada") {
+      return res.status(409).json({
+        ok: false,
+        error: "La visita ya fue finalizada",
+      });
+    }
+
+    if (estadoActual === "Cancelada" || estadoActual === "Denegada") {
+      return res.status(409).json({
+        ok: false,
+        error: `No se puede registrar ingreso porque la cita está en estado "${estadoActual}"`,
+      });
+    }
+
+    if (!canEnterByEstado(estadoActual)) {
+      return res.status(409).json({
+        ok: false,
+        error: `La cita no puede ingresar desde el estado "${estadoActual}"`,
+      });
+    }
+
+    const actorId = getActorId(req);
+    const now = new Date();
+
     visita.estado = "Dentro";
+
     if (!visita.fechaEntrada) {
-      visita.fechaEntrada = new Date();
+      visita.fechaEntrada = now;
+    }
+
+    if (!visita.validatedAt) {
+      visita.validatedAt = now;
+    }
+
+    if (!visita.ingresadaAt) {
+      visita.ingresadaAt = now;
+    }
+
+    if (actorId && !visita.validatedBy) {
+      visita.validatedBy = actorId;
+    }
+
+    if (actorId && !visita.ingresadaBy) {
+      visita.ingresadaBy = actorId;
     }
 
     await visita.save();
-    res.json({ ok: true, item: visita });
+
+    return res.json({ ok: true, item: visita });
   } catch (err) {
     console.error("[visitas] checkinCita", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }
 
 /**
  * PATCH /api/citas/:id/estado
- * Actualiza el estado de la cita (en_revision, autorizada, denegada, cancelada, etc.)
- * para que se refleje también en la Agenda de Citas.
+ * Actualiza el estado de la cita
  */
 export async function updateCitaEstado(req, res) {
   try {
@@ -259,20 +448,27 @@ export async function updateCitaEstado(req, res) {
     const { estado } = req.body || {};
 
     if (!estado) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Debe indicar un estado" });
+      return res.status(400).json({
+        ok: false,
+        error: "Debe indicar un estado",
+      });
     }
 
     const visita = await Visita.findById(id);
     if (!visita) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "Cita/visita no encontrada" });
+      return res.status(404).json({
+        ok: false,
+        error: "Cita/visita no encontrada",
+      });
     }
 
-    // Solo cambiamos el estado; la validación de enum la hace mongoose
-    visita.estado = estado;
+    const nextEstado = normalizeEstadoInput(estado);
+    visita.estado = nextEstado;
+
+    if (nextEstado === "Dentro" && !visita.fechaEntrada) {
+      visita.fechaEntrada = new Date();
+    }
+
     await visita.save();
 
     return res.json({ ok: true, item: visita });
@@ -283,15 +479,129 @@ export async function updateCitaEstado(req, res) {
 }
 
 /**
+ * POST /api/citas/scan-qr
+ * Escanea QR y registra ingreso inmediato
+ */
+export async function scanQrCita(req, res) {
+  try {
+    const { qrText, qrPayload } = req.body || {};
+    const raw = qrText || qrPayload;
+
+    if (!raw || typeof raw !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: "Debe enviar qrText o qrPayload",
+      });
+    }
+
+    if (!raw.startsWith(QR_PREFIX)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Formato de QR no válido",
+      });
+    }
+
+    const qrToken = raw.slice(QR_PREFIX.length).trim();
+    if (!qrToken) {
+      return res.status(400).json({
+        ok: false,
+        error: "QR inválido",
+      });
+    }
+
+    const visita = await Visita.findOne({ qrToken });
+    if (!visita) {
+      return res.status(404).json({
+        ok: false,
+        error: "No se encontró una cita asociada a este QR",
+      });
+    }
+
+    if (visita.tipo !== "Agendada") {
+      return res.status(409).json({
+        ok: false,
+        error: "El QR pertenece a un registro que no es una cita agendada",
+        item: visita,
+      });
+    }
+
+    const estadoActual = normalizeEstadoInput(visita.estado);
+
+    if (estadoActual === "Finalizada") {
+      return res.status(409).json({
+        ok: false,
+        error: "La visita ya fue finalizada",
+        item: visita,
+      });
+    }
+
+    if (estadoActual === "Cancelada" || estadoActual === "Denegada") {
+      return res.status(409).json({
+        ok: false,
+        error: `La cita no puede ingresar porque está en estado "${estadoActual}"`,
+        item: visita,
+      });
+    }
+
+    if (estadoActual === "Dentro") {
+      return res.status(409).json({
+        ok: false,
+        error: "La cita ya fue registrada previamente como dentro",
+        item: visita,
+      });
+    }
+
+    if (!canEnterByEstado(estadoActual)) {
+      return res.status(409).json({
+        ok: false,
+        error: `La cita no puede ingresar desde el estado "${estadoActual}"`,
+        item: visita,
+      });
+    }
+
+    const actorId = getActorId(req);
+    const now = new Date();
+
+    visita.estado = "Dentro";
+    visita.validatedAt = now;
+
+    if (actorId) {
+      visita.validatedBy = actorId;
+    }
+
+    if (!visita.fechaEntrada) {
+      visita.fechaEntrada = now;
+    }
+
+    if (!visita.ingresadaAt) {
+      visita.ingresadaAt = now;
+    }
+
+    if (actorId) {
+      visita.ingresadaBy = actorId;
+    }
+
+    await visita.save();
+
+    return res.json({
+      ok: true,
+      item: visita,
+      message: "Ingreso registrado correctamente",
+    });
+  } catch (err) {
+    console.error("[visitas] scanQrCita", err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Error al procesar el QR",
+    });
+  }
+}
+
+/**
  * GET /api/visitas/vehiculos-en-sitio
- * Vehículos de VISITANTES actualmente dentro de la empresa, incluyendo
- * tanto visitas reales (estado "Dentro") como citas programadas (tipo "Agendada")
- * que tengan vehículo. Esto permite al módulo de Control de Acceso
- * mostrar en una sola tabla los vehículos de visitantes en el estacionamiento.
  */
 export async function listVehiculosVisitasEnSitio(req, res) {
   try {
-    // Visitas que ya están dentro de la empresa
     const visitasDentro = await Visita.find({
       estado: "Dentro",
       llegoEnVehiculo: true,
@@ -303,10 +613,8 @@ export async function listVehiculosVisitasEnSitio(req, res) {
       .sort({ fechaEntrada: -1, createdAt: -1 })
       .lean();
 
-    // Citas agendadas con vehículo que aún no se han cerrado
     const citasConVehiculo = await Visita.find({
       tipo: "Agendada",
-      // estados que indican que la cita aún está activa/programada
       estado: { $in: ["Programada", "En revisión", "Autorizada"] },
       llegoEnVehiculo: true,
       $or: [
@@ -317,13 +625,14 @@ export async function listVehiculosVisitasEnSitio(req, res) {
       .sort({ citaAt: 1, createdAt: -1 })
       .lean();
 
-    // Transformamos ambas listas al mismo formato esperado por el frontend
     const items = [
       ...visitasDentro.map((v) => {
         const veh = v.vehiculo;
         const marca = typeof veh === "string" ? veh : veh?.marca || "";
         const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+        const placa =
+          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+
         return {
           id: v._id.toString(),
           visitante: v.nombre,
@@ -334,13 +643,17 @@ export async function listVehiculosVisitasEnSitio(req, res) {
           vehiculoModelo: modelo,
           placa,
           horaEntrada: v.fechaEntrada,
+          tipo: v.tipo,
+          estado: v.estado,
         };
       }),
       ...citasConVehiculo.map((v) => {
         const veh = v.vehiculo;
         const marca = typeof veh === "string" ? veh : veh?.marca || "";
         const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+        const placa =
+          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
+
         return {
           id: v._id.toString(),
           visitante: v.nombre,
@@ -351,14 +664,16 @@ export async function listVehiculosVisitasEnSitio(req, res) {
           vehiculoModelo: modelo,
           placa,
           horaEntrada: v.citaAt,
+          tipo: v.tipo,
+          estado: v.estado,
         };
       }),
     ];
 
-    res.json({ ok: true, items });
+    return res.json({ ok: true, items });
   } catch (err) {
     console.error("[visitas] listVehiculosVisitasEnSitio", err);
-    res.status(500).json({
+    return res.status(500).json({
       ok: false,
       error: err.message || "Error al obtener vehículos de visitas en sitio",
     });
@@ -373,5 +688,6 @@ export default {
   listCitas,
   checkinCita,
   updateCitaEstado,
+  scanQrCita,
   listVehiculosVisitasEnSitio,
 };

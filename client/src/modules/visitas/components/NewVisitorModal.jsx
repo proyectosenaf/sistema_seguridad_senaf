@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 
 // 🔹 BASE DEL BACKEND
 const ROOT = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api"
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:4000/api"
 ).replace(/\/$/, "");
 
 // 🔹 ENDPOINTS DE CATÁLOGOS
@@ -21,7 +23,7 @@ const NAME_MAX = 40;
 const COMPANY_MAX = 20;
 const EMP_MAX = 20;
 const REASON_MAX = 20;
-const EMAIL_MAX = 25;
+const EMAIL_MAX = 60;
 
 function sxCard(extra = {}) {
   return {
@@ -81,6 +83,40 @@ function normalizeModelItem(item) {
   return item?.name || item?.label || item?.modelo || item?.value || "";
 }
 
+function normalizeVisitType(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "profesional" || raw === "professional") return "Profesional";
+  return "Personal";
+}
+
+function normalizeName(str) {
+  return String(str || "").trim().toLowerCase();
+}
+
+function normalizeDni(str) {
+  return String(str || "").replace(/\D/g, "");
+}
+
+function formatDniInput(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, DNI_DIGITS);
+
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
+}
+
+function formatPhoneHN(value) {
+  let input = String(value || "");
+  if (input.startsWith("+504")) {
+    input = input.slice(4).trimStart();
+  }
+
+  const digits = input.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
+
+  if (digits.length <= 4) return `+504 ${digits}`;
+  return `+504 ${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
 export default function NewVisitorModal({
   onClose,
   onSubmit,
@@ -118,7 +154,7 @@ export default function NewVisitorModal({
   const [autoFilledByName, setAutoFilledByName] = useState(false);
 
   function isWithinBusinessHours(date) {
-    if (!(date instanceof Date) || isNaN(date.getTime())) return false;
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return false;
     return true;
   }
 
@@ -212,12 +248,22 @@ export default function NewVisitorModal({
 
     setName(editingVisitor.name || "");
     setDocument(editingVisitor.document || "");
-    setCompany(editingVisitor.company || "");
-    setEmployee(editingVisitor.employee || "");
+    setCompany(
+      editingVisitor.company && editingVisitor.company !== "—"
+        ? editingVisitor.company
+        : ""
+    );
+    setEmployee(
+      editingVisitor.employee && editingVisitor.employee !== "—"
+        ? editingVisitor.employee
+        : ""
+    );
     setReason(editingVisitor.reason || "");
     setPhone(editingVisitor.phone || "+504 ");
     setEmail(editingVisitor.email || "");
-    setVisitType(editingVisitor.visitType || editingVisitor.kind || "Personal");
+    setVisitType(
+      normalizeVisitType(editingVisitor.visitType || editingVisitor.kind)
+    );
     setAcompanado(!!editingVisitor.acompanado);
 
     const hasVeh =
@@ -255,19 +301,18 @@ export default function NewVisitorModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const normalizeDni = (str) => (str || "").replace(/\D/g, "");
-  const normalizeName = (str) => (str || "").trim().toLowerCase();
-
   function autofillFromKnownVisitor(visitor) {
     if (!visitor) return;
 
-    setCompany(visitor.company || "");
-    setEmployee(visitor.employee || "");
+    setCompany(visitor.company && visitor.company !== "—" ? visitor.company : "");
+    setEmployee(
+      visitor.employee && visitor.employee !== "—" ? visitor.employee : ""
+    );
     setPhone(visitor.phone || "+504 ");
     setEmail(visitor.email || "");
     setAcompanado(!!visitor.acompanado);
 
-    if (visitor.company) {
+    if (visitor.company && visitor.company !== "—") {
       setVisitType("Profesional");
     } else {
       setVisitType("Personal");
@@ -305,7 +350,7 @@ export default function NewVisitorModal({
   }
 
   const handleNameChange = (e) => {
-    let val = e.target.value
+    const val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, NAME_MAX);
 
@@ -346,16 +391,8 @@ export default function NewVisitorModal({
   };
 
   const handleDocumentChange = (e) => {
-    const digits = e.target.value.replace(/\D/g, "").slice(0, DNI_DIGITS);
-
-    let formatted = digits;
-    if (digits.length > 4 && digits.length <= 8) {
-      formatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    } else if (digits.length > 8) {
-      formatted = `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(
-        8
-      )}`;
-    }
+    const formatted = formatDniInput(e.target.value);
+    const digits = formatted.replace(/\D/g, "");
 
     setDocument(formatted);
     setErrors((prev) => ({ ...prev, document: undefined }));
@@ -374,52 +411,40 @@ export default function NewVisitorModal({
   };
 
   const handleCompanyChange = (e) => {
-    let val = e.target.value
+    const val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, COMPANY_MAX);
+
     setCompany(val);
     setErrors((prev) => ({ ...prev, company: undefined }));
   };
 
   const handleEmployeeChange = (e) => {
-    let val = e.target.value
+    const val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, EMP_MAX);
+
     setEmployee(val);
     setErrors((prev) => ({ ...prev, employee: undefined }));
   };
 
   const handleReasonChange = (e) => {
-    let val = e.target.value
+    const val = e.target.value
       .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
       .slice(0, REASON_MAX);
+
     setReason(val);
     setErrors((prev) => ({ ...prev, reason: undefined }));
   };
 
   const handlePhoneChange = (e) => {
-    let input = e.target.value;
-
-    if (input.startsWith("+504")) {
-      input = input.slice(4).trimStart();
-    }
-
-    const digits = input.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
-
-    let localFormatted = "";
-    if (digits.length <= 4) {
-      localFormatted = digits;
-    } else {
-      localFormatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    }
-
-    const formatted = `+504 ${localFormatted}`;
+    const formatted = formatPhoneHN(e.target.value);
     setPhone(formatted);
     setErrors((prev) => ({ ...prev, phone: undefined }));
   };
 
   const handleEmailChange = (e) => {
-    let val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
+    const val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
     setEmail(val);
     setErrors((prev) => ({ ...prev, email: undefined }));
   };
@@ -455,6 +480,7 @@ export default function NewVisitorModal({
       .toUpperCase()
       .replace(/[^A-Z0-9-]/g, "")
       .slice(0, 8);
+
     setVehiclePlate(val);
     setErrors((prev) => ({ ...prev, vehiclePlate: undefined }));
   };
@@ -464,13 +490,13 @@ export default function NewVisitorModal({
 
     const trimmedName = name.trim();
     const parts = trimmedName.split(/\s+/).filter(Boolean);
+
     if (!trimmedName) {
       newErrors.name = "El nombre es obligatorio.";
     } else if (trimmedName.length > NAME_MAX) {
       newErrors.name = `El nombre no debe superar ${NAME_MAX} caracteres.`;
-    } else if (parts.length < 3) {
-      newErrors.name =
-        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+    } else if (parts.length < 2) {
+      newErrors.name = "Ingrese el nombre completo del visitante.";
     }
 
     const dniDigits = document.replace(/\D/g, "");
@@ -488,10 +514,8 @@ export default function NewVisitorModal({
       } else if (trimmedCompany.length > COMPANY_MAX) {
         newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
       }
-    } else {
-      if (trimmedCompany && trimmedCompany.length > COMPANY_MAX) {
-        newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
-      }
+    } else if (trimmedCompany && trimmedCompany.length > COMPANY_MAX) {
+      newErrors.company = `La empresa no debe superar ${COMPANY_MAX} caracteres.`;
     }
 
     const trimmedEmp = employee.trim();
@@ -521,20 +545,18 @@ export default function NewVisitorModal({
     if (email.trim()) {
       if (email.length > EMAIL_MAX) {
         newErrors.email = `El correo no debe superar ${EMAIL_MAX} caracteres.`;
-      } else if (!email.includes("@")) {
-        newErrors.email = "El correo debe incluir el símbolo @.";
       } else {
-        const emailRegex =
-          /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
         if (!emailRegex.test(email.trim())) {
-          newErrors.email =
-            "El correo debe tener un dominio válido y terminar en .com o .org.";
+          newErrors.email = "Ingrese un correo válido.";
         }
       }
     }
 
     const finalModel =
-      vehicleModel === "__custom"
+      vehicleBrand === "Otra"
+        ? vehicleModelCustom.trim()
+        : vehicleModel === "__custom"
         ? vehicleModelCustom.trim()
         : vehicleModel.trim();
 
@@ -545,6 +567,7 @@ export default function NewVisitorModal({
       if (!finalModel) {
         newErrors.vehicleModel = "El modelo es obligatorio.";
       }
+
       const plate = vehiclePlate.trim();
       if (!plate) {
         newErrors.vehiclePlate = "La placa es obligatoria.";
@@ -571,7 +594,9 @@ export default function NewVisitorModal({
 
     try {
       const finalModel =
-        vehicleModel === "__custom"
+        vehicleBrand === "Otra"
+          ? vehicleModelCustom.trim()
+          : vehicleModel === "__custom"
           ? vehicleModelCustom.trim()
           : vehicleModel.trim();
 
@@ -593,7 +618,7 @@ export default function NewVisitorModal({
         reason: reason.trim(),
         phone: phone.trim(),
         email: email.trim(),
-        visitType,
+        visitType: normalizeVisitType(visitType),
         acompanado,
         vehicle: hasVehicle
           ? {
@@ -716,11 +741,13 @@ export default function NewVisitorModal({
               style={sxInput()}
               value={visitType}
               onChange={(e) => {
-                const val = e.target.value;
+                const val = normalizeVisitType(e.target.value);
                 setVisitType(val);
+
                 if (val === "Personal") {
                   setCompany("");
                 }
+
                 setErrors((prev) => ({ ...prev, company: undefined }));
               }}
             >
@@ -873,6 +900,7 @@ export default function NewVisitorModal({
                 onChange={(e) => {
                   const checked = e.target.checked;
                   setHasVehicle(checked);
+
                   if (!checked) {
                     setVehicleBrand("");
                     setVehicleModel("");
@@ -929,37 +957,51 @@ export default function NewVisitorModal({
                   <label className="text-xs" style={{ color: "var(--text-muted)" }}>
                     Modelo <span style={{ color: "#f87171" }}>*</span>
                   </label>
-                  <select
-                    className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
-                    style={sxInput()}
-                    value={vehicleModel}
-                    onChange={handleVehicleModelChange}
-                    disabled={!vehicleBrand || vehicleBrand === "Otra"}
-                  >
-                    <option value="">
-                      {!vehicleBrand
-                        ? "Seleccione marca primero…"
-                        : loadingModels
-                        ? "Cargando modelos..."
-                        : "Seleccione modelo…"}
-                    </option>
-                    {vehicleModels.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value="__custom">Otro modelo (escribir)</option>
-                  </select>
 
-                  {showCustomModelInput && (
+                  {vehicleBrand === "Otra" ? (
                     <input
-                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition mt-2"
+                      className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
                       style={sxInput()}
                       value={vehicleModelCustom}
                       onChange={handleVehicleModelCustomChange}
                       placeholder="Escriba el modelo"
                     />
+                  ) : (
+                    <>
+                      <select
+                        className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                        style={sxInput()}
+                        value={vehicleModel}
+                        onChange={handleVehicleModelChange}
+                        disabled={!vehicleBrand}
+                      >
+                        <option value="">
+                          {!vehicleBrand
+                            ? "Seleccione marca primero…"
+                            : loadingModels
+                            ? "Cargando modelos..."
+                            : "Seleccione modelo…"}
+                        </option>
+                        {vehicleModels.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                        <option value="__custom">Otro modelo (escribir)</option>
+                      </select>
+
+                      {showCustomModelInput && (
+                        <input
+                          className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition mt-2"
+                          style={sxInput()}
+                          value={vehicleModelCustom}
+                          onChange={handleVehicleModelCustomChange}
+                          placeholder="Escriba el modelo"
+                        />
+                      )}
+                    </>
                   )}
+
                   {errors.vehicleModel && (
                     <p className="text-xs mt-1" style={{ color: "#f87171" }}>
                       {errors.vehicleModel}

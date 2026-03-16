@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
 import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
@@ -10,12 +10,18 @@ import { QRCodeSVG } from "qrcode.react";
 
 // 🔹 BASE DEL BACKEND
 const ROOT = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api"
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:4000/api"
 ).replace(/\/$/, "");
 
 // 🔹 ENDPOINTS
 const VISITAS_API_URL = `${ROOT}/visitas/v1/visitas`;
 const CITAS_API_URL = `${ROOT}/citas`;
+
+const STORAGE_KEY = "visitas_demo";
+const CITA_STORAGE_KEY = "citas_demo";
+const QR_PREFIX = "SENAF_CITA_QR::";
 
 function normalizeEmail(v) {
   return String(v || "").trim().toLowerCase();
@@ -25,15 +31,26 @@ function normalizeDoc(v) {
   return String(v || "").replace(/\D/g, "");
 }
 
+function normalizeRoleName(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
 function resolveAuthPrincipal(auth) {
   const raw = auth?.me || auth?.user || null;
   if (!raw || typeof raw !== "object") return null;
 
-  const roles = Array.isArray(raw.roles)
-    ? raw.roles
-    : Array.isArray(raw.user?.roles)
-    ? raw.user.roles
-    : [];
+  const nestedRoles = Array.isArray(raw.user?.roles) ? raw.user.roles : [];
+  const directRoles = Array.isArray(raw.roles) ? raw.roles : [];
+  const role =
+    raw.role ||
+    raw.rol ||
+    raw.user?.role ||
+    raw.user?.rol ||
+    raw.profile?.role ||
+    raw.profile?.rol ||
+    "";
+
+  const roles = [...directRoles, ...nestedRoles, role].filter(Boolean);
 
   const email =
     normalizeEmail(raw.email) ||
@@ -50,7 +67,7 @@ function resolveAuthPrincipal(auth) {
     normalizeDoc(raw.user?.dni) ||
     "";
 
-  const roleSet = new Set(roles.map((r) => String(r || "").toLowerCase()));
+  const roleSet = new Set(roles.map((r) => normalizeRoleName(r)));
 
   const hint = (() => {
     try {
@@ -65,7 +82,11 @@ function resolveAuthPrincipal(auth) {
     email,
     document,
     roles,
-    isVisitor: hint || roleSet.has("visita") || roleSet.has("visitor"),
+    isVisitor:
+      hint ||
+      roleSet.has("visita") ||
+      roleSet.has("visitor") ||
+      roleSet.has("visitante"),
   };
 }
 
@@ -85,7 +106,12 @@ function citaBelongsToVisitor(cita, principal) {
     .map(normalizeEmail)
     .filter(Boolean);
 
-  const candidateDocs = [cita?.documento, cita?.document, cita?.dni]
+  const candidateDocs = [
+    cita?.documento,
+    cita?.document,
+    cita?.dni,
+    cita?.createdByDocument,
+  ]
     .map(normalizeDoc)
     .filter(Boolean);
 
@@ -261,18 +287,50 @@ function getTodayRange() {
   return { start, end };
 }
 
-const STORAGE_KEY = "visitas_demo";
-const CITA_STORAGE_KEY = "citas_demo";
+function normalizeCitaEstado(value) {
+  const raw = String(value || "").trim();
+
+  const map = {
+    solicitada: "Programada",
+    programada: "Programada",
+    "en revisión": "En revisión",
+    en_revision: "En revisión",
+    autorizada: "Autorizada",
+    denegada: "Denegada",
+    cancelada: "Cancelada",
+    dentro: "Dentro",
+    finalizada: "Finalizada",
+  };
+
+  return map[raw.toLowerCase()] || raw || "Programada";
+}
 
 function prettyCitaEstado(value) {
-  if (!value) return "solicitada";
-  if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada";
-  return value;
+  const estado = normalizeCitaEstado(value);
+
+  switch (estado) {
+    case "Programada":
+      return "programada";
+    case "En revisión":
+      return "en revisión";
+    case "Autorizada":
+      return "autorizada";
+    case "Denegada":
+      return "denegada";
+    case "Cancelada":
+      return "cancelada";
+    case "Dentro":
+      return "ingresada";
+    case "Finalizada":
+      return "finalizada";
+    default:
+      return String(estado || "programada").toLowerCase();
+  }
 }
 
 function CitaEstadoPill({ estado }) {
-  const val = prettyCitaEstado(estado);
+  const normalized = normalizeCitaEstado(estado);
+  const val = prettyCitaEstado(normalized);
 
   let style = {
     background: "color-mix(in srgb, #f59e0b 12%, transparent)",
@@ -280,33 +338,48 @@ function CitaEstadoPill({ estado }) {
     border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
   };
 
-  switch (estado) {
-    case "autorizada":
+  switch (normalized) {
+    case "Programada":
+      style = {
+        background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+        color: "#fde68a",
+        border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
+      };
+      break;
+    case "En revisión":
+      style = {
+        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
+        color: "#93c5fd",
+        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
+      };
+      break;
+    case "Autorizada":
       style = {
         background: "color-mix(in srgb, #22c55e 12%, transparent)",
         color: "#86efac",
         border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
       };
       break;
-    case "denegada":
+    case "Dentro":
+      style = {
+        background: "color-mix(in srgb, #16a34a 14%, transparent)",
+        color: "#86efac",
+        border: "1px solid color-mix(in srgb, #16a34a 36%, transparent)",
+      };
+      break;
+    case "Denegada":
       style = {
         background: "color-mix(in srgb, #ef4444 12%, transparent)",
         color: "#fca5a5",
         border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
       };
       break;
-    case "cancelada":
+    case "Cancelada":
+    case "Finalizada":
       style = {
         background: "color-mix(in srgb, #64748b 18%, transparent)",
         color: "#cbd5e1",
         border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
-      };
-      break;
-    case "en_revision":
-      style = {
-        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
-        color: "#93c5fd",
-        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
       };
       break;
     default:
@@ -331,6 +404,14 @@ function stripDiacritics(str) {
 function buildQrValueForCita(cita) {
   if (!cita) return "";
 
+  if (cita.qrPayload && String(cita.qrPayload).trim()) {
+    return String(cita.qrPayload).trim();
+  }
+
+  if (cita.qrToken && String(cita.qrToken).trim()) {
+    return `${QR_PREFIX}${String(cita.qrToken).trim()}`;
+  }
+
   const nombre = cita.nombre || cita.visitante || "Visitante";
   const documento = cita.documento || "No especificado";
   const empresa = cita.empresa || "—";
@@ -340,7 +421,7 @@ function buildQrValueForCita(cita) {
   let fecha = "—";
   let hora = "—";
 
-  if (cita.citaAt instanceof Date && !isNaN(cita.citaAt.getTime())) {
+  if (cita.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())) {
     fecha = cita.citaAt.toLocaleDateString("es-ES", {
       day: "2-digit",
       month: "2-digit",
@@ -373,6 +454,206 @@ function buildQrValueForCita(cita) {
   return stripDiacritics(text);
 }
 
+function saveToStorage(next) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch (e) {
+    console.warn("[visitas] no se pudo guardar en localStorage:", e);
+  }
+}
+
+function saveCitasToStorage(next) {
+  try {
+    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(next));
+  } catch (e) {
+    console.warn("[citas] no se pudieron guardar en localStorage:", e);
+  }
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((v) => ({
+      ...v,
+      entryAt: v.entryAt ? new Date(v.entryAt) : null,
+      exitAt: v.exitAt ? new Date(v.exitAt) : null,
+      kind: v.kind || "Presencial",
+    }));
+  } catch (e) {
+    console.warn("[visitas] no se pudo leer de localStorage:", e);
+    return [];
+  }
+}
+
+function loadCitasFromStorage() {
+  try {
+    const raw = localStorage.getItem(CITA_STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+
+    return arr.map((c, idx) => {
+      const baseId = c._id || c.id || `local-cita-${idx}`;
+      let citaAt = null;
+
+      if (c.citaAt) {
+        citaAt = new Date(c.citaAt);
+      } else if (c.fecha && c.hora) {
+        citaAt = new Date(`${c.fecha}T${c.hora}:00`);
+      }
+
+      return {
+        ...c,
+        _id: baseId,
+        id: baseId,
+        citaAt,
+        estado: normalizeCitaEstado(c.estado),
+      };
+    });
+  } catch (e) {
+    console.warn("[citas] no se pudo leer de localStorage:", e);
+    return [];
+  }
+}
+
+function normalizeVisitFromServer(v) {
+  const id = v?._id || v?.id || `local-${Date.now()}-${Math.random()}`;
+  const entryAt = v?.fechaEntrada
+    ? new Date(v.fechaEntrada)
+    : v?.entryAt
+    ? new Date(v.entryAt)
+    : null;
+  const exitAt = v?.fechaSalida
+    ? new Date(v.fechaSalida)
+    : v?.exitAt
+    ? new Date(v.exitAt)
+    : null;
+  const vehiculo = v?.vehiculo || null;
+
+  const vehicleBrand = vehiculo?.marca || vehiculo?.brand || v?.vehicleBrand || "";
+  const vehicleModel = vehiculo?.modelo || vehiculo?.model || v?.vehicleModel || "";
+  const vehiclePlate = vehiculo?.placa || vehiculo?.plate || v?.vehiclePlate || "";
+
+  const vehicleSummary =
+    vehicleBrand || vehicleModel || vehiclePlate
+      ? `${vehicleBrand || "N/D"}${vehicleModel ? ` ${vehicleModel}` : ""}${
+          vehiclePlate ? ` (${vehiclePlate})` : ""
+        }`
+      : "—";
+
+  return {
+    id,
+    _id: id,
+    kind: v?.tipo || v?.kind || "Presencial",
+    name: v?.nombre || v?.name || "",
+    document: v?.documento || v?.document || v?.dni || "",
+    company: v?.empresa || v?.company || "—",
+    employee: v?.empleado || v?.employee || "—",
+    phone: v?.telefono || v?.phone || "",
+    email: v?.correo || v?.email || "",
+    reason: v?.motivo || v?.reason || "",
+    entry:
+      entryAt && !Number.isNaN(entryAt.getTime())
+        ? `${entryAt.toLocaleDateString("es-ES", {
+            day: "2-digit",
+            month: "2-digit",
+          })}, ${entryAt.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}`
+        : "—",
+    exit:
+      exitAt && !Number.isNaN(exitAt.getTime())
+        ? `${exitAt.toLocaleDateString("es-ES", {
+            day: "2-digit",
+            month: "2-digit",
+          })}, ${exitAt.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}`
+        : "-",
+    status: v?.estado || v?.status || "Dentro",
+    entryAt,
+    exitAt,
+    vehicleBrand,
+    vehicleModel,
+    vehiclePlate,
+    vehicleSummary,
+    raw: v,
+  };
+}
+
+function normalizeCitaFromServer(c, index = 0) {
+  const id = c?._id || c?.id || `server-cita-${index}`;
+  let citaAt = null;
+
+  if (c?.citaAt) {
+    citaAt = new Date(c.citaAt);
+  } else if (c?.fecha && c?.hora) {
+    citaAt = new Date(`${c.fecha}T${c.hora}:00`);
+  }
+
+  return {
+    ...c,
+    _id: id,
+    id,
+    citaAt,
+    estado: normalizeCitaEstado(c?.estado),
+    qrDataUrl: c?.qrDataUrl || "",
+    qrPayload: c?.qrPayload || "",
+    qrToken: c?.qrToken || "",
+  };
+}
+
+function mergeVisitLists(serverList, localList) {
+  const map = new Map();
+
+  for (const item of localList) {
+    map.set(item.id, item);
+  }
+
+  for (const item of serverList) {
+    map.set(item.id, {
+      ...(map.get(item.id) || {}),
+      ...item,
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const da = a.entryAt instanceof Date ? a.entryAt.getTime() : 0;
+    const db = b.entryAt instanceof Date ? b.entryAt.getTime() : 0;
+    return db - da;
+  });
+}
+
+function mergeCitaLists(serverList, localList) {
+  const map = new Map();
+
+  for (const item of localList) {
+    map.set(item._id, item);
+  }
+
+  for (const item of serverList) {
+    const prev = map.get(item._id) || {};
+    map.set(item._id, {
+      ...prev,
+      ...item,
+      qrDataUrl: item.qrDataUrl || prev.qrDataUrl || "",
+      qrPayload: item.qrPayload || prev.qrPayload || "",
+      qrToken: item.qrToken || prev.qrToken || "",
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const da = a.citaAt instanceof Date ? a.citaAt.getTime() : 0;
+    const db = b.citaAt instanceof Date ? b.citaAt.getTime() : 0;
+    return da - db;
+  });
+}
+
 export default function VisitsPage() {
   const navigate = useNavigate();
   const auth = useAuth();
@@ -386,73 +667,69 @@ export default function VisitsPage() {
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingExit, setSavingExit] = useState(null);
+  const [savingCitaAction, setSavingCitaAction] = useState(null);
 
   const [onlineCitas, setOnlineCitas] = useState([]);
   const [qrCita, setQrCita] = useState(null);
   const [editingVisitor, setEditingVisitor] = useState(null);
   const [viewMode, setViewMode] = useState("citas");
 
-  function saveToStorage(next) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch (e) {
-      console.warn("[visitas] no se pudo guardar en localStorage:", e);
-    }
-  }
+  const loadAllData = useCallback(async () => {
+    setLoading(true);
 
-  function loadFromStorage() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return [];
-      return arr.map((v) => ({
-        ...v,
-        entryAt: v.entryAt ? new Date(v.entryAt) : null,
-        exitAt: v.exitAt ? new Date(v.exitAt) : null,
-        kind: v.kind || "Presencial",
-      }));
-    } catch (e) {
-      console.warn("[visitas] no se pudo leer de localStorage:", e);
-      return [];
-    }
-  }
+      const localVisits = loadFromStorage();
+      const localCitas = loadCitasFromStorage();
 
-  function loadCitasFromStorage() {
-    try {
-      const raw = localStorage.getItem(CITA_STORAGE_KEY);
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return [];
-      return arr.map((c, idx) => {
-        const baseId = c._id || c.id || `local-cita-${idx}`;
-        let citaAt = null;
-        if (c.citaAt) {
-          citaAt = new Date(c.citaAt);
-        } else if (c.fecha && c.hora) {
-          citaAt = new Date(`${c.fecha}T${c.hora}:00`);
+      let serverVisits = [];
+      let serverCitas = [];
+
+      try {
+        const visitasRes = await fetch(VISITAS_API_URL);
+        const visitasData = await visitasRes.json().catch(() => ({}));
+        if (visitasRes.ok && Array.isArray(visitasData?.items)) {
+          serverVisits = visitasData.items.map(normalizeVisitFromServer);
         }
-        return { ...c, _id: baseId, id: baseId, citaAt };
-      });
-    } catch (e) {
-      console.warn("[citas] no se pudo leer de localStorage:", e);
-      return [];
-    }
-  }
+      } catch (err) {
+        console.warn("[visitas] no se pudo leer backend:", err);
+      }
 
-  function saveCitasToStorage(next) {
-    try {
-      localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(next));
-    } catch (e) {
-      console.warn("[citas] no se pudieron guardar en localStorage:", e);
+      try {
+        const citasRes = await fetch(CITAS_API_URL);
+        const citasData = await citasRes.json().catch(() => ({}));
+        if (citasRes.ok && Array.isArray(citasData?.items)) {
+          serverCitas = citasData.items.map((c, idx) =>
+            normalizeCitaFromServer(c, idx)
+          );
+        }
+      } catch (err) {
+        console.warn("[citas] no se pudo leer backend:", err);
+      }
+
+      const nextVisitors = mergeVisitLists(serverVisits, localVisits);
+      const nextCitas = mergeCitaLists(serverCitas, localCitas);
+
+      setVisitors(nextVisitors);
+      setOnlineCitas(nextCitas);
+
+      saveToStorage(nextVisitors);
+      saveCitasToStorage(
+        nextCitas.map((c) => ({
+          ...c,
+          citaAt:
+            c.citaAt instanceof Date && !Number.isNaN(c.citaAt.getTime())
+              ? c.citaAt.toISOString()
+              : c.citaAt,
+        }))
+      );
+    } finally {
+      setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    setVisitors(loadFromStorage());
-    setOnlineCitas(loadCitasFromStorage());
-    setLoading(false);
-  }, []);
+    loadAllData();
+  }, [loadAllData]);
 
   useEffect(() => {
     if (isVisitor && viewMode !== "citas") {
@@ -498,7 +775,7 @@ export default function VisitsPage() {
       const matchesStatus =
         statusFilter === "todos"
           ? true
-          : v.status.toLowerCase() === statusFilter.toLowerCase();
+          : String(v.status || "").toLowerCase() === statusFilter.toLowerCase();
 
       return matchesSearch && matchesStatus;
     });
@@ -530,7 +807,9 @@ export default function VisitsPage() {
     return base.filter((c) => {
       const full = `${c.nombre || c.visitante || ""} ${
         c.documento || ""
-      } ${c.empresa || ""} ${c.empleado || ""} ${c.motivo || ""}`
+      } ${c.empresa || ""} ${c.empleado || ""} ${c.motivo || ""} ${
+        c.telefono || ""
+      }`
         .toString()
         .toLowerCase();
 
@@ -567,45 +846,6 @@ export default function VisitsPage() {
     if (isEditing && editingVisitor?.id) {
       const id = editingVisitor.id;
 
-      try {
-        const payload = {
-          nombre: formData.name?.trim(),
-          documento: formData.document?.trim(),
-          empresa: formData.company?.trim() || null,
-          empleado: formData.employee?.trim() || null,
-          motivo: formData.reason?.trim() || null,
-          telefono: formData.phone?.trim() || null,
-          correo: formData.email?.trim() || null,
-          kind: formData.visitType || editingVisitor.kind || "Presencial",
-          vehicle:
-            vehicleBrand || vehicleModel || vehiclePlate
-              ? {
-                  brand: vehicleBrand || undefined,
-                  model: vehicleModel || undefined,
-                  plate: vehiclePlate || undefined,
-                }
-              : null,
-        };
-
-        const url = `${VISITAS_API_URL}/${encodeURIComponent(id)}`;
-        const res = await fetch(url, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          console.warn(
-            "[visitas] fallo al actualizar en backend:",
-            res.status,
-            data
-          );
-        }
-      } catch (err) {
-        console.warn("[visitas] error de red al actualizar en backend:", err);
-      }
-
       setVisitors((prev) => {
         const next = prev.map((row) =>
           row.id === id
@@ -617,6 +857,7 @@ export default function VisitsPage() {
                 employee: formData.employee?.trim() || "—",
                 phone: formData.phone?.trim() || "",
                 email: formData.email?.trim() || "",
+                reason: formData.reason?.trim() || "",
                 kind: formData.visitType || row.kind || "Presencial",
                 vehicleBrand,
                 vehicleModel,
@@ -654,15 +895,14 @@ export default function VisitsPage() {
         motivo: formData.reason?.trim() || null,
         telefono: formData.phone?.trim() || null,
         correo: formData.email?.trim() || null,
-        kind: formData.visitType || "Presencial",
-        estado: "Dentro",
-        entryAt: entryDate.toISOString(),
-        vehicle:
+        tipo: "Ingreso",
+        llegoEnVehiculo: !!(vehicleBrand || vehicleModel || vehiclePlate),
+        vehiculo:
           vehicleBrand || vehicleModel || vehiclePlate
             ? {
-                brand: vehicleBrand || undefined,
-                model: vehicleModel || undefined,
-                plate: vehiclePlate || undefined,
+                marca: vehicleBrand || "",
+                modelo: vehicleModel || "",
+                placa: vehiclePlate || "",
               }
             : null,
       };
@@ -677,13 +917,7 @@ export default function VisitsPage() {
 
       if (res.ok && data) {
         backendId =
-          data._id ||
-          data.id ||
-          data?.item?._id ||
-          data?.item?.id ||
-          data?.visita?._id ||
-          data?.visita?.id ||
-          null;
+          data?.item?._id || data?.item?.id || data?._id || data?.id || null;
       } else {
         console.warn("[visitas] fallo al crear en backend:", data);
       }
@@ -691,8 +925,11 @@ export default function VisitsPage() {
       console.warn("[visitas] error de red al crear en backend:", err);
     }
 
+    const tempId = backendId || `local-${Date.now()}`;
+
     const newRow = {
-      id: backendId || `local-${Date.now()}`,
+      id: tempId,
+      _id: tempId,
       kind: formData.visitType || "Presencial",
       name: formData.name?.trim(),
       document: formData.document?.trim(),
@@ -700,6 +937,7 @@ export default function VisitsPage() {
       employee: formData.employee?.trim() || "—",
       phone: formData.phone?.trim() || "",
       email: formData.email?.trim() || "",
+      reason: formData.reason?.trim() || "",
       entry: fmtEntry,
       exit: "-",
       status: "Dentro",
@@ -716,6 +954,7 @@ export default function VisitsPage() {
       saveToStorage(next);
       return next;
     });
+
     setShowModal(false);
   }
 
@@ -724,7 +963,18 @@ export default function VisitsPage() {
     if (!id) return;
 
     setSavingExit(id);
+
     try {
+      const res = await fetch(
+        `${ROOT}/visitas/${encodeURIComponent(id)}/cerrar`,
+        { method: "PATCH" }
+      );
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        console.warn("[visitas] fallo cerrando visita en backend:", data);
+      }
+
       const exitDate = new Date();
       const fmtExit = `${exitDate.toLocaleDateString("es-ES", {
         day: "2-digit",
@@ -743,6 +993,8 @@ export default function VisitsPage() {
         saveToStorage(next);
         return next;
       });
+    } catch (err) {
+      console.warn("[visitas] error de red al cerrar visita:", err);
     } finally {
       setSavingExit(null);
     }
@@ -754,17 +1006,40 @@ export default function VisitsPage() {
     setShowModal(true);
   }
 
+  async function patchLocalAndRemoteCita(citaId, patch) {
+    setOnlineCitas((prev) => {
+      const next = prev.map((c) =>
+        c._id === citaId
+          ? {
+              ...c,
+              ...patch,
+              estado: patch.estado ? normalizeCitaEstado(patch.estado) : c.estado,
+            }
+          : c
+      );
+
+      saveCitasToStorage(
+        next.map((c) => ({
+          ...c,
+          citaAt:
+            c.citaAt instanceof Date && !Number.isNaN(c.citaAt.getTime())
+              ? c.citaAt.toISOString()
+              : c.citaAt,
+        }))
+      );
+
+      return next;
+    });
+  }
+
   async function updateCitaStatus(citaId, nuevoEstado) {
     if (isVisitor) return;
     if (!citaId) return;
 
-    setOnlineCitas((prev) => {
-      const next = prev.map((c) =>
-        c._id === citaId ? { ...c, estado: nuevoEstado } : c
-      );
-      saveCitasToStorage(next);
-      return next;
-    });
+    setSavingCitaAction(`${citaId}:${nuevoEstado}`);
+
+    const normalized = normalizeCitaEstado(nuevoEstado);
+    await patchLocalAndRemoteCita(citaId, { estado: normalized });
 
     try {
       const url = `${CITAS_API_URL}/${encodeURIComponent(citaId)}/estado`;
@@ -776,15 +1051,50 @@ export default function VisitsPage() {
       });
 
       const data = await res.json().catch(() => null);
+
       if (!res.ok) {
         console.warn(
           "[citas] fallo al actualizar estado en backend:",
           res.status,
           data
         );
+      } else if (data?.item) {
+        await patchLocalAndRemoteCita(citaId, normalizeCitaFromServer(data.item));
       }
     } catch (err) {
       console.warn("[citas] error de red al actualizar estado:", err);
+    } finally {
+      setSavingCitaAction(null);
+    }
+  }
+
+  async function handleRegistrarIngreso(cita) {
+    if (isVisitor) return;
+    if (!cita?._id) return;
+
+    const actionKey = `${cita._id}:checkin`;
+    setSavingCitaAction(actionKey);
+
+    await patchLocalAndRemoteCita(cita._id, { estado: "Dentro" });
+
+    try {
+      const url = `${CITAS_API_URL}/${encodeURIComponent(cita._id)}/checkin`;
+
+      const res = await fetch(url, {
+        method: "PATCH",
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        console.warn("[citas] fallo al registrar check-in:", res.status, data);
+      } else if (data?.item) {
+        await patchLocalAndRemoteCita(cita._id, normalizeCitaFromServer(data.item));
+      }
+    } catch (err) {
+      console.warn("[citas] error de red al registrar ingreso:", err);
+    } finally {
+      setSavingCitaAction(null);
     }
   }
 
@@ -847,7 +1157,7 @@ export default function VisitsPage() {
       });
 
       doc.setFontSize(14);
-      doc.text("Reporte de Visitantes", 40, 40);
+      doc.text("Reporte de Visitantes SENAF", 40, 40);
 
       const headers = Object.keys(rows[0]);
       const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
@@ -883,7 +1193,7 @@ export default function VisitsPage() {
 
       let fecha = "";
       let hora = "";
-      if (c.citaAt instanceof Date && !isNaN(c.citaAt.getTime())) {
+      if (c.citaAt instanceof Date && !Number.isNaN(c.citaAt.getTime())) {
         fecha = c.citaAt.toLocaleDateString("es-ES", {
           day: "2-digit",
           month: "2-digit",
@@ -1024,6 +1334,15 @@ export default function VisitsPage() {
             >
               <span className="font-semibold">Agenda de Citas</span> →
             </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/visitas/scan-qr")}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition relative z-10"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
+            >
+              <span className="font-semibold">Escanear QR</span> 📷
+            </button>
           </div>
         )}
       </div>
@@ -1163,7 +1482,7 @@ export default function VisitsPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[1000px]">
+            <table className="w-full text-left border-collapse min-w-[1100px]">
               <thead
                 className="text-xs uppercase"
                 style={{ color: "var(--text-muted)" }}
@@ -1207,6 +1526,15 @@ export default function VisitsPage() {
                         ? "Personal"
                         : "—";
 
+                    const estadoNormalizado = normalizeCitaEstado(cita.estado);
+                    const canShowQr =
+                      !!cita.qrDataUrl || !!cita.qrPayload || !!cita.qrToken;
+                    const canRegistrarIngreso =
+                      !isVisitor &&
+                      ["Autorizada", "En revisión", "Programada"].includes(
+                        estadoNormalizado
+                      );
+
                     return (
                       <tr
                         key={cita._id}
@@ -1227,7 +1555,8 @@ export default function VisitsPage() {
                         <td>{cita.telefono || "—"}</td>
                         <td>{tipoLegible}</td>
                         <td style={{ color: "var(--text-muted)" }}>
-                          {cita.citaAt
+                          {cita.citaAt instanceof Date &&
+                          !Number.isNaN(cita.citaAt.getTime())
                             ? cita.citaAt.toLocaleDateString("es-ES", {
                                 day: "2-digit",
                                 month: "2-digit",
@@ -1236,7 +1565,8 @@ export default function VisitsPage() {
                             : cita.fecha || "—"}
                         </td>
                         <td style={{ color: "var(--text-muted)" }}>
-                          {cita.citaAt
+                          {cita.citaAt instanceof Date &&
+                          !Number.isNaN(cita.citaAt.getTime())
                             ? cita.citaAt.toLocaleTimeString("es-ES", {
                                 hour: "2-digit",
                                 minute: "2-digit",
@@ -1244,11 +1574,11 @@ export default function VisitsPage() {
                             : cita.hora || "—"}
                         </td>
                         <td>
-                          <CitaEstadoPill estado={cita.estado} />
+                          <CitaEstadoPill estado={estadoNormalizado} />
                         </td>
                         <td className="text-right">
                           <div className="flex flex-wrap gap-2 justify-end">
-                            {cita.estado === "autorizada" && (
+                            {canShowQr && (
                               <button
                                 type="button"
                                 onClick={() => setQrCita(cita)}
@@ -1263,40 +1593,75 @@ export default function VisitsPage() {
                               <>
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateCitaStatus(cita._id, "en_revision")
+                                  disabled={
+                                    savingCitaAction === `${cita._id}:En revisión` ||
+                                    estadoNormalizado === "Dentro" ||
+                                    estadoNormalizado === "Finalizada"
                                   }
-                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "En revisión")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50"
                                   style={sxGhostBtn()}
                                 >
                                   En revisión
                                 </button>
+
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateCitaStatus(cita._id, "autorizada")
+                                  disabled={
+                                    savingCitaAction === `${cita._id}:Autorizada` ||
+                                    estadoNormalizado === "Dentro" ||
+                                    estadoNormalizado === "Finalizada"
                                   }
-                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "Autorizada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50"
                                   style={sxSuccessBtn()}
                                 >
-                                  Ingresar
+                                  Autorizar
                                 </button>
+
+                                {canRegistrarIngreso && (
+                                  <button
+                                    type="button"
+                                    disabled={savingCitaAction === `${cita._id}:checkin`}
+                                    onClick={() => handleRegistrarIngreso(cita)}
+                                    className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50"
+                                    style={sxPrimaryBtn()}
+                                  >
+                                    Registrar ingreso
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateCitaStatus(cita._id, "denegada")
+                                  disabled={
+                                    savingCitaAction === `${cita._id}:Denegada` ||
+                                    estadoNormalizado === "Dentro" ||
+                                    estadoNormalizado === "Finalizada"
                                   }
-                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "Denegada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50"
                                   style={sxDangerBtn()}
                                 >
                                   Denegar
                                 </button>
+
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateCitaStatus(cita._id, "cancelada")
+                                  disabled={
+                                    savingCitaAction === `${cita._id}:Cancelada` ||
+                                    estadoNormalizado === "Dentro" ||
+                                    estadoNormalizado === "Finalizada"
                                   }
-                                  className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                  onClick={() =>
+                                    updateCitaStatus(cita._id, "Cancelada")
+                                  }
+                                  className="px-2 py-1 rounded-md text-xs font-semibold transition disabled:opacity-50"
                                   style={sxGhostBtn()}
                                 >
                                   Cancelar
@@ -1417,7 +1782,8 @@ export default function VisitsPage() {
                         <span
                           className="px-2 py-1 rounded-full text-xs font-semibold"
                           style={{
-                            background: "color-mix(in srgb, #22c55e 12%, transparent)",
+                            background:
+                              "color-mix(in srgb, #22c55e 12%, transparent)",
                             color: "#86efac",
                             border:
                               "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
@@ -1429,7 +1795,8 @@ export default function VisitsPage() {
                         <span
                           className="px-2 py-1 rounded-full text-xs font-semibold"
                           style={{
-                            background: "color-mix(in srgb, #64748b 16%, transparent)",
+                            background:
+                              "color-mix(in srgb, #64748b 16%, transparent)",
                             color: "#cbd5e1",
                             border:
                               "1px solid color-mix(in srgb, #64748b 36%, transparent)",
@@ -1554,11 +1921,19 @@ export default function VisitsPage() {
                 className="rounded-[18px] p-4"
                 style={sxCardSoft({ background: "#ffffff" })}
               >
-                <QRCodeSVG
-                  value={buildQrValueForCita(qrCita)}
-                  size={200}
-                  includeMargin
-                />
+                {qrCita.qrDataUrl ? (
+                  <img
+                    src={qrCita.qrDataUrl}
+                    alt="QR de cita"
+                    className="w-[200px] h-[200px] object-contain"
+                  />
+                ) : (
+                  <QRCodeSVG
+                    value={buildQrValueForCita(qrCita)}
+                    size={200}
+                    includeMargin
+                  />
+                )}
               </div>
 
               <div
@@ -1570,20 +1945,22 @@ export default function VisitsPage() {
                 </div>
                 <div>{qrCita.documento || "Documento no especificado"}</div>
                 <div>
-                  {qrCita.citaAt
+                  {qrCita.citaAt instanceof Date &&
+                  !Number.isNaN(qrCita.citaAt.getTime())
                     ? qrCita.citaAt.toLocaleDateString("es-ES", {
                         day: "2-digit",
                         month: "2-digit",
                         year: "numeric",
                       })
-                    : qrCita.fecha}{" "}
+                    : qrCita.fecha || "—"}{" "}
                   {" · "}
-                  {qrCita.citaAt
+                  {qrCita.citaAt instanceof Date &&
+                  !Number.isNaN(qrCita.citaAt.getTime())
                     ? qrCita.citaAt.toLocaleTimeString("es-ES", {
                         hour: "2-digit",
                         minute: "2-digit",
                       })
-                    : qrCita.hora}
+                    : qrCita.hora || "—"}
                 </div>
                 <div className="mt-1">
                   Estado: <CitaEstadoPill estado={qrCita.estado} />

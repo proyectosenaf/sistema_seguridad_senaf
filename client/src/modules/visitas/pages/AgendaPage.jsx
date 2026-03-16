@@ -28,10 +28,64 @@ const NAME_MAX = 40;
 const COMPANY_MAX = 20;
 const EMP_MAX = 20;
 const REASON_MAX = 20;
-const EMAIL_MAX = 25;
+const EMAIL_MAX = 60;
 
 /* ================== Storage local para citas ================== */
 const CITA_STORAGE_KEY = "citas_demo";
+
+/* ====== Storage opcional para datos del usuario actual ======
+   No rompe si no existe.
+   Se usa para:
+   - ocultar "Volver a Gestión de Visitantes" cuando el rol es visitante
+   - forzar "Mis citas" si podemos inferir documento del usuario
+*/
+const POSSIBLE_USER_KEYS = [
+  "auth_user",
+  "user",
+  "currentUser",
+  "senaf_user",
+  "auth",
+  "session",
+];
+
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function readCurrentUser() {
+  try {
+    for (const key of POSSIBLE_USER_KEYS) {
+      const fromLocal = localStorage.getItem(key);
+      if (fromLocal) {
+        const parsed = safeJsonParse(fromLocal);
+        if (parsed) {
+          if (parsed.user && typeof parsed.user === "object") return parsed.user;
+          return parsed;
+        }
+      }
+
+      const fromSession = sessionStorage.getItem(key);
+      if (fromSession) {
+        const parsed = safeJsonParse(fromSession);
+        if (parsed) {
+          if (parsed.user && typeof parsed.user === "object") return parsed.user;
+          return parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[AgendaPage] No se pudo leer usuario actual:", err);
+  }
+  return null;
+}
+
+function normalizeDocumento(raw) {
+  return String(raw || "").replace(/\D/g, "");
+}
 
 function loadStoredCitas() {
   try {
@@ -39,13 +93,23 @@ function loadStoredCitas() {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
+
     return arr.map((it) => {
       const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
       let citaAt = it.citaAt;
+
       if (!citaAt && it.fecha && it.hora) {
-        citaAt = new Date(`${it.fecha}T${it.hora}:00`).toISOString();
+        const temp = new Date(`${it.fecha}T${it.hora}:00`);
+        if (!Number.isNaN(temp.getTime())) {
+          citaAt = temp.toISOString();
+        }
       }
-      return { ...it, _id, citaAt };
+
+      return {
+        ...it,
+        _id,
+        citaAt,
+      };
     });
   } catch (e) {
     console.warn("[citas] No se pudo leer de localStorage:", e);
@@ -141,15 +205,50 @@ function normalizeModelItem(item) {
 
 /* ========= Helpers visuales de estado ========= */
 
+function normalizeEstadoValue(value) {
+  const raw = String(value || "").trim();
+
+  const map = {
+    solicitada: "Programada",
+    programada: "Programada",
+    "en revisión": "En revisión",
+    en_revision: "En revisión",
+    autorizada: "Autorizada",
+    denegada: "Denegada",
+    cancelada: "Cancelada",
+    dentro: "Dentro",
+    finalizada: "Finalizada",
+  };
+
+  return map[raw.toLowerCase()] || raw || "Programada";
+}
+
 function prettyCitaEstado(value) {
-  if (!value) return "solicitada";
-  if (value === "en_revision") return "en revisión";
-  if (value === "autorizada") return "ingresada";
-  return value;
+  const estado = normalizeEstadoValue(value);
+
+  switch (estado) {
+    case "Programada":
+      return "programada";
+    case "En revisión":
+      return "en revisión";
+    case "Autorizada":
+      return "autorizada";
+    case "Denegada":
+      return "denegada";
+    case "Cancelada":
+      return "cancelada";
+    case "Dentro":
+      return "ingresada";
+    case "Finalizada":
+      return "finalizada";
+    default:
+      return estado.toLowerCase();
+  }
 }
 
 function CitaEstadoPill({ estado }) {
-  const val = prettyCitaEstado(estado);
+  const normalized = normalizeEstadoValue(estado);
+  const val = prettyCitaEstado(normalized);
 
   let style = {
     background: "color-mix(in srgb, #f59e0b 12%, transparent)",
@@ -157,33 +256,54 @@ function CitaEstadoPill({ estado }) {
     border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
   };
 
-  switch (estado) {
-    case "autorizada":
+  switch (normalized) {
+    case "Programada":
+      style = {
+        background: "color-mix(in srgb, #f59e0b 12%, transparent)",
+        color: "#fde68a",
+        border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
+      };
+      break;
+    case "En revisión":
+      style = {
+        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
+        color: "#93c5fd",
+        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
+      };
+      break;
+    case "Autorizada":
       style = {
         background: "color-mix(in srgb, #22c55e 12%, transparent)",
         color: "#86efac",
         border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
       };
       break;
-    case "denegada":
+    case "Dentro":
       style = {
-        background: "color-mix(in srgb, #ef4444 12%, transparent)",
-        color: "#fca5a5",
-        border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+        background: "color-mix(in srgb, #16a34a 14%, transparent)",
+        color: "#86efac",
+        border: "1px solid color-mix(in srgb, #16a34a 36%, transparent)",
       };
       break;
-    case "cancelada":
+    case "Finalizada":
       style = {
         background: "color-mix(in srgb, #64748b 18%, transparent)",
         color: "#cbd5e1",
         border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
       };
       break;
-    case "en_revision":
+    case "Denegada":
       style = {
-        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
-        color: "#93c5fd",
-        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
+        background: "color-mix(in srgb, #ef4444 12%, transparent)",
+        color: "#fca5a5",
+        border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+      };
+      break;
+    case "Cancelada":
+      style = {
+        background: "color-mix(in srgb, #64748b 18%, transparent)",
+        color: "#cbd5e1",
+        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
       };
       break;
     default:
@@ -200,16 +320,82 @@ function CitaEstadoPill({ estado }) {
   );
 }
 
+function buildISOFromDateAndTime(fecha, hora) {
+  const temp = new Date(`${fecha}T${hora}:00`);
+  if (Number.isNaN(temp.getTime())) return null;
+  return temp.toISOString();
+}
+
+function mergeServerAndLocal(serverList, localList) {
+  const map = new Map();
+
+  for (const it of serverList || []) {
+    const key = it?._id || it?.id;
+    if (!key) continue;
+    map.set(key, { ...it });
+  }
+
+  for (const local of localList || []) {
+    const key = local?._id || local?.id;
+    if (!key) continue;
+
+    if (map.has(key)) {
+      map.set(key, {
+        ...local,
+        ...map.get(key),
+        // preservamos QR si vino del backend
+        qrDataUrl: map.get(key)?.qrDataUrl || local?.qrDataUrl || "",
+        qrPayload: map.get(key)?.qrPayload || local?.qrPayload || "",
+        qrToken: map.get(key)?.qrToken || local?.qrToken || "",
+      });
+    } else {
+      map.set(key, { ...local });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function toDisplayName(it) {
+  return it?.nombre || it?.visitante || "";
+}
+
+function toDisplayCompany(it) {
+  return it?.empresa || "";
+}
+
 /* ================== Página ================== */
 
 export default function AgendaPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState("agendar");
 
+  const currentUser = useMemo(() => readCurrentUser(), []);
+  const currentRole = String(
+    currentUser?.role ||
+      currentUser?.rol ||
+      currentUser?.userRole ||
+      currentUser?.tipo ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const currentDocumento = useMemo(() => {
+    return normalizeDocumento(
+      currentUser?.documento ||
+        currentUser?.dni ||
+        currentUser?.identityNumber ||
+        ""
+    );
+  }, [currentUser]);
+
+  const isVisitante = currentRole === "visitante";
+
   /* ===================== FORMULARIO: AGENDAR ===================== */
   const initialFormState = {
     visitante: "",
-    documento: "",
+    documento: currentDocumento || "",
     tipoCita: "personal",
     empresa: "",
     empleado: "",
@@ -244,6 +430,15 @@ export default function AgendaPage() {
 
   // Cita que se está editando
   const [editingCita, setEditingCita] = useState(null);
+
+  // Modal QR
+  const [qrModal, setQrModal] = useState({
+    open: false,
+    qrDataUrl: "",
+    qrPayload: "",
+    qrToken: "",
+    cita: null,
+  });
 
   // 🔹 CARGAR MARCAS DESDE BACKEND
   useEffect(() => {
@@ -328,6 +523,21 @@ export default function AgendaPage() {
     };
   }, [vehicleBrand]);
 
+  function resetFormState() {
+    setForm({
+      ...initialFormState,
+      documento: currentDocumento || "",
+    });
+    setHasCompanion(false);
+    setHasVehicle(false);
+    setVehicleBrand("");
+    setVehicleModel("");
+    setVehicleModelCustom("");
+    setVehiclePlate("");
+    setEditingCita(null);
+    setErrors({});
+  }
+
   function onChange(e) {
     const { name, value } = e.target;
     let newValue = value;
@@ -408,16 +618,15 @@ export default function AgendaPage() {
       e.visitante = "El nombre es obligatorio.";
     } else if (nombre.length > NAME_MAX) {
       e.visitante = `El nombre no debe superar ${NAME_MAX} caracteres.`;
-    } else if (nombreParts.length < 3) {
-      e.visitante =
-        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+    } else if (nombreParts.length < 2) {
+      e.visitante = "Ingrese el nombre completo del visitante.";
     }
 
     const dniDigits = form.documento.replace(/\D/g, "");
     if (!dniDigits) {
-      e.documento = "El DNI es obligatorio.";
+      e.documento = "El documento es obligatorio.";
     } else if (dniDigits.length !== DNI_DIGITS) {
-      e.documento = `El DNI debe tener exactamente ${DNI_DIGITS} dígitos.`;
+      e.documento = `El documento debe tener exactamente ${DNI_DIGITS} dígitos.`;
     }
 
     const tipo = form.tipoCita || "personal";
@@ -451,6 +660,14 @@ export default function AgendaPage() {
     if (!form.fecha) e.fecha = "Requerido";
     if (!form.hora) e.hora = "Requerido";
 
+    if (form.fecha && form.hora) {
+      const citaDate = new Date(`${form.fecha}T${form.hora}:00`);
+      if (Number.isNaN(citaDate.getTime())) {
+        e.fecha = "Fecha inválida";
+        e.hora = "Hora inválida";
+      }
+    }
+
     const phoneTrimmed = form.telefono.trim();
     if (phoneTrimmed && phoneTrimmed !== "+504") {
       const digits = form.telefono.replace(/\D/g, "");
@@ -464,13 +681,10 @@ export default function AgendaPage() {
     if (correo) {
       if (correo.length > EMAIL_MAX) {
         e.correo = `El correo no debe superar ${EMAIL_MAX} caracteres.`;
-      } else if (!correo.includes("@")) {
-        e.correo = "El correo debe incluir el símbolo @.";
       } else {
-        const emailRegex = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
         if (!emailRegex.test(correo)) {
-          e.correo =
-            "El correo debe tener un dominio válido y terminar en .com o .org.";
+          e.correo = "Ingrese un correo válido.";
         }
       }
     }
@@ -479,7 +693,11 @@ export default function AgendaPage() {
       if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
 
       const finalModel =
-        vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+        vehicleModel === "__custom"
+          ? vehicleModelCustom.trim()
+          : vehicleBrand === "Otra"
+          ? vehicleModelCustom.trim()
+          : vehicleModel.trim();
 
       if (!finalModel) e.vehicleModel = "Requerido";
 
@@ -499,6 +717,26 @@ export default function AgendaPage() {
     return Object.keys(e).length === 0;
   }
 
+  function openQrModal({ cita, qrDataUrl, qrPayload, qrToken }) {
+    setQrModal({
+      open: true,
+      qrDataUrl: qrDataUrl || "",
+      qrPayload: qrPayload || "",
+      qrToken: qrToken || "",
+      cita: cita || null,
+    });
+  }
+
+  function closeQrModal() {
+    setQrModal({
+      open: false,
+      qrDataUrl: "",
+      qrPayload: "",
+      qrToken: "",
+      cita: null,
+    });
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
@@ -509,15 +747,27 @@ export default function AgendaPage() {
 
     const fecha = form.fecha;
     const hora = form.hora;
-    const citaAtDate = new Date(`${fecha}T${hora}:00`);
+    const citaAtISO = buildISOFromDateAndTime(fecha, hora);
+
+    if (!citaAtISO) {
+      setErrorMsg("La fecha u hora de la cita no es válida.");
+      setSubmitting(false);
+      return;
+    }
 
     const finalModel =
-      vehicleModel === "__custom" ? vehicleModelCustom.trim() : vehicleModel.trim();
+      vehicleModel === "__custom"
+        ? vehicleModelCustom.trim()
+        : vehicleBrand === "Otra"
+        ? vehicleModelCustom.trim()
+        : vehicleModel.trim();
 
     const tipo = form.tipoCita || "personal";
 
     try {
       // ========== MODO EDICIÓN ==========
+      // Tu backend actual no expone endpoint de edición de cita desde esta vista,
+      // por eso mantenemos edición local sin romper tu flujo existente.
       if (editingCita) {
         const updated = {
           ...editingCita,
@@ -531,7 +781,7 @@ export default function AgendaPage() {
           correo: form.correo.trim() || undefined,
           fecha,
           hora,
-          citaAt: citaAtDate.toISOString(),
+          citaAt: citaAtISO,
           tieneAcompanante: !!hasCompanion,
           vehiculo: hasVehicle
             ? {
@@ -556,23 +806,18 @@ export default function AgendaPage() {
           }
           return it;
         });
+
         if (!found) {
           storedUpdated.push(updated);
         }
+
         saveStoredCitas(storedUpdated);
 
-        setOkMsg("✅ Cita actualizada correctamente.");
+        setOkMsg(
+          "✅ Cita actualizada en respaldo local. Si deseas editar también en servidor, habría que agregar endpoint PATCH/PUT."
+        );
         setErrorMsg("");
-        setEditingCita(null);
-
-        setForm(initialFormState);
-        setHasCompanion(false);
-        setHasVehicle(false);
-        setVehicleBrand("");
-        setVehicleModel("");
-        setVehicleModelCustom("");
-        setVehiclePlate("");
-
+        resetFormState();
         setSubmitting(false);
         return;
       }
@@ -590,8 +835,8 @@ export default function AgendaPage() {
         correo: form.correo.trim() || undefined,
         fecha,
         hora,
-        citaAt: citaAtDate.toISOString(),
-        estado: "solicitada",
+        citaAt: citaAtISO,
+        estado: "Programada",
         tieneAcompanante: !!hasCompanion,
         vehiculo: hasVehicle
           ? {
@@ -600,12 +845,15 @@ export default function AgendaPage() {
               placa: vehiclePlate.trim(),
             }
           : null,
+        qrDataUrl: "",
+        qrPayload: "",
+        qrToken: "",
       };
 
       const payload = {
         nombre: nuevaCita.nombre,
         documento: nuevaCita.documento,
-        empresa: nuevaCita.empresa,
+        empresa: nuevaCita.empresa || null,
         empleado: nuevaCita.empleado,
         motivo: nuevaCita.motivo,
         telefono: nuevaCita.telefono || null,
@@ -625,14 +873,13 @@ export default function AgendaPage() {
 
       let syncedWithServer = false;
       let serverError = "";
+      let createdFromServer = null;
+      let qrDataUrl = "";
+      let qrPayload = "";
+      let qrToken = "";
 
       try {
-        const params = new URLSearchParams();
-        const url = `${CITAS_API_URL}${
-          params.toString() ? `?${params.toString()}` : ""
-        }`;
-
-        const res = await fetch(url, {
+        const res = await fetch(CITAS_API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -640,15 +887,46 @@ export default function AgendaPage() {
 
         const data = await res.json().catch(() => null);
 
-        if (res.ok && data?.ok && data.item) {
-          syncedWithServer = true;
-          nuevaCita._id = data.item._id || nuevaCita._id;
-          nuevaCita.citaAt = data.item.citaAt || nuevaCita.citaAt;
-          nuevaCita.estado = data.item.estado || nuevaCita.estado;
+        if (res.ok && data?.ok) {
+          createdFromServer = data?.item || null;
+          qrDataUrl = data?.qrDataUrl || "";
+          qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
+          qrToken = data?.qrToken || data?.item?.qrToken || "";
+
+          if (createdFromServer) {
+            syncedWithServer = true;
+            nuevaCita._id = createdFromServer._id || nuevaCita._id;
+            nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
+            nuevaCita.estado =
+              normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
+            nuevaCita.qrDataUrl = qrDataUrl;
+            nuevaCita.qrPayload = qrPayload;
+            nuevaCita.qrToken = qrToken;
+            nuevaCita.nombre =
+              createdFromServer.nombre || nuevaCita.nombre;
+            nuevaCita.documento =
+              createdFromServer.documento || nuevaCita.documento;
+            nuevaCita.empresa =
+              createdFromServer.empresa || nuevaCita.empresa;
+            nuevaCita.empleado =
+              createdFromServer.empleado || nuevaCita.empleado;
+            nuevaCita.motivo =
+              createdFromServer.motivo || nuevaCita.motivo;
+            nuevaCita.telefono =
+              createdFromServer.telefono || nuevaCita.telefono;
+            nuevaCita.correo =
+              createdFromServer.correo || nuevaCita.correo;
+            nuevaCita.vehiculo =
+              createdFromServer.vehiculo || nuevaCita.vehiculo;
+          }
         } else {
           console.warn("[citas] fallo al crear en backend:", data);
           if (data && typeof data.error === "string") {
             serverError = data.error;
+          } else if (data && typeof data.message === "string") {
+            serverError = data.message;
+          } else {
+            serverError = "No se pudo crear la cita en el servidor.";
           }
         }
       } catch (err) {
@@ -666,9 +944,20 @@ export default function AgendaPage() {
       const next = [...current, nuevaCita];
       saveStoredCitas(next);
 
+      setItems((prev) => [...prev, nuevaCita]);
+
       if (syncedWithServer) {
         setOkMsg("✅ Cita agendada correctamente.");
         setErrorMsg("");
+
+        if (qrDataUrl || qrPayload || qrToken) {
+          openQrModal({
+            cita: nuevaCita,
+            qrDataUrl,
+            qrPayload,
+            qrToken,
+          });
+        }
       } else {
         setOkMsg(
           "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
@@ -676,13 +965,7 @@ export default function AgendaPage() {
         setErrorMsg("");
       }
 
-      setForm(initialFormState);
-      setHasCompanion(false);
-      setHasVehicle(false);
-      setVehicleBrand("");
-      setVehicleModel("");
-      setVehicleModelCustom("");
-      setVehiclePlate("");
+      resetFormState();
 
       if (tab === "citas") {
         fetchCitas();
@@ -698,6 +981,7 @@ export default function AgendaPage() {
   /* ===================== LISTADO: CITAS ===================== */
   function fmtDate(d) {
     const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return "";
     return dt.toLocaleDateString("es-HN", {
       year: "numeric",
       month: "2-digit",
@@ -707,6 +991,7 @@ export default function AgendaPage() {
 
   function fmtTime(d) {
     const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return "";
     return dt.toLocaleTimeString("es-HN", {
       hour: "2-digit",
       minute: "2-digit",
@@ -722,49 +1007,46 @@ export default function AgendaPage() {
   const [loading, setLoading] = useState(false);
 
   const [dateFilter, setDateFilter] = useState("");
-  const [showMyCitas, setShowMyCitas] = useState(false);
-  const [myDocumento, setMyDocumento] = useState("");
+  const [showMyCitas, setShowMyCitas] = useState(!!(isVisitante && currentDocumento));
+  const [myDocumento, setMyDocumento] = useState(currentDocumento || "");
 
   const [citasSearch, setCitasSearch] = useState("");
   const [citasEstado, setCitasEstado] = useState("todos");
 
   async function fetchCitas() {
     setLoading(true);
+
     try {
       const params = new URLSearchParams();
+
       if (mode === "month" && month) {
         params.set("month", month);
       } else if (mode === "day" && dateFilter) {
         params.set("day", dateFilter);
       }
 
-      let url = CITAS_API_URL;
       const qs = params.toString();
-      if (qs) url += `?${qs}`;
+      const url = qs ? `${CITAS_API_URL}?${qs}` : CITAS_API_URL;
 
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
 
-      let list = Array.isArray(data.items) ? data.items : [];
+      const data = await res.json();
+      let list = Array.isArray(data?.items) ? data.items : [];
 
       const stored = loadStoredCitas();
-      const storedMap = new Map(stored.map((c) => [c._id || c.id, c]));
-      list = list.map((it) => {
-        const key = it._id || it.id;
-        const local = storedMap.get(key);
-        if (local) return { ...it, ...local };
-        return it;
-      });
+      list = mergeServerAndLocal(list, stored);
 
-      if (showMyCitas && myDocumento.trim()) {
-        const doc = myDocumento.trim();
-        list = list.filter((it) => (it.documento || "").includes(doc));
+      if ((showMyCitas || isVisitante) && myDocumento.trim()) {
+        const doc = normalizeDocumento(myDocumento.trim());
+        list = list.filter(
+          (it) => normalizeDocumento(it.documento || "") === doc
+        );
       }
 
       if (mode === "day" && dateFilter) {
         list = list.filter(
-          (it) => (it.citaAt || "").slice(0, 10) === dateFilter
+          (it) => String(it.citaAt || "").slice(0, 10) === dateFilter
         );
       }
 
@@ -777,21 +1059,21 @@ export default function AgendaPage() {
         const all = loadStoredCitas();
         let list = [...all];
 
-        if (showMyCitas && myDocumento.trim()) {
-          const doc = myDocumento.trim();
-          list = list.filter((it) => (it.documento || "").includes(doc));
+        if ((showMyCitas || isVisitante) && myDocumento.trim()) {
+          const doc = normalizeDocumento(myDocumento.trim());
+          list = list.filter(
+            (it) => normalizeDocumento(it.documento || "") === doc
+          );
         }
 
         if (mode === "month") {
           if (month) {
-            list = list.filter((it) => (it.citaAt || "").slice(0, 7) === month);
+            list = list.filter((it) => String(it.citaAt || "").slice(0, 7) === month);
           }
-        } else {
-          if (dateFilter) {
-            list = list.filter(
-              (it) => (it.citaAt || "").slice(0, 10) === dateFilter
-            );
-          }
+        } else if (dateFilter) {
+          list = list.filter(
+            (it) => String(it.citaAt || "").slice(0, 10) === dateFilter
+          );
         }
 
         list.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
@@ -821,7 +1103,8 @@ export default function AgendaPage() {
     const fechaInput =
       it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
     const horaInput =
-      it.hora || (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
+      it.hora ||
+      (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
 
     const tipo = it.tipoCita || (it.empresa ? "profesional" : "personal");
 
@@ -844,6 +1127,7 @@ export default function AgendaPage() {
 
     const hasVeh = !!it.vehiculo;
     setHasVehicle(hasVeh);
+
     if (hasVeh) {
       setVehicleBrand(it.vehiculo.marca || "");
       setVehicleModel(it.vehiculo.modelo || "");
@@ -864,6 +1148,13 @@ export default function AgendaPage() {
   }
 
   useEffect(() => {
+    if (isVisitante && currentDocumento) {
+      setShowMyCitas(true);
+      setMyDocumento(currentDocumento);
+    }
+  }, [isVisitante, currentDocumento]);
+
+  useEffect(() => {
     if (tab === "citas") {
       fetchCitas();
     }
@@ -878,14 +1169,14 @@ export default function AgendaPage() {
       let ok = true;
 
       if (hasSearch) {
-        const full = `${it.nombre || ""} ${it.documento || ""}`
+        const full = `${toDisplayName(it)} ${it.documento || ""}`
           .toString()
           .toLowerCase();
         ok = full.includes(search);
       }
 
       if (ok && citasEstado !== "todos") {
-        const estadoBase = it.estado || "solicitada";
+        const estadoBase = normalizeEstadoValue(it.estado || "Programada");
         ok = estadoBase === citasEstado;
       }
 
@@ -895,14 +1186,17 @@ export default function AgendaPage() {
 
   const grouped = useMemo(() => {
     const map = new Map();
+
     for (const it of filteredItems) {
-      const key = (it.citaAt || "").slice(0, 10) || todayISO;
+      const key = String(it.citaAt || "").slice(0, 10) || todayISO;
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(it);
     }
+
     for (const arr of map.values()) {
       arr.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
     }
+
     return Array.from(map.entries()).sort(
       (a, b) => new Date(a[0]) - new Date(b[0])
     );
@@ -920,21 +1214,27 @@ export default function AgendaPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-bold" style={{ color: "var(--text)" }}>
+          <h1
+            className="text-xl md:text-2xl font-bold"
+            style={{ color: "var(--text)" }}
+          >
             Agenda de Citas
           </h1>
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             Agendar y consultar citas programadas (pre-registro en línea)
           </p>
         </div>
+
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate("/visitas/control")}
-            className="text-xs hover:underline"
-            style={{ color: "#60a5fa" }}
-          >
-            ← Volver a Gestión de Visitantes
-          </button>
+          {!isVisitante && (
+            <button
+              onClick={() => navigate("/visitas/control")}
+              className="text-xs hover:underline"
+              style={{ color: "#60a5fa" }}
+            >
+              ← Volver a Gestión de Visitantes
+            </button>
+          )}
         </div>
       </div>
 
@@ -1172,38 +1472,9 @@ export default function AgendaPage() {
                     name="vehicleModel"
                     error={errors.vehicleModel}
                   >
-                    <select
-                      className="w-full rounded-lg px-3 py-2 focus:outline-none"
-                      style={sxInput()}
-                      value={vehicleModel}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setVehicleModel(val);
-                        if (val !== "__custom") {
-                          setVehicleModelCustom("");
-                        }
-                        setErrors((prev) => ({ ...prev, vehicleModel: "" }));
-                      }}
-                      disabled={!vehicleBrand || vehicleBrand === "Otra"}
-                    >
-                      <option value="">
-                        {!vehicleBrand
-                          ? "Seleccione marca primero…"
-                          : loadingModels
-                          ? "Cargando modelos..."
-                          : "Seleccione modelo…"}
-                      </option>
-                      {vehicleModels.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                      <option value="__custom">Otro modelo (escribir)</option>
-                    </select>
-
-                    {showCustomModelInput && (
+                    {vehicleBrand === "Otra" ? (
                       <input
-                        className="mt-2 w-full rounded-lg px-3 py-2 focus:outline-none"
+                        className="w-full rounded-lg px-3 py-2 focus:outline-none"
                         style={sxInput()}
                         value={vehicleModelCustom}
                         onChange={(e) => {
@@ -1215,6 +1486,53 @@ export default function AgendaPage() {
                         }}
                         placeholder="Escriba el modelo"
                       />
+                    ) : (
+                      <>
+                        <select
+                          className="w-full rounded-lg px-3 py-2 focus:outline-none"
+                          style={sxInput()}
+                          value={vehicleModel}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setVehicleModel(val);
+                            if (val !== "__custom") {
+                              setVehicleModelCustom("");
+                            }
+                            setErrors((prev) => ({ ...prev, vehicleModel: "" }));
+                          }}
+                          disabled={!vehicleBrand}
+                        >
+                          <option value="">
+                            {!vehicleBrand
+                              ? "Seleccione marca primero…"
+                              : loadingModels
+                              ? "Cargando modelos..."
+                              : "Seleccione modelo…"}
+                          </option>
+                          {vehicleModels.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                          <option value="__custom">Otro modelo (escribir)</option>
+                        </select>
+
+                        {showCustomModelInput && (
+                          <input
+                            className="mt-2 w-full rounded-lg px-3 py-2 focus:outline-none"
+                            style={sxInput()}
+                            value={vehicleModelCustom}
+                            onChange={(e) => {
+                              setVehicleModelCustom(e.target.value);
+                              setErrors((prev) => ({
+                                ...prev,
+                                vehicleModel: "",
+                              }));
+                            }}
+                            placeholder="Escriba el modelo"
+                          />
+                        )}
+                      </>
                     )}
                   </Field>
 
@@ -1255,12 +1573,16 @@ export default function AgendaPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    if (isVisitante) {
+                      resetFormState();
+                      return;
+                    }
                     navigate("/visitas/control");
                   }}
                   className="px-3 py-2 rounded-md text-xs font-semibold transition"
                   style={sxGhostBtn()}
                 >
-                  Cancelar
+                  {isVisitante ? "Limpiar" : "Cancelar"}
                 </button>
                 <button
                   type="submit"
@@ -1285,7 +1607,10 @@ export default function AgendaPage() {
               </div>
             )}
             {errorMsg && (
-              <div className="md:col-span-2 text-sm flex items-center gap-2" style={{ color: "#f87171" }}>
+              <div
+                className="md:col-span-2 text-sm flex items-center gap-2"
+                style={{ color: "#f87171" }}
+              >
                 <span>✖</span>
                 <span>{errorMsg}</span>
               </div>
@@ -1328,21 +1653,25 @@ export default function AgendaPage() {
                     style={sxInput()}
                     title="Filtrar por fecha (opcional)"
                   />
-                  <label
-                    className="flex items-center gap-2 text-xs"
-                    style={{ color: "var(--text)" }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={showMyCitas}
-                      onChange={(e) => {
-                        setShowMyCitas(e.target.checked);
-                        if (!e.target.checked) setMyDocumento("");
-                      }}
-                    />
-                    Mis citas
-                  </label>
-                  {showMyCitas && (
+
+                  {!isVisitante && (
+                    <label
+                      className="flex items-center gap-2 text-xs"
+                      style={{ color: "var(--text)" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showMyCitas}
+                        onChange={(e) => {
+                          setShowMyCitas(e.target.checked);
+                          if (!e.target.checked) setMyDocumento("");
+                        }}
+                      />
+                      Mis citas
+                    </label>
+                  )}
+
+                  {(showMyCitas || isVisitante) && (
                     <input
                       type="text"
                       placeholder="Documento (ej: 0801...)"
@@ -1350,6 +1679,7 @@ export default function AgendaPage() {
                       onChange={(e) => setMyDocumento(e.target.value)}
                       className="rounded-lg px-3 py-2 text-xs md:text-sm"
                       style={sxInput()}
+                      readOnly={isVisitante && !!currentDocumento}
                     />
                   )}
                 </>
@@ -1383,11 +1713,13 @@ export default function AgendaPage() {
                 title="Filtrar por estado"
               >
                 <option value="todos">Todos los estados</option>
-                <option value="solicitada">Solicitada</option>
-                <option value="en_revision">En revisión</option>
-                <option value="autorizada">Ingresada</option>
-                <option value="denegada">Denegada</option>
-                <option value="cancelada">Cancelada</option>
+                <option value="Programada">Programada</option>
+                <option value="En revisión">En revisión</option>
+                <option value="Autorizada">Autorizada</option>
+                <option value="Dentro">Ingresada</option>
+                <option value="Denegada">Denegada</option>
+                <option value="Cancelada">Cancelada</option>
+                <option value="Finalizada">Finalizada</option>
               </select>
 
               <button
@@ -1411,11 +1743,7 @@ export default function AgendaPage() {
           ) : (
             <div className="flex flex-col gap-6">
               {grouped.map(([k, arr]) => (
-                <div
-                  key={k}
-                  className="rounded-xl"
-                  style={sxCardSoft()}
-                >
+                <div key={k} className="rounded-xl" style={sxCardSoft()}>
                   <div
                     className="px-4 py-3 text-sm"
                     style={{
@@ -1426,8 +1754,9 @@ export default function AgendaPage() {
                     <span className="font-semibold">{fmtDate(k)}</span> —{" "}
                     {arr.length} cita(s)
                   </div>
+
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[900px]">
+                    <table className="w-full text-left border-collapse min-w-[980px]">
                       <thead
                         className="text-xs uppercase"
                         style={{ color: "var(--text-muted)" }}
@@ -1445,35 +1774,61 @@ export default function AgendaPage() {
                           <th className="text-right">Acciones</th>
                         </tr>
                       </thead>
+
                       <tbody style={{ color: "var(--text)" }}>
-                        {arr.map((it) => (
-                          <tr
-                            key={it._id}
-                            className="text-sm [&>td]:py-3 [&>td]:pr-4"
-                            style={{ borderBottom: "1px solid var(--border)" }}
-                          >
-                            <td className="font-medium">{it.nombre}</td>
-                            <td>{it.empresa}</td>
-                            <td>{it.empleado}</td>
-                            <td style={{ color: "var(--text-muted)" }}>
-                              {it.motivo}
-                            </td>
-                            <td>{fmtTime(it.citaAt)}</td>
-                            <td>
-                              <CitaEstadoPill estado={it.estado} />
-                            </td>
-                            <td className="text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleEditCita(it)}
-                                className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                                style={sxPrimaryBtn()}
-                              >
-                                Editar
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {arr.map((it) => {
+                          const canShowQr =
+                            !!it.qrDataUrl || !!it.qrPayload || !!it.qrToken;
+
+                          return (
+                            <tr
+                              key={it._id}
+                              className="text-sm [&>td]:py-3 [&>td]:pr-4"
+                              style={{ borderBottom: "1px solid var(--border)" }}
+                            >
+                              <td className="font-medium">{toDisplayName(it)}</td>
+                              <td>{toDisplayCompany(it)}</td>
+                              <td>{it.empleado}</td>
+                              <td style={{ color: "var(--text-muted)" }}>
+                                {it.motivo}
+                              </td>
+                              <td>{fmtTime(it.citaAt)}</td>
+                              <td>
+                                <CitaEstadoPill estado={it.estado} />
+                              </td>
+                              <td className="text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {canShowQr && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openQrModal({
+                                          cita: it,
+                                          qrDataUrl: it.qrDataUrl,
+                                          qrPayload: it.qrPayload,
+                                          qrToken: it.qrToken,
+                                        })
+                                      }
+                                      className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                      style={sxSuccessBtn()}
+                                    >
+                                      Ver QR
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditCita(it)}
+                                    className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                    style={sxPrimaryBtn()}
+                                  >
+                                    Editar
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1482,6 +1837,157 @@ export default function AgendaPage() {
             </div>
           )}
         </section>
+      )}
+
+      {/* ===================== Modal QR ===================== */}
+      {qrModal.open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
+          <div
+            className="w-full max-w-md rounded-[24px] p-5 md:p-6"
+            style={sxCard({
+              background:
+                "color-mix(in srgb, var(--card-solid) 96%, rgba(2,6,23,.88))",
+            })}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  className="text-lg md:text-xl font-bold"
+                  style={{ color: "var(--text)" }}
+                >
+                  Cita agendada
+                </h3>
+                <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+                  Presente este código QR al guardia para validar su ingreso.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeQrModal}
+                className="rounded-lg px-2 py-1 text-sm"
+                style={sxGhostBtn()}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 flex justify-center">
+              {qrModal.qrDataUrl ? (
+                <img
+                  src={qrModal.qrDataUrl}
+                  alt="QR de la cita"
+                  className="h-64 w-64 rounded-xl bg-white p-3 object-contain"
+                />
+              ) : (
+                <div
+                  className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
+                  style={sxCardSoft({ color: "var(--text-muted)" })}
+                >
+                  No se recibió imagen QR del servidor.
+                </div>
+              )}
+            </div>
+
+            <div
+              className="mt-4 rounded-xl p-4 text-sm"
+              style={sxCardSoft({ background: "var(--input-bg)" })}
+            >
+              <div style={{ color: "var(--text)" }}>
+                <strong>Visitante:</strong> {qrModal.cita?.nombre || ""}
+              </div>
+              <div style={{ color: "var(--text)" }}>
+                <strong>Documento:</strong> {qrModal.cita?.documento || ""}
+              </div>
+              <div style={{ color: "var(--text)" }}>
+                <strong>Empleado:</strong> {qrModal.cita?.empleado || ""}
+              </div>
+              <div style={{ color: "var(--text)" }}>
+                <strong>Motivo:</strong> {qrModal.cita?.motivo || ""}
+              </div>
+              <div style={{ color: "var(--text)" }}>
+                <strong>Fecha:</strong> {fmtDate(qrModal.cita?.citaAt)}
+              </div>
+              <div style={{ color: "var(--text)" }}>
+                <strong>Hora:</strong> {fmtTime(qrModal.cita?.citaAt)}
+              </div>
+
+              {qrModal.qrPayload && (
+                <div
+                  className="mt-2 break-all text-xs"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <strong>Payload QR:</strong> {qrModal.qrPayload}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-end">
+              {qrModal.qrDataUrl && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const w = window.open("", "_blank", "width=700,height=800");
+                      if (!w) return;
+
+                      w.document.write(`
+                        <html>
+                          <head>
+                            <title>QR de cita</title>
+                            <style>
+                              body {
+                                font-family: Arial, sans-serif;
+                                padding: 24px;
+                                text-align: center;
+                              }
+                              img {
+                                max-width: 320px;
+                                width: 100%;
+                                height: auto;
+                              }
+                            </style>
+                          </head>
+                          <body>
+                            <h2>QR de cita</h2>
+                            <p><strong>Visitante:</strong> ${qrModal.cita?.nombre || ""}</p>
+                            <p><strong>Documento:</strong> ${qrModal.cita?.documento || ""}</p>
+                            <p><strong>Empleado:</strong> ${qrModal.cita?.empleado || ""}</p>
+                            <p><strong>Motivo:</strong> ${qrModal.cita?.motivo || ""}</p>
+                            <img src="${qrModal.qrDataUrl}" alt="QR" />
+                          </body>
+                        </html>
+                      `);
+                      w.document.close();
+                    }}
+                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                    style={sxGhostBtn()}
+                  >
+                    Abrir QR
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                    style={sxGhostBtn()}
+                  >
+                    Imprimir
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={closeQrModal}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                style={sxPrimaryBtn()}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 import {
   getVisitas,
@@ -9,9 +8,10 @@ import {
   checkinCita,
   listVehiculosVisitasEnSitio,
   updateCitaEstado,
+  scanQrCita,
 } from "./visitas.controller.js";
 
-// Si tienes un middleware para validar horario, mantenlo importado
+// Corrige esta ruta según tu estructura real
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
 
 const router = Router();
@@ -89,5 +89,9 @@ router.patch("/citas/:id/checkin", asyncHandler(checkinCita));
 
 // Actualizar estado de la cita (usado por VisitsPage)
 router.patch("/citas/:id/estado", asyncHandler(updateCitaEstado));
+
+// Escaneo QR por guardia
+router.post("/citas/scan-qr", asyncHandler(scanQrCita));
+router.post("/citas/scan", asyncHandler(scanQrCita)); // alias por compatibilidad
 
 export default router;
