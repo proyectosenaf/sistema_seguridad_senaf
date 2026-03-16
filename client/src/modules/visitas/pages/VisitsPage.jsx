@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect } from "react";
+
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import NewVisitorModal from "../components/NewVisitorModal.jsx";
 import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
@@ -39,6 +40,22 @@ function encodeBase64Utf8(value) {
     return btoa(unescape(encodeURIComponent(String(value || ""))));
   } catch {
     return "";
+  }
+}
+
+function decodeBase64Utf8(value) {
+  try {
+    return decodeURIComponent(escape(atob(String(value || ""))));
+  } catch {
+    return "";
+  }
+}
+
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
   }
 }
 
@@ -470,6 +487,103 @@ function enrichCitaWithQr(cita) {
   };
 }
 
+function parseQrValue(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+
+  if (raw.startsWith(QR_PREFIX)) {
+    const encoded = raw.slice(QR_PREFIX.length);
+    const decoded = decodeBase64Utf8(encoded);
+    const parsed = safeJsonParse(decoded);
+    if (parsed) return parsed;
+  }
+
+  const parsedJson = safeJsonParse(raw);
+  if (parsedJson) return parsedJson;
+
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return null;
+
+  const readField = (label) => {
+    const row = lines.find((line) =>
+      line.toLowerCase().startsWith(label.toLowerCase())
+    );
+    if (!row) return "";
+    return row.split(":").slice(1).join(":").trim();
+  };
+
+  const nombre = readField("Visitante");
+  const documento = readField("Documento");
+  const empresa = readField("Empresa");
+  const empleado = readField("Visita a");
+  const motivo = readField("Motivo");
+  const fecha = readField("Fecha");
+  const hora = readField("Hora");
+  const estado = readField("Estado");
+
+  if (!nombre && !documento) return null;
+
+  return {
+    type: "senaf.cita.autorizada",
+    version: 0,
+    estado: estado || "autorizada",
+    visitante: {
+      nombre,
+      documento,
+      empresa,
+    },
+    visita: {
+      empleado,
+      motivo,
+      fecha,
+      hora,
+      tipo: empresa && empresa !== "—" ? "Profesional" : "Personal",
+    },
+    vehiculo: null,
+  };
+}
+
+function mapQrPayloadToVisitForm(payload) {
+  if (!payload) return null;
+
+  const visitante = payload.visitante || {};
+  const visita = payload.visita || {};
+  const vehiculo = payload.vehiculo || {};
+
+  const tipoRaw = String(visita.tipo || "").toLowerCase();
+  const visitType =
+    tipoRaw === "profesional" || tipoRaw === "personal"
+      ? tipoRaw === "profesional"
+        ? "Profesional"
+        : "Personal"
+      : visitante.empresa
+      ? "Profesional"
+      : "Personal";
+
+  return {
+    name: visitante.nombre || "",
+    document: formatDni(visitante.documento || ""),
+    company: visitante.empresa || "",
+    employee: visita.empleado || "",
+    reason: visita.motivo || "",
+    phone: visitante.telefono || "",
+    email: visitante.correo || "",
+    acompanado: !!visitante.acompanado,
+    visitType,
+    citaId: payload.citaId || null,
+    qrSource: "scanner_qr",
+    vehicle: {
+      brand: vehiculo.brand || vehiculo.marca || "",
+      model: vehiculo.model || vehiculo.modelo || "",
+      plate: vehiculo.plate || vehiculo.placa || "",
+    },
+  };
+}
+
 export default function VisitsPage() {
   const navigate = useNavigate();
   const auth = useAuth();
@@ -488,6 +602,18 @@ export default function VisitsPage() {
   const [qrCita, setQrCita] = useState(null);
   const [editingVisitor, setEditingVisitor] = useState(null);
   const [viewMode, setViewMode] = useState("citas");
+
+  // 🔹 Estados del escáner QR
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerManualValue, setScannerManualValue] = useState("");
+  const [scannerLastPayload, setScannerLastPayload] = useState(null);
+
+  const scannerRegionIdRef = useRef(
+    `visitas-qr-reader-${Math.random().toString(36).slice(2)}`
+  );
+  const html5QrRef = useRef(null);
 
   function saveToStorage(next) {
     try {
@@ -1139,6 +1265,136 @@ export default function VisitsPage() {
     }
   }
 
+  async function stopScanner() {
+    try {
+      if (html5QrRef.current) {
+        const instance = html5QrRef.current;
+        try {
+          await instance.stop();
+        } catch {}
+        try {
+          await instance.clear();
+        } catch {}
+        html5QrRef.current = null;
+      }
+    } catch (err) {
+      console.warn("[qr] stopScanner:", err);
+    }
+  }
+
+  async function processScannedQr(decodedText) {
+    const payload = parseQrValue(decodedText);
+
+    if (!payload) {
+      setScannerError("El contenido del QR no es válido.");
+      return;
+    }
+
+    if (payload.estado && payload.estado !== "autorizada") {
+      setScannerError("La cita escaneada no está autorizada.");
+      return;
+    }
+
+    const formData = mapQrPayloadToVisitForm(payload);
+
+    if (!formData?.name || !formData?.document) {
+      setScannerError("El QR no contiene nombre o documento suficientes.");
+      return;
+    }
+
+    const duplicate = visitors.find((v) => {
+      const sameCita =
+        payload.citaId && v.citaId && String(v.citaId) === String(payload.citaId);
+      const sameDoc = normalizeDoc(v.document) === normalizeDoc(formData.document);
+      return v.status === "Dentro" && (sameCita || sameDoc);
+    });
+
+    if (duplicate) {
+      setScannerLastPayload(payload);
+      setScannerError("");
+      await stopScanner();
+      setScannerOpen(false);
+      alert(`La visita de ${duplicate.name} ya está registrada como "Dentro".`);
+      return;
+    }
+
+    setScannerLastPayload(payload);
+    setScannerError("");
+
+    const matchedCita = onlineCitas.find((c) => {
+      const byId =
+        payload.citaId &&
+        String(c._id || c.id) === String(payload.citaId);
+
+      const byDoc =
+        normalizeDoc(c.documento) === normalizeDoc(formData.document);
+
+      return byId || byDoc;
+    });
+
+    await handleAddVisitor(formData);
+
+    if (matchedCita && matchedCita.estado !== "autorizada") {
+      await updateCitaStatus(matchedCita._id || matchedCita.id, "autorizada");
+    }
+
+    setViewMode("visitas");
+    await stopScanner();
+    setScannerOpen(false);
+    setScannerManualValue("");
+  }
+
+  async function startScanner() {
+    setScannerLoading(true);
+    setScannerError("");
+
+    try {
+      const mod = await import("html5-qrcode");
+      const Html5Qrcode = mod?.Html5Qrcode;
+
+      if (!Html5Qrcode) {
+        throw new Error("No se pudo cargar html5-qrcode");
+      }
+
+      await stopScanner();
+
+      const instance = new Html5Qrcode(scannerRegionIdRef.current);
+      html5QrRef.current = instance;
+
+      await instance.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 240, height: 240 },
+          aspectRatio: 1.3,
+        },
+        async (decodedText) => {
+          await processScannedQr(decodedText);
+        },
+        () => {}
+      );
+    } catch (err) {
+      console.error("[qr] error iniciando escáner:", err);
+      setScannerError(
+        "No se pudo acceder a la cámara. Verifica permisos del navegador."
+      );
+    } finally {
+      setScannerLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (scannerOpen) {
+      startScanner();
+    } else {
+      stopScanner();
+    }
+
+    return () => {
+      stopScanner();
+    };
+  }, [scannerOpen]);
+
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon pointer-events-none" aria-hidden />
@@ -1172,6 +1428,15 @@ export default function VisitsPage() {
               style={sxPrimaryBtn({ borderRadius: "9999px" })}
             >
               <span className="font-semibold">+ Registrar Visitante</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setScannerOpen(true)}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition relative z-10"
+              style={sxSuccessBtn({ borderRadius: "9999px" })}
+            >
+              <span className="font-semibold">Escanear QR</span>
             </button>
 
             <button
@@ -1762,6 +2027,156 @@ export default function VisitsPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {scannerOpen && !isVisitor && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center"
+          style={{
+            background: "rgba(2, 6, 23, 0.72)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setScannerOpen(false);
+          }}
+        >
+          <div
+            className="p-4 md:p-6 w-[95%] max-w-[560px] rounded-[24px]"
+            style={sxCard()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-4 gap-3">
+              <div>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: "var(--text)" }}
+                >
+                  Escanear QR de cita
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Escanea el QR autorizado para registrar automáticamente la visita.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setScannerOpen(false)}
+                style={{ color: "var(--text-muted)" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              className="rounded-[20px] overflow-hidden mb-4"
+              style={sxCardSoft({ padding: 12 })}
+            >
+              <div
+                id={scannerRegionIdRef.current}
+                style={{
+                  width: "100%",
+                  minHeight: 300,
+                  borderRadius: 18,
+                  overflow: "hidden",
+                  background: "#0f172a",
+                }}
+              />
+            </div>
+
+            {scannerLoading && (
+              <div className="text-sm mb-3" style={{ color: "#93c5fd" }}>
+                Iniciando cámara…
+              </div>
+            )}
+
+            {scannerError && (
+              <div className="text-sm mb-3" style={{ color: "#fca5a5" }}>
+                {scannerError}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <label
+                className="block mb-2 text-xs"
+                style={{ color: "var(--text)" }}
+              >
+                Pegar contenido del QR manualmente
+              </label>
+              <textarea
+                rows={5}
+                value={scannerManualValue}
+                onChange={(e) => setScannerManualValue(e.target.value)}
+                className="w-full rounded-xl px-3 py-3 focus:outline-none resize-none"
+                style={sxInput()}
+                placeholder={`${QR_PREFIX}...`}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={async () => {
+                  await stopScanner();
+                  setScannerOpen(false);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={sxGhostBtn()}
+              >
+                Cerrar
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!scannerManualValue.trim()) {
+                    setScannerError("Pega primero el contenido del QR.");
+                    return;
+                  }
+                  await processScannedQr(scannerManualValue.trim());
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={sxPrimaryBtn()}
+              >
+                Procesar QR
+              </button>
+            </div>
+
+            {scannerLastPayload && (
+              <div className="mt-4 rounded-2xl p-4" style={sxCardSoft()}>
+                <div
+                  className="text-sm font-semibold mb-2"
+                  style={{ color: "var(--text)" }}
+                >
+                  Última lectura
+                </div>
+
+                <div className="text-sm" style={{ color: "var(--text)" }}>
+                  <div>
+                    <strong>Visitante:</strong>{" "}
+                    {scannerLastPayload?.visitante?.nombre || "—"}
+                  </div>
+                  <div>
+                    <strong>DNI:</strong>{" "}
+                    {scannerLastPayload?.visitante?.documento || "—"}
+                  </div>
+                  <div>
+                    <strong>Empleado:</strong>{" "}
+                    {scannerLastPayload?.visita?.empleado || "—"}
+                  </div>
+                  <div>
+                    <strong>Motivo:</strong>{" "}
+                    {scannerLastPayload?.visita?.motivo || "—"}
+                  </div>
+                  <div>
+                    <strong>Estado:</strong>{" "}
+                    {prettyCitaEstado(scannerLastPayload?.estado)}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

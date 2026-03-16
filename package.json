@@ -3,6 +3,7 @@
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "csv-stringify": "^6.6.0",
+    "html5-qrcode": "^2.3.8",
     "jspdf": "^3.0.3",
     "jspdf-autotable": "^5.0.2",
     "mongodb": "^7.1.0",

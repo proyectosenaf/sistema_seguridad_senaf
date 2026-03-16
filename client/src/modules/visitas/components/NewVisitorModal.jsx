@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 
@@ -18,11 +19,11 @@ const VEHICLE_MODELS_API_URL =
 // Longitudes / límites
 const DNI_DIGITS = 13;
 const PHONE_MIN_DIGITS = 8;
-const NAME_MAX = 40;
-const COMPANY_MAX = 20;
-const EMP_MAX = 20;
-const REASON_MAX = 20;
-const EMAIL_MAX = 25;
+const NAME_MAX = 80;
+const COMPANY_MAX = 40;
+const EMP_MAX = 40;
+const REASON_MAX = 80;
+const EMAIL_MAX = 80;
 
 const QR_PREFIX = "SENAF_CITA_QR::";
 
@@ -113,6 +114,41 @@ function decodeBase64Utf8(value) {
   }
 }
 
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normalizePhoneHn(v) {
+  const input = String(v || "").trim();
+  if (!input) return "+504 ";
+
+  let local = input;
+  if (local.startsWith("+504")) {
+    local = local.slice(4).trimStart();
+  }
+
+  const digits = local.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
+
+  if (!digits) return "+504 ";
+  if (digits.length <= 4) return `+504 ${digits}`;
+  return `+504 ${digits.slice(0, 4)}-${digits.slice(4)}`;
+}
+
+function normalizeNameInput(value, max = NAME_MAX) {
+  return String(value || "")
+    .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ' -]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .slice(0, max);
+}
+
 function parseLegacyQrText(raw) {
   const text = String(raw || "").trim();
   if (!text) return null;
@@ -136,18 +172,19 @@ function parseLegacyQrText(raw) {
 
   return {
     type: "senaf.cita.legacy",
+    kind: "senaf.cita.legacy",
     estado: estado?.toLowerCase?.() || "autorizada",
     visitante: {
       nombre,
       documento,
       empresa: empresa === "—" ? "" : empresa,
     },
-    visita: {
+    cita: {
       empleado: empleado === "—" ? "" : empleado,
       motivo: motivo === "—" ? "" : motivo,
       fecha: fecha === "—" ? "" : fecha,
       hora: hora === "—" ? "" : hora,
-      tipo: empresa && empresa !== "—" ? "Profesional" : "Personal",
+      tipoCita: empresa && empresa !== "—" ? "profesional" : "personal",
     },
     vehiculo: null,
   };
@@ -162,21 +199,77 @@ function parseQrPayload(raw) {
     const decoded = decodeBase64Utf8(encoded);
     if (!decoded) return null;
 
-    try {
-      return JSON.parse(decoded);
-    } catch {
-      return null;
-    }
+    const parsed = safeJsonParse(decoded);
+    if (parsed && typeof parsed === "object") return parsed;
+    return null;
   }
 
-  try {
-    const maybeJson = JSON.parse(text);
-    if (maybeJson && typeof maybeJson === "object") return maybeJson;
-  } catch {
-    // ignore
+  const maybeJson = safeJsonParse(text);
+  if (maybeJson && typeof maybeJson === "object") {
+    return maybeJson;
   }
 
   return parseLegacyQrText(text);
+}
+
+function resolveQrDataShape(payload) {
+  if (!payload || typeof payload !== "object") return null;
+
+  const visitante = payload.visitante || payload.visitor || {};
+  const cita = payload.cita || payload.visita || {};
+  const vehiculo = payload.vehiculo || payload.vehicle || {};
+
+  return {
+    citaId: payload.citaId || payload.id || payload.cita?._id || null,
+    estado: String(payload.estado || payload.status || "").toLowerCase(),
+    visitante: {
+      nombre:
+        visitante.nombre ||
+        payload.nombre ||
+        payload.visitante ||
+        payload.name ||
+        "",
+      documento:
+        visitante.documento ||
+        visitante.document ||
+        visitante.dni ||
+        payload.documento ||
+        payload.document ||
+        payload.dni ||
+        "",
+      empresa: visitante.empresa || payload.empresa || "",
+      telefono: visitante.telefono || payload.telefono || payload.phone || "",
+      correo:
+        visitante.correo ||
+        visitante.email ||
+        payload.correo ||
+        payload.email ||
+        "",
+      acompanado:
+        !!visitante.acompanado ||
+        !!visitante.acompañado ||
+        !!payload.acompanado ||
+        !!payload.acompañado,
+    },
+    cita: {
+      empleado: cita.empleado || payload.empleado || "",
+      motivo: cita.motivo || payload.motivo || "",
+      fecha: cita.fecha || payload.fecha || "",
+      hora: cita.hora || payload.hora || "",
+      citaAt: cita.citaAt || cita.citaAtIso || payload.citaAt || "",
+      tipoCita:
+        cita.tipoCita ||
+        payload.tipoCita ||
+        cita.tipo ||
+        payload.tipo ||
+        "",
+    },
+    vehiculo: {
+      marca: vehiculo.marca || vehiculo.brand || "",
+      modelo: vehiculo.modelo || vehiculo.model || "",
+      placa: vehiculo.placa || vehiculo.plate || "",
+    },
+  };
 }
 
 function ScannerModal({ open, onClose, onDetected }) {
@@ -235,9 +328,7 @@ function ScannerModal({ open, onClose, onDetected }) {
 
             onDetected?.(decodedText);
           },
-          () => {
-            // sin ruido por frame
-          }
+          () => {}
         );
       } catch (err) {
         console.error("[ScannerModal] error iniciando escáner:", err);
@@ -522,6 +613,7 @@ export default function NewVisitorModal({
         ? {
             citaId: editingVisitor.citaId,
             qrSource: editingVisitor.qrSource || "edit",
+            qrPayload: editingVisitor.qrPayload || null,
           }
         : null
     );
@@ -615,10 +707,16 @@ export default function NewVisitorModal({
       return;
     }
 
-    const citaId = payload?.citaId || null;
-    const estado = String(payload?.estado || "").toLowerCase();
+    const normalized = resolveQrDataShape(payload);
+    if (!normalized) {
+      alert("No se pudo interpretar la información del QR.");
+      return;
+    }
 
-    if (estado && !["autorizada", "autorizado", "ingresada"].includes(estado)) {
+    const citaId = normalized.citaId || null;
+    const estado = normalized.estado;
+
+    if (estado && !["autorizada", "autorizado", "ingresada", "approved"].includes(estado)) {
       alert("Este QR no corresponde a una cita autorizada.");
       return;
     }
@@ -635,39 +733,25 @@ export default function NewVisitorModal({
       }
     }
 
-    const visitante = payload.visitante || {};
-    const visita = payload.visita || {};
-    const vehiculo = payload.vehiculo || {};
+    const visitante = normalized.visitante;
+    const cita = normalized.cita;
+    const vehiculo = normalized.vehiculo;
 
-    const nombre = String(
-      visitante.nombre || payload.nombre || payload.visitante || ""
-    ).trim();
+    const nombre = String(visitante.nombre || "").trim();
+    const documento = formatDni(visitante.documento || "");
+    const empresa = String(visitante.empresa || "").trim();
+    const empleado = String(cita.empleado || "").trim();
+    const motivo = String(cita.motivo || "").trim();
+    const telefono = normalizePhoneHn(visitante.telefono || "");
+    const correo = normalizeEmail(visitante.correo || "");
 
-    const documento = formatDni(
-      visitante.documento ||
-        payload.documento ||
-        payload.document ||
-        payload.dni ||
-        ""
-    );
-
-    const empresa = String(visitante.empresa || payload.empresa || "").trim();
-    const empleado = String(visita.empleado || payload.empleado || "").trim();
-    const motivo = String(visita.motivo || payload.motivo || "").trim();
-    const telefono = String(
-      visitante.telefono || payload.telefono || ""
-    ).trim();
-    const correo = String(
-      visitante.correo || payload.correo || payload.email || ""
-    ).trim();
-
-    const tipoQr = String(visita.tipo || payload.tipoCita || "").toLowerCase();
+    const tipoQr = String(cita.tipoCita || "").toLowerCase();
     const nextVisitType =
       tipoQr === "profesional" || empresa ? "Profesional" : "Personal";
 
-    const brand = String(vehiculo.brand || vehiculo.marca || "").trim();
-    const model = String(vehiculo.model || vehiculo.modelo || "").trim();
-    const plate = String(vehiculo.plate || vehiculo.placa || "")
+    const brand = String(vehiculo.marca || "").trim();
+    const model = String(vehiculo.modelo || "").trim();
+    const plate = String(vehiculo.placa || "")
       .trim()
       .toUpperCase();
 
@@ -679,7 +763,7 @@ export default function NewVisitorModal({
     setPhone(telefono || "+504 ");
     setEmail(correo);
     setVisitType(nextVisitType);
-    setAcompanado(!!visitante.acompanado || !!payload.acompanado);
+    setAcompanado(!!visitante.acompanado);
 
     if (brand || model || plate) {
       setHasVehicle(true);
@@ -697,7 +781,11 @@ export default function NewVisitorModal({
 
     setQrFillInfo({
       citaId: citaId || null,
-      qrSource: rawValue ? "scanner" : "scanner-legacy",
+      qrSource: rawValue
+        ? rawValue.startsWith(QR_PREFIX)
+          ? "scanner"
+          : "scanner-json"
+        : "scanner-legacy",
       qrPayload: payload,
     });
 
@@ -710,9 +798,7 @@ export default function NewVisitorModal({
   }
 
   const handleNameChange = (e) => {
-    let val = e.target.value
-      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-      .slice(0, NAME_MAX);
+    const val = normalizeNameInput(e.target.value, NAME_MAX);
 
     setName(val);
     setErrors((prev) => ({ ...prev, name: undefined }));
@@ -769,52 +855,31 @@ export default function NewVisitorModal({
   };
 
   const handleCompanyChange = (e) => {
-    let val = e.target.value
-      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-      .slice(0, COMPANY_MAX);
+    const val = normalizeNameInput(e.target.value, COMPANY_MAX);
     setCompany(val);
     setErrors((prev) => ({ ...prev, company: undefined }));
   };
 
   const handleEmployeeChange = (e) => {
-    let val = e.target.value
-      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-      .slice(0, EMP_MAX);
+    const val = normalizeNameInput(e.target.value, EMP_MAX);
     setEmployee(val);
     setErrors((prev) => ({ ...prev, employee: undefined }));
   };
 
   const handleReasonChange = (e) => {
-    let val = e.target.value
-      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
-      .slice(0, REASON_MAX);
+    const val = normalizeNameInput(e.target.value, REASON_MAX);
     setReason(val);
     setErrors((prev) => ({ ...prev, reason: undefined }));
   };
 
   const handlePhoneChange = (e) => {
-    let input = e.target.value;
-
-    if (input.startsWith("+504")) {
-      input = input.slice(4).trimStart();
-    }
-
-    const digits = input.replace(/\D/g, "").slice(0, PHONE_MIN_DIGITS);
-
-    let localFormatted = "";
-    if (digits.length <= 4) {
-      localFormatted = digits;
-    } else {
-      localFormatted = `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    }
-
-    const formatted = `+504 ${localFormatted}`;
+    const formatted = normalizePhoneHn(e.target.value);
     setPhone(formatted);
     setErrors((prev) => ({ ...prev, phone: undefined }));
   };
 
   const handleEmailChange = (e) => {
-    let val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
+    const val = e.target.value.replace(/\s/g, "").slice(0, EMAIL_MAX);
     setEmail(val);
     setErrors((prev) => ({ ...prev, email: undefined }));
   };
@@ -864,9 +929,9 @@ export default function NewVisitorModal({
       newErrors.name = "El nombre es obligatorio.";
     } else if (trimmedName.length > NAME_MAX) {
       newErrors.name = `El nombre no debe superar ${NAME_MAX} caracteres.`;
-    } else if (parts.length < 3) {
+    } else if (parts.length < 2) {
       newErrors.name =
-        "Ingrese el nombre completo: dos nombres y al menos un apellido.";
+        "Ingrese al menos nombre y apellido del visitante.";
     }
 
     const dniDigits = document.replace(/\D/g, "");
@@ -918,10 +983,10 @@ export default function NewVisitorModal({
       } else if (!email.includes("@")) {
         newErrors.email = "El correo debe incluir el símbolo @.";
       } else {
-        const emailRegex = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.(com|org)$/i;
+        const emailRegex =
+          /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/i;
         if (!emailRegex.test(email.trim())) {
-          newErrors.email =
-            "El correo debe tener un dominio válido y terminar en .com o .org.";
+          newErrors.email = "Ingrese un correo válido.";
         }
       }
     }
