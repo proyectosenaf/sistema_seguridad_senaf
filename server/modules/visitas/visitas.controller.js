@@ -1,105 +1,7 @@
+// server/src/modules/visitas/visitas.controller.js
+
+
 import Visita from "./visitas.model.js";
-
-function isValidDate(d) {
-  return d instanceof Date && !Number.isNaN(d.getTime());
-}
-
-function parseCitaAt(value) {
-  if (!value) return null;
-
-  if (value instanceof Date) {
-    return isValidDate(value) ? value : null;
-  }
-
-  const raw = String(value).trim();
-  if (!raw) return null;
-
-  // YYYY-MM-DD
-  const onlyDate = /^(\d{4})-(\d{2})-(\d{2})$/;
-  const mDate = raw.match(onlyDate);
-  if (mDate) {
-    const yyyy = Number(mDate[1]);
-    const mm = Number(mDate[2]);
-    const dd = Number(mDate[3]);
-    const dt = new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
-    return isValidDate(dt) ? dt : null;
-  }
-
-  // YYYY-MM-DDTHH:mm o YYYY-MM-DDTHH:mm:ss (sin zona)
-  const localDateTime =
-    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
-  const mLocal = raw.match(localDateTime);
-  if (mLocal) {
-    const yyyy = Number(mLocal[1]);
-    const mm = Number(mLocal[2]);
-    const dd = Number(mLocal[3]);
-    const hh = Number(mLocal[4]);
-    const mi = Number(mLocal[5]);
-    const ss = Number(mLocal[6] || 0);
-    const dt = new Date(yyyy, mm - 1, dd, hh, mi, ss, 0);
-    return isValidDate(dt) ? dt : null;
-  }
-
-  const dt = new Date(raw);
-  return isValidDate(dt) ? dt : null;
-}
-
-function parseLocalDayRange(day) {
-  const raw = String(day || "").trim();
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-
-  const yyyy = Number(m[1]);
-  const mm = Number(m[2]);
-  const dd = Number(m[3]);
-
-  const start = new Date(yyyy, mm - 1, dd, 0, 0, 0, 0);
-  const end = new Date(yyyy, mm - 1, dd + 1, 0, 0, 0, 0);
-
-  if (!isValidDate(start) || !isValidDate(end)) return null;
-  return { start, end };
-}
-
-function parseLocalMonthRange(month) {
-  const raw = String(month || "").trim();
-  const m = raw.match(/^(\d{4})-(\d{2})$/);
-  if (!m) return null;
-
-  const yyyy = Number(m[1]);
-  const mm = Number(m[2]);
-
-  const start = new Date(yyyy, mm - 1, 1, 0, 0, 0, 0);
-  const end = new Date(yyyy, mm, 1, 0, 0, 0, 0);
-
-  if (!isValidDate(start) || !isValidDate(end)) return null;
-  return { start, end };
-}
-
-function normalizeEstado(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return raw;
-
-  const key = raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, "_");
-
-  const map = {
-    programada: "Programada",
-    dentro: "Dentro",
-    finalizada: "Finalizada",
-    cancelada: "Cancelada",
-    en_revision: "en_revision",
-    revision: "en_revision",
-    autorizada: "autorizada",
-    autorizado: "autorizada",
-    denegada: "denegada",
-    denegado: "denegada",
-  };
-
-  return map[key] || raw;
-}
 
 /**
  * GET /api/visitas
@@ -136,21 +38,7 @@ export async function createVisita(req, res) {
       llegoEnVehiculo,
       vehiculo,
       citaAt,
-    } = req.body || {};
-
-    const nombreSafe = String(nombre || "").trim();
-    const documentoSafe = String(documento || "").trim();
-    const motivoSafe = String(motivo || "").trim();
-
-    if (!nombreSafe) {
-      return res.status(400).json({ ok: false, error: "nombre_required" });
-    }
-    if (!documentoSafe) {
-      return res.status(400).json({ ok: false, error: "documento_required" });
-    }
-    if (!motivoSafe) {
-      return res.status(400).json({ ok: false, error: "motivo_required" });
-    }
+    } = req.body;
 
     // Detectamos si realmente viene info de vehículo
     const hasVehiculo =
@@ -159,17 +47,17 @@ export async function createVisita(req, res) {
         (vehiculo.marca && String(vehiculo.marca).trim() !== "") ||
         (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
 
-    const citaDate = parseCitaAt(citaAt);
-
     const visita = new Visita({
-      nombre: nombreSafe,
-      documento: documentoSafe,
+      nombre,
+      documento,
       empresa: empresa || null,
       empleado: empleado || null,
-      motivo: motivoSafe,
+      motivo,
       telefono: telefono || null,
       correo: correo || null,
       tipo: tipo || "Ingreso",
+      // Si el frontend manda llegoEnVehiculo lo respetamos,
+      // si no lo manda pero hay vehículo → true
       llegoEnVehiculo:
         typeof llegoEnVehiculo !== "undefined"
           ? !!llegoEnVehiculo
@@ -181,7 +69,8 @@ export async function createVisita(req, res) {
             placa: (vehiculo.placa || "").toUpperCase(),
           }
         : null,
-      citaAt: citaDate || null,
+      citaAt: citaAt || null,
+      // fechaEntrada: el pre("save") del modelo la llena si tipo = "Ingreso"
     });
 
     await visita.save();
@@ -239,30 +128,7 @@ export async function createCita(req, res) {
       citaAt, // fecha/hora de la cita
       llegoEnVehiculo,
       vehiculo,
-    } = req.body || {};
-
-    const nombreSafe = String(nombre || "").trim();
-    const documentoSafe = String(documento || "").trim();
-    const motivoSafe = String(motivo || "").trim();
-
-    if (!nombreSafe) {
-      return res.status(400).json({ ok: false, error: "nombre_required" });
-    }
-    if (!documentoSafe) {
-      return res.status(400).json({ ok: false, error: "documento_required" });
-    }
-    if (!motivoSafe) {
-      return res.status(400).json({ ok: false, error: "motivo_required" });
-    }
-
-    const citaDate = parseCitaAt(citaAt);
-    if (!citaDate) {
-      return res.status(400).json({
-        ok: false,
-        error: "citaAt_invalid",
-        message: "La fecha/hora de la cita no es válida",
-      });
-    }
+    } = req.body;
 
     const hasVehiculo =
       vehiculo &&
@@ -271,15 +137,16 @@ export async function createCita(req, res) {
         (vehiculo.modelo && String(vehiculo.modelo).trim() !== ""));
 
     const visita = new Visita({
-      nombre: nombreSafe,
-      documento: documentoSafe,
+      nombre,
+      documento,
       empresa: empresa || null,
       empleado: empleado || null,
-      motivo: motivoSafe,
+      motivo,
       telefono: telefono || null,
       correo: correo || null,
       tipo: "Agendada",
-      citaAt: citaDate,
+      // el default de estado en el modelo: "Programada"
+      citaAt: citaAt ? new Date(citaAt) : null,
       llegoEnVehiculo:
         typeof llegoEnVehiculo !== "undefined"
           ? !!llegoEnVehiculo
@@ -307,43 +174,43 @@ export async function createCita(req, res) {
  * Soporta:
  *  - ?day=YYYY-MM-DD
  *  - ?month=YYYY-MM
- *  - ?estado=...
  */
 export async function listCitas(req, res) {
   try {
-    const { day, month, estado } = req.query || {};
+    const { day, month } = req.query;
 
     const match = { tipo: "Agendada" };
 
     if (day) {
-      const range = parseLocalDayRange(day);
-      if (!range) {
-        return res.status(400).json({
-          ok: false,
-          error: "day_invalid",
-          message: "El parámetro day debe venir en formato YYYY-MM-DD",
-        });
-      }
-      match.citaAt = { $gte: range.start, $lt: range.end };
+      const d = new Date(day);
+      const start = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        0,
+        0,
+        0
+      );
+      const end = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() + 1,
+        0,
+        0,
+        0
+      );
+      match.citaAt = { $gte: start, $lt: end };
     } else if (month) {
-      const range = parseLocalMonthRange(month);
-      if (!range) {
-        return res.status(400).json({
-          ok: false,
-          error: "month_invalid",
-          message: "El parámetro month debe venir en formato YYYY-MM",
-        });
+      // month = "YYYY-MM"
+      const [yyyy, mm] = month.split("-").map((x) => parseInt(x, 10));
+      if (!isNaN(yyyy) && !isNaN(mm)) {
+        const start = new Date(yyyy, mm - 1, 1, 0, 0, 0);
+        const end = new Date(yyyy, mm, 1, 0, 0, 0);
+        match.citaAt = { $gte: start, $lt: end };
       }
-      match.citaAt = { $gte: range.start, $lt: range.end };
     }
 
-    if (estado) {
-      match.estado = normalizeEstado(estado);
-    }
-
-    const citas = await Visita.find(match)
-      .sort({ citaAt: 1, createdAt: -1 })
-      .lean();
+    const citas = await Visita.find(match).sort({ citaAt: 1 }).lean();
 
     res.json({ ok: true, items: citas });
   } catch (err) {
@@ -389,9 +256,9 @@ export async function checkinCita(req, res) {
 export async function updateCitaEstado(req, res) {
   try {
     const { id } = req.params;
-    const estadoNormalizado = normalizeEstado(req.body?.estado);
+    const { estado } = req.body || {};
 
-    if (!estadoNormalizado) {
+    if (!estado) {
       return res
         .status(400)
         .json({ ok: false, error: "Debe indicar un estado" });
@@ -404,17 +271,13 @@ export async function updateCitaEstado(req, res) {
         .json({ ok: false, error: "Cita/visita no encontrada" });
     }
 
-    visita.estado = estadoNormalizado;
+    // Solo cambiamos el estado; la validación de enum la hace mongoose
+    visita.estado = estado;
     await visita.save();
 
     return res.json({ ok: true, item: visita });
   } catch (err) {
     console.error("[visitas] updateCitaEstado", err);
-
-    if (err?.name === "ValidationError") {
-      return res.status(400).json({ ok: false, error: err.message });
-    }
-
     return res.status(500).json({ ok: false, error: err.message });
   }
 }
@@ -443,16 +306,8 @@ export async function listVehiculosVisitasEnSitio(req, res) {
     // Citas agendadas con vehículo que aún no se han cerrado
     const citasConVehiculo = await Visita.find({
       tipo: "Agendada",
-      estado: {
-        $in: [
-          "Programada",
-          "en_revision",
-          "autorizada",
-          // compatibilidad legacy por si existe data vieja
-          "En revisión",
-          "Autorizada",
-        ],
-      },
+      // estados que indican que la cita aún está activa/programada
+      estado: { $in: ["Programada", "En revisión", "Autorizada"] },
       llegoEnVehiculo: true,
       $or: [
         { "vehiculo.placa": { $exists: true, $ne: "" } },
@@ -468,9 +323,7 @@ export async function listVehiculosVisitasEnSitio(req, res) {
         const veh = v.vehiculo;
         const marca = typeof veh === "string" ? veh : veh?.marca || "";
         const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa =
-          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
-
+        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
         return {
           id: v._id.toString(),
           visitante: v.nombre,
@@ -487,9 +340,7 @@ export async function listVehiculosVisitasEnSitio(req, res) {
         const veh = v.vehiculo;
         const marca = typeof veh === "string" ? veh : veh?.marca || "";
         const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa =
-          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
-
+        const placa = (veh && typeof veh === "object" && veh.placa) || v.placa || "";
         return {
           id: v._id.toString(),
           visitante: v.nombre,
