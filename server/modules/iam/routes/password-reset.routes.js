@@ -1,3 +1,4 @@
+
 // server/modules/iam/routes/password-reset.routes.js
 import { Router } from "express";
 import IamUser from "../models/IamUser.model.js";
@@ -51,7 +52,23 @@ function genericResetResponse(res) {
 
 function passwordPolicy(password) {
   const s = String(password || "");
-  if (s.length < 8) return "Debe tener al menos 8 caracteres.";
+
+  if (s.length < 8) {
+    return "Debe tener al menos 8 caracteres.";
+  }
+
+  if (!/[A-Za-z]/.test(s)) {
+    return "Debe incluir al menos una letra.";
+  }
+
+  if (!/\d/.test(s)) {
+    return "Debe incluir al menos un número.";
+  }
+
+  if (!/[^A-Za-z0-9]/.test(s)) {
+    return "Debe incluir al menos un carácter especial.";
+  }
+
   return null;
 }
 
@@ -227,3 +244,5 @@ r.post("/reset-password", async (req, res) => {
 });
 
 export default r;
+
+
