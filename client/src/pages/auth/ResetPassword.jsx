@@ -10,12 +10,34 @@ function inputClass() {
   return "border border-slate-300/80 dark:border-slate-700/80 bg-white/80 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100 w-full p-2 rounded outline-none focus:ring-2 focus:ring-blue-500/30";
 }
 
+function validatePassword(password) {
+  const s = String(password || "");
+  return (
+    s.length >= 8 &&
+    /[A-Za-z]/.test(s) &&
+    /\d/.test(s) &&
+    /[^A-Za-z0-9]/.test(s)
+  );
+}
+
+function getPasswordChecks(password) {
+  const s = String(password || "");
+  return {
+    length: s.length >= 8,
+    letter: /[A-Za-z]/.test(s),
+    number: /\d/.test(s),
+    special: /[^A-Za-z0-9]/.test(s),
+  };
+}
+
 function humanResetError(codeOrMsg) {
   const s = String(codeOrMsg || "").toLowerCase();
 
   if (s.includes("missing_fields")) return "Completa todos los campos.";
   if (s.includes("password_mismatch")) return "Las contraseñas no coinciden.";
-  if (s.includes("invalid_password")) return "La contraseña no cumple la política mínima.";
+  if (s.includes("invalid_password")) {
+    return "La contraseña debe tener mínimo 8 caracteres e incluir letras, números y un carácter especial.";
+  }
   if (s.includes("invalid_reset")) return "Solicitud inválida.";
   if (s.includes("reset_not_requested")) return "Primero debes solicitar un código.";
   if (s.includes("reset_already_used")) return "Ese código ya fue utilizado.";
@@ -44,6 +66,8 @@ export default function ResetPassword() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const checks = getPasswordChecks(form.passwordNueva);
+
   const publicApi = useMemo(() => {
     const base = String(API_BASE || "http://localhost:4000/api")
       .trim()
@@ -70,14 +94,37 @@ export default function ResetPassword() {
     e.preventDefault();
     setMsg("");
     setError("");
+
+    const email = String(form.email || "").trim().toLowerCase();
+    const token = String(form.token || "").trim().toUpperCase();
+    const passwordNueva = String(form.passwordNueva || "");
+    const confirmarPassword = String(form.confirmarPassword || "");
+
+    if (!email || !token || !passwordNueva || !confirmarPassword) {
+      setError("Completa todos los campos.");
+      return;
+    }
+
+    if (!validatePassword(passwordNueva)) {
+      setError(
+        "La contraseña debe tener mínimo 8 caracteres e incluir letras, números y un carácter especial."
+      );
+      return;
+    }
+
+    if (passwordNueva !== confirmarPassword) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const { data } = await publicApi.post("/public/v1/password/reset-password", {
-        email: String(form.email || "").trim().toLowerCase(),
-        token: String(form.token || "").trim().toUpperCase(),
-        passwordNueva: String(form.passwordNueva || ""),
-        confirmarPassword: String(form.confirmarPassword || ""),
+        email,
+        token,
+        passwordNueva,
+        confirmarPassword,
       });
 
       if (data?.ok === false) {
@@ -132,6 +179,7 @@ export default function ResetPassword() {
                 placeholder="Correo electrónico"
                 value={form.email}
                 onChange={onChange}
+                autoComplete="email"
               />
 
               <input
@@ -148,8 +196,7 @@ export default function ResetPassword() {
                 }
               />
 
-              {/* NUEVA CONTRASEÑA */}
-              <div className="relative mb-3">
+              <div className="relative mb-2">
                 <input
                   className={`${inputClass()} pr-10`}
                   name="passwordNueva"
@@ -157,17 +204,37 @@ export default function ResetPassword() {
                   placeholder="Nueva contraseña"
                   value={form.passwordNueva}
                   onChange={onChange}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPass((s) => !s)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
+                  aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  title={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
                 >
                   {showPass ? "🙈" : "👁️"}
                 </button>
               </div>
 
-              {/* CONFIRMAR CONTRASEÑA */}
+              <div className="mb-3 rounded border border-slate-200/70 bg-slate-50/80 px-3 py-2 text-xs text-slate-600 dark:border-slate-700/70 dark:bg-slate-900/40 dark:text-slate-300">
+                <div className="mb-1 font-medium">
+                  Mínimo 8 caracteres, debe incluir letras, números y un carácter especial.
+                </div>
+                <div className={checks.length ? "text-emerald-600" : "text-slate-500"}>
+                  {checks.length ? "✓" : "•"} Al menos 8 caracteres
+                </div>
+                <div className={checks.letter ? "text-emerald-600" : "text-slate-500"}>
+                  {checks.letter ? "✓" : "•"} Al menos una letra
+                </div>
+                <div className={checks.number ? "text-emerald-600" : "text-slate-500"}>
+                  {checks.number ? "✓" : "•"} Al menos un número
+                </div>
+                <div className={checks.special ? "text-emerald-600" : "text-slate-500"}>
+                  {checks.special ? "✓" : "•"} Al menos un carácter especial
+                </div>
+              </div>
+
               <div className="relative mb-3">
                 <input
                   className={`${inputClass()} pr-10`}
@@ -176,11 +243,14 @@ export default function ResetPassword() {
                   placeholder="Confirmar contraseña"
                   value={form.confirmarPassword}
                   onChange={onChange}
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirm((s) => !s)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
+                  aria-label={showConfirm ? "Ocultar confirmación" : "Mostrar confirmación"}
+                  title={showConfirm ? "Ocultar confirmación" : "Mostrar confirmación"}
                 >
                   {showConfirm ? "🙈" : "👁️"}
                 </button>
@@ -213,3 +283,4 @@ export default function ResetPassword() {
     </AuthBackground>
   );
 }
+
