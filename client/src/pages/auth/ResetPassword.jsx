@@ -1,3 +1,4 @@
+
 // client/src/pages/auth/ResetPassword.jsx
 import React, { useMemo, useState } from "react";
 import axios from "axios";
@@ -35,6 +36,9 @@ export default function ResetPassword() {
     passwordNueva: "",
     confirmarPassword: "",
   });
+
+  const [showPass, setShowPass] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -128,7 +132,6 @@ export default function ResetPassword() {
                 placeholder="Correo electrónico"
                 value={form.email}
                 onChange={onChange}
-                autoComplete="email"
               />
 
               <input
@@ -145,25 +148,43 @@ export default function ResetPassword() {
                 }
               />
 
-              <input
-                className={`${inputClass()} mb-3`}
-                name="passwordNueva"
-                type="password"
-                placeholder="Nueva contraseña"
-                value={form.passwordNueva}
-                onChange={onChange}
-                autoComplete="new-password"
-              />
+              {/* NUEVA CONTRASEÑA */}
+              <div className="relative mb-3">
+                <input
+                  className={`${inputClass()} pr-10`}
+                  name="passwordNueva"
+                  type={showPass ? "text" : "password"}
+                  placeholder="Nueva contraseña"
+                  value={form.passwordNueva}
+                  onChange={onChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
+                >
+                  {showPass ? "🙈" : "👁️"}
+                </button>
+              </div>
 
-              <input
-                className={`${inputClass()} mb-3`}
-                name="confirmarPassword"
-                type="password"
-                placeholder="Confirmar contraseña"
-                value={form.confirmarPassword}
-                onChange={onChange}
-                autoComplete="new-password"
-              />
+              {/* CONFIRMAR CONTRASEÑA */}
+              <div className="relative mb-3">
+                <input
+                  className={`${inputClass()} pr-10`}
+                  name="confirmarPassword"
+                  type={showConfirm ? "text" : "password"}
+                  placeholder="Confirmar contraseña"
+                  value={form.confirmarPassword}
+                  onChange={onChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
+                >
+                  {showConfirm ? "🙈" : "👁️"}
+                </button>
+              </div>
 
               <button
                 type="submit"
