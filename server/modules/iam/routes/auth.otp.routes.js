@@ -1,6 +1,5 @@
 // server/modules/iam/routes/auth.otp.routes.js
 import { Router } from "express";
-import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 
@@ -9,15 +8,12 @@ import AuthOtp from "../models/AuthOtp.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
 import { getSecuritySettings } from "../services/settings.service.js";
 import { sendOtpEmail } from "../services/otp.mailer.js";
+import { normEmail, makeOtp, hashOtp } from "../utils/otp.util.js";
 
 const r = Router();
 const IS_PROD = process.env.NODE_ENV === "production";
 
 /* ---------------------- helpers ---------------------- */
-function normEmail(e) {
-  return String(e || "").trim().toLowerCase();
-}
-
 function maskEmail(email) {
   const e = normEmail(email);
   const [u, d] = e.split("@");
@@ -86,15 +82,6 @@ function signLocalJwt(payload) {
   const secret = jwtSecret();
   const expiresIn = String(process.env.JWT_EXPIRES_IN || "12h");
   return jwt.sign(payload, secret, { expiresIn, algorithm: "HS256" });
-}
-
-function randomOtp6() {
-  const n = crypto.randomInt(0, 1000000);
-  return String(n).padStart(6, "0");
-}
-
-function sha256(s) {
-  return crypto.createHash("sha256").update(String(s)).digest("hex");
 }
 
 function hasRole(user, role) {
@@ -179,7 +166,6 @@ function canResendDoc(doc) {
 /**
  * Para LOGIN:
  * - si ya existe OTP activo y NO expiró, no generamos otro
- * - esto evita invalidar el primer código por doble submit accidental
  */
 async function getOrCreateActiveOtpForLogin({
   email,
@@ -236,8 +222,8 @@ async function createOrReplaceActiveOtpDocAtomic({
 
   await expireActiveOtps(email, purpose);
 
-  const code = randomOtp6();
-  const codeHash = sha256(code);
+  const code = makeOtp(6);
+  const codeHash = hashOtp(email, code);
 
   const expiresAt = new Date(now.getTime() + Number(ttlSeconds || 300) * 1000);
   const resendAfter = new Date(now.getTime() + Number(resendCooldownSeconds || 30) * 1000);
@@ -355,7 +341,6 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  // Si ya había un OTP activo, NO generes otro
   if (issued?.reused) {
     return res.json({
       ok: true,
@@ -497,7 +482,7 @@ async function verifyOtpHandler(req, res) {
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
 
-  const expectedHash = sha256(otp);
+  const expectedHash = hashOtp(email, otp);
 
   if (expectedHash !== String(doc.codeHash || "")) {
     doc.attempts = Number(doc.attempts || 0) + 1;
