@@ -401,15 +401,44 @@ function stripDiacritics(str) {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeQrPayloadValue(payload) {
+  if (payload == null) return "";
+
+  if (typeof payload === "string") {
+    const trimmed = payload.trim();
+    if (!trimmed) return "";
+    if (trimmed === "[object Object]") return "";
+    return trimmed;
+  }
+
+  if (typeof payload === "object") {
+    const json = safeJsonStringify(payload);
+    return json.trim();
+  }
+
+  const primitive = String(payload).trim();
+  if (!primitive || primitive === "[object Object]") return "";
+  return primitive;
+}
+
 function buildQrValueForCita(cita) {
   if (!cita) return "";
 
-  if (cita.qrPayload && String(cita.qrPayload).trim()) {
-    return String(cita.qrPayload).trim();
-  }
-
   if (cita.qrToken && String(cita.qrToken).trim()) {
     return `${QR_PREFIX}${String(cita.qrToken).trim()}`;
+  }
+
+  const normalizedQrPayload = normalizeQrPayloadValue(cita.qrPayload);
+  if (normalizedQrPayload) {
+    return stripDiacritics(normalizedQrPayload);
   }
 
   const nombre = cita.nombre || cita.visitante || "Visitante";
@@ -452,6 +481,11 @@ function buildQrValueForCita(cita) {
   ].join("\n");
 
   return stripDiacritics(text);
+}
+
+function getRenderableQrValue(cita) {
+  const value = buildQrValueForCita(cita);
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function saveToStorage(next) {
@@ -603,7 +637,7 @@ function normalizeCitaFromServer(c, index = 0) {
     citaAt,
     estado: normalizeCitaEstado(c?.estado),
     qrDataUrl: c?.qrDataUrl || "",
-    qrPayload: c?.qrPayload || "",
+    qrPayload: c?.qrPayload ?? "",
     qrToken: c?.qrToken || "",
   };
 }
@@ -642,7 +676,7 @@ function mergeCitaLists(serverList, localList) {
       ...prev,
       ...item,
       qrDataUrl: item.qrDataUrl || prev.qrDataUrl || "",
-      qrPayload: item.qrPayload || prev.qrPayload || "",
+      qrPayload: item.qrPayload ?? prev.qrPayload ?? "",
       qrToken: item.qrToken || prev.qrToken || "",
     });
   }
@@ -1291,6 +1325,8 @@ export default function VisitsPage() {
     }
   }
 
+  const qrModalValue = useMemo(() => getRenderableQrValue(qrCita), [qrCita]);
+
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6">
       <div className="mesh mesh--ribbon pointer-events-none" aria-hidden />
@@ -1527,8 +1563,9 @@ export default function VisitsPage() {
                         : "—";
 
                     const estadoNormalizado = normalizeCitaEstado(cita.estado);
-                    const canShowQr =
-                      !!cita.qrDataUrl || !!cita.qrPayload || !!cita.qrToken;
+                    const qrValue = getRenderableQrValue(cita);
+                    const canShowQr = !!qrValue || !!cita.qrDataUrl;
+
                     const canRegistrarIngreso =
                       !isVisitor &&
                       ["Autorizada", "En revisión", "Programada"].includes(
@@ -1921,18 +1958,25 @@ export default function VisitsPage() {
                 className="rounded-[18px] p-4"
                 style={sxCardSoft({ background: "#ffffff" })}
               >
-                {qrCita.qrDataUrl ? (
+                {qrModalValue ? (
+                  <QRCodeSVG value={qrModalValue} size={200} includeMargin />
+                ) : qrCita.qrDataUrl ? (
                   <img
                     src={qrCita.qrDataUrl}
                     alt="QR de cita"
                     className="w-[200px] h-[200px] object-contain"
                   />
                 ) : (
-                  <QRCodeSVG
-                    value={buildQrValueForCita(qrCita)}
-                    size={200}
-                    includeMargin
-                  />
+                  <div
+                    className="w-[200px] h-[200px] flex items-center justify-center text-center text-xs rounded-[12px]"
+                    style={{
+                      color: "#334155",
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    No hay QR disponible
+                  </div>
                 )}
               </div>
 

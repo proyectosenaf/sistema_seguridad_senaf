@@ -136,12 +136,27 @@ function verifyPwResetToken(token) {
    OTP en Mongo (AuthOtp)
 ========================================================= */
 
+async function expireActiveOtps(email, purpose) {
+  await AuthOtp.updateMany(
+    {
+      email,
+      purpose,
+      status: "active",
+      consumedAt: null,
+    },
+    {
+      $set: { status: "expired" },
+    }
+  ).exec();
+}
+
 async function getActiveOtp(email, purpose) {
   return AuthOtp.findOne({
     email,
     purpose,
     status: "active",
     consumedAt: null,
+    expiresAt: { $gt: new Date() },
   })
     .sort({ createdAt: -1 })
     .exec();
@@ -174,24 +189,15 @@ async function getOrCreateActiveOtpForLogin({
   resendCooldownSeconds,
   metaUserId,
 }) {
-  const existing = await AuthOtp.findOne({ email, purpose }).exec();
+  const existing = await getActiveOtp(email, purpose);
 
-  if (existing && existing.status === "active" && existing.consumedAt == null) {
-    if (isExpiredDoc(existing)) {
-      try {
-        await existing.markExpired?.();
-      } catch {
-        existing.status = "expired";
-        await existing.save().catch(() => {});
-      }
-    } else {
-      return {
-        ok: true,
-        reused: true,
-        expiresAt: existing.expiresAt,
-        resendAfter: existing.resendAfter,
-      };
-    }
+  if (existing && !isExpiredDoc(existing)) {
+    return {
+      ok: true,
+      reused: true,
+      expiresAt: existing.expiresAt,
+      resendAfter: existing.resendAfter,
+    };
   }
 
   return createOrReplaceActiveOtpDocAtomic({
@@ -217,25 +223,18 @@ async function createOrReplaceActiveOtpDocAtomic({
   metaUserId,
 }) {
   const now = new Date();
-  const existing = await AuthOtp.findOne({ email, purpose }).exec();
+  const existing = await getActiveOtp(email, purpose);
 
-  if (existing && existing.status === "active" && existing.consumedAt == null) {
-    if (isExpiredDoc(existing)) {
-      try {
-        await existing.markExpired?.();
-      } catch {
-        existing.status = "expired";
-        await existing.save().catch(() => {});
-      }
-    } else if (!canResendDoc(existing)) {
-      return {
-        ok: false,
-        cooldown: true,
-        resendAfter: existing.resendAfter,
-        expiresAt: existing.expiresAt,
-      };
-    }
+  if (existing && !isExpiredDoc(existing) && !canResendDoc(existing)) {
+    return {
+      ok: false,
+      cooldown: true,
+      resendAfter: existing.resendAfter,
+      expiresAt: existing.expiresAt,
+    };
   }
+
+  await expireActiveOtps(email, purpose);
 
   const code = randomOtp6();
   const codeHash = sha256(code);
@@ -243,8 +242,10 @@ async function createOrReplaceActiveOtpDocAtomic({
   const expiresAt = new Date(now.getTime() + Number(ttlSeconds || 300) * 1000);
   const resendAfter = new Date(now.getTime() + Number(resendCooldownSeconds || 30) * 1000);
 
-  const update = {
-    $set: {
+  try {
+    await AuthOtp.create({
+      email,
+      purpose,
       codeHash,
       expiresAt,
       resendAfter,
@@ -253,21 +254,12 @@ async function createOrReplaceActiveOtpDocAtomic({
       consumedAt: null,
       status: "active",
       meta: { userId: metaUserId || null },
-    },
-    $setOnInsert: { email, purpose },
-  };
-
-  try {
-    await AuthOtp.findOneAndUpdate({ email, purpose }, update, {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-    }).exec();
+    });
 
     return { ok: true, reused: false, code, expiresAt, resendAfter };
   } catch (err) {
     if (err && (err.code === 11000 || err.codeName === "DuplicateKey")) {
-      const doc = await AuthOtp.findOne({ email, purpose }).exec();
+      const doc = await getActiveOtp(email, purpose);
       return {
         ok: false,
         cooldown: true,
@@ -320,7 +312,7 @@ async function loginOtpHandler(req, res) {
   const otpEnabled = !!settings?.features?.enableEmployeeOtp;
 
   const firstTimeOtp = !user.otpVerifiedAt;
-  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
+  const mustChange = isVisitor ? false : !!user.mustChangePassword || isPasswordExpired(user);
 
   if (!otpEnabled) {
     const token = signLocalJwt({
@@ -332,7 +324,7 @@ async function loginOtpHandler(req, res) {
     return res.json({ ok: true, otpRequired: false, token, mustChangePassword: mustChange });
   }
 
-  const otpRequired = isVisitor ? firstTimeOtp : (firstTimeOtp || mustChange);
+  const otpRequired = isVisitor ? firstTimeOtp : firstTimeOtp || mustChange;
 
   if (!otpRequired) {
     const token = signLocalJwt({
@@ -364,7 +356,6 @@ async function loginOtpHandler(req, res) {
   }
 
   // Si ya había un OTP activo, NO generes otro
-  // Solo deja continuar al flujo OTP con el mismo código vigente
   if (issued?.reused) {
     return res.json({
       ok: true,
@@ -460,7 +451,7 @@ async function verifyOtpHandler(req, res) {
   }
 
   const email = normEmail(req.body?.email);
-  const otp = String(req.body?.otp || "").trim();
+  const otp = String(req.body?.otp || req.body?.code || "").trim();
 
   if (!email || !otp) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
@@ -480,34 +471,58 @@ async function verifyOtpHandler(req, res) {
   const purpose = isVisitor ? "visitor-login" : "employee-login";
 
   const doc = await getActiveOtp(email, purpose);
-  if (!doc) return res.status(400).json({ ok: false, error: "otp_not_found" });
+  if (!doc) {
+    await expireActiveOtps(email, purpose).catch(() => {});
+    return res.status(400).json({ ok: false, error: "otp_not_found" });
+  }
 
   if (isExpiredDoc(doc)) {
-    await doc.markExpired?.().catch(() => {});
+    await doc.markExpired?.().catch(async () => {
+      doc.status = "expired";
+      await doc.save().catch(() => {});
+    });
     return res.status(400).json({ ok: false, error: "otp_expired" });
   }
 
-  const maxAttempts = Number.isFinite(Number(doc.maxAttempts)) ? Number(doc.maxAttempts) : settings.maxAttempts;
+  const maxAttempts = Number.isFinite(Number(doc.maxAttempts))
+    ? Number(doc.maxAttempts)
+    : settings.maxAttempts;
+
   if (Number(doc.attempts || 0) >= maxAttempts) {
-    await doc.markConsumed?.().catch(() => {});
+    await doc.markConsumed?.().catch(async () => {
+      doc.consumedAt = new Date();
+      doc.status = "consumed";
+      await doc.save().catch(() => {});
+    });
     return res.status(429).json({ ok: false, error: "otp_max_attempts" });
   }
 
-  doc.attempts = Number(doc.attempts || 0) + 1;
-  await doc.save();
+  const expectedHash = sha256(otp);
 
-  if (sha256(otp) !== String(doc.codeHash || "")) {
+  if (expectedHash !== String(doc.codeHash || "")) {
+    doc.attempts = Number(doc.attempts || 0) + 1;
+
+    if (doc.attempts >= maxAttempts) {
+      doc.consumedAt = new Date();
+      doc.status = "consumed";
+    }
+
+    await doc.save().catch(() => {});
     return res.status(401).json({ ok: false, error: "otp_invalid" });
   }
 
-  await doc.markConsumed?.().catch(() => {});
+  await doc.markConsumed?.().catch(async () => {
+    doc.consumedAt = new Date();
+    doc.status = "consumed";
+    await doc.save().catch(() => {});
+  });
 
   if (!user.otpVerifiedAt) {
     user.otpVerifiedAt = new Date();
     await user.save().catch(() => {});
   }
 
-  const mustChange = isVisitor ? false : (!!user.mustChangePassword || isPasswordExpired(user));
+  const mustChange = isVisitor ? false : !!user.mustChangePassword || isPasswordExpired(user);
   if (mustChange) {
     const resetToken = signPwResetToken({ email: user.email, userId: user._id });
     return res.json({ ok: true, mustChangePassword: true, resetToken });

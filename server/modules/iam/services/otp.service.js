@@ -38,9 +38,29 @@ function canResendDoc(doc) {
   return new Date() >= ra;
 }
 
+async function expireActiveOtps({ email, purpose }) {
+  const e = normEmail(email);
+  const q = {
+    email: e,
+    status: "active",
+    consumedAt: null,
+  };
+  if (purpose) q.purpose = purpose;
+
+  await AuthOtp.updateMany(q, { $set: { status: "expired" } }).exec();
+}
+
 async function findActiveOtp({ email, purpose }) {
   const e = normEmail(email);
-  const q = { email: e, consumedAt: null };
+  const now = new Date();
+
+  const q = {
+    email: e,
+    status: "active",
+    consumedAt: null,
+    expiresAt: { $gt: now },
+  };
+
   if (purpose) q.purpose = purpose;
 
   return AuthOtp.findOne(q).sort({ createdAt: -1 }).exec();
@@ -81,7 +101,7 @@ export async function createOtp({ email, purpose, meta = {} }) {
   resendAfter.setSeconds(resendAfter.getSeconds() + settings.resendCooldownSeconds);
 
   // Solo 1 OTP activo por (email,purpose)
-  await AuthOtp.deleteMany({ email: e, purpose, consumedAt: null });
+  await expireActiveOtps({ email: e, purpose });
 
   const doc = await AuthOtp.create({
     email: e,
@@ -92,6 +112,7 @@ export async function createOtp({ email, purpose, meta = {} }) {
     maxAttempts: settings.maxAttempts,
     resendAfter,
     consumedAt: null,
+    status: "active",
     meta,
   });
 
@@ -162,13 +183,23 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
 
   // Si no viene purpose o no encontró, intenta con cualquiera activo (más reciente)
   if (!doc && !purpose) {
-    doc = await AuthOtp.findOne({ email: e, consumedAt: null }).sort({ createdAt: -1 }).exec();
+    doc = await AuthOtp.findOne({
+      email: e,
+      status: "active",
+      consumedAt: null,
+      expiresAt: { $gt: new Date() },
+    })
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
-  if (!doc) throw Object.assign(new Error("otp_not_found"), { code: "otp_not_found" });
+  if (!doc) {
+    await expireActiveOtps({ email: e, purpose });
+    throw Object.assign(new Error("otp_not_found"), { code: "otp_not_found" });
+  }
 
   if (isExpiredDoc(doc)) {
-    await AuthOtp.deleteMany({ email: e, consumedAt: null });
+    await expireActiveOtps({ email: e, purpose });
     throw Object.assign(new Error("otp_expired"), { code: "otp_expired" });
   }
 
@@ -177,7 +208,9 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
     : settings.maxAttempts;
 
   if (Number(doc.attempts || 0) >= maxAttempts) {
-    await AuthOtp.deleteMany({ email: e, consumedAt: null });
+    doc.status = "consumed";
+    doc.consumedAt = new Date();
+    await doc.save().catch(() => {});
     throw Object.assign(new Error("otp_max_attempts"), { code: "otp_max_attempts" });
   }
 
@@ -190,9 +223,10 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
 
   // OTP correcto => consumir + limpiar otros activos
   doc.consumedAt = new Date();
+  doc.status = "consumed";
   await doc.save();
 
-  await AuthOtp.deleteMany({ email: e, consumedAt: null });
+  await expireActiveOtps({ email: e, purpose });
 
   return { ok: true, purpose: doc.purpose, meta: doc.meta || {} };
 }
