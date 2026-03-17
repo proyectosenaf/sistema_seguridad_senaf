@@ -1,3 +1,4 @@
+
 // server/src/server.js  ✅ SIN DUPLICADOS (OTP solo PUBLIC) + registerIAMModule arreglado
 import "dotenv/config";
 import express from "express";
@@ -23,6 +24,9 @@ import { buildContextFrom } from "../modules/iam/utils/rbac.util.js";
 
 // ✅ Auth OTP PÚBLICO (visitantes / empleados) desde IAM
 import iamOtpAuthRoutes from "../modules/iam/routes/auth.otp.routes.js";
+
+// ✅ PASSWORD RESET PÚBLICO
+import passwordResetRoutes from "../modules/iam/routes/password-reset.routes.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -194,6 +198,11 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/public/v1/auth", iamOtpAuthRoutes);
 app.use("/public/v1/auth", iamOtpAuthRoutes);
+
+/* ───────────────────── ✅ PASSWORD RESET PÚBLICO ✅ ───────────────────── */
+
+app.use("/api/public/v1/password", passwordResetRoutes);
+app.use("/public/v1/password", passwordResetRoutes);
 
 /* ───────────────────── HTTP + Socket.IO bind ──────────────────── */
 
@@ -661,3 +670,4 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
 process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));
+

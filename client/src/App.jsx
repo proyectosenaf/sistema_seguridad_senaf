@@ -1,3 +1,4 @@
+
 // client/src/App.jsx
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
@@ -16,6 +17,10 @@ import { APP_CONFIG } from "./config/app.config.js";
 
 // Login local
 import LoginLocal from "./pages/auth/LoginLocal.jsx";
+
+// ✅ NUEVO: recuperación de contraseña
+const ForgotPassword = React.lazy(() => import("./pages/auth/ForgotPassword.jsx"));
+const ResetPassword = React.lazy(() => import("./pages/auth/ResetPassword.jsx"));
 
 // ✅ Pantalla para forzar cambio de contraseña
 const ForceChangePassword = React.lazy(() => import("./pages/ForceChangePassword.jsx"));
@@ -45,6 +50,7 @@ const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
 import CitasQrScannerPage from "./pages/CitasQrScannerPage.jsx";
+
 /* ───────────────── ENV helpers ───────────────── */
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
@@ -81,6 +87,10 @@ function isPublicPath(pathname) {
   const p = normalizePath(pathname);
   const login = normalizePath(APP_CONFIG?.routes?.login || "/login");
   if (startsWithPath(p, login)) return true;
+
+  // ✅ rutas públicas de recuperación
+  if (startsWithPath(p, "/forgot-password")) return true;
+  if (startsWithPath(p, "/reset-password")) return true;
 
   if (startsWithPath(p, "/otp")) return true;
   if (startsWithPath(p, "/force-change-password")) return true;
@@ -304,7 +314,7 @@ function useMeSession(authToken) {
       setMe(null);
       setError(e);
 
-      if (Number(e?.status) === 401) {
+      if (Number(e?.status) === 401 || Number(e?.response?.status) === 401) {
         clearPersistedSessionArtifacts();
         clearToken();
       }
@@ -539,6 +549,8 @@ export default function App() {
       "/visitas/agenda",
       "/otp",
       "/force-change-password",
+      "/forgot-password",
+      "/reset-password",
       loginRoute,
     ];
 
@@ -560,6 +572,10 @@ export default function App() {
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
             <Route path={loginRoute} element={<LoginLocal />} />
+
+            {/* ✅ nuevas rutas públicas de recuperación */}
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             <Route path="/entry" element={<Navigate to={loginRoute} replace />} />
             <Route path="/callback" element={<Navigate to={loginRoute} replace />} />
@@ -801,8 +817,8 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-              
-              <Route
+
+            <Route
               path="/visitas/scan-qr"
               element={
                 <ProtectedRoute>
@@ -816,7 +832,6 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-
 
             <Route
               path="/bitacora"

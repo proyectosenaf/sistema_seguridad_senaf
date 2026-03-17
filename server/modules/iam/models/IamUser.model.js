@@ -24,7 +24,7 @@ function normPerms(arr) {
 const IamUserSchema = new mongoose.Schema(
   {
     email: {
-      type: String, 
+      type: String,
       required: true,
       lowercase: true,
       trim: true,
@@ -83,6 +83,8 @@ const IamUserSchema = new mongoose.Schema(
       index: true,
     },
 
+    /* ───────── RESET PASSWORD ───────── */
+
     tempPassHash: {
       type: String,
       select: false,
@@ -105,6 +107,8 @@ const IamUserSchema = new mongoose.Schema(
       default: 0,
     },
 
+    /* ───────── RBAC ───────── */
+
     roles: {
       type: [String],
       default: [],
@@ -118,6 +122,8 @@ const IamUserSchema = new mongoose.Schema(
       set: normPerms,
     },
 
+    /* ───────── Identidades externas ───────── */
+
     externalId: {
       type: String,
       trim: true,
@@ -129,6 +135,8 @@ const IamUserSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+
+    /* ───────── Auditoría ───────── */
 
     lastLoginAt: {
       type: Date,
@@ -147,18 +155,17 @@ const IamUserSchema = new mongoose.Schema(
   }
 );
 
-/* =========================
-   Índices
-========================= */
+/* ───────── Índices ───────── */
 
 IamUserSchema.index({ email: 1 }, { unique: true });
 IamUserSchema.index({ createdAt: -1 });
 IamUserSchema.index({ externalId: 1 }, { unique: true, sparse: true });
 IamUserSchema.index({ legacySub: 1 }, { unique: true, sparse: true });
 
-/* =========================
-   Export seguro
-========================= */
+// índice útil para recuperación
+IamUserSchema.index({ tempPassExpiresAt: 1 });
+
+/* ───────── Export seguro ───────── */
 
 const IamUser = mongoose.models.IamUser || mongoose.model("IamUser", IamUserSchema);
 

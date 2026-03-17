@@ -29,13 +29,21 @@ function envNum(name, def) {
  * - MAIL_REQUIRE_TLS (opcional; default true si puerto 587)
  * - MAIL_DEV_FALLBACK (opcional; default true en dev, false en prod)
  * - MAIL_DEBUG (opcional; logs nodemailer)
+ * - MAIL_CONNECTION_TIMEOUT_MS
+ * - MAIL_GREETING_TIMEOUT_MS
+ * - MAIL_SOCKET_TIMEOUT_MS
+ * - MAIL_POOL
+ * - MAIL_MAX_CONNECTIONS
+ * - MAIL_MAX_MESSAGES
  */
 export function makeMailer() {
   const host = envStr("MAIL_HOST");
   const port = envNum("MAIL_PORT", 587);
 
   const secure =
-    process.env.MAIL_SECURE === undefined ? port === 465 : envBool("MAIL_SECURE", false);
+    process.env.MAIL_SECURE === undefined
+      ? port === 465
+      : envBool("MAIL_SECURE", false);
 
   const user = envStr("MAIL_USER");
   const pass = envStr("MAIL_PASS");
@@ -45,11 +53,12 @@ export function makeMailer() {
 
   // En 587 muchas veces conviene forzar STARTTLS
   const requireTLS =
-    process.env.MAIL_REQUIRE_TLS === undefined ? port === 587 : envBool("MAIL_REQUIRE_TLS", false);
+    process.env.MAIL_REQUIRE_TLS === undefined
+      ? port === 587
+      : envBool("MAIL_REQUIRE_TLS", false);
 
   // En dev simula si falta config; en prod NO.
   const DEV_FALLBACK = envBool("MAIL_DEV_FALLBACK", !IS_PROD);
-
   const DEBUG = envBool("MAIL_DEBUG", false);
 
   // Si falta config SMTP
@@ -63,8 +72,14 @@ export function makeMailer() {
             hasText: !!text,
             hasHtml: !!html,
           });
-          return { ok: true, dev: true };
+
+          return {
+            ok: true,
+            dev: true,
+            simulated: true,
+          };
         }
+
         return {
           ok: false,
           error: "mail_not_configured",
@@ -100,10 +115,18 @@ export function makeMailer() {
 
   async function verifyOnce() {
     if (verified) return;
+
     try {
       await transport.verify();
       verified = true;
-      console.log("[mailer] SMTP verify OK:", { host, port, secure, requireTLS, user });
+
+      console.log("[mailer] SMTP verify OK:", {
+        host,
+        port,
+        secure,
+        requireTLS,
+        user,
+      });
     } catch (e) {
       console.error("[mailer] SMTP verify FAILED:", e?.message || e, {
         host,
@@ -121,13 +144,23 @@ export function makeMailer() {
       await verifyOnce();
 
       try {
-        const info = await transport.sendMail({ from, to, subject, text, html });
+        const info = await transport.sendMail({
+          from,
+          to,
+          subject,
+          text,
+          html,
+        });
 
         const accepted = Array.isArray(info.accepted) ? info.accepted : [];
         const rejected = Array.isArray(info.rejected) ? info.rejected : [];
 
         if (rejected.length > 0 && accepted.length === 0) {
-          console.error("[mailer] rejected by provider:", { rejected, response: info.response });
+          console.error("[mailer] rejected by provider:", {
+            rejected,
+            response: info.response,
+          });
+
           return {
             ok: false,
             error: "mail_rejected",
@@ -144,7 +177,12 @@ export function makeMailer() {
         };
       } catch (e) {
         console.error("[mailer] sendMail FAILED:", e?.message || e);
-        return { ok: false, error: "mail_send_failed", message: e?.message || String(e) };
+
+        return {
+          ok: false,
+          error: "mail_send_failed",
+          message: e?.message || String(e),
+        };
       }
     },
   };

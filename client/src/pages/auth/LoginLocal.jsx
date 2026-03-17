@@ -1,3 +1,4 @@
+
 import React, { useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -517,6 +518,16 @@ export default function LoginLocal() {
                     {submitting ? "Procesando..." : "Continuar"}
                   </button>
 
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => navigate("/forgot-password")}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </button>
+                  </div>
+
                   <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                     API: <span className="font-mono">{API_BASE || "—"}</span>
                     {getToken() ? (
@@ -646,3 +657,4 @@ export default function LoginLocal() {
     </AuthBackground>
   );
 }
+
