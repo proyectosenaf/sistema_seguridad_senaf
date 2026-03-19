@@ -5,35 +5,23 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
-import {
+import api, {
   getToken,
   setToken as setTokenStorage,
   clearToken,
-  TOKEN_UPDATED_EVENT, // ✅ escucha cambios de token en la misma tab
+  TOKEN_UPDATED_EVENT,
 } from "../../lib/api.js";
 
 import { jwtDecode } from "jwt-decode";
-
-/**
- * AuthProvider (canónico):
- * - NO llama /me (eso lo resuelve App.jsx si lo necesitas).
- * - Token centralizado en lib/api.js (senaf_token).
- * - Se re-sincroniza si el token cambia (storage/focus) y por evento interno.
- *
- * ✅ Centralización:
- * - Roles/perms/can salen SOLO del token y/o del storedUser (si token no los trae).
- * - Helpers: hasPerm/hasRole/requirePerm para que NADIE duplique lógica.
- */
 
 const AuthContext = createContext(null);
 
 const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
-
-// ✅ evento interno para sincronizar en la misma pestaña (storage NO dispara en la misma tab)
 const USER_UPDATED_EVENT = "senaf:user_updated";
 
 function safeJSONParse(raw) {
@@ -72,6 +60,30 @@ function uniqLower(arr) {
   );
 }
 
+function normalizeCan(v) {
+  if (!v) return null;
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+
+  if (typeof v === "string") {
+    const parsed = safeJSONParse(v);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function normalizeBool(v, fallback = false) {
+  if (typeof v === "boolean") return v;
+  if (v == null) return fallback;
+
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return fallback;
+}
+
 function pickFirstNonEmptyArray(...cands) {
   for (const c of cands) {
     const arr = normalizeArray(c);
@@ -80,7 +92,6 @@ function pickFirstNonEmptyArray(...cands) {
   return [];
 }
 
-/** Perm check: soporta "*" */
 function hasPermImpl(perms, p) {
   const key = String(p || "").trim().toLowerCase();
   if (!key) return false;
@@ -88,7 +99,6 @@ function hasPermImpl(perms, p) {
   return set.has("*") || set.has(key);
 }
 
-/** Role check */
 function hasRoleImpl(roles, r) {
   const key = String(r || "").trim().toLowerCase();
   if (!key) return false;
@@ -96,29 +106,20 @@ function hasRoleImpl(roles, r) {
   return set.has(key);
 }
 
-function normalizeCan(v) {
-  if (!v) return null;
-  if (typeof v === "object" && !Array.isArray(v)) return v;
-
-  // por si viene string JSON en el token
-  if (typeof v === "string") {
-    const parsed = safeJSONParse(v);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-  }
-  return null;
-}
-
-/**
- * Extrae roles/perms/can/email/name desde el token.
- * Ajusta aquí si tu payload usa otros nombres.
- */
 function deriveAuthFromToken(token) {
   const decoded = safeDecodeJwt(token);
   if (!decoded) {
-    return { decoded: null, roles: [], perms: [], can: null, email: "", name: "" };
+    return {
+      decoded: null,
+      roles: [],
+      perms: [],
+      can: null,
+      email: "",
+      name: "",
+      isSuperAdmin: false,
+    };
   }
 
-  // ✅ IMPORTANTÍSIMO: no uses `a || b` con arrays, porque [] es truthy.
   const roles = pickFirstNonEmptyArray(
     decoded.roles,
     decoded.r,
@@ -127,38 +128,87 @@ function deriveAuthFromToken(token) {
 
   const perms = pickFirstNonEmptyArray(
     decoded.perms,
+    decoded.permissions,
     decoded.p,
-    decoded["https://senaf/perms"]
+    decoded["https://senaf/perms"],
+    decoded["https://senaf/permissions"]
   );
 
-  // ✅ ACL por clave: { "rondasqr.reports": true, "rondasqr.admin": true, ... }
-  const can = normalizeCan(decoded.can || decoded.c || decoded["https://senaf/can"]);
+  const can = normalizeCan(
+    decoded.can ||
+      decoded.c ||
+      decoded["https://senaf/can"]
+  );
 
-  const email = String(decoded.email || decoded.e || decoded.user?.email || "").trim();
+  const email = String(
+    decoded.email || decoded.e || decoded.user?.email || ""
+  ).trim();
 
-  // backend firma `name: user.name || user.email`
-  const name = String(decoded.name || decoded.n || decoded.user?.name || "").trim();
+  const name = String(
+    decoded.name || decoded.n || decoded.user?.name || ""
+  ).trim();
 
-  return { decoded, roles, perms, can, email, name };
+  const isSuperAdmin = normalizeBool(
+    decoded.isSuperAdmin ??
+      decoded.superadmin ??
+      decoded.user?.isSuperAdmin ??
+      decoded.user?.superadmin,
+    false
+  );
+
+  return { decoded, roles, perms, can, email, name, isSuperAdmin };
+}
+
+function normalizeUserLike(u) {
+  if (!u || typeof u !== "object") return null;
+
+  const roles = uniqLower(u.roles);
+  const perms = uniqLower(u.perms || u.permissions);
+  const can = normalizeCan(u.can);
+
+  return {
+    ...u,
+    email: String(u.email || "").trim(),
+    name: String(u.name || u.nombreCompleto || "").trim(),
+    roles,
+    perms,
+    permissions: perms,
+    can,
+    isSuperAdmin: normalizeBool(u.isSuperAdmin ?? u.superadmin, false),
+    superadmin: normalizeBool(u.superadmin ?? u.isSuperAdmin, false),
+  };
 }
 
 function mergeUser(storedUser, tokenInfo) {
-  const u = storedUser && typeof storedUser === "object" ? storedUser : null;
-  const merged = { ...(u || {}) };
+  const u = normalizeUserLike(storedUser) || {};
+  const merged = { ...u };
 
   if (tokenInfo?.email) merged.email = tokenInfo.email;
   if (tokenInfo?.name) merged.name = tokenInfo.name;
 
-  // roles/perms/can SOLO del token si vienen; si no, conserva almacenado
-  const uRoles = normalizeArray(u?.roles);
-  const uPerms = normalizeArray(u?.perms);
-  const uCan = normalizeCan(u?.can);
+  const storedRoles = uniqLower(u?.roles);
+  const storedPerms = uniqLower(u?.perms || u?.permissions);
+  const storedCan = normalizeCan(u?.can);
 
-  merged.roles = tokenInfo?.roles?.length ? tokenInfo.roles : uRoles;
-  merged.perms = tokenInfo?.perms?.length ? tokenInfo.perms : uPerms;
-  merged.can = tokenInfo?.can ? tokenInfo.can : uCan;
+  const tokenRoles = uniqLower(tokenInfo?.roles);
+  const tokenPerms = uniqLower(tokenInfo?.perms);
+  const tokenCan = normalizeCan(tokenInfo?.can);
 
+  merged.roles = storedRoles.length ? storedRoles : tokenRoles;
+  merged.perms = storedPerms.length ? storedPerms : tokenPerms;
+  merged.permissions = merged.perms;
+  merged.can = storedCan || tokenCan || null;
+
+  const storedIsSuperAdmin = normalizeBool(
+    u?.isSuperAdmin ?? u?.superadmin,
+    false
+  );
+  const tokenIsSuperAdmin = normalizeBool(tokenInfo?.isSuperAdmin, false);
+
+  merged.isSuperAdmin = storedIsSuperAdmin || tokenIsSuperAdmin;
+  merged.superadmin = merged.isSuperAdmin;
   merged._hydratedAt = new Date().toISOString();
+
   return merged;
 }
 
@@ -166,10 +216,30 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setTokenState] = useState(() => getToken() || "");
   const [isLoading, setIsLoading] = useState(true);
+  const meRequestRef = useRef(0);
+  const lastSavedUserRef = useRef("");
 
-  // ✅ Un solo sync central (lo usan todos los listeners)
+  const persistUserIfChanged = useCallback((nextUser) => {
+    const payload = nextUser ? JSON.stringify(nextUser) : "";
+    if (payload === lastSavedUserRef.current) return;
+
+    lastSavedUserRef.current = payload;
+
+    try {
+      if (nextUser) {
+        localStorage.setItem(USER_KEY, payload);
+      } else {
+        localStorage.removeItem(USER_KEY);
+      }
+      window.dispatchEvent(new Event(USER_UPDATED_EVENT));
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const syncFromStorage = useCallback(() => {
     setIsLoading(true);
+
     try {
       const t = getToken() || "";
 
@@ -177,12 +247,17 @@ export function AuthProvider({ children }) {
       try {
         const rawUser = localStorage.getItem(USER_KEY);
         stored = rawUser ? safeJSONParse(rawUser) : null;
+        lastSavedUserRef.current = rawUser || "";
       } catch {
         stored = null;
+        lastSavedUserRef.current = "";
       }
 
+      const normalizedStored = normalizeUserLike(stored);
       const tokenInfo = t ? deriveAuthFromToken(t) : null;
-      const nextUser = tokenInfo ? mergeUser(stored, tokenInfo) : stored || null;
+      const nextUser = tokenInfo
+        ? mergeUser(normalizedStored, tokenInfo)
+        : normalizedStored || null;
 
       setTokenState(t);
       setUser(nextUser || null);
@@ -196,43 +271,132 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // Hidratación inicial (refresh)
+  const refreshMe = useCallback(async () => {
+    const currentToken = getToken() || "";
+    if (!currentToken) {
+      setUser(null);
+      persistUserIfChanged(null);
+      return null;
+    }
+
+    const reqId = Date.now() + Math.random();
+    meRequestRef.current = reqId;
+
+    try {
+      const res = await api.get("/iam/v1/me", {
+        headers: {
+          "Cache-Control": "no-store, no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      if (meRequestRef.current !== reqId) return null;
+
+      const payload = res?.data ?? null;
+      const nextUser = normalizeUserLike(
+        payload?.user && typeof payload.user === "object"
+          ? {
+              ...payload,
+              ...payload.user,
+              permissions:
+                payload?.permissions ||
+                payload?.perms ||
+                payload?.user?.permissions ||
+                payload?.user?.perms ||
+                [],
+              perms:
+                payload?.permissions ||
+                payload?.perms ||
+                payload?.user?.permissions ||
+                payload?.user?.perms ||
+                [],
+              roles:
+                payload?.roles ||
+                payload?.user?.roles ||
+                [],
+              can:
+                payload?.can ||
+                payload?.user?.can ||
+                null,
+              isSuperAdmin:
+                payload?.isSuperAdmin === true ||
+                payload?.superadmin === true ||
+                payload?.user?.isSuperAdmin === true ||
+                payload?.user?.superadmin === true,
+              superadmin:
+                payload?.superadmin === true ||
+                payload?.isSuperAdmin === true ||
+                payload?.user?.superadmin === true ||
+                payload?.user?.isSuperAdmin === true,
+              isVisitor:
+                payload?.isVisitor === true ||
+                payload?.visitor === true ||
+                payload?.user?.isVisitor === true ||
+                payload?.user?.visitor === true,
+              visitor:
+                payload?.visitor === true ||
+                payload?.isVisitor === true ||
+                payload?.user?.visitor === true ||
+                payload?.user?.isVisitor === true,
+            }
+          : payload
+      );
+
+      const tokenInfo = deriveAuthFromToken(currentToken);
+      const merged = nextUser ? mergeUser(nextUser, tokenInfo) : null;
+
+      setUser(merged || null);
+      persistUserIfChanged(merged || null);
+      return merged || null;
+    } catch {
+      return null;
+    }
+  }, [persistUserIfChanged]);
+
   useEffect(() => {
     syncFromStorage();
   }, [syncFromStorage]);
 
-  // Re-sync:
-  // - storage (otra pestaña)
-  // - focus (misma pestaña al volver)
-  // - USER_UPDATED_EVENT (cuando App.jsx persiste /me en senaf_user en misma tab)
-  // - TOKEN_UPDATED_EVENT (cuando lib/api.js setToken/clearToken/migración legacy en misma tab)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const currentToken = getToken() || "";
+      if (!currentToken) return;
+      if (cancelled) return;
+      await refreshMe();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshMe, token]);
+
   useEffect(() => {
     const onStorage = () => syncFromStorage();
     const onFocus = () => syncFromStorage();
-    const onUserUpdated = () => syncFromStorage();
     const onTokenUpdated = () => syncFromStorage();
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", onFocus);
-    window.addEventListener(USER_UPDATED_EVENT, onUserUpdated);
     window.addEventListener(TOKEN_UPDATED_EVENT, onTokenUpdated);
 
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", onFocus);
-      window.removeEventListener(USER_UPDATED_EVENT, onUserUpdated);
       window.removeEventListener(TOKEN_UPDATED_EVENT, onTokenUpdated);
     };
   }, [syncFromStorage]);
 
-  // bootstrap(): expone hidratación manual
   const bootstrap = useCallback(async () => {
-    return syncFromStorage();
-  }, [syncFromStorage]);
+    const hydrated = syncFromStorage();
+    const currentToken = getToken() || "";
+    if (currentToken) {
+      await refreshMe();
+    }
+    return hydrated;
+  }, [syncFromStorage, refreshMe]);
 
-  /**
-   * login(u, tkn)
-   */
   const login = useCallback(
     async (u, tkn) => {
       setIsLoading(true);
@@ -242,7 +406,6 @@ export function AuthProvider({ children }) {
 
         if (tkn) {
           const clean = String(tkn || "").trim();
-          // ✅ esto dispara TOKEN_UPDATED_EVENT desde lib/api.js
           setTokenStorage(clean);
           setTokenState(clean);
           nextToken = clean;
@@ -257,57 +420,64 @@ export function AuthProvider({ children }) {
         let nextUser = null;
 
         if (u && typeof u === "object") {
-          nextUser = tokenInfo ? mergeUser(u, tokenInfo) : u;
+          const normalizedInput = normalizeUserLike(u);
+          nextUser = tokenInfo
+            ? mergeUser(normalizedInput, tokenInfo)
+            : normalizedInput;
 
-          setUser(nextUser);
+          setUser(nextUser || null);
+          persistUserIfChanged(nextUser || null);
+        } else {
+          let stored = null;
           try {
-            localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
-            // ✅ notifica a la misma tab (por si el token no trae can/roles/perms)
-            window.dispatchEvent(new Event(USER_UPDATED_EVENT));
-          } catch {}
+            const rawUser = localStorage.getItem(USER_KEY);
+            stored = rawUser ? safeJSONParse(rawUser) : null;
+          } catch {
+            stored = null;
+          }
 
-          return nextUser;
+          const normalizedStored = normalizeUserLike(stored);
+          nextUser = tokenInfo
+            ? mergeUser(normalizedStored, tokenInfo)
+            : normalizedStored || null;
+
+          setUser(nextUser || null);
+          persistUserIfChanged(nextUser || null);
         }
 
-        let stored = null;
-        try {
-          const rawUser = localStorage.getItem(USER_KEY);
-          stored = rawUser ? safeJSONParse(rawUser) : null;
-        } catch {
-          stored = null;
+        if (nextToken) {
+          await refreshMe();
         }
 
-        nextUser = tokenInfo ? mergeUser(stored, tokenInfo) : stored || null;
-
-        setUser(nextUser || null);
         return nextUser || null;
       } finally {
         setIsLoading(false);
       }
     },
-    [token]
+    [token, persistUserIfChanged, refreshMe]
   );
 
   const logout = useCallback(() => {
     setUser(null);
     setTokenState("");
+    persistUserIfChanged(null);
 
     try {
-      localStorage.removeItem(USER_KEY);
       sessionStorage.removeItem(RETURN_TO_KEY);
-      window.dispatchEvent(new Event(USER_UPDATED_EVENT));
-    } catch {}
+    } catch {
+      // ignore
+    }
 
-    // ✅ esto dispara TOKEN_UPDATED_EVENT desde lib/api.js
     clearToken();
-  }, []);
+  }, [persistUserIfChanged]);
 
-  // returnTo helpers
   const setReturnTo = useCallback((path) => {
     if (!safeInternalPath(path)) return;
     try {
       sessionStorage.setItem(RETURN_TO_KEY, path);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   const getReturnTo = useCallback(() => {
@@ -322,16 +492,22 @@ export function AuthProvider({ children }) {
   const clearReturnTo = useCallback(() => {
     try {
       sessionStorage.removeItem(RETURN_TO_KEY);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   const value = useMemo(() => {
-    const isAuthenticated = !isLoading && !!token;
-
-    // ✅ Normalizados a minúsculas únicos
     const roles = uniqLower(user?.roles);
-    const perms = uniqLower(user?.perms);
+    const perms = uniqLower(user?.perms || user?.permissions);
     const can = user?.can && typeof user.can === "object" ? user.can : null;
+    const isSuperAdmin = normalizeBool(
+      user?.isSuperAdmin ?? user?.superadmin,
+      false
+    );
+
+    const isAuthenticated =
+      !isLoading && (!!String(token || "").trim() || !!String(user?.email || "").trim());
 
     const isVisitor = roles.includes("visita") || roles.includes("visitor");
 
@@ -341,30 +517,28 @@ export function AuthProvider({ children }) {
       String(user?.email || "").trim() ||
       "";
 
-    // ✅ Helpers centralizados (nadie duplica)
-    const hasPerm = (p) => hasPermImpl(perms, p);
+    const hasPerm = (p) => isSuperAdmin || hasPermImpl(perms, p);
     const hasRole = (r) => hasRoleImpl(roles, r);
     const requirePerm = (p) => isAuthenticated && hasPerm(p);
 
-    /**
-     * ✅ Flags “like” (consumidos por UI como ScanPage)
-     * - NO inventan roles/perms: solo consultan roles/perms/can ya provistos.
-     */
     const isAdminLike =
+      isSuperAdmin ||
       hasPerm("*") ||
       hasRole("admin") ||
-      can?.["rondasqr.admin"] === true ||
-      hasPerm("rondasqr.admin") ||
-      can?.["iam.admin"] === true ||
-      hasPerm("iam.admin");
+      hasPerm("iam.users.write") ||
+      hasPerm("iam.roles.write") ||
+      hasPerm("iam.users.manage") ||
+      hasPerm("iam.roles.manage") ||
+      can?.["iam.admin"] === true;
 
     const isSupervisorLike =
       isAdminLike ||
       hasRole("supervisor") ||
-      can?.["rondasqr.reports"] === true ||
-      can?.["rondasqr.view"] === true ||
+      hasPerm("rondasqr.reports.read") ||
       hasPerm("rondasqr.reports") ||
-      hasPerm("rondasqr.view");
+      hasPerm("rondasqr.view") ||
+      can?.["rondasqr.reports"] === true ||
+      can?.["rondasqr.view"] === true;
 
     return {
       user,
@@ -374,8 +548,10 @@ export function AuthProvider({ children }) {
 
       roles,
       perms,
+      permissions: perms,
       can,
       isVisitor,
+      isSuperAdmin,
       displayName,
 
       hasPerm,
@@ -388,6 +564,7 @@ export function AuthProvider({ children }) {
       login,
       logout,
       bootstrap,
+      refreshMe,
 
       setReturnTo,
       getReturnTo,
@@ -400,6 +577,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     bootstrap,
+    refreshMe,
     setReturnTo,
     getReturnTo,
     clearReturnTo,
@@ -413,5 +591,3 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth debe usarse dentro de <AuthProvider />");
   return ctx;
 }
-
-

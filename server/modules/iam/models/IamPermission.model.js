@@ -1,6 +1,23 @@
 // server/modules/iam/models/IamPermission.model.js
 import mongoose from "mongoose";
 
+function normKey(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normGroup(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function normLabel(v) {
+  return String(v || "").trim();
+}
+
+function normOrder(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
 const schema = new mongoose.Schema(
   {
     key: {
@@ -9,12 +26,15 @@ const schema = new mongoose.Schema(
       unique: true,
       trim: true,
       lowercase: true,
+      set: normKey,
     },
 
     label: {
       type: String,
       required: true,
       trim: true,
+      default: "",
+      set: normLabel,
     },
 
     group: {
@@ -22,59 +42,66 @@ const schema = new mongoose.Schema(
       required: true,
       trim: true,
       lowercase: true,
+      default: "",
+      set: normGroup,
     },
 
     order: {
       type: Number,
       default: 0,
+      set: normOrder,
     },
   },
   {
     timestamps: true,
-    collection: "iam_permissions",  
+    collection: "iam_permissions",
   }
 );
 
-// Índice para orden por grupo
+// índices
+schema.index({ key: 1 }, { unique: true });
 schema.index({ group: 1, order: 1 });
 
-// Normaliza strings
+// normalización al guardar
 schema.pre("save", function (next) {
-  if (this.isModified("key") && typeof this.key === "string") {
-    this.key = this.key.trim().toLowerCase();
-  }
-  if (this.isModified("group") && typeof this.group === "string") {
-    this.group = this.group.trim().toLowerCase();
-  }
-  if (this.isModified("label") && typeof this.label === "string") {
-    this.label = this.label.trim();
-  }
-  if (this.isModified("order")) {
-    const n = Number(this.order);
-    this.order = Number.isFinite(n) ? Math.trunc(n) : 0;
-  }
+  this.key = normKey(this.key);
+  this.group = normGroup(this.group);
+  this.label = normLabel(this.label);
+  this.order = normOrder(this.order);
   next();
 });
 
+// normalización en updates
 schema.pre("findOneAndUpdate", function (next) {
   const u = this.getUpdate() || {};
-  const setObj = u.$set && typeof u.$set === "object" ? u.$set : u;
 
-  if (setObj.key && typeof setObj.key === "string") {
-    setObj.key = setObj.key.trim().toLowerCase();
+  if (typeof u?.key === "string") {
+    u.key = normKey(u.key);
   }
-  if (setObj.group && typeof setObj.group === "string") {
-    setObj.group = setObj.group.trim().toLowerCase();
-  }
-  if (setObj.label && typeof setObj.label === "string") {
-    setObj.label = setObj.label.trim();
-  }
-  if (setObj.order != null) {
-    const n = Number(setObj.order);
-    setObj.order = Number.isFinite(n) ? Math.trunc(n) : 0;
+  if (typeof u?.$set?.key === "string") {
+    u.$set.key = normKey(u.$set.key);
   }
 
-  if (u.$set) u.$set = setObj;
+  if (u?.label !== undefined) {
+    u.label = normLabel(u.label);
+  }
+  if (u?.$set?.label !== undefined) {
+    u.$set.label = normLabel(u.$set.label);
+  }
+
+  if (typeof u?.group === "string") {
+    u.group = normGroup(u.group);
+  }
+  if (typeof u?.$set?.group === "string") {
+    u.$set.group = normGroup(u.$set.group);
+  }
+
+  if (u?.order !== undefined) {
+    u.order = normOrder(u.order);
+  }
+  if (u?.$set?.order !== undefined) {
+    u.$set.order = normOrder(u.$set.order);
+  }
 
   this.setUpdate(u);
   next();

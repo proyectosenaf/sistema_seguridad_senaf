@@ -1,5 +1,5 @@
 // client/src/components/ProtectedRoute.jsx
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
@@ -14,8 +14,22 @@ const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();
 const MODE = String(import.meta.env.MODE || "").toLowerCase();
 const IS_PROD = VITE_ENV === "production" || MODE === "production";
 
+const RETURN_TO_KEY = "auth:returnTo";
+
+function readAnyToken() {
+  try {
+    return (
+      localStorage.getItem("senaf_token") ||
+      localStorage.getItem("token") ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
 export default function ProtectedRoute({ children }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user, token } = useAuth();
   const location = useLocation();
 
   // Solo permitir “sin auth” en DEV/local. Nunca en PROD.
@@ -28,19 +42,37 @@ export default function ProtectedRoute({ children }) {
     );
   }, []);
 
+  const fallbackToken = readAnyToken();
+  const effectiveToken = String(token || fallbackToken || "").trim();
+  const hasUserIdentity = !!String(user?.email || "").trim();
+  const isActuallyAuthenticated =
+    !!isAuthenticated || !!effectiveToken || hasUserIdentity;
+
+  useEffect(() => {
+    if (skipVerify) return;
+    if (isLoading) return;
+    if (isActuallyAuthenticated) return;
+
+    const returnTo = location.pathname + location.search;
+    try {
+      sessionStorage.setItem(RETURN_TO_KEY, returnTo);
+    } catch {
+      // ignore
+    }
+  }, [skipVerify, isLoading, isActuallyAuthenticated, location.pathname, location.search]);
+
   // ✅ Localhost con modo libre (DEV)
   if (skipVerify) return <>{children}</>;
 
   // ✅ Loading
-  if (isLoading) return <div className="p-6">Cargando…</div>;
-
-  // ✅ Fallback: si AuthProvider aún no “marca” authenticated pero ya hay token
-  const token =
-    localStorage.getItem("senaf_token") || localStorage.getItem("token");
+  if (isLoading) {
+    return <div className="p-6">Cargando…</div>;
+  }
 
   // ✅ No autenticado: manda a /login y guarda returnTo
-  if (!isAuthenticated && !token) {
+  if (!isActuallyAuthenticated) {
     const returnTo = location.pathname + location.search;
+
     return (
       <Navigate
         to="/login"

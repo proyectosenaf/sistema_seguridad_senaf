@@ -1,5 +1,5 @@
 // client/src/modules/rondasqr/guard/SidebarGuard.jsx
-import React from "react";
+import React, { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, MessageSquare, LogOut } from "lucide-react";
 
@@ -15,58 +15,109 @@ const ROUTE_LOGIN =
 const ROUTE_RONDAS_SCAN = "/rondasqr/scan";
 const ROUTE_INCIDENTE_NUEVO = "/incidentes/nuevo?from=ronda";
 
-// Consistencia de keys
 const USER_KEY = "senaf_user";
 const RETURN_TO_KEY = "auth:returnTo";
 const VISITOR_HINT_KEY = "senaf_is_visitor";
 
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map(String);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      normalizeArray(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizeCan(v) {
+  if (!v) return {};
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+  return {};
+}
+
 function resolvePrincipal(user) {
   if (!user || typeof user !== "object") return null;
 
-  if (user.user && typeof user.user === "object") {
-    return {
-      ...user.user,
-      can:
-        user?.can && typeof user.can === "object"
-          ? user.can
-          : user?.user?.can && typeof user.user.can === "object"
-          ? user.user.can
-          : {},
-      superadmin:
-        user?.superadmin === true ||
-        user?.isSuperAdmin === true ||
-        user?.user?.superadmin === true ||
-        user?.user?.isSuperAdmin === true,
-    };
-  }
+  const base =
+    user.user && typeof user.user === "object"
+      ? { ...user.user, ...user }
+      : { ...user };
+
+  const roles = uniqLower(base.roles);
+  const perms = uniqLower(base.perms || base.permissions);
+  const can = normalizeCan(base.can);
 
   return {
-    ...user,
-    can: user?.can && typeof user.can === "object" ? user.can : {},
-    superadmin: user?.superadmin === true || user?.isSuperAdmin === true,
+    ...base,
+    roles,
+    perms,
+    permissions: perms,
+    can,
+    superadmin:
+      base?.superadmin === true || base?.isSuperAdmin === true,
+    isSuperAdmin:
+      base?.isSuperAdmin === true || base?.superadmin === true,
   };
 }
 
+function hasPermLike(principal, key) {
+  const perms = uniqLower(principal?.perms || principal?.permissions);
+  const wanted = String(key || "").trim().toLowerCase();
+  if (!wanted) return false;
+  return perms.includes("*") || perms.includes(wanted);
+}
+
+function hasCanLike(principal, key) {
+  const can = normalizeCan(principal?.can);
+  return can?.[key] === true;
+}
+
 export default function SidebarGuard({
-  variant = "desktop", // "desktop" | "mobile"
+  variant = "desktop",
   onCloseMobile,
   onSendAlert,
   asGlobal = false,
 }) {
   const navigate = useNavigate();
-  const { logout, user } = useAuth();
-  const principal = resolvePrincipal(user) || {};
+  const { logout, user, hasPerm, isSuperAdmin } = useAuth();
+  const principal = useMemo(() => resolvePrincipal(user) || {}, [user]);
 
   if (asGlobal) return null;
+
+  const canSendPanic =
+    isSuperAdmin ||
+    hasPerm?.("rondasqr.panic.write") ||
+    hasPermLike(principal, "rondasqr.panic.write") ||
+    hasPermLike(principal, "rondasqr.panic.send") ||
+    hasCanLike(principal, "rondasqr.scan") ||
+    hasCanLike(principal, "nav.rondas");
+
+  const canCreateIncident =
+    isSuperAdmin ||
+    hasPerm?.("incidentes.records.write") ||
+    hasPerm?.("incidentes.create") ||
+    hasPermLike(principal, "incidentes.records.write") ||
+    hasPermLike(principal, "incidentes.create") ||
+    hasCanLike(principal, "nav.incidentes");
 
   async function doLogout() {
     try {
       await iamApi.logout?.();
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     try {
       await logout?.();
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     try {
       clearToken();
@@ -83,7 +134,9 @@ export default function SidebarGuard({
       sessionStorage.removeItem("senaf_otp_flow");
       sessionStorage.removeItem("senaf_pwreset_token");
       sessionStorage.removeItem("senaf_otp_mustChange");
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     if (variant === "mobile" && typeof onCloseMobile === "function") {
       onCloseMobile();
@@ -93,6 +146,11 @@ export default function SidebarGuard({
   }
 
   async function handleAlert() {
+    if (!canSendPanic) {
+      window.alert("No tienes permiso para enviar alertas de pánico.");
+      return;
+    }
+
     if (typeof onSendAlert === "function") {
       await onSendAlert();
       if (variant === "mobile" && typeof onCloseMobile === "function") {
@@ -119,7 +177,9 @@ export default function SidebarGuard({
           );
         });
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     try {
       await rondasqrApi.panic(gps);
@@ -146,6 +206,11 @@ export default function SidebarGuard({
   }
 
   function handleMsg() {
+    if (!canCreateIncident) {
+      window.alert("No tienes permiso para crear mensajes/incidentes.");
+      return;
+    }
+
     if (variant === "mobile" && typeof onCloseMobile === "function") {
       onCloseMobile();
     }
@@ -173,6 +238,15 @@ export default function SidebarGuard({
     background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
     color: "var(--text)",
     boxShadow: "var(--shadow-sm)",
+  };
+
+  const disabledItemStyle = {
+    border: "1px solid var(--border)",
+    background: "color-mix(in srgb, var(--card-solid) 70%, transparent)",
+    color: "var(--text-muted)",
+    boxShadow: "none",
+    opacity: 0.65,
+    cursor: "not-allowed",
   };
 
   const dangerItemStyle = {
@@ -207,8 +281,14 @@ export default function SidebarGuard({
         <button
           type="button"
           onClick={handleAlert}
+          disabled={!canSendPanic}
           className={itemBase}
-          style={neutralItemStyle}
+          style={canSendPanic ? neutralItemStyle : disabledItemStyle}
+          title={
+            canSendPanic
+              ? "Enviar alerta"
+              : "No tienes permiso para enviar alertas"
+          }
         >
           <AlertTriangle
             size={18}
@@ -223,8 +303,14 @@ export default function SidebarGuard({
         <button
           type="button"
           onClick={handleMsg}
+          disabled={!canCreateIncident}
           className={itemBase}
-          style={neutralItemStyle}
+          style={canCreateIncident ? neutralItemStyle : disabledItemStyle}
+          title={
+            canCreateIncident
+              ? "Crear incidente"
+              : "No tienes permiso para crear incidentes"
+          }
         >
           <MessageSquare
             size={18}

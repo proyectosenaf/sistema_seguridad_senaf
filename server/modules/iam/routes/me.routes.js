@@ -15,7 +15,7 @@ function withTimeout(promise, ms, label = "op") {
 }
 
 /* =========================
-   Helpers de autorización
+   Helpers
 ========================= */
 function asArr(v) {
   if (!v) return [];
@@ -52,6 +52,7 @@ function getSuperadminEmails() {
     [
       process.env.SUPERADMIN_EMAIL,
       process.env.VITE_SUPERADMIN_EMAIL,
+      process.env.ROOT_ADMINS,
       "proyectosenaf@gmail.com",
     ]
       .flatMap((v) =>
@@ -69,17 +70,19 @@ function isSuperadminEmail(email) {
   return getSuperadminEmails().includes(e);
 }
 
-function buildEvaluator({ roles = [], perms = [] }) {
-  const roleSet = new Set(normalizeRolesArr(roles));
+/* =========================
+   Evaluador SOLO por permisos
+   (sin usar roles como permisos)
+========================= */
+function buildEvaluator({ perms = [], isSuperAdmin = false }) {
   const normalizedPerms = normalizePermsArr(perms);
   const permSet = new Set(normalizedPerms);
   const permSetLower = new Set(normalizedPerms.map((p) => p.toLowerCase()));
 
   const hasWildcard =
+    isSuperAdmin ||
     permSet.has("*") ||
-    permSetLower.has("*") ||
-    roleSet.has("admin") ||
-    roleSet.has("administrador");
+    permSetLower.has("*");
 
   const tokenMatches = (k) => {
     if (!k) return false;
@@ -88,7 +91,7 @@ function buildEvaluator({ roles = [], perms = [] }) {
     const raw = String(k).trim();
     const low = raw.toLowerCase();
 
-    return permSet.has(raw) || permSetLower.has(low) || roleSet.has(low);
+    return permSet.has(raw) || permSetLower.has(low);
   };
 
   const hasPerm = (p) => (!p ? true : tokenMatches(p));
@@ -111,15 +114,15 @@ function buildEvaluator({ roles = [], perms = [] }) {
     if (rules.requirePerm) ok = ok && hasPerm(rules.requirePerm);
     if (asArr(rules.anyOf).length) ok = ok && hasAny(rules.anyOf);
     if (asArr(rules.allOf).length) ok = ok && hasAll(rules.allOf);
-    if (asArr(rules.requireRole).length) ok = ok && hasAny(rules.requireRole);
     return ok;
   };
 
-  return { roleSet, permSet, permSetLower, hasWildcard, canAccess, tokenMatches };
+  return { permSet, permSetLower, hasWildcard, canAccess, tokenMatches };
 }
 
 /* =========================
    Route rules centralizadas
+   Compatibles, pero SOLO con permisos
 ========================= */
 function buildRouteRules() {
   return {
@@ -131,6 +134,7 @@ function buildRouteRules() {
         "accesos.read",
         "accesos.write",
         "accesos.export",
+        "accesos.ver",
         "accesos",
         "*",
       ],
@@ -162,16 +166,27 @@ function buildRouteRules() {
         "rondasqr.qr.read",
         "rondasqr.qr.generate",
         "rondasqr.qr.export",
+
+        // aliases legacy
         "rondas.scan",
         "rondas.reports",
         "rondas.admin",
         "rondasqr.scan",
         "rondasqr.reports",
         "rondasqr.admin",
-        "guardia",
-        "supervisor",
-        "administrador_it",
-        "ti",
+        "rondasqr.view",
+        "rondasqr.create",
+        "rondasqr.edit",
+        "rondasqr.delete",
+        "rondasqr.export",
+        "rondasqr.reports.view",
+        "rondasqr.reports.export_pdf",
+        "rondasqr.scan.qr",
+        "rondasqr.checks.create",
+        "rondasqr.checks.update",
+        "rondasqr.panic.send",
+        "rondasqr.offline.use",
+        "rondasqr.offline.dump",
         "*",
       ],
     },
@@ -185,6 +200,8 @@ function buildRouteRules() {
         "incidentes.evidences.write",
         "incidentes.reports.read",
         "incidentes.reports.export",
+
+        // aliases legacy
         "incidentes.read",
         "incidentes.create",
         "incidentes.edit",
@@ -195,6 +212,7 @@ function buildRouteRules() {
         "incidentes.export",
         "incidentes.list",
         "incidentes.ver",
+        "incidentes.crear",
         "incidentes",
         "*",
       ],
@@ -206,6 +224,8 @@ function buildRouteRules() {
         "visitas.records.write",
         "visitas.records.close",
         "visitas.reports.export",
+
+        // aliases legacy
         "visitas.read",
         "visitas.write",
         "visitas.close",
@@ -222,6 +242,8 @@ function buildRouteRules() {
         "bitacora.records.read",
         "bitacora.records.write",
         "bitacora.reports.export",
+
+        // aliases legacy
         "bitacora.read",
         "bitacora.write",
         "bitacora.export",
@@ -238,8 +260,11 @@ function buildRouteRules() {
         "iam.roles.read",
         "iam.roles.write",
         "iam.audit.read",
+
+        // aliases legacy
         "iam.users.view",
         "iam.users.manage",
+        "iam.roles.view",
         "iam.roles.manage",
         "iam.audit.view",
         "iam.usuarios.gestionar",
@@ -256,10 +281,16 @@ function buildRouteRules() {
         "iam.roles.read",
         "iam.roles.write",
         "iam.audit.read",
+
+        // aliases legacy
+        "iam.users.view",
         "iam.users.manage",
+        "iam.roles.view",
         "iam.roles.manage",
+        "iam.audit.view",
         "iam.usuarios.gestionar",
         "iam.roles.gestionar",
+        "iam.admin",
         "*",
       ],
     },
@@ -324,9 +355,13 @@ function buildRouteRules() {
         "rondasqr.scan.execute",
         "rondasqr.scan.manual",
         "rondasqr.checks.write",
+
+        // aliases legacy
         "rondas.scan",
         "rondasqr.scan",
-        "guardia",
+        "rondasqr.scan.qr",
+        "rondasqr.checks.create",
+        "rondasqr.checks.update",
         "*",
       ],
     },
@@ -339,9 +374,12 @@ function buildRouteRules() {
         "rondasqr.reports.print",
         "rondasqr.reports.map",
         "rondasqr.reports.highlight",
+
+        // aliases legacy
         "rondas.reports",
         "rondasqr.reports",
-        "supervisor",
+        "rondasqr.reports.view",
+        "rondasqr.reports.export_pdf",
         "*",
       ],
     },
@@ -359,10 +397,15 @@ function buildRouteRules() {
         "rondasqr.qr.read",
         "rondasqr.qr.generate",
         "rondasqr.qr.export",
+
+        // aliases legacy
         "rondas.admin",
         "rondasqr.admin",
-        "ti",
-        "administrador_it",
+        "rondasqr.view",
+        "rondasqr.create",
+        "rondasqr.edit",
+        "rondasqr.delete",
+        "rondasqr.export",
         "*",
       ],
     },
@@ -379,16 +422,18 @@ function buildRouteRules() {
         "rondasqr.reports.read",
         "rondasqr.assignments.read",
         "rondasqr.rounds.read",
+
+        // aliases legacy
         "rondas.scan",
         "rondas.reports",
         "rondas.admin",
         "rondasqr.scan",
         "rondasqr.reports",
         "rondasqr.admin",
-        "guardia",
-        "supervisor",
-        "administrador_it",
-        "ti",
+        "rondasqr.scan.qr",
+        "rondasqr.reports.view",
+        "rondasqr.panic.send",
+        "rondasqr.offline.use",
         "*",
       ],
     },
@@ -406,11 +451,15 @@ function buildRouteRules() {
         "rondasqr.qr.read",
         "rondasqr.qr.generate",
         "rondasqr.qr.export",
+
+        // aliases legacy
         "rondas.admin",
         "rondasqr.admin",
-        "supervisor",
-        "administrador_it",
-        "ti",
+        "rondasqr.view",
+        "rondasqr.create",
+        "rondasqr.edit",
+        "rondasqr.delete",
+        "rondasqr.export",
         "*",
       ],
     },
@@ -423,11 +472,12 @@ function buildRouteRules() {
         "rondasqr.reports.print",
         "rondasqr.reports.map",
         "rondasqr.reports.highlight",
+
+        // aliases legacy
         "rondas.reports",
         "rondasqr.reports",
-        "supervisor",
-        "administrador_it",
-        "ti",
+        "rondasqr.reports.view",
+        "rondasqr.reports.export_pdf",
         "*",
       ],
     },
@@ -436,6 +486,7 @@ function buildRouteRules() {
 
 /* =========================
    DefaultRoute desde backend
+   Mantiene UX sin otorgar permisos falsos
 ========================= */
 function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = false }) {
   if (isSuperAdmin) return "/iam/admin";
@@ -444,35 +495,53 @@ function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = fals
   const Praw = normalizePermsArr(perms);
   const P = new Set(Praw);
   const Plow = new Set(Praw.map((p) => p.toLowerCase()));
-
-  const hasWildcard = P.has("*") || Plow.has("*") || R.has("admin") || R.has("administrador");
+  const hasWildcard = P.has("*") || Plow.has("*");
 
   if (visitor) return "/visitas/agenda";
 
-  if (hasWildcard || R.has("ti") || R.has("administrador_it")) return "/iam/admin";
+  // Preferimos permisos reales antes que roles
+  const hasIamAdmin =
+    hasWildcard ||
+    P.has("iam.users.write") ||
+    P.has("iam.roles.write") ||
+    Plow.has("iam.users.write") ||
+    Plow.has("iam.roles.write") ||
+    P.has("iam.users.manage") ||
+    P.has("iam.roles.manage") ||
+    Plow.has("iam.users.manage") ||
+    Plow.has("iam.roles.manage");
+
+  const hasRondasPanel =
+    hasWildcard ||
+    P.has("rondasqr.scan.execute") ||
+    P.has("rondasqr.scan.manual") ||
+    P.has("rondasqr.reports.read") ||
+    P.has("rondasqr.assignments.read") ||
+    P.has("rondasqr.rounds.read") ||
+    P.has("rondas.scan") ||
+    P.has("rondas.reports") ||
+    P.has("rondas.admin") ||
+    P.has("rondasqr.scan") ||
+    P.has("rondasqr.reports") ||
+    P.has("rondasqr.admin");
+
+  const hasVisitasControl =
+    hasWildcard ||
+    P.has("visitas.records.read") ||
+    P.has("visitas.records.write") ||
+    P.has("visitas.records.close") ||
+    P.has("visitas.control") ||
+    P.has("visitas.manage");
+
+  if (hasIamAdmin) return "/iam/admin";
+  if (hasRondasPanel) return "/rondasqr";
+  if (hasVisitasControl) return "/visitas/control";
+
+  // fallback de UX
   if (R.has("guardia")) return "/rondasqr";
   if (R.has("supervisor")) return "/rondasqr";
   if (R.has("recepcion")) return "/visitas/control";
   return "/";
-}
-
-/* =========================
-   Admin-like (nunca visitor)
-========================= */
-function isAdminLike({ roles = [], perms = [], isSuperAdmin = false }) {
-  if (isSuperAdmin) return true;
-
-  const R = new Set(normalizeRolesArr(roles));
-  const Praw = normalizePermsArr(perms);
-  const Plow = new Set(Praw.map((p) => p.toLowerCase()));
-
-  if (Plow.has("*")) return true;
-
-  if (R.has("admin") || R.has("administrador") || R.has("ti") || R.has("administrador_it")) {
-    return true;
-  }
-
-  return false;
 }
 
 function buildAllFalseCan(routeRules) {
@@ -483,7 +552,15 @@ function buildAllTrueCan(routeRules) {
   return Object.fromEntries(Object.keys(routeRules).map((k) => [k, true]));
 }
 
-function shapeUser({ id = "", email = null, name = "", roles = [], perms = [], can = {}, superadmin = false }) {
+function shapeUser({
+  id = "",
+  email = null,
+  name = "",
+  roles = [],
+  perms = [],
+  can = {},
+  superadmin = false,
+}) {
   return {
     id: String(id || ""),
     email,
@@ -512,7 +589,6 @@ r.get("/", async (req, res, next) => {
     const ctxUserEmail = String(ctx?.user?.email || "").toLowerCase().trim() || null;
     const resolvedEmail = ctxUserEmail || ctxEmail || null;
 
-    // ✅ HARD-PASS real por correo superadmin
     const forcedSuperadmin = isSuperadminEmail(resolvedEmail);
     const isSuperAdmin = !!ctx?.isSuperAdmin || forcedSuperadmin;
 
@@ -548,11 +624,16 @@ r.get("/", async (req, res, next) => {
         mustChangePassword: false,
         routeRules,
         can,
-        defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions, isSuperAdmin: false }),
+        defaultRoute: pickDefaultRoute({
+          visitor,
+          roles,
+          perms: permissions,
+          isSuperAdmin: false,
+        }),
       });
     }
 
-    // ✅ Si es el correo superadmin, no importa si ctx.user falló
+    // 2) Si es superadmin por correo, permitir incluso si user no resolvió
     if (!ctx?.user && forcedSuperadmin) {
       const roles = ["admin"];
       const permissions = ["*"];
@@ -584,7 +665,7 @@ r.get("/", async (req, res, next) => {
       });
     }
 
-    // 2) Hay email pero no se resolvió usuario
+    // 3) Hay email pero no user resuelto
     if (!ctx?.user) {
       const visitor = true;
       const roles = ["visita"];
@@ -644,7 +725,6 @@ r.get("/", async (req, res, next) => {
     roles = normalizeRolesArr(roles);
     permissions = normalizePermsArr(permissions);
 
-    // ✅ hard-pass definitivo superadmin
     if (isSuperAdmin) {
       roles = ["admin"];
       permissions = ["*"];
@@ -659,20 +739,20 @@ r.get("/", async (req, res, next) => {
       // ignore
     }
 
-    const adminLike = isAdminLike({ roles, perms: permissions, isSuperAdmin });
     const visitorRaw = !!u?.visitor || !!u?.isVisitor || isVisitorByRoles(roles);
-    const visitor = adminLike ? false : visitorRaw;
+    const visitor = isSuperAdmin ? false : visitorRaw;
 
-    const evalr = buildEvaluator({ roles, perms: permissions });
+    const evalr = buildEvaluator({ perms: permissions, isSuperAdmin });
 
     let can = Object.fromEntries(
       Object.entries(routeRules).map(([k, rules]) => [k, !!evalr.canAccess(rules)])
     );
 
-    if (adminLike || isSuperAdmin) {
+    if (isSuperAdmin) {
       can = buildAllTrueCan(routeRules);
     }
 
+    // visitante: UX limitada solo a visitas
     if (visitor && !isSuperAdmin) {
       can = buildAllFalseCan(routeRules);
       can["nav.visitas"] = true;
@@ -703,7 +783,12 @@ r.get("/", async (req, res, next) => {
       mustChangePassword,
       routeRules,
       can,
-      defaultRoute: pickDefaultRoute({ visitor, roles, perms: permissions, isSuperAdmin }),
+      defaultRoute: pickDefaultRoute({
+        visitor,
+        roles,
+        perms: permissions,
+        isSuperAdmin,
+      }),
     });
   } catch (e) {
     if (String(e?.message || "").startsWith("[timeout]")) {

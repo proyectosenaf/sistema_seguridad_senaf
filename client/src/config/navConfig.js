@@ -59,26 +59,68 @@ export const NAV_SECTIONS = [
   },
 ];
 
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map(String);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      normalizeArray(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizeCan(v) {
+  if (!v) return null;
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 /**
  * Extrae objeto de sesión usable
  */
 function resolvePrincipal(me) {
   if (!me || typeof me !== "object") return null;
 
-  // si ya viene plano
-  if (me.can || me.superadmin === true || me.isSuperAdmin === true) return me;
+  const nestedUser =
+    me.user && typeof me.user === "object" ? me.user : null;
 
-  // compat si viene anidado
-  if (me.user && typeof me.user === "object") {
-    return {
-      ...me.user,
-      can: me.can || me.user.can || null,
-      superadmin: me.superadmin === true || me.user.superadmin === true,
-      isSuperAdmin: me.isSuperAdmin === true || me.user.isSuperAdmin === true,
-    };
-  }
+  const source = nestedUser
+    ? { ...nestedUser, ...me }
+    : { ...me };
 
-  return me;
+  const roles = uniqLower(source.roles);
+  const permissions = uniqLower(source.permissions || source.perms);
+  const can = normalizeCan(source.can);
+
+  return {
+    ...source,
+    roles,
+    permissions,
+    perms: permissions,
+    can,
+    superadmin:
+      source.superadmin === true || source.isSuperAdmin === true,
+    isSuperAdmin:
+      source.isSuperAdmin === true || source.superadmin === true,
+  };
 }
 
 /**

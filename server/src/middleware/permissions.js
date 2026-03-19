@@ -1,11 +1,9 @@
 // server/src/middleware/permissions.js
 import { buildContextFrom } from "../../modules/iam/utils/rbac.util.js";
 
-/**
- * Asegura que exista req.iam (contexto IAM)
- * - Si ya existe, no recalcula
- * - Si no, lo construye desde IAM (JWT -> email -> IamUser -> roles -> permisos)
- */
+/* =========================
+   CONTEXTO IAM
+========================= */
 async function ensureIam(req) {
   if (req.iam) return req.iam;
   const ctx = await buildContextFrom(req);
@@ -14,14 +12,12 @@ async function ensureIam(req) {
 }
 
 function isAuthed(ctx) {
-  // En tu nuevo modelo sin Auth0, identidad = email válido
   return !!ctx?.email;
 }
 
-/**
- * requirePerm("incidentes.read")
- * Permite acceso si el usuario posee el permiso exacto o "*"
- */
+/* =========================
+   PERMISO ÚNICO
+========================= */
 export function requirePerm(perm) {
   return async (req, res, next) => {
     try {
@@ -31,7 +27,10 @@ export function requirePerm(perm) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
 
-      const ok = typeof ctx.has === "function" ? ctx.has(perm) : false;
+      const ok =
+        typeof ctx.has === "function"
+          ? ctx.has(perm)
+          : false;
 
       if (!ok) {
         return res.status(403).json({
@@ -52,10 +51,9 @@ export function requirePerm(perm) {
   };
 }
 
-/**
- * requireAnyPerm("a", "b", "c")
- * Permite acceso si el usuario tiene al menos uno
- */
+/* =========================
+   ANY OF PERMS
+========================= */
 export function requireAnyPerm(...perms) {
   return async (req, res, next) => {
     try {
@@ -89,18 +87,16 @@ export function requireAnyPerm(...perms) {
   };
 }
 
-/**
- * Alias compatible con tus routers:
- * requirePermission("a","b")
- */
+/* =========================
+   ALIAS
+========================= */
 export function requirePermission(...perms) {
   return requireAnyPerm(...perms);
 }
 
-/**
- * requireRole("admin")
- * Rol viene desde IAM (IamUser.roles)
- */
+/* =========================
+   ROLE CHECK (solo si lo necesitas)
+========================= */
 export function requireRole(...rolesAllowed) {
   return async (req, res, next) => {
     try {
@@ -136,10 +132,9 @@ export function requireRole(...rolesAllowed) {
   };
 }
 
-/**
- * requireAdmin
- * Admin real = rol "admin" o permiso "*"
- */
+/* =========================
+   ADMIN REAL (CORREGIDO)
+========================= */
 export async function requireAdmin(req, res, next) {
   try {
     const ctx = await ensureIam(req);
@@ -148,22 +143,23 @@ export async function requireAdmin(req, res, next) {
       return res.status(401).json({ ok: false, message: "No autenticado" });
     }
 
-    const roles = (ctx.roles || []).map((r) =>
-      String(r).toLowerCase()
-    );
+    // ✅ SUPERADMIN bypass
+    if (ctx.isSuperAdmin) {
+      return next();
+    }
 
-    const perms = Array.isArray(ctx.permissions)
-      ? ctx.permissions
-      : [];
-
-    const ok = perms.includes("*") || roles.includes("admin");
+    // ✅ ADMIN ahora basado en permisos reales (no roles)
+    const ok =
+      typeof ctx.has === "function"
+        ? ctx.has("iam.users.write") || ctx.has("iam.roles.write")
+        : false;
 
     if (!ok) {
       return res.status(403).json({
         ok: false,
         message: "Acceso solo para administradores",
-        roles,
-        permissions: perms,
+        roles: ctx.roles || [],
+        permissions: ctx.permissions || [],
         email: ctx.email || null,
       });
     }

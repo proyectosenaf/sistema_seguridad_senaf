@@ -1,5 +1,4 @@
-
-// server/src/server.js  ✅ SIN DUPLICADOS (OTP solo PUBLIC) + registerIAMModule arreglado
+// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -62,7 +61,7 @@ import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync
 const app = express();
 app.set("trust proxy", 1);
 
-// ✅ SOLUCIÓN REAL: deshabilita ETag global en Express (evita 304 por If-None-Match)
+// ✅ evita 304 por If-None-Match en API
 app.set("etag", false);
 
 /* ───────────────────── ENV / MODOS ───────────────────── */
@@ -103,6 +102,10 @@ const corsOptions = {
     "Content-Type",
     "Authorization",
     "x-user-email",
+    "x-user-roles",
+    "x-user-perms",
+    "x-roles",
+    "x-perms",
     "Cache-Control",
     "Pragma",
     "Expires",
@@ -129,9 +132,7 @@ app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
 /**
- * ✅ SOLUCIÓN REAL: Anti-cache para TODA la API (PROD y DEV)
- * Esto evita que roles/permisos/me se queden cacheados y que el navegador pida 304.
- * Se aplica SOLO a /api para no afectar estáticos/frontend.
+ * ✅ Anti-cache para TODA la API
  */
 app.use("/api", (req, res, next) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -192,6 +193,7 @@ app.get("/api/health", (_req, res) =>
     disableAuth: DISABLE_AUTH,
   })
 );
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 /* ───────────────────── ✅ AUTH OTP PÚBLICO ✅ ───────────────────── */
@@ -268,8 +270,12 @@ const requireAuth = makeAuthMw();
 
 function optionalAuth(req, res, next) {
   if (DISABLE_AUTH) return next();
+
   const h = String(req.headers.authorization || "");
-  if (h.toLowerCase().startsWith("bearer ")) return requireAuth(req, res, next);
+  if (h.toLowerCase().startsWith("bearer ")) {
+    return requireAuth(req, res, next);
+  }
+
   return next();
 }
 app.use(optionalAuth);
@@ -287,13 +293,23 @@ function attachAuthUser(req, _res, next) {
 }
 app.use(attachAuthUser);
 
+/**
+ * ✅ Construye req.iam solo cuando realmente hay identidad.
+ * No rompe públicos, no recalcula si ya existe.
+ */
 app.use(async (req, _res, next) => {
   try {
+    if (req.iam) return next();
+
     const hasPayload = !!req?.auth?.payload;
-    const hasBearer = String(req.headers.authorization || "").toLowerCase().startsWith("bearer ");
+    const hasBearer = String(req.headers.authorization || "")
+      .toLowerCase()
+      .startsWith("bearer ");
     const hasDevEmail = !!req.headers["x-user-email"];
 
-    if (!(hasPayload || hasBearer || hasDevEmail)) return next();
+    if (!(hasPayload || hasBearer || hasDevEmail)) {
+      return next();
+    }
 
     req.iam = await buildContextFrom(req);
     return next();
@@ -501,7 +517,7 @@ function joinRoomsByIdentity(socket, identity = {}) {
 
   if (userId) {
     socket.join(`user-${userId}`);
-    socket.join(`guard-${userId}`); // se mantiene compatibilidad
+    socket.join(`guard-${userId}`);
   }
 
   if (email) {
@@ -545,14 +561,13 @@ io.on("connection", (s) => {
     console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
   };
 
-  // Compatibilidad total con lo que ya tienes
   s.on("join-room", ({ userId }) => joinRoomsLegacy(userId));
+
   s.on("join", ({ userId, roles, role, email } = {}) => {
     joinRoomsLegacy(userId);
     joinRoomsByIdentity(s, { userId, roles, role, email });
   });
 
-  // Nuevo: registro explícito de identidad/roles para filtrar alertas
   s.on("presence:join", (payload = {}) => {
     joinRoomsByIdentity(s, payload);
     s.emit("presence:joined", {
@@ -583,11 +598,7 @@ io.on("connection", (s) => {
     s.emit("chat:left", { room });
   });
 
-  /* ───────────────── ALERTAS ─────────────────
-     Regla:
-     - el socket que origina NO recibe el evento de sonido
-     - visitantes NO deben recibirlo, siempre que se hayan unido con role(s)
-  */
+  /* ───────────────── ALERTAS ───────────────── */
 
   const emitEmergencyAlert = (payload = {}, ack) => {
     const now = Date.now();
@@ -611,7 +622,6 @@ io.on("connection", (s) => {
       ...payload,
     };
 
-    // Confirmación solo al originador
     s.emit("alerta:confirmada", {
       ok: true,
       ts: now,
@@ -619,9 +629,6 @@ io.on("connection", (s) => {
       deliveredMode: "broadcast-except-visitors",
     });
 
-    // Broadcast a todos menos:
-    // 1) el socket origen
-    // 2) sockets unidos a roles de visitantes
     s.broadcast
       .except([
         "role:visitante",
@@ -646,7 +653,6 @@ io.on("connection", (s) => {
     }
   };
 
-  // Alias para no romper por nombres distintos en frontend
   s.on("alerta:activar", emitEmergencyAlert);
   s.on("alerta:emitir", emitEmergencyAlert);
   s.on("emergency:alert", emitEmergencyAlert);
@@ -670,4 +676,3 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
 process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));
-
