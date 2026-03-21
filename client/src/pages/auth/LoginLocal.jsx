@@ -1,9 +1,13 @@
-
 import React, { useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Eye, EyeOff } from "lucide-react";
-import api, { API as API_BASE, getToken, clearToken, setToken } from "../../lib/api.js";
+import api, {
+  API as API_BASE,
+  getToken,
+  clearToken,
+  setToken,
+} from "../../lib/api.js";
 import { useAuth } from "./AuthProvider.jsx";
 import AuthBackground from "../../components/AuthBackground.jsx";
 
@@ -54,7 +58,10 @@ function humanLoginError(codeOrMsg) {
   if (s.includes("invalid_credentials")) {
     return "Credenciales inválidas. Revisa correo y contraseña.";
   }
-  if (s.includes("password_not_set") || s.includes("password_not_configured")) {
+  if (
+    s.includes("password_not_set") ||
+    s.includes("password_not_configured")
+  ) {
     return "Tu usuario no tiene contraseña configurada. Contacta al administrador.";
   }
   if (s.includes("user_inactive")) {
@@ -88,12 +95,16 @@ function humanRegisterError(codeOrMsg) {
   if (s.includes("name_required")) return "Ingresa tu nombre completo.";
   if (s.includes("email_required")) return "Ingresa tu correo.";
   if (s.includes("password_required")) return "Ingresa una contraseña.";
-  if (s.includes("password_too_short")) return "La contraseña debe tener al menos 8 caracteres.";
+  if (s.includes("password_too_short")) {
+    return "La contraseña debe tener al menos 8 caracteres.";
+  }
   if (s.includes("email_invalid")) return "Correo inválido. Revisa el formato.";
   if (s.includes("email_taken") || s.includes("user_exists")) {
     return "Ya existe una cuenta con ese correo. Inicia sesión.";
   }
-  if (s.includes("user_inactive")) return "Tu usuario está inactivo. Contacta al administrador.";
+  if (s.includes("user_inactive")) {
+    return "Tu usuario está inactivo. Contacta al administrador.";
+  }
 
   return codeOrMsg || "No se pudo completar el registro.";
 }
@@ -102,7 +113,9 @@ function passwordPolicyErrorLettersNumbersSpecial(pw) {
   const s = String(pw || "");
 
   if (s.length < 8) return "La contraseña debe tener al menos 8 caracteres.";
-  if (!/[A-Za-z]/.test(s)) return "La contraseña debe incluir al menos 1 letra.";
+  if (!/[A-Za-z]/.test(s)) {
+    return "La contraseña debe incluir al menos 1 letra.";
+  }
   if (!/[0-9]/.test(s)) return "La contraseña debe incluir al menos 1 número.";
   if (!/[^A-Za-z0-9]/.test(s)) {
     return "La contraseña debe incluir al menos 1 carácter especial (ej: !@#$%).";
@@ -112,6 +125,7 @@ function passwordPolicyErrorLettersNumbersSpecial(pw) {
 }
 
 const VISITOR_HINT_KEY = "senaf_is_visitor";
+
 function setVisitorHint(isVisitor) {
   try {
     if (isVisitor) localStorage.setItem(VISITOR_HINT_KEY, "1");
@@ -176,6 +190,7 @@ export default function LoginLocal() {
     () => String(identifier || "").trim().toLowerCase(),
     [identifier]
   );
+
   const visitorEmailNorm = useMemo(
     () => String(vEmail || "").trim().toLowerCase(),
     [vEmail]
@@ -194,7 +209,10 @@ export default function LoginLocal() {
       } catch {}
     }
     try {
-      sessionStorage.setItem("senaf_otp_mustChange", mustChangePassword ? "1" : "0");
+      sessionStorage.setItem(
+        "senaf_otp_mustChange",
+        mustChangePassword ? "1" : "0"
+      );
     } catch {}
   }
 
@@ -263,9 +281,12 @@ export default function LoginLocal() {
         await auth.login({ email: emailNorm }, directToken);
 
         if (data?.mustChangePassword) {
-          navigate(`/force-change-password?email=${encodeURIComponent(emailNorm)}`, {
-            replace: true,
-          });
+          navigate(
+            `/force-change-password?email=${encodeURIComponent(emailNorm)}`,
+            {
+              replace: true,
+            }
+          );
           return;
         }
 
@@ -291,7 +312,9 @@ export default function LoginLocal() {
     } catch (err) {
       const d = err?.response?.data;
       const msg =
-        (d && typeof d === "object" && (d.error || d.message || d.details)) ||
+        (d &&
+          typeof d === "object" &&
+          (d.error || d.message || d.details)) ||
         err?.message ||
         "Error de conexión";
 
@@ -385,7 +408,9 @@ export default function LoginLocal() {
         return;
       }
 
-      setInfo("Registro completado. Ahora puedes iniciar sesión en la pestaña de acceso.");
+      setInfo(
+        "Registro completado. Ahora puedes iniciar sesión en la pestaña de acceso."
+      );
       setMode("internal");
       setIdentifier(visitorEmailNorm);
       setPassword("");
@@ -395,7 +420,9 @@ export default function LoginLocal() {
     } catch (err) {
       const d = err?.response?.data;
       const msg =
-        (d && typeof d === "object" && (d.error || d.message || d.details)) ||
+        (d &&
+          typeof d === "object" &&
+          (d.error || d.message || d.details)) ||
         err?.message ||
         "Error registrando visitante";
 
@@ -408,11 +435,16 @@ export default function LoginLocal() {
   }
 
   return (
-    <AuthBackground imageUrl="/images/senaf-bg.png" variant="cover" opacity={0.5} blurPx={0}>
+    <AuthBackground
+      imageUrl="/images/senaf-bg.png"
+      variant="cover"
+      opacity={0.5}
+      blurPx={0}
+    >
       <div className="w-[400px]">
-        <div className="relative bg-white/90 dark:bg-slate-900/85 shadow-sm border border-slate-200/80 dark:border-slate-800/80 rounded backdrop-blur-md">
+        <div className="relative rounded border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
           <div
-            className="pointer-events-none absolute inset-0 opacity-[0.06] dark:opacity-[0.05] bg-center bg-no-repeat bg-contain"
+            className="pointer-events-none absolute inset-0 bg-contain bg-center bg-no-repeat opacity-[0.06] dark:opacity-[0.05]"
             style={{ backgroundImage: "url('/images/senaf-bg.png')" }}
           />
 
@@ -452,7 +484,7 @@ export default function LoginLocal() {
             </div>
 
             <div className="p-6">
-              <h2 className="text-lg mb-4 font-bold text-slate-900 dark:text-slate-100">
+              <h2 className="mb-4 text-lg font-bold text-slate-900 dark:text-slate-100">
                 {mode === "internal" ? "Acceso" : "Registro de visita"}
               </h2>
 
@@ -490,30 +522,36 @@ export default function LoginLocal() {
                       type="button"
                       onClick={() => setShowPassInternal((v) => !v)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                      aria-label={showPassInternal ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      aria-label={
+                        showPassInternal
+                          ? "Ocultar contraseña"
+                          : "Mostrar contraseña"
+                      }
                       title={showPassInternal ? "Ocultar" : "Mostrar"}
                     >
                       {showPassInternal ? (
-                        <EyeOff className="w-4 h-4" />
+                        <EyeOff className="h-4 w-4" />
                       ) : (
-                        <Eye className="w-4 h-4" />
+                        <Eye className="h-4 w-4" />
                       )}
                     </button>
                   </div>
 
                   {info && (
-                    <div className="text-emerald-700 dark:text-emerald-400 mb-2 text-sm">
+                    <div className="mb-2 text-sm text-emerald-700 dark:text-emerald-400">
                       {info}
                     </div>
                   )}
                   {error && (
-                    <div className="text-red-600 dark:text-red-400 mb-2 text-sm">{error}</div>
+                    <div className="mb-2 text-sm text-red-600 dark:text-red-400">
+                      {error}
+                    </div>
                   )}
 
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
+                    className="w-full rounded bg-blue-600 p-2 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     {submitting ? "Procesando..." : "Continuar"}
                   </button>
@@ -531,7 +569,9 @@ export default function LoginLocal() {
                   <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                     API: <span className="font-mono">{API_BASE || "—"}</span>
                     {getToken() ? (
-                      <span className="ml-2 text-emerald-700 dark:text-emerald-400">(token)</span>
+                      <span className="ml-2 text-emerald-700 dark:text-emerald-400">
+                        (token)
+                      </span>
                     ) : null}
                   </div>
                 </form>
@@ -581,19 +621,24 @@ export default function LoginLocal() {
                       type="button"
                       onClick={() => setShowPassVisitor((v) => !v)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                      aria-label={showPassVisitor ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      aria-label={
+                        showPassVisitor
+                          ? "Ocultar contraseña"
+                          : "Mostrar contraseña"
+                      }
                       title={showPassVisitor ? "Ocultar" : "Mostrar"}
                     >
                       {showPassVisitor ? (
-                        <EyeOff className="w-4 h-4" />
+                        <EyeOff className="h-4 w-4" />
                       ) : (
-                        <Eye className="w-4 h-4" />
+                        <Eye className="h-4 w-4" />
                       )}
                     </button>
                   </div>
 
                   <div className="mb-3 text-[11px] text-slate-500 dark:text-slate-400">
-                    Mínimo 8 caracteres, debe incluir letras, números y un carácter especial.
+                    Mínimo 8 caracteres, debe incluir letras, números y un
+                    carácter especial.
                   </div>
 
                   <div className="relative mb-3">
@@ -613,30 +658,36 @@ export default function LoginLocal() {
                       type="button"
                       onClick={() => setShowPassVisitor2((v) => !v)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-                      aria-label={showPassVisitor2 ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      aria-label={
+                        showPassVisitor2
+                          ? "Ocultar contraseña"
+                          : "Mostrar contraseña"
+                      }
                       title={showPassVisitor2 ? "Ocultar" : "Mostrar"}
                     >
                       {showPassVisitor2 ? (
-                        <EyeOff className="w-4 h-4" />
+                        <EyeOff className="h-4 w-4" />
                       ) : (
-                        <Eye className="w-4 h-4" />
+                        <Eye className="h-4 w-4" />
                       )}
                     </button>
                   </div>
 
                   {info && (
-                    <div className="text-emerald-700 dark:text-emerald-400 mb-2 text-sm">
+                    <div className="mb-2 text-sm text-emerald-700 dark:text-emerald-400">
                       {info}
                     </div>
                   )}
                   {error && (
-                    <div className="text-red-600 dark:text-red-400 mb-2 text-sm">{error}</div>
+                    <div className="mb-2 text-sm text-red-600 dark:text-red-400">
+                      {error}
+                    </div>
                   )}
 
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
+                    className="w-full rounded bg-blue-600 p-2 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     {submitting ? "Procesando..." : "Continuar"}
                   </button>
@@ -646,7 +697,8 @@ export default function LoginLocal() {
                   </div>
 
                   <div className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-                    Al registrarte como visitante, entrarás al flujo de visitas (sin menú del sistema).
+                    Al registrarte como visitante, entrarás al flujo de visitas
+                    (sin menú del sistema).
                   </div>
                 </form>
               )}
@@ -657,4 +709,3 @@ export default function LoginLocal() {
     </AuthBackground>
   );
 }
-

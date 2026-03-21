@@ -1,0 +1,169 @@
+/* =========================================================
+   SENAF THEME TOKENS
+   ========================================================= */
+:root {
+  color-scheme: light;
+
+  /* ========= Base estructural ========= */
+  --bg: #f8fafc;
+  --bg-elevated: #ffffff;
+  --panel: #f8fafc;
+  --card: rgba(255, 255, 255, 0.84);
+  --card-solid: #ffffff;
+
+  --text: #0f172a;
+  --text-muted: #64748b;
+
+  --border: rgba(15, 23, 42, 0.10);
+  --border-strong: rgba(15, 23, 42, 0.16);
+
+  --input-bg: rgba(255, 255, 255, 0.78);
+  --input-border: rgba(15, 23, 42, 0.12);
+
+  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 18px 50px rgba(15, 23, 42, 0.12);
+
+  --radius-sm: 14px;
+  --radius-md: 18px;
+  --radius-lg: 24px;
+
+  /* ========= Acentos principales SENAF ========= */
+  --accent: #2563eb;
+  --accent-2: #06b6d4;
+  --accent-soft: rgba(37, 99, 235, 0.14);
+  --accent-foreground: #ffffff;
+  --ring: rgba(37, 99, 235, 0.45);
+
+  /* ========= FX Palette ========= */
+  --fx1: #ff00e6;
+  --fx2: #00e1ff;
+  --fx3: #00ff87;
+  --surface: #0b0b12;
+
+  /* ========= Aurora ========= */
+  --aurora-p1: 18%;
+  --aurora-p2: 16%;
+  --aurora-p3: 14%;
+  --aurora-blur: 8px;
+
+  /* ========= Glass ========= */
+  --aurora-glass-light: 0.60;
+  --aurora-glass-dark: 0.45;
+
+  --glass-rgb: 255 255 255;
+  --glass-border-rgb: 15 23 42;
+  --glass-alpha: var(--aurora-glass-light);
+  --glass-border-alpha: 0.12;
+  --glass-blur: 14px;
+  --glass-sat: 140%;
+
+  /* ========= Chat ========= */
+  --chat-1: #0b132b;
+  --chat-2: #1d4ed8;
+  --chat-3: #06b6d4;
+  --chat-ink: #ffffff;
+
+  --chat-out-1: #2563eb;
+  --chat-out-2: #06b6d4;
+  --chat-out-fg: #ffffff;
+
+  --chat-in-bg: rgba(15, 23, 42, 0.06);
+  --chat-in-fg: #0f172a;
+  --chat-meta: #64748b;
+
+  /* ========= Sidebar / navegación premium ========= */
+  --sidebar-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #7c3aed 18%, var(--panel)) 0%,
+      color-mix(in srgb, #2563eb 10%, var(--panel)) 55%,
+      color-mix(in srgb, #0f172a 4%, var(--panel)) 100%
+    );
+
+  --sidebar-border: rgba(15, 23, 42, 0.10);
+  --sidebar-logo: #0f172a;
+  --sidebar-logo-muted: #64748b;
+
+  --nav-item-hover: rgba(15, 23, 42, 0.05);
+  --nav-item-active: rgba(255, 255, 255, 0.72);
+  --nav-item-active-border: rgba(37, 99, 235, 0.22);
+  --nav-item-active-glow: 0 10px 24px rgba(37, 99, 235, 0.10);
+
+  --nav-text: #334155;
+  --nav-text-hover: #0f172a;
+  --nav-text-active: #0f172a;
+
+  --nav-icon: #94a3b8;
+  --nav-icon-hover: #38bdf8;
+  --nav-icon-active: #2563eb;
+
+  --nav-rail: linear-gradient(180deg, #3b82f6, #06b6d4);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --bg: #020617;
+  --bg-elevated: #08101f;
+  --panel: #0b1220;
+  --card: rgba(15, 23, 42, 0.76);
+  --card-solid: #0f172a;
+
+  --text: #e5e7eb;
+  --text-muted: #94a3b8;
+
+  --border: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --input-bg: rgba(15, 23, 42, 0.72);
+  --input-border: rgba(255, 255, 255, 0.12);
+
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 20px 55px rgba(0, 0, 0, 0.38);
+
+  --accent: #60a5fa;
+  --accent-2: #22d3ee;
+  --accent-soft: rgba(96, 165, 250, 0.16);
+  --ring: rgba(96, 165, 250, 0.40);
+
+  --glass-rgb: 17 24 39;
+  --glass-border-rgb: 255 255 255;
+  --glass-alpha: var(--aurora-glass-dark);
+  --glass-border-alpha: 0.16;
+
+  --chat-in-bg: rgba(255, 255, 255, 0.10);
+  --chat-in-fg: #e5e7eb;
+  --chat-meta: #9aa4b2;
+
+  /* ========= Sidebar / navegación premium ========= */
+  --sidebar-bg:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #a855f7 20%, #0b1220) 0%,
+      color-mix(in srgb, #0f172a 78%, #1d4ed8 22%) 55%,
+      color-mix(in srgb, #020617 88%, #06b6d4 12%) 100%
+    );
+
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-logo: #f8fafc;
+  --sidebar-logo-muted: #a8b3c7;
+
+  --nav-item-hover: rgba(255, 255, 255, 0.05);
+  --nav-item-active: rgba(15, 23, 42, 0.72);
+  --nav-item-active-border: rgba(96, 165, 250, 0.32);
+  --nav-item-active-glow:
+    0 0 0 1px rgba(96, 165, 250, 0.10),
+    0 12px 28px rgba(0, 0, 0, 0.26);
+
+  --nav-text: #c7d2e3;
+  --nav-text-hover: #ffffff;
+  --nav-text-active: #ffffff;
+
+  --nav-icon: #94a3b8;
+  --nav-icon-hover: #7dd3fc;
+  --nav-icon-active: #60a5fa;
+
+  --nav-rail: linear-gradient(180deg, #3b82f6, #22d3ee);
+}

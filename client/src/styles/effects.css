@@ -1,0 +1,300 @@
+/* =========================================================
+   GLASS
+   ========================================================= */
+.glass {
+  background: var(--card);
+  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  backdrop-filter: blur(12px) saturate(130%);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md);
+}
+
+.glass-soft {
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(8px) saturate(120%);
+  border-radius: var(--radius-sm);
+}
+
+/* =========================================================
+   TEMAS FX
+   ========================================================= */
+[data-fx="neon"] {
+  --fx1: #ff00e6;
+  --fx2: #00e1ff;
+  --fx3: #00ff87;
+}
+
+[data-fx="candy"] {
+  --fx1: #ff3cac;
+  --fx2: #784ba0;
+  --fx3: #2b86c5;
+}
+
+[data-fx="retro"] {
+  --fx1: #f72585;
+  --fx2: #4361ee;
+  --fx3: #4cc9f0;
+}
+
+[data-fx="holo"] {
+  --fx1: #a1ffce;
+  --fx2: #faffd1;
+  --fx3: #fcb045;
+}
+
+[data-fx="cyber"] {
+  --fx1: #8a2be2;
+  --fx2: #00ffff;
+  --fx3: #39ff14;
+}
+
+[data-fx="sunset"] {
+  --fx1: #ff5f6d;
+  --fx2: #ffc371;
+  --fx3: #ffd166;
+}
+
+[data-fx="ocean"] {
+  --fx1: #00c6ff;
+  --fx2: #0072ff;
+  --fx3: #00ffa3;
+}
+
+/* =========================================================
+   FONDO MESH SUAVE
+   ========================================================= */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      42rem 42rem at 16% 16%,
+      color-mix(in oklab, var(--fx1) 22%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      36rem 36rem at 85% 20%,
+      color-mix(in oklab, var(--fx2) 18%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      40rem 40rem at 40% 88%,
+      color-mix(in oklab, var(--fx3) 20%, transparent),
+      transparent 62%
+    );
+  opacity: 0.22;
+  animation: mesh-pan 28s ease-in-out infinite alternate;
+  filter: saturate(120%);
+}
+
+html.dark .app-bg {
+  opacity: 0.3;
+}
+
+@keyframes mesh-pan {
+  0% {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  100% {
+    background-position: -30% 8%, 18% -18%, 12% 16%;
+  }
+}
+
+/* =========================================================
+   CAPAS DECORATIVAS
+   ========================================================= */
+.mesh {
+  position: absolute;
+  pointer-events: none;
+  filter: blur(60px) saturate(160%);
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.mesh--ribbon {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 140px;
+  background:
+    radial-gradient(
+      40rem 10rem at 20% -20%,
+      color-mix(in oklab, var(--fx1) 45%, transparent),
+      transparent 65%
+    ),
+    radial-gradient(
+      36rem 12rem at 60% -30%,
+      color-mix(in oklab, var(--fx2) 40%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      30rem 10rem at 95% 0%,
+      color-mix(in oklab, var(--fx3) 40%, transparent),
+      transparent 70%
+    );
+  -webkit-mask: linear-gradient(to bottom, black, transparent);
+  mask: linear-gradient(to bottom, black, transparent);
+}
+
+.mesh--br {
+  width: 60vw;
+  height: 60vh;
+  right: -15vw;
+  bottom: -20vh;
+  background:
+    radial-gradient(
+      40rem 40rem at 30% 35%,
+      color-mix(in oklab, var(--fx3) 45%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      22rem 22rem at 80% 70%,
+      color-mix(in oklab, var(--fx2) 40%, transparent),
+      transparent 65%
+    );
+}
+
+.mesh--lb {
+  width: 35vw;
+  height: 40vh;
+  left: -12vw;
+  bottom: -10vh;
+  background: radial-gradient(
+    28rem 28rem at 70% 30%,
+    color-mix(in oklab, var(--fx1) 35%, transparent),
+    transparent 65%
+  );
+}
+
+/* =========================================================
+   SIDEBAR AURORA
+   ========================================================= */
+.sidebar-aurora {
+  background:
+    radial-gradient(
+      60rem 60rem at -10% 0%,
+      color-mix(in oklab, var(--fx1) var(--aurora-p1), transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      42rem 42rem at 120% -10%,
+      color-mix(in oklab, var(--fx2) var(--aurora-p2), transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      36rem 36rem at 40% 110%,
+      color-mix(in oklab, var(--fx3) var(--aurora-p3), transparent),
+      transparent 60%
+    );
+}
+
+/* =========================================================
+   PRESETS AURORA
+   ========================================================= */
+[data-aurora="sutil"] {
+  --aurora-p1: 10%;
+  --aurora-p2: 9%;
+  --aurora-p3: 8%;
+  --aurora-blur: 6px;
+  --aurora-glass-light: 0.72;
+  --aurora-glass-dark: 0.55;
+}
+
+[data-aurora="medio"] {
+  --aurora-p1: 18%;
+  --aurora-p2: 16%;
+  --aurora-p3: 14%;
+  --aurora-blur: 8px;
+}
+
+[data-aurora="fuerte"] {
+  --aurora-p1: 26%;
+  --aurora-p2: 24%;
+  --aurora-p3: 22%;
+  --aurora-blur: 9px;
+}
+
+[data-aurora="extremo"] {
+  --aurora-p1: 36%;
+  --aurora-p2: 32%;
+  --aurora-p3: 28%;
+  --aurora-blur: 10px;
+  --aurora-glass-light: 0.52;
+  --aurora-glass-dark: 0.38;
+}
+
+/* =========================================================
+   FX CARDS / KPI / TILE
+   ========================================================= */
+[data-fx] .fx-card {
+  position: relative;
+  border-radius: 1.25rem;
+  padding: 1rem;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    conic-gradient(from 0deg, var(--fx1), var(--fx2), var(--fx3), var(--fx1)) border-box;
+  border: 1px solid transparent;
+  box-shadow:
+    0 0 0 0.5px hsl(0 0% 100% / 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.18),
+    0 0 40px color-mix(in oklab, var(--fx2) 22%, transparent);
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.12s ease,
+    background-color 0.25s ease;
+}
+
+[data-fx] .fx-card:hover {
+  transform: translateY(-1px);
+}
+
+html:not(.dark)[data-fx] .fx-card {
+  --surface: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+}
+
+html.dark[data-fx] .fx-card {
+  --surface: rgba(17, 19, 24, 0.92);
+  color: #e5e7eb;
+}
+
+[data-fx] .fx-card :is(h1, h2, h3, h4, h5, h6, p, span, small, div, a) {
+  color: inherit;
+}
+
+.fx-kpi {
+  border-radius: 1.25rem;
+  padding: 1rem;
+  background:
+    radial-gradient(
+      80% 140% at 20% 0%,
+      color-mix(in oklab, var(--fx2) 12%, transparent),
+      transparent 60%
+    ),
+    linear-gradient(to bottom right, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.02));
+  border: 1px solid hsl(0 0% 100% / 0.08);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08), 0 20px 40px rgba(0, 0, 0, 0.18);
+}
+
+.fx-tile {
+  border-radius: 1rem;
+  border: 1px solid hsl(0 0% 100% / 0.08);
+  background: linear-gradient(hsl(0 0% 100% / 0.03), hsl(0 0% 0% / 0.06));
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.fx-tile:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.22),
+    0 0 28px color-mix(in oklab, var(--fx1) 20%, transparent);
+  border-color: rgba(0, 225, 255, 0.3);
+}

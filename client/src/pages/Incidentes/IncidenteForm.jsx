@@ -1,14 +1,11 @@
-// client/src/modules/incidentes/IncidenteForm.jsx
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
+import { Mic, MicOff, PencilLine } from "lucide-react";
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
 import AudioRecorder from "../../components/AudioRecorder.jsx";
 import api from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
-
-// ✅ Dictado por voz
-import useSpeechToText from "../../iam/hooks/useSpeechToText";
 
 const USER_KEY = "senaf_user";
 
@@ -29,15 +26,90 @@ function readLocalUser() {
   }
 }
 
-function normRole(x) {
-  return String(x || "").trim().toLowerCase();
+function norm(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+const LEGACY_PERMISSION_ALIASES = {
+  "incidentes.read": "incidentes.records.read",
+  "incidentes.create": "incidentes.records.write",
+  "incidentes.edit": "incidentes.records.write",
+  "incidentes.delete": "incidentes.records.delete",
+  "incidentes.close": "incidentes.records.close",
+  "incidentes.attach": "incidentes.evidences.write",
+  "incidentes.reports": "incidentes.reports.read",
+  "incidentes.export": "incidentes.reports.export",
+
+  "rondasqr.view": "rondasqr.rounds.read",
+  "rondasqr.create": "rondasqr.assignments.write",
+  "rondasqr.edit": "rondasqr.assignments.write",
+  "rondasqr.delete": "rondasqr.assignments.delete",
+  "rondasqr.export": "rondasqr.reports.export",
+  "rondasqr.reports": "rondasqr.reports.read",
+  "rondasqr.scan.qr": "rondasqr.scan.execute",
+  "rondasqr.panic.send": "rondasqr.panic.write",
+
+  "visitas.read": "visitas.records.read",
+  "visitas.write": "visitas.records.write",
+  "visitas.close": "visitas.records.close",
+};
+
+function normalizePermissionKey(key) {
+  const k = norm(key);
+  if (!k) return "";
+  return LEGACY_PERMISSION_ALIASES[k] || k;
 }
 
 function extractRoles(u) {
   const roles = Array.isArray(u?.roles) ? u.roles : u?.roles ? [u.roles] : [];
   const NS = "https://senaf.local/roles";
   const nsRoles = Array.isArray(u?.[NS]) ? u[NS] : [];
-  return [...roles, ...nsRoles].map(normRole).filter(Boolean);
+
+  return [...roles, ...nsRoles]
+    .map((r) => {
+      if (typeof r === "string") return norm(r);
+      if (r && typeof r === "object") {
+        return norm(r.code || r.key || r.slug || r.name || r.nombre);
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function extractPermissions(u) {
+  const direct = Array.isArray(u?.permissions) ? u.permissions : [];
+  const permsField = Array.isArray(u?.perms) ? u.perms : [];
+
+  const rolePerms = Array.isArray(u?.roles)
+    ? u.roles.flatMap((r) => {
+        if (!r || typeof r !== "object") return [];
+        return Array.isArray(r.permissions)
+          ? r.permissions
+          : Array.isArray(r.perms)
+          ? r.perms
+          : [];
+      })
+    : [];
+
+  return [
+    ...new Set(
+      [...direct, ...permsField, ...rolePerms]
+        .map((p) => normalizePermissionKey(p))
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function hasPermission(user, ...wanted) {
+  const perms = extractPermissions(user);
+  if (perms.includes("*")) return true;
+  return wanted.map(normalizePermissionKey).some((w) => perms.includes(w));
+}
+
+function hasRole(user, ...wanted) {
+  const roles = extractRoles(user);
+  const normalizedWanted = wanted.map(norm).filter(Boolean);
+  return normalizedWanted.some((r) => roles.includes(r));
 }
 
 function normalizeMediaType(kind) {
@@ -57,13 +129,10 @@ function normalizeEvidenceKind(type) {
 function normalizeIncidentMedia(inc) {
   if (!inc || typeof inc !== "object") return [];
 
-  // ✅ Nuevo formato normalizado
   if (Array.isArray(inc.evidences) && inc.evidences.length > 0) {
     return inc.evidences
       .filter(Boolean)
       .map((e) => {
-        // ✅ Consistencia con IncidentesList:
-        // priorizar base64 antes que url para no depender de rutas rotas
         const src = e?.base64 || e?.src || e?.url || e?.path || "";
         if (!src) return null;
 
@@ -75,7 +144,6 @@ function normalizeIncidentMedia(inc) {
       .filter(Boolean);
   }
 
-  // ✅ Compatibilidad legacy
   const photos = [
     ...(Array.isArray(inc.photosBase64) ? inc.photosBase64 : []),
     ...(Array.isArray(inc.photos) ? inc.photos : []),
@@ -98,9 +166,6 @@ function normalizeIncidentMedia(inc) {
   ];
 }
 
-/* =========================
-   UI styles
-========================= */
 const UI = {
   page: "min-h-screen max-w-[1100px] mx-auto space-y-6 px-4 py-6 md:p-8 transition-colors layer-content",
   shell: "rounded-[24px] p-6 md:p-8 transition-all",
@@ -108,7 +173,8 @@ const UI = {
   label: "block mb-2 font-medium text-sm",
   input: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition",
   select: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition",
-  textarea: "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition min-h-[110px] resize-none",
+  textarea:
+    "w-full rounded-[14px] px-3 py-2 text-sm outline-none transition min-h-[110px] resize-none",
   btn: "inline-flex items-center justify-center rounded-[14px] px-4 py-2 text-sm font-medium transition-all duration-150",
   btnSm: "inline-flex items-center justify-center rounded-[12px] px-3 py-1.5 text-xs font-semibold transition-all duration-150",
 };
@@ -213,6 +279,85 @@ function sxOrangeBtn(extra = {}) {
   };
 }
 
+function getGuardLabel(g) {
+  if (!g) return "";
+  return g.email ? `${g.name || "(Sin nombre)"} — ${g.email}` : g.name || "(Sin nombre)";
+}
+
+function buildSelfGuard(user) {
+  const id = String(user?._id || user?.id || user?.sub || "").trim();
+  const email = String(user?.email || user?.correo || user?.mail || "").trim();
+  const name =
+    String(
+      user?.nombreCompleto ||
+        user?.fullName ||
+        user?.name ||
+        user?.nombre ||
+        user?.nickname ||
+        ""
+    ).trim() || "Guardia";
+
+  return {
+    _id: id,
+    name,
+    email,
+    opId: id,
+    active: true,
+    synthetic: true,
+  };
+}
+
+function normalizeGuards(items) {
+  const normalized = (items || [])
+    .filter(Boolean)
+    .map((u) => ({
+      _id: u._id ? String(u._id) : String(u.id || ""),
+      name: u.name || u.nombreCompleto || u.fullName || u.nombre || "",
+      email: u.email || u.correo || u.mail || "",
+      opId: u.opId || u.sub || u.legacyId || String(u._id || u.id || ""),
+      active: u.active !== false,
+    }))
+    .filter((u) => u.active !== false);
+
+  const seen = new Set();
+  return normalized.filter((g) => {
+    const k = String(g._id || g.opId || g.email || "");
+    if (!k) return true;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function findGuardByAnyId(guards, value) {
+  const v = String(value || "").trim();
+  if (!v) return null;
+
+  return (
+    guards.find((g) => String(g._id || "") === v) ||
+    guards.find((g) => String(g.opId || "") === v) ||
+    null
+  );
+}
+
+function matchesCurrentUserGuard(guard, user) {
+  const userId = String(user?._id || user?.id || user?.sub || "").trim();
+  const userEmail = String(user?.email || "").trim().toLowerCase();
+
+  if (!guard) return false;
+  if (userId && (String(guard._id || "") === userId || String(guard.opId || "") === userId)) {
+    return true;
+  }
+  if (userEmail && String(guard.email || "").trim().toLowerCase() === userEmail) {
+    return true;
+  }
+  return false;
+}
+
+function normalizeSpeechText(t) {
+  return String(t || "").replace(/\s+/g, " ").trim();
+}
+
 export default function IncidenteForm({
   stayOnFinish = false,
   onCancel,
@@ -221,6 +366,34 @@ export default function IncidenteForm({
 }) {
   const nav = useNavigate();
   const location = useLocation();
+  const localUser = useMemo(() => readLocalUser(), []);
+  const selfGuard = useMemo(() => buildSelfGuard(localUser), [localUser]);
+
+  const canRead =
+    hasPermission(
+      localUser,
+      "incidentes.records.read",
+      "incidentes.reports.read",
+      "incidentes.read.any",
+      "incidentes.reports.any"
+    ) || hasRole(localUser, "admin", "superadmin", "supervisor", "guardia");
+
+  const canCreate =
+    hasPermission(localUser, "incidentes.records.write", "incidentes.create.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor", "guardia");
+
+  const canCreateAny =
+    hasPermission(localUser, "incidentes.create.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor");
+
+  const canEditAny =
+    hasPermission(localUser, "incidentes.edit.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor");
+
+  const isGuardOnly =
+    hasRole(localUser, "guardia", "guard", "rondasqr.guard") &&
+    !canCreateAny &&
+    !hasRole(localUser, "admin", "superadmin", "supervisor");
 
   const search = new URLSearchParams(location.search);
   const fromQueryIsRonda = search.get("from") === "ronda";
@@ -240,7 +413,6 @@ export default function IncidenteForm({
     status: "abierto",
   });
 
-  // media = [{ type: "image"|"video"|"audio", src: dataUrl|url }]
   const [media, setMedia] = useState([]);
   const [sending, setSending] = useState(false);
 
@@ -250,93 +422,92 @@ export default function IncidenteForm({
 
   const fileInputRef = useRef(null);
 
-  // Guardias IAM
   const [guards, setGuards] = useState([]);
   const [loadingGuards, setLoadingGuards] = useState(false);
 
-  /* ================== Dictado por voz ================== */
-  const {
-    supported: sttSupported,
-    listening: sttListening,
-    transcript: sttTranscript,
-    error: sttError,
-    start: sttStart,
-    stop: sttStop,
-    reset: sttReset,
-  } = useSpeechToText({
-    lang: "es-ES",
-    continuous: false,
-    interimResults: false,
-  });
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [speechError, setSpeechError] = useState("");
+  const recognitionRef = useRef(null);
 
-  const lastInsertedRef = useRef("");
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  function normalizeSpeechText(t) {
-    return String(t || "").replace(/\s+/g, " ").trim();
-  }
-
-  function appendTranscriptToDescription(forceText) {
-    const raw = forceText != null ? forceText : sttTranscript;
-    const t = normalizeSpeechText(raw);
-    if (!t) return;
-
-    if (t === lastInsertedRef.current) {
-      sttReset();
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+      recognitionRef.current = null;
       return;
     }
 
-    setForm((prev) => ({
-      ...prev,
-      description: prev.description ? `${prev.description}\n${t}` : t,
-    }));
+    setSpeechSupported(true);
 
-    lastInsertedRef.current = t;
-    sttReset();
-  }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "es-HN";
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-  async function stopAndInsert() {
-    try {
-      await sttStop();
-    } finally {
-      setTimeout(() => appendTranscriptToDescription(), 50);
-    }
-  }
+    recognition.onstart = () => {
+      setIsListening(true);
+      setSpeechError("");
+    };
 
-  /* ================== helpers guardias ================== */
-  function getGuardLabel(g) {
-    if (!g) return "";
-    return g.email
-      ? `${g.name || "(Sin nombre)"} — ${g.email}`
-      : g.name || "(Sin nombre)";
-  }
+    recognition.onend = () => {
+      setIsListening(false);
+    };
 
-  function normalizeGuards(items) {
-    const normalized = (items || [])
-      .filter(Boolean)
-      .map((u) => ({
-        _id: u._id,
-        name: u.name,
-        email: u.email,
-        opId: u.opId || u.sub || u.legacyId || String(u._id),
-        active: u.active !== false,
-      }))
-      .filter((u) => u.active !== false);
+    recognition.onerror = (event) => {
+      console.warn("[IncidenteForm] speech error:", event?.error);
+      setSpeechError("No se pudo usar el dictado por voz.");
+      setIsListening(false);
+    };
 
-    const seen = new Set();
-    return normalized.filter((g) => {
-      const k = String(g.opId || g.email || g._id || "");
-      if (!k) return true;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
+    recognition.onresult = (event) => {
+      let finalTranscript = "";
 
-  // ✅ Cargar guardias
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0]?.transcript || "";
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + " ";
+        }
+      }
+
+      if (finalTranscript.trim()) {
+        setForm((prev) => ({
+          ...prev,
+          description: `${prev.description}${prev.description ? " " : ""}${finalTranscript.trim()}`.trim(),
+        }));
+      }
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
-    (async () => {
+    async function loadGuards() {
+      if (isGuardOnly) {
+        const mine = selfGuard && (selfGuard._id || selfGuard.email) ? [selfGuard] : [];
+        if (!mounted) return;
+        setGuards(mine);
+        setForm((prev) => ({
+          ...prev,
+          reportedByGuardId: mine[0]?._id || mine[0]?.opId || "",
+          reportedBy: mine[0] ? getGuardLabel(mine[0]) : "",
+        }));
+        setLoadingGuards(false);
+        return;
+      }
+
       setLoadingGuards(true);
 
       try {
@@ -365,80 +536,160 @@ export default function IncidenteForm({
           );
         }
 
-        const normalized = normalizeGuards(items);
+        let normalized = normalizeGuards(items);
+
+        if (selfGuard && (selfGuard._id || selfGuard.email)) {
+          const existsMe = normalized.some((g) => matchesCurrentUserGuard(g, localUser));
+          if (!existsMe) normalized = [selfGuard, ...normalized];
+        }
 
         if (!mounted) return;
         setGuards(normalized);
 
-        if (fromQueryIsRonda) {
-          const lu = readLocalUser();
-          const myEmail = String(lu?.email || "").trim().toLowerCase();
-          const myId = String(lu?._id || lu?.id || "").trim();
+        const myself =
+          normalized.find((g) => matchesCurrentUserGuard(g, localUser)) || null;
 
-          const meMatch =
-            (myEmail &&
-              normalized.find(
-                (g) => String(g.email || "").toLowerCase() === myEmail
-              )) ||
-            (myId &&
-              normalized.find(
-                (g) => String(g._id || g.opId || "") === myId
-              )) ||
-            null;
-
-          if (meMatch) {
-            setForm((prev) => ({
-              ...prev,
-              reportedByGuardId: String(meMatch.opId),
-              reportedBy: getGuardLabel(meMatch),
-            }));
-          }
+        if (myself && fromQueryIsRonda) {
+          setForm((prev) => ({
+            ...prev,
+            reportedByGuardId: String(myself._id || myself.opId || ""),
+            reportedBy: getGuardLabel(myself),
+          }));
         }
       } catch (e) {
         console.warn("[IncidenteForm] load guards error:", e);
-        if (mounted) setGuards([]);
+        if (!mounted) return;
+
+        const fallback = selfGuard && (selfGuard._id || selfGuard.email) ? [selfGuard] : [];
+        setGuards(fallback);
+
+        if (fromQueryIsRonda || isGuardOnly) {
+          setForm((prev) => ({
+            ...prev,
+            reportedByGuardId: fallback[0]?._id || fallback[0]?.opId || "",
+            reportedBy: fallback[0] ? getGuardLabel(fallback[0]) : "",
+          }));
+        }
       } finally {
         if (mounted) setLoadingGuards(false);
       }
-    })();
+    }
+
+    loadGuards();
 
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fromQueryIsRonda, isGuardOnly, localUser, selfGuard]);
 
-  // ✅ Modo edición: cargar campos + media normalizada
   useEffect(() => {
     if (!editingIncident) return;
+
+    const matchedGuard = findGuardByAnyId(
+      guards,
+      editingIncident.reportedByGuardId ||
+        editingIncident.guardId ||
+        editingIncident.opId ||
+        editingIncident.createdByUserId ||
+        ""
+    );
 
     setForm((prev) => ({
       ...prev,
       type: editingIncident.type || "Acceso no autorizado",
       description: editingIncident.description || "",
-      reportedBy: editingIncident.reportedBy || "",
-      reportedByGuardId:
-        editingIncident.reportedByGuardId ||
-        editingIncident.guardId ||
-        editingIncident.opId ||
-        "",
+      reportedBy:
+        matchedGuard
+          ? getGuardLabel(matchedGuard)
+          : editingIncident.reportedBy || "",
+      reportedByGuardId: String(
+        matchedGuard?._id ||
+          editingIncident.reportedByGuardId ||
+          editingIncident.guardId ||
+          editingIncident.opId ||
+          editingIncident.createdByUserId ||
+          ""
+      ),
       zone: editingIncident.zone || "",
       priority: editingIncident.priority || "alta",
       status: editingIncident.status || "abierto",
     }));
 
     setMedia(normalizeIncidentMedia(editingIncident));
-  }, [editingIncident]);
+  }, [editingIncident, guards]);
+
+  useEffect(() => {
+    if (!openLike(finalStayOnFinish, editing, onCancel) && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setIsListening(false);
+    }
+  }, [finalStayOnFinish, editing, onCancel]);
+
+  const canEditThisIncident = useMemo(() => {
+    if (!editingIncident) return canCreate;
+    if (canEditAny) return true;
+
+    const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
+    const myEmail = String(localUser?.email || "").trim().toLowerCase();
+
+    const ownerIds = [
+      editingIncident?.createdByUserId,
+      editingIncident?.reportedByGuardId,
+      editingIncident?.guardId,
+      editingIncident?.reportedByUserId,
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    const ownerEmails = [
+      editingIncident?.reportedByGuardEmail,
+      editingIncident?.guardEmail,
+    ]
+      .map((v) => String(v || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    if (myId && ownerIds.includes(myId)) return true;
+    if (myEmail && ownerEmails.includes(myEmail)) return true;
+
+    return false;
+  }, [editingIncident, canEditAny, canCreate, localUser]);
+
+  const availableGuards = useMemo(() => {
+    if (!isGuardOnly) return guards;
+    const mine = guards.filter((g) => matchesCurrentUserGuard(g, localUser));
+    return mine.length
+      ? mine
+      : selfGuard && (selfGuard._id || selfGuard.email)
+      ? [selfGuard]
+      : [];
+  }, [guards, isGuardOnly, localUser, selfGuard]);
+
+  const selectedGuard = useMemo(() => {
+    return (
+      findGuardByAnyId(availableGuards, form.reportedByGuardId) ||
+      availableGuards.find((g) => matchesCurrentUserGuard(g, localUser)) ||
+      null
+    );
+  }, [availableGuards, form.reportedByGuardId, localUser]);
 
   const handleChange = (e) =>
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
   const handleReporterChange = (e) => {
-    const opId = e.target.value;
-    const g = guards.find((x) => String(x.opId) === String(opId));
+    const selectedId = e.target.value;
+    const g = findGuardByAnyId(guards, selectedId);
+
+    if (isGuardOnly && g && !matchesCurrentUserGuard(g, localUser)) {
+      return;
+    }
+
     setForm((prev) => ({
       ...prev,
-      reportedByGuardId: opId,
+      reportedByGuardId: selectedId,
       reportedBy: g ? getGuardLabel(g) : "",
     }));
   };
@@ -475,69 +726,109 @@ export default function IncidenteForm({
   };
 
   const resetForm = () => {
+    const myGuard =
+      guards.find((g) => matchesCurrentUserGuard(g, localUser)) ||
+      (selfGuard && (selfGuard._id || selfGuard.email) ? selfGuard : null);
+
     setForm({
       type: "Acceso no autorizado",
       description: "",
-      reportedBy: "",
-      reportedByGuardId: "",
+      reportedBy: isGuardOnly && myGuard ? getGuardLabel(myGuard) : "",
+      reportedByGuardId:
+        isGuardOnly && myGuard ? String(myGuard._id || myGuard.opId || "") : "",
       zone: "",
       priority: "alta",
       status: "abierto",
     });
+
     setMedia([]);
-    lastInsertedRef.current = "";
-    sttReset();
+    setSpeechError("");
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // ignore
+    }
+    setIsListening(false);
   };
+
+  function toggleVoiceDictation() {
+    if (!speechSupported || !recognitionRef.current) {
+      setSpeechError("El dictado por voz no está disponible en este navegador.");
+      return;
+    }
+
+    setSpeechError("");
+
+    try {
+      if (isListening) recognitionRef.current.stop();
+      else recognitionRef.current.start();
+    } catch (err) {
+      console.warn("[IncidenteForm] toggle voice error:", err);
+      setSpeechError("No se pudo iniciar el dictado por voz.");
+      setIsListening(false);
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (!canCreate) {
+      return alert("No tienes permisos para reportar incidentes.");
+    }
+
+    if (editing && !canEditThisIncident) {
+      return alert("No tienes permisos para editar este incidente.");
+    }
+
     if (!form.description.trim()) return alert("Describa el incidente.");
-    if (!form.reportedByGuardId) {
+
+    const effectiveGuard =
+      findGuardByAnyId(guards, form.reportedByGuardId) ||
+      selectedGuard ||
+      (isGuardOnly ? selfGuard : null);
+
+    if (!effectiveGuard || !(effectiveGuard._id || effectiveGuard.opId || effectiveGuard.email)) {
       return alert("Seleccione el guardia que reporta el incidente.");
+    }
+
+    if (isGuardOnly && !matchesCurrentUserGuard(effectiveGuard, localUser)) {
+      return alert("Como guardia, solo puedes reportar incidentes a tu propio nombre.");
     }
 
     try {
       setSending(true);
 
-      const guard = guards.find(
-        (g) => String(g.opId) === String(form.reportedByGuardId)
-      );
-      const label = guard ? getGuardLabel(guard) : form.reportedBy;
+      const label = getGuardLabel(effectiveGuard);
+      const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
 
-      // ✅ Compatibilidad actual
-      const photosBase64 = media
-        .filter((m) => m.type === "image")
-        .map((m) => m.src);
+      const photosBase64 = media.filter((m) => m.type === "image").map((m) => m.src);
+      const videosBase64 = media.filter((m) => m.type === "video").map((m) => m.src);
+      const audiosBase64 = media.filter((m) => m.type === "audio").map((m) => m.src);
 
-      const videosBase64 = media
-        .filter((m) => m.type === "video")
-        .map((m) => m.src);
-
-      const audiosBase64 = media
-        .filter((m) => m.type === "audio")
-        .map((m) => m.src);
-
-      // ✅ Nuevo formato normalizado
       const evidences = media.map((m) => ({
         kind: normalizeEvidenceKind(m.type),
-        url: m.src,
         base64: m.src,
       }));
 
       const payload = {
         ...form,
+        reportedByGuardId: String(effectiveGuard._id || effectiveGuard.opId || ""),
         reportedBy: label,
-        guardId: form.reportedByGuardId || undefined,
-        guardName: guard?.name || undefined,
-        guardEmail: guard?.email || undefined,
+        status: String(form.status || "abierto").trim(),
 
-        // Legacy
+        reportedByGuardName: effectiveGuard?.name || "",
+        reportedByGuardEmail: effectiveGuard?.email || "",
+
+        guardId: String(effectiveGuard._id || effectiveGuard.opId || ""),
+        guardName: effectiveGuard?.name || "",
+        guardEmail: effectiveGuard?.email || "",
+
+        createdByUserId: myId || "",
+        reportedByUserId: myId || "",
+
         photosBase64,
         videosBase64,
         audiosBase64,
-
-        // Nuevo
         evidences,
 
         ...(origin ? { origin } : {}),
@@ -563,12 +854,18 @@ export default function IncidenteForm({
       if (finalStayOnFinish) resetForm();
       else nav("/incidentes/lista");
     } catch (err) {
-      console.error(err);
+      console.error("Error guardando incidente:", err);
+      console.error("STATUS:", err?.response?.status || err?.status);
+      console.error("DATA:", err?.response?.data || err?.payload);
+
       const msg =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
+        err?.payload?.message ||
+        err?.payload?.error ||
         err?.message ||
         "Error al guardar el incidente";
+
       alert(msg);
     } finally {
       setSending(false);
@@ -580,6 +877,51 @@ export default function IncidenteForm({
     if (finalStayOnFinish) resetForm();
     else nav("/incidentes/lista");
   };
+
+  if (!canRead) {
+    return (
+      <div className={UI.page}>
+        <div className={UI.shell} style={sxCard()}>
+          <h2 className={UI.title} style={{ color: "var(--text)" }}>
+            Acceso restringido
+          </h2>
+          <p style={{ color: "var(--text-muted)" }}>
+            No tienes permisos para acceder al módulo de incidentes.
+          </p>
+          <div className="pt-4">
+            <button type="button" onClick={() => nav("/")} className={UI.btn} style={sxGhostBtn()}>
+              Volver al panel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (editing && !canEditThisIncident) {
+    return (
+      <div className={UI.page}>
+        <div className={UI.shell} style={sxCard()}>
+          <h2 className={UI.title} style={{ color: "var(--text)" }}>
+            Edición no permitida
+          </h2>
+          <p style={{ color: "var(--text-muted)" }}>
+            No tienes permiso para editar este incidente.
+          </p>
+          <div className="pt-4">
+            <button
+              type="button"
+              onClick={() => nav("/incidentes/lista")}
+              className={UI.btn}
+              style={sxGhostBtn()}
+            >
+              Volver a la lista
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={UI.page}>
@@ -616,6 +958,8 @@ export default function IncidenteForm({
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-6 text-sm">
+          <input type="hidden" name="reportedByGuardId" value={form.reportedByGuardId || ""} readOnly />
+
           <div>
             <label className={UI.label} style={{ color: "var(--text-muted)" }}>
               Tipo de Incidente
@@ -636,56 +980,54 @@ export default function IncidenteForm({
 
           <div>
             <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-              <label className={UI.label} style={{ color: "var(--text-muted)", marginBottom: 0 }}>
+              <label
+                className={UI.label}
+                style={{ color: "var(--text-muted)", marginBottom: 0 }}
+              >
                 Descripción del Incidente
               </label>
 
               <div className="flex flex-wrap items-center gap-2">
-                {!sttSupported ? (
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    🎙️ Dictado no disponible en este navegador
-                  </span>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={sttListening ? stopAndInsert : sttStart}
-                      className={UI.btnSm}
-                      style={sttListening ? sxDangerBtn() : sxGhostBtn()}
-                      title="Iniciar / detener dictado"
-                    >
-                      {sttListening ? "⏹ Detener" : "🎙 Grabar"}
-                    </button>
+                <span
+                  className="inline-flex items-center gap-1 text-xs"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <PencilLine className="h-3.5 w-3.5" />
+                  Manual
+                </span>
 
-                    <button
-                      type="button"
-                      onClick={() => appendTranscriptToDescription()}
-                      disabled={!String(sttTranscript || "").trim()}
-                      className={UI.btnSm}
-                      style={
-                        !String(sttTranscript || "").trim()
-                          ? { ...sxGhostBtn(), opacity: 0.5, cursor: "not-allowed" }
-                          : sxSuccessBtn()
-                      }
-                      title="Insertar lo dictado"
-                    >
-                      ➕ Insertar
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        sttReset();
-                        lastInsertedRef.current = "";
-                      }}
-                      className={UI.btnSm}
-                      style={sxGhostBtn()}
-                      title="Limpiar dictado"
-                    >
-                      🧹 Limpiar dictado
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={toggleVoiceDictation}
+                  disabled={!speechSupported}
+                  className={UI.btnSm}
+                  style={
+                    !speechSupported
+                      ? { ...sxGhostBtn(), opacity: 0.55, cursor: "not-allowed" }
+                      : isListening
+                      ? sxDangerBtn()
+                      : sxGhostBtn()
+                  }
+                  title={
+                    speechSupported
+                      ? isListening
+                        ? "Detener dictado"
+                        : "Iniciar dictado por voz"
+                      : "Dictado por voz no disponible"
+                  }
+                >
+                  {isListening ? (
+                    <>
+                      <MicOff className="h-3.5 w-3.5" />
+                      <span>Detener</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="h-3.5 w-3.5" />
+                      <span>Micrófono</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -699,24 +1041,28 @@ export default function IncidenteForm({
               required
             />
 
-            {sttSupported && (sttError || sttTranscript) ? (
+            {(speechError || speechSupported) && (
               <div className="mt-2 rounded-[14px] p-3" style={sxCardSoft()}>
-                {sttError ? (
+                {speechError ? (
                   <div className="text-xs" style={{ color: "#fb7185" }}>
-                    ⚠️ {sttError}
+                    ⚠️ {speechError}
                   </div>
-                ) : null}
-                {sttTranscript ? (
+                ) : (
                   <div
-                    className="mt-1 text-xs whitespace-pre-wrap"
-                    style={{ color: "var(--text)" }}
+                    className="text-xs"
+                    style={{
+                      color: isListening ? "#22c55e" : "var(--text-muted)",
+                    }}
                   >
-                    <span style={{ color: "var(--text-muted)" }}>Dictado:</span>{" "}
-                    {sttTranscript}
+                    {isListening
+                      ? "Escuchando... hable ahora para agregar la descripción."
+                      : speechSupported
+                      ? "Puede escribir manualmente o usar el micrófono para dictar."
+                      : "El dictado por voz no está disponible en este navegador."}
                   </div>
-                ) : null}
+                )}
               </div>
-            ) : null}
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -724,25 +1070,45 @@ export default function IncidenteForm({
               <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                 Reportado por
               </label>
-              <select
-                name="reportedByGuardId"
-                value={form.reportedByGuardId}
-                onChange={handleReporterChange}
-                className={UI.select}
-                style={sxInput()}
-                required
-              >
-                <option value="">
-                  {loadingGuards
-                    ? "Cargando guardias..."
-                    : "Seleccione el guardia que reporta"}
-                </option>
-                {guards.map((g) => (
-                  <option key={g._id || g.opId} value={g.opId}>
-                    {getGuardLabel(g)}
+
+              {isGuardOnly ? (
+                <input
+                  type="text"
+                  value={selectedGuard ? getGuardLabel(selectedGuard) : form.reportedBy}
+                  readOnly
+                  className={UI.input}
+                  style={sxInput({ opacity: 0.95 })}
+                  placeholder="Tu usuario guardia"
+                />
+              ) : (
+                <select
+                  name="reportedByGuardId"
+                  value={form.reportedByGuardId}
+                  onChange={handleReporterChange}
+                  className={UI.select}
+                  style={sxInput()}
+                  required
+                  disabled={loadingGuards}
+                >
+                  <option value="">
+                    {loadingGuards
+                      ? "Cargando guardias..."
+                      : "Seleccione el guardia que reporta"}
                   </option>
-                ))}
-              </select>
+
+                  {availableGuards.map((g) => (
+                    <option key={g._id || g.opId} value={g._id || g.opId}>
+                      {getGuardLabel(g)}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {isGuardOnly && (
+                <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                  Como usuario guardia, el incidente queda reportado automáticamente a tu nombre.
+                </p>
+              )}
             </div>
 
             <div>
@@ -775,6 +1141,23 @@ export default function IncidenteForm({
               <option value="alta">Alta</option>
               <option value="media">Media</option>
               <option value="baja">Baja</option>
+            </select>
+          </div>
+
+          <div>
+            <label className={UI.label} style={{ color: "var(--text-muted)" }}>
+              Estado
+            </label>
+            <select
+              name="status"
+              value={form.status}
+              onChange={handleChange}
+              className={UI.select}
+              style={sxInput()}
+            >
+              <option value="abierto">Abierto</option>
+              <option value="en proceso">En proceso</option>
+              <option value="cerrado">Cerrado</option>
             </select>
           </div>
 
@@ -820,10 +1203,7 @@ export default function IncidenteForm({
                 🎙️ Grabar audio
               </button>
 
-              <p
-                className="text-xs self-center"
-                style={{ color: "var(--text-muted)" }}
-              >
+              <p className="text-xs self-center" style={{ color: "var(--text-muted)" }}>
                 Adjunta evidencias desde archivos o graba en tiempo real.
               </p>
             </div>
@@ -864,9 +1244,7 @@ export default function IncidenteForm({
 
                     <button
                       type="button"
-                      onClick={() =>
-                        setMedia((prev) => prev.filter((_, i) => i !== idx))
-                      }
+                      onClick={() => setMedia((prev) => prev.filter((_, i) => i !== idx))}
                       className="absolute top-1 right-1 text-xs rounded-full w-5 h-5 flex items-center justify-center"
                       style={{
                         background: "rgba(2,6,23,.72)",
@@ -894,9 +1272,13 @@ export default function IncidenteForm({
 
             <button
               type="submit"
-              disabled={sending}
+              disabled={sending || !canCreate || (editing && !canEditThisIncident)}
               className={UI.btn}
-              style={sxSuccessBtn(sending ? { opacity: 0.7 } : {})}
+              style={sxSuccessBtn(
+                sending || !canCreate || (editing && !canEditThisIncident)
+                  ? { opacity: 0.7, cursor: "not-allowed" }
+                  : {}
+              )}
             >
               {sending
                 ? editing
@@ -941,4 +1323,8 @@ function fileToBase64(file) {
     r.onerror = reject;
     r.readAsDataURL(file);
   });
+}
+
+function openLike(finalStayOnFinish, editing, onCancel) {
+  return !!(finalStayOnFinish || editing || onCancel);
 }

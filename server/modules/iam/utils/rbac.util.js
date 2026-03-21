@@ -1,4 +1,3 @@
-// server/modules/iam/utils/rbac.util.js
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
 import { getBearer, verifyToken } from "./jwt.util.js";
@@ -50,6 +49,14 @@ function normPerm(p) {
   return String(p || "").trim().toLowerCase();
 }
 
+function normalizeRoleValue(r) {
+  if (typeof r === "string") return normRole(r);
+  if (r && typeof r === "object") {
+    return normRole(r.code || r.key || r.slug || r.name || r.nombre);
+  }
+  return "";
+}
+
 /* =========================
    JWT
 ========================= */
@@ -75,6 +82,22 @@ function getEmailFromPayload(payload) {
   if (payload.email) return String(payload.email).toLowerCase().trim();
   if (payload.correo) return String(payload.correo).toLowerCase().trim();
   return null;
+}
+
+function getNameFromPayload(payload) {
+  if (!payload) return "";
+  return String(
+    payload.name ||
+      payload.nombreCompleto ||
+      payload.fullName ||
+      payload.nickname ||
+      ""
+  ).trim();
+}
+
+function getSubjectFromPayload(payload) {
+  if (!payload) return "";
+  return String(payload.sub || payload.id || payload.userId || "").trim();
 }
 
 /* =========================
@@ -137,6 +160,9 @@ export async function buildContextFrom(req) {
   const headerPerms = allowDevHeaders ? parseListSmart(headerPermsRaw) : [];
 
   const jwtEmail = getEmailFromPayload(payload);
+  const payloadName = getNameFromPayload(payload);
+  const payloadSub = getSubjectFromPayload(payload);
+
   const email = String(jwtEmail || headerEmail || "").toLowerCase().trim() || null;
   const hasIdentity = !!email;
 
@@ -166,7 +192,7 @@ export async function buildContextFrom(req) {
     const doc = forcedSuperadmin
       ? {
           email,
-          name: email.split("@")[0],
+          name: payloadName || email.split("@")[0],
           active: true,
           provider: "local",
           roles: ["admin"],
@@ -180,7 +206,7 @@ export async function buildContextFrom(req) {
         }
       : {
           email,
-          name: email.split("@")[0],
+          name: payloadName || email.split("@")[0],
           active: true,
           provider: "local",
           roles: [getDefaultVisitorRole()],
@@ -222,9 +248,9 @@ export async function buildContextFrom(req) {
   /* =========================
      ROLES
   ========================= */
-  const baseRoles = Array.isArray(user?.roles) ? user.roles : [];
+  const baseRolesRaw = Array.isArray(user?.roles) ? user.roles : [];
   const roleNames = new Set(
-    [...baseRoles.map(normRole), ...headerRoles.map(normRole)].filter(Boolean)
+    [...baseRolesRaw.map(normalizeRoleValue), ...headerRoles.map(normalizeRoleValue)].filter(Boolean)
   );
 
   /* =========================
@@ -297,7 +323,9 @@ export async function buildContextFrom(req) {
     const raw = normPerm(perm);
     const low = raw.toLowerCase();
 
-    return permSet.has(raw) || permSetLower.has(low);
+    if (raw === "*") return permSet.has("*") || permSetLower.has("*");
+
+    return permSet.has(raw) || permSetLower.has(low) || permSet.has("*") || permSetLower.has("*");
   }
 
   /* =========================
@@ -305,7 +333,28 @@ export async function buildContextFrom(req) {
   ========================= */
   const isVisitor = !isSuperAdmin && roleNames.has(getDefaultVisitorRole());
 
+  const finalId = String(
+    user?._id ||
+      user?.id ||
+      payloadSub ||
+      ""
+  ).trim();
+
+  const finalName = String(
+    user?.name ||
+      user?.nombreCompleto ||
+      payloadName ||
+      email?.split("@")[0] ||
+      ""
+  ).trim();
+
   return {
+    _id: finalId,
+    id: finalId,
+    sub: finalId || payloadSub || "",
+    userId: finalId,
+    name: finalName,
+    nombreCompleto: finalName,
     user,
     email,
     roles: [...roleNames],

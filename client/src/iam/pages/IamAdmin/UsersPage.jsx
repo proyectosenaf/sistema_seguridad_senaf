@@ -35,44 +35,125 @@ function sxInput(extra = {}) {
   };
 }
 
-function sxGhostBtn(extra = {}) {
+function sxBtnBase(extra = {}) {
   return {
-    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "0.4rem",
+    minHeight: "38px",
+    padding: "0 14px",
+    borderRadius: "12px",
+    fontSize: "13px",
+    fontWeight: 600,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+    transition:
+      "transform .15s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease",
+    ...extra,
+  };
+}
+
+function sxGhostBtn(extra = {}) {
+  return sxBtnBase({
+    background: "color-mix(in srgb, var(--card-solid) 90%, transparent)",
     color: "var(--text)",
     border: "1px solid var(--border)",
     boxShadow: "var(--shadow-sm)",
     ...extra,
-  };
+  });
 }
 
 function sxPrimaryBtn(extra = {}) {
-  return {
+  return sxBtnBase({
     background: "linear-gradient(135deg, #2563eb, #06b6d4)",
-    color: "#fff",
+    color: "#ffffff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
     ...extra,
-  };
+  });
 }
 
 function sxDangerBtn(extra = {}) {
-  return {
+  return sxBtnBase({
     background: "linear-gradient(135deg, #dc2626, #ef4444)",
-    color: "#fff",
+    color: "#ffffff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
     ...extra,
-  };
+  });
 }
 
 function sxSuccessBtn(extra = {}) {
-  return {
+  return sxBtnBase({
     background: "linear-gradient(135deg, #16a34a, #22c55e)",
-    color: "#fff",
+    color: "#ffffff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
     ...extra,
+  });
+}
+
+function sxWarningBtn(extra = {}) {
+  return sxBtnBase({
+    background: "color-mix(in srgb, #f59e0b 12%, var(--card-solid))",
+    color: "#d97706",
+    border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  });
+}
+
+function sxTableActionBtn(kind = "neutral", extra = {}) {
+  const common = {
+    minHeight: "34px",
+    padding: "0 12px",
+    borderRadius: "11px",
+    fontSize: "12px",
+    fontWeight: 600,
   };
+
+  if (kind === "warning") {
+    return sxBtnBase({
+      ...common,
+      background: "color-mix(in srgb, #f59e0b 12%, var(--card-solid))",
+      color: "#d97706",
+      border: "1px solid color-mix(in srgb, #f59e0b 34%, transparent)",
+      boxShadow: "var(--shadow-sm)",
+      ...extra,
+    });
+  }
+
+  if (kind === "success") {
+    return sxBtnBase({
+      ...common,
+      background: "color-mix(in srgb, #22c55e 12%, var(--card-solid))",
+      color: "#15803d",
+      border: "1px solid color-mix(in srgb, #22c55e 34%, transparent)",
+      boxShadow: "var(--shadow-sm)",
+      ...extra,
+    });
+  }
+
+  if (kind === "danger") {
+    return sxBtnBase({
+      ...common,
+      background: "color-mix(in srgb, #ef4444 10%, var(--card-solid))",
+      color: "#dc2626",
+      border: "1px solid color-mix(in srgb, #ef4444 28%, transparent)",
+      boxShadow: "var(--shadow-sm)",
+      ...extra,
+    });
+  }
+
+  return sxBtnBase({
+    ...common,
+    background: "color-mix(in srgb, var(--card-solid) 92%, transparent)",
+    color: "var(--text)",
+    border: "1px solid var(--border)",
+    boxShadow: "var(--shadow-sm)",
+    ...extra,
+  });
 }
 
 class PageErrorBoundary extends React.Component {
@@ -80,12 +161,15 @@ class PageErrorBoundary extends React.Component {
     super(props);
     this.state = { hasError: false, err: null };
   }
+
   static getDerivedStateFromError(err) {
     return { hasError: true, err };
   }
+
   componentDidCatch(err, info) {
     console.error("[UsersPage] render error:", err, info);
   }
+
   render() {
     if (this.state.hasError) {
       return (
@@ -108,7 +192,7 @@ class PageErrorBoundary extends React.Component {
               </div>
             </div>
             <button
-              className="mt-4 px-4 py-2 rounded-lg font-semibold"
+              className="mt-4"
               style={sxPrimaryBtn()}
               onClick={() => this.setState({ hasError: false, err: null })}
             >
@@ -118,6 +202,7 @@ class PageErrorBoundary extends React.Component {
         </div>
       );
     }
+
     return this.props.children;
   }
 }
@@ -125,6 +210,7 @@ class PageErrorBoundary extends React.Component {
 function getPath(obj, path) {
   return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
+
 function getVal(obj, paths, fallback = "") {
   for (const p of paths) {
     const v = p.includes(".") ? getPath(obj, p) : obj?.[p];
@@ -138,7 +224,9 @@ function normalizeRoles(api) {
   if (typeof roles === "string") roles = [roles];
   if (Array.isArray(roles)) {
     return roles
-      .map((r) => (typeof r === "string" ? r : r?.code || r?.name || r?.nombre || r?.key || ""))
+      .map((r) =>
+        typeof r === "string" ? r : r?.code || r?.name || r?.nombre || r?.key || ""
+      )
       .filter(Boolean);
   }
   return [];
@@ -189,19 +277,21 @@ function useClickOutside(ref, handler, enabled = true) {
 
 function RoleBadges({ roles = [], roleLabelMap = {} }) {
   const labels = Array.isArray(roles) ? roles.map((code) => roleLabelMap[code] || code) : [];
+
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex flex-wrap gap-1.5">
       {labels.length === 0 ? (
         <span style={{ color: "var(--text-muted)" }}>—</span>
       ) : (
         labels.map((r, i) => (
           <span
             key={`${r}-${i}`}
-            className="text-xs px-2 py-1 rounded-full"
+            className="text-xs px-2.5 py-1 rounded-full"
             style={{
               background: "color-mix(in srgb, #06b6d4 10%, transparent)",
-              color: "#cffafe",
+              color: "#0f766e",
               border: "1px solid color-mix(in srgb, #06b6d4 26%, transparent)",
+              fontWeight: 600,
             }}
           >
             {r}
@@ -249,7 +339,7 @@ function RoleSelect({ value = [], onChange, availableRoles = [] }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="w-full px-3 py-2 rounded-lg text-left text-sm flex items-center gap-2"
-        style={sxInput()}
+        style={sxInput({ minHeight: "42px" })}
       >
         <span className="truncate">{labelSelected}</span>
         <span className="ml-auto text-xs opacity-70">▾</span>
@@ -265,6 +355,7 @@ function RoleSelect({ value = [], onChange, availableRoles = [] }) {
               No hay roles configurados.
             </div>
           )}
+
           {normalizedRoles.map((r) => (
             <label
               key={r.code}
@@ -322,6 +413,7 @@ function UsersPageInner() {
     active: true,
     forcePwChange: true,
   };
+
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
 
@@ -586,7 +678,9 @@ function UsersPageInner() {
   }
 
   async function handleDelete(u) {
-    const ok = window.confirm(`¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`);
+    const ok = window.confirm(
+      `¿Seguro que deseas eliminar al usuario "${u.nombreCompleto || u.name || ""}"?`
+    );
     if (!ok) return;
 
     try {
@@ -628,6 +722,7 @@ function UsersPageInner() {
           <h2 className="text-lg md:text-xl font-semibold" style={{ color: "var(--text)" }}>
             {editing ? "Editar usuario" : "Registrar nuevo usuario"}
           </h2>
+
           <button
             type="button"
             onClick={() => {
@@ -636,7 +731,6 @@ function UsersPageInner() {
               setCreds({ password: "", confirm: "" });
               setErrors({});
             }}
-            className="text-xs md:text-sm px-3 py-1.5 rounded-lg transition-colors"
             style={sxGhostBtn()}
           >
             Limpiar formulario
@@ -668,10 +762,14 @@ function UsersPageInner() {
                 value={form.nombreCompleto}
                 onChange={(e) => setField("nombreCompleto", e.target.value)}
                 className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
-                style={sxInput()}
+                style={sxInput({ minHeight: "42px" })}
                 placeholder="Ej. Juan Pérez"
               />
-              {errors.nombreCompleto && <p className="text-xs" style={{ color: "#fca5a5" }}>{errors.nombreCompleto}</p>}
+              {errors.nombreCompleto && (
+                <p className="text-xs" style={{ color: "#fca5a5" }}>
+                  {errors.nombreCompleto}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -684,10 +782,14 @@ function UsersPageInner() {
                 value={form.email}
                 onChange={(e) => setField("email", e.target.value)}
                 className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
-                style={sxInput()}
+                style={sxInput({ minHeight: "42px" })}
                 placeholder="usuario@dominio.com"
               />
-              {errors.email && <p className="text-xs" style={{ color: "#fca5a5" }}>{errors.email}</p>}
+              {errors.email && (
+                <p className="text-xs" style={{ color: "#fca5a5" }}>
+                  {errors.email}
+                </p>
+              )}
             </div>
           </div>
 
@@ -696,8 +798,16 @@ function UsersPageInner() {
               <label className="text-sm" style={{ color: "var(--text)" }}>
                 Rol(es)
               </label>
-              <RoleSelect value={form.roles} onChange={(val) => setField("roles", val)} availableRoles={roleCatalog} />
-              {errors.roles && <p className="text-xs" style={{ color: "#fca5a5" }}>{errors.roles}</p>}
+              <RoleSelect
+                value={form.roles}
+                onChange={(val) => setField("roles", val)}
+                availableRoles={roleCatalog}
+              />
+              {errors.roles && (
+                <p className="text-xs" style={{ color: "#fca5a5" }}>
+                  {errors.roles}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -709,7 +819,7 @@ function UsersPageInner() {
                 value={form.active ? "1" : "0"}
                 onChange={(e) => setField("active", e.target.value === "1")}
                 className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
-                style={sxInput()}
+                style={sxInput({ minHeight: "42px" })}
               >
                 <option value="1">Activo</option>
                 <option value="0">Inactivo</option>
@@ -720,27 +830,36 @@ function UsersPageInner() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
             <div className="space-y-1">
               <label className="text-sm" style={{ color: "var(--text)" }}>
-                Contraseña <span className="text-xs ml-2" style={{ color: "var(--text-muted)" }}>(solo al crear o cambiar)</span>
+                Contraseña{" "}
+                <span className="text-xs ml-2" style={{ color: "var(--text-muted)" }}>
+                  (solo al crear o cambiar)
+                </span>
               </label>
+
               <div className="flex items-center gap-2">
                 <input
                   type={showPwd ? "text" : "password"}
                   value={creds.password}
                   onChange={(e) => setCreds((prev) => ({ ...prev, password: e.target.value }))}
                   className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
-                  style={sxInput()}
+                  style={sxInput({ minHeight: "42px" })}
                   placeholder="••••••••"
                 />
+
                 <button
                   type="button"
                   onClick={() => setShowPwd((s) => !s)}
-                  className="px-2 py-1 text-xs rounded-md"
-                  style={sxGhostBtn()}
+                  style={sxGhostBtn({ minHeight: "42px", padding: "0 12px" })}
                 >
                   {showPwd ? "Ocultar" : "Ver"}
                 </button>
               </div>
-              {errors.password && <p className="text-xs" style={{ color: "#fca5a5" }}>{errors.password}</p>}
+
+              {errors.password && (
+                <p className="text-xs" style={{ color: "#fca5a5" }}>
+                  {errors.password}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -751,12 +870,18 @@ function UsersPageInner() {
                 type={showPwd ? "text" : "password"}
                 name="confirm"
                 className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
-                style={sxInput()}
+                style={sxInput({ minHeight: "42px" })}
                 value={creds.confirm}
                 onChange={(e) => setCreds((prev) => ({ ...prev, confirm: e.target.value }))}
                 placeholder="••••••••"
               />
-              {errors.confirm && <span className="text-xs" style={{ color: "#fca5a5" }}>{errors.confirm}</span>}
+
+              {errors.confirm && (
+                <span className="text-xs" style={{ color: "#fca5a5" }}>
+                  {errors.confirm}
+                </span>
+              )}
+
               {!errors.confirm && creds.confirm && !match && (
                 <span className="text-xs" style={{ color: "#fca5a5" }}>
                   No coincide con la contraseña.
@@ -768,7 +893,11 @@ function UsersPageInner() {
               <label className="text-sm" style={{ color: "var(--text)" }}>
                 Seguridad
               </label>
-              <label className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
+
+              <label
+                className="flex items-center gap-2 text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
                 <input
                   type="checkbox"
                   checked={!!form.forcePwChange}
@@ -776,6 +905,7 @@ function UsersPageInner() {
                 />
                 Forzar cambio de contraseña
               </label>
+
               <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                 Se envía al backend como <span className="font-mono">mustChangePassword</span>.
               </p>
@@ -783,44 +913,47 @@ function UsersPageInner() {
           </div>
 
           {showPwdRules && (
-            <div
-              className="text-xs rounded-lg px-3 py-2 space-y-1"
-              style={sxCardSoft()}
-            >
+            <div className="text-xs rounded-lg px-3 py-2 space-y-1" style={sxCardSoft()}>
               <div className="font-semibold mb-1" style={{ color: "#67e8f9" }}>
                 Requisitos de contraseña:
               </div>
               <div>
-                <span style={{ color: pwdR.length ? "#86efac" : "#fca5a5" }}>• Al menos 8 caracteres</span>
+                <span style={{ color: pwdR.length ? "#86efac" : "#fca5a5" }}>
+                  • Al menos 8 caracteres
+                </span>
               </div>
               <div>
-                <span style={{ color: pwdR.upper ? "#86efac" : "#fca5a5" }}>• Una letra mayúscula</span>
+                <span style={{ color: pwdR.upper ? "#86efac" : "#fca5a5" }}>
+                  • Una letra mayúscula
+                </span>
               </div>
               <div>
-                <span style={{ color: pwdR.lower ? "#86efac" : "#fca5a5" }}>• Una letra minúscula</span>
+                <span style={{ color: pwdR.lower ? "#86efac" : "#fca5a5" }}>
+                  • Una letra minúscula
+                </span>
               </div>
               <div>
-                <span style={{ color: pwdR.digit ? "#86efac" : "#fca5a5" }}>• Un número</span>
+                <span style={{ color: pwdR.digit ? "#86efac" : "#fca5a5" }}>
+                  • Un número
+                </span>
               </div>
               <div>
-                <span style={{ color: match ? "#86efac" : "#fca5a5" }}>• Coincidencia entre contraseña y confirmación</span>
+                <span style={{ color: match ? "#86efac" : "#fca5a5" }}>
+                  • Coincidencia entre contraseña y confirmación
+                </span>
               </div>
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={cancelEdit}
-              className="px-4 py-2 text-sm rounded-lg"
-              style={sxGhostBtn()}
-            >
+          <div className="flex justify-end gap-3 pt-2 flex-wrap">
+            <button type="button" onClick={cancelEdit} style={sxGhostBtn()}>
               Cancelar
             </button>
+
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 text-sm rounded-lg font-semibold disabled:opacity-60"
+              className="disabled:opacity-60"
               style={sxPrimaryBtn()}
             >
               {submitting ? "Guardando..." : editing ? "Guardar cambios" : "Crear usuario"}
@@ -846,7 +979,7 @@ function UsersPageInner() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Buscar por nombre o correo..."
               className="px-3 py-1.5 rounded-lg text-sm focus:outline-none"
-              style={sxInput()}
+              style={sxInput({ minHeight: "40px" })}
             />
 
             <input
@@ -854,20 +987,28 @@ function UsersPageInner() {
               value={createdFrom}
               onChange={(e) => setCreatedFrom(e.target.value)}
               className="px-3 py-1.5 rounded-lg text-sm focus:outline-none"
-              style={sxInput()}
+              style={sxInput({ minHeight: "40px" })}
               title="Desde (creación)"
             />
+
             <input
               type="date"
               value={createdTo}
               onChange={(e) => setCreatedTo(e.target.value)}
               className="px-3 py-1.5 rounded-lg text-sm focus:outline-none"
-              style={sxInput()}
+              style={sxInput({ minHeight: "40px" })}
               title="Hasta (creación)"
             />
 
-            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
+            <label
+              className="flex items-center gap-2 text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <input
+                type="checkbox"
+                checked={onlyActive}
+                onChange={(e) => setOnlyActive(e.target.checked)}
+              />
               Mostrar solo activos
             </label>
 
@@ -879,9 +1020,8 @@ function UsersPageInner() {
                 setCreatedTo("");
                 setOnlyActive(true);
               }}
-              className="text-xs px-3 py-1.5 rounded-lg"
-              style={sxGhostBtn()}
               title="Quitar filtros"
+              style={sxGhostBtn({ minHeight: "40px" })}
             >
               Limpiar filtros
             </button>
@@ -942,17 +1082,17 @@ function UsersPageInner() {
 
                     <td className="px-4 py-3 text-center">
                       <span
-                        className="inline-flex items-center px-2 py-1 rounded-full text-[11px] font-semibold"
+                        className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
                         style={
                           u.active !== false
                             ? {
                                 background: "color-mix(in srgb, #22c55e 12%, transparent)",
-                                color: "#86efac",
+                                color: "#15803d",
                                 border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
                               }
                             : {
                                 background: "color-mix(in srgb, #ef4444 12%, transparent)",
-                                color: "#fca5a5",
+                                color: "#dc2626",
                                 border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
                               }
                         }
@@ -962,51 +1102,34 @@ function UsersPageInner() {
                       </span>
                     </td>
 
-                    <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleActive(u)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md"
-                        style={
-                          u.active !== false
-                            ? {
-                                background: "color-mix(in srgb, #f59e0b 10%, transparent)",
-                                color: "#fde68a",
-                                border: "1px solid color-mix(in srgb, #f59e0b 30%, transparent)",
-                              }
-                            : {
-                                background: "color-mix(in srgb, #22c55e 10%, transparent)",
-                                color: "#86efac",
-                                border: "1px solid color-mix(in srgb, #22c55e 30%, transparent)",
-                              }
-                        }
-                      >
-                        {u.active !== false ? "Desactivar" : "Activar"}
-                      </button>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(u)}
+                          style={sxTableActionBtn(u.active !== false ? "warning" : "success")}
+                        >
+                          {u.active !== false ? "Desactivar" : "Activar"}
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => startEdit(u)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md"
-                        style={sxGhostBtn()}
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        Editar
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(u)}
+                          style={sxTableActionBtn("neutral")}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          Editar
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(u)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md"
-                        style={{
-                          background: "color-mix(in srgb, #ef4444 10%, transparent)",
-                          color: "#fecaca",
-                          border: "1px solid color-mix(in srgb, #ef4444 30%, transparent)",
-                        }}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Eliminar
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(u)}
+                          style={sxTableActionBtn("danger")}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Eliminar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1021,7 +1144,7 @@ function UsersPageInner() {
               type="button"
               onClick={() => load({ append: true })}
               disabled={loading}
-              className="px-4 py-2 text-sm rounded-lg disabled:opacity-60"
+              className="disabled:opacity-60"
               style={sxGhostBtn()}
             >
               {loading ? "Cargando..." : "Ver más usuarios"}

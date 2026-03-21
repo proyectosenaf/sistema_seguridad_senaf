@@ -16,8 +16,17 @@ function parseCsv(s) {
     .filter(Boolean);
 }
 
+function normalizeArray(arr) {
+  return Array.from(
+    new Set(
+      (Array.isArray(arr) ? arr : [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 function readDevIdentityFromHeaders(req) {
-  // ✅ soporta tus headers ya usados en otros módulos (audit.util.js)
   const email =
     String(req?.headers?.["x-user-email"] || "")
       .trim()
@@ -25,16 +34,19 @@ function readDevIdentityFromHeaders(req) {
 
   const id = String(req?.headers?.["x-user-id"] || "").trim() || null;
 
-  // roles/perms opcionales (si no vienen, no inventamos)
-  // acepta JSON ["admin"] o CSV "admin,supervisor"
   const rolesRaw = req?.headers?.["x-user-roles"];
   const permsRaw = req?.headers?.["x-user-perms"];
 
   const rolesJson = safeJsonParse(rolesRaw);
   const permsJson = safeJsonParse(permsRaw);
 
-  const roles = Array.isArray(rolesJson) ? rolesJson : parseCsv(rolesRaw);
-  const perms = Array.isArray(permsJson) ? permsJson : parseCsv(permsRaw);
+  const roles = normalizeArray(
+    Array.isArray(rolesJson) ? rolesJson : parseCsv(rolesRaw)
+  );
+
+  const perms = normalizeArray(
+    Array.isArray(permsJson) ? permsJson : parseCsv(permsRaw)
+  );
 
   if (!email && !id && !roles.length && !perms.length) return null;
 
@@ -43,7 +55,8 @@ function readDevIdentityFromHeaders(req) {
     email: email || undefined,
     roles,
     perms,
-    permissions: perms, // compat
+    permissions: perms,
+    provider: "local",
   };
 }
 
@@ -53,8 +66,7 @@ function readDevIdentityFromHeaders(req) {
  * - required: false => si no hay token -> next() sin req.auth
  * - attachToReqUser: true => req.user = payload (compat)
  *
- * NOTA:
- * - Siempre deja payload en req.auth.payload para reutilizarlo en buildContextFrom
+ * Siempre deja payload en req.auth.payload.
  */
 export function makeAuthMw(options = {}) {
   const {
@@ -63,20 +75,29 @@ export function makeAuthMw(options = {}) {
     errorMessage = "Unauthorized",
   } = options;
 
-  const disableAuth = process.env.DISABLE_AUTH === "1";
+  const disableAuth = String(process.env.DISABLE_AUTH || "0") === "1";
 
-  // ✅ Si DISABLE_AUTH=1, no bloquea y no valida token
   if (disableAuth) {
     console.warn("[AUTH] DISABLE_AUTH=1 → JWT deshabilitado");
 
     return (req, _res, next) => {
-      // ✅ FIX: en modo disable, intenta hidratar identidad desde headers (si vienen)
       const devPayload = readDevIdentityFromHeaders(req);
+
       if (devPayload) {
         req.auth = req.auth || {};
-        req.auth.payload = devPayload;
-        if (attachToReqUser) req.user = req.user || devPayload;
+        req.auth.payload = {
+          ...(req.auth.payload || {}),
+          ...devPayload,
+        };
+
+        if (attachToReqUser) {
+          req.user = {
+            ...(req.user || {}),
+            ...req.auth.payload,
+          };
+        }
       }
+
       return next();
     };
   }
@@ -85,7 +106,27 @@ export function makeAuthMw(options = {}) {
     const token = getBearer(req);
 
     if (!token) {
-      if (!required) return next();
+      if (!required) {
+        const devPayload = readDevIdentityFromHeaders(req);
+
+        if (devPayload) {
+          req.auth = req.auth || {};
+          req.auth.payload = {
+            ...(req.auth.payload || {}),
+            ...devPayload,
+          };
+
+          if (attachToReqUser) {
+            req.user = {
+              ...(req.user || {}),
+              ...req.auth.payload,
+            };
+          }
+        }
+
+        return next();
+      }
+
       return res.status(401).json({ ok: false, error: errorMessage });
     }
 
@@ -95,11 +136,33 @@ export function makeAuthMw(options = {}) {
       req.auth = req.auth || {};
       req.auth.payload = payload;
 
-      if (attachToReqUser) req.user = req.user || payload;
+      if (attachToReqUser) {
+        req.user = req.user || payload;
+      }
 
       return next();
     } catch (e) {
-      if (!required) return next();
+      if (!required) {
+        const devPayload = readDevIdentityFromHeaders(req);
+
+        if (devPayload) {
+          req.auth = req.auth || {};
+          req.auth.payload = {
+            ...(req.auth.payload || {}),
+            ...devPayload,
+          };
+
+          if (attachToReqUser) {
+            req.user = {
+              ...(req.user || {}),
+              ...req.auth.payload,
+            };
+          }
+        }
+
+        return next();
+      }
+
       return res.status(401).json({
         ok: false,
         error: errorMessage,
@@ -109,8 +172,5 @@ export function makeAuthMw(options = {}) {
   };
 }
 
-// ✅ compat default (para imports antiguos)
 export default makeAuthMw;
-
-// ✅ si en otros módulos importabas getBearer desde aquí, re-export para no romper
 export { getBearer };

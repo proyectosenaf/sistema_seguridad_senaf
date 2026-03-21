@@ -2,27 +2,24 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
-import { devOr, requirePerm, parseList, buildContextFrom } from "../utils/rbac.util.js";
+import {
+  devOr,
+  requirePerm,
+  parseList,
+  buildContextFrom,
+} from "../utils/rbac.util.js";
 import { writeAudit } from "../utils/audit.util.js";
 import { hashPassword } from "../utils/password.util.js";
+import { logBitacoraEvent } from "../../bitacora/services/bitacora.service.js";
 
 const r = Router();
 
 /* ===================== Middlewares ===================== */
 
-/**
- * ✅ Manage:
- * compatible con canónico + legacy
- */
 const MW_USERS_MANAGE = devOr(
   requirePerm(["iam.users.write", "iam.users.manage"])
 );
 
-/**
- * ✅ View:
- * view OR read OR write/manage
- * para no romper compatibilidad con estados anteriores
- */
 const MW_USERS_VIEW = devOr(async (req, res, next) => {
   try {
     const ctx = req.iam || (await buildContextFrom(req));
@@ -88,18 +85,111 @@ function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(String(id || ""));
 }
 
+function normEmail(e) {
+  return String(e || "").trim().toLowerCase();
+}
+
+function escapeRegex(s = "") {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseBool(v, def = false) {
+  if (v === undefined || v === null) return def;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v === 1;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return def;
+}
+
+function hasRole(roles, role) {
+  const rr = Array.isArray(roles) ? roles : [];
+  const wanted = String(role || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_");
+
+  return rr
+    .map((x) => String(x || "").toLowerCase().trim().replace(/\s+/g, "_"))
+    .includes(wanted);
+}
+
+function normalizeRoleValue(role) {
+  if (!role) return "";
+
+  if (typeof role === "string") return role.trim();
+
+  if (typeof role === "object") {
+    return String(
+      role.name ||
+        role.slug ||
+        role.code ||
+        role.key ||
+        role.nombre ||
+        role.label ||
+        ""
+    ).trim();
+  }
+
+  return String(role).trim();
+}
+
+function getPrimaryRole(userLike) {
+  const roles = Array.isArray(userLike?.roles) ? userLike.roles : [];
+  return normalizeRoleValue(roles[0] || "");
+}
+
+function clientIp(req) {
+  return (
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    req.connection?.remoteAddress ||
+    ""
+  );
+}
+
 function auditSafe(req, payload, label) {
   return writeAudit(req, payload).catch((e) => {
     console.warn(`[IAM][AUDIT ${label}] error (no bloquea):`, e?.message || e);
   });
 }
 
-function normEmail(e) {
-  return String(e || "").trim().toLowerCase();
+async function bitacoraSafe(req, payload, label) {
+  try {
+    await logBitacoraEvent({
+      modulo: "IAM",
+      tipo: "IAM",
+      prioridad: payload.prioridad || "Media",
+      estado: payload.estado || "Registrado",
+      source: payload.source || "iam-users",
+      agente:
+        req?.user?.email ||
+        req?.user?.name ||
+        payload.agente ||
+        "Sistema IAM",
+      actorId:
+        req?.user?.sub ||
+        req?.user?._id ||
+        req?.user?.id ||
+        payload.actorId ||
+        "",
+      actorEmail: req?.user?.email || payload.actorEmail || "",
+      actorRol: getPrimaryRole(req?.user) || payload.actorRol || "",
+      ip: clientIp(req),
+      userAgent: req?.get?.("user-agent") || "",
+      ...payload,
+    });
+  } catch (e) {
+    console.warn(
+      `[IAM][BITACORA ${label}] error (no bloquea):`,
+      e?.message || e
+    );
+  }
 }
 
 /**
- * ✅ Soporta roles como:
+ * Soporta roles como:
  * - ["admin", "visita"]
  * - "admin,visita"
  * - [{code:"admin"}, {value:"visita"}]
@@ -108,7 +198,11 @@ function normEmail(e) {
 function toStringArray(v) {
   const normOne = (x) => {
     if (x == null) return "";
-    if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") {
+    if (
+      typeof x === "string" ||
+      typeof x === "number" ||
+      typeof x === "boolean"
+    ) {
       return String(x).trim();
     }
     if (typeof x === "object") {
@@ -142,28 +236,6 @@ function toStringArray(v) {
   return [];
 }
 
-function escapeRegex(s = "") {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function parseBool(v, def = false) {
-  if (v === undefined || v === null) return def;
-  if (typeof v === "boolean") return v;
-  if (typeof v === "number") return v === 1;
-  const s = String(v).trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
-  if (["0", "false", "no", "n", "off"].includes(s)) return false;
-  return def;
-}
-
-function hasRole(roles, role) {
-  const rr = Array.isArray(roles) ? roles : [];
-  const wanted = String(role || "").toLowerCase().trim().replace(/\s+/g, "_");
-  return rr
-    .map((x) => String(x || "").toLowerCase().trim().replace(/\s+/g, "_"))
-    .includes(wanted);
-}
-
 function pickUser(u) {
   if (!u) return null;
   return {
@@ -189,10 +261,6 @@ function pickUser(u) {
   };
 }
 
-/**
- * Input del UsersPage (form) -> schema real
- * ✅ acepta alias comunes de password
- */
 function mapBodyToIamUser(body = {}) {
   const email = normEmail(body.email || body.correoPersona);
   const name = String(body.name || body.nombreCompleto || "").trim();
@@ -251,9 +319,13 @@ function parseDateToExclusive(s) {
 r.get("/", MW_USERS_VIEW, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
-    const onlyActive = parseBool(req.query.onlyActive, true) || String(req.query.active || "") === "1";
+    const onlyActive =
+      parseBool(req.query.onlyActive, true) ||
+      String(req.query.active || "") === "1";
 
-    const createdFromRaw = String(req.query.createdFrom || req.query.from || "").trim();
+    const createdFromRaw = String(
+      req.query.createdFrom || req.query.from || ""
+    ).trim();
     const createdToRaw = String(req.query.createdTo || req.query.to || "").trim();
 
     const createdFrom = parseDateFromStart(createdFromRaw);
@@ -272,7 +344,8 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
       query.createdAt = {};
       if (createdFrom) query.createdAt.$gte = createdFrom;
       if (createdToExcl) {
-        query.createdAt[isDateOnlyString(createdToRaw) ? "$lt" : "$lte"] = createdToExcl;
+        query.createdAt[isDateOnlyString(createdToRaw) ? "$lt" : "$lte"] =
+          createdToExcl;
       }
     }
 
@@ -288,7 +361,8 @@ r.get("/", MW_USERS_VIEW, async (req, res, next) => {
         ? 2000
         : 5;
 
-    const skip = Number.isFinite(skipParam) && skipParam > 0 ? Math.max(0, skipParam) : 0;
+    const skip =
+      Number.isFinite(skipParam) && skipParam > 0 ? Math.max(0, skipParam) : 0;
 
     const [total, items] = await Promise.all([
       IamUser.countDocuments(query),
@@ -320,7 +394,11 @@ r.get("/guards", MW_USERS_VIEW, async (req, res, next) => {
       query.$or = [{ name: rx }, { email: rx }];
     }
 
-    const items = await IamUser.find(query).sort({ createdAt: -1 }).limit(500).lean();
+    const items = await IamUser.find(query)
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .lean();
+
     return res.json({ ok: true, items: items.map(pickUser) });
   } catch (e) {
     next(e);
@@ -336,7 +414,9 @@ r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
 
     const u = await IamUser.findById(id).lean();
     if (!u) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     return res.json({ ok: true, item: pickUser(u) });
@@ -350,16 +430,30 @@ r.get("/:id", MW_USERS_VIEW, async (req, res, next) => {
  */
 r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
   try {
-    const { email, name, roles, active, mustChangePasswordRaw, password } = mapBodyToIamUser(req.body || {});
+    const {
+      email,
+      name,
+      roles,
+      active,
+      mustChangePasswordRaw,
+      password,
+    } = mapBodyToIamUser(req.body || {});
 
     if (!email) {
-      return res.status(400).json({ ok: false, message: "email/correoPersona requerido" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "email/correoPersona requerido" });
     }
     if (!name) {
-      return res.status(400).json({ ok: false, message: "name/nombreCompleto requerido" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "name/nombreCompleto requerido" });
     }
     if (!roles.length) {
-      return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
+      return res.status(400).json({
+        ok: false,
+        message: "roles requerido (al menos 1)",
+      });
     }
 
     const isVisitor = hasRole(roles, "visita");
@@ -380,10 +474,16 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
 
     const exists = await IamUser.findOne({ email }).lean();
     if (exists) {
-      return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
+      return res.status(409).json({
+        ok: false,
+        message: "Ya existe un usuario con ese correo",
+      });
     }
 
-    const mustChangePassword = isVisitor ? false : parseBool(mustChangePasswordRaw, true);
+    const mustChangePassword = isVisitor
+      ? false
+      : parseBool(mustChangePasswordRaw, true);
+
     const passwordHash = password ? await hashPassword(password) : "";
 
     const doc = await IamUser.create({
@@ -404,6 +504,14 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       otpVerifiedAt: null,
     });
 
+    const after = {
+      email: doc.email,
+      name: doc.name,
+      roles: doc.roles || [],
+      active: doc.active !== false,
+      mustChangePassword: !!doc.mustChangePassword,
+    };
+
     await auditSafe(
       req,
       {
@@ -411,12 +519,27 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
         entity: "user",
         entityId: doc._id.toString(),
         before: null,
-        after: {
-          email: doc.email,
-          name: doc.name,
-          roles: doc.roles || [],
-          active: doc.active !== false,
-          mustChangePassword: !!doc.mustChangePassword,
+        after,
+      },
+      "create user"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "USER_CREATE",
+        entidad: "IamUser",
+        entidadId: doc._id.toString(),
+        titulo: `Usuario creado: ${doc.email}`,
+        descripcion: `Se creó el usuario ${doc.email}.`,
+        before: null,
+        after,
+        estado: "Exitoso",
+        prioridad: "Media",
+        nombre: doc.name || doc.email,
+        meta: {
+          provider: doc.provider || "local",
+          visitor: isVisitor,
         },
       },
       "create user"
@@ -428,7 +551,10 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
     });
   } catch (e) {
     if (e?.code === 11000) {
-      return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
+      return res.status(409).json({
+        ok: false,
+        message: "Ya existe un usuario con ese correo",
+      });
     }
     next(e);
   }
@@ -443,14 +569,15 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
 
     const before = await IamUser.findById(id).lean();
     if (!before) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     const protectedUser = isProtectedAdminEmail(before.email);
     const body = req.body || {};
     const update = {};
 
-    // ---------- si NO es protegido: cambios normales ----------
     if (!protectedUser) {
       if (body.email != null || body.correoPersona != null) {
         update.email = normEmail(body.email || body.correoPersona);
@@ -460,7 +587,10 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       if (body.roles != null) {
         const roles = toStringArray(body.roles);
         if (!roles.length) {
-          return res.status(400).json({ ok: false, message: "roles requerido (al menos 1)" });
+          return res.status(400).json({
+            ok: false,
+            message: "roles requerido (al menos 1)",
+          });
         }
         newRoles = roles;
         update.roles = roles;
@@ -475,7 +605,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       if (isVisitor) update.mustChangePassword = false;
     }
 
-    // ---------- si ES protegido: permitir SOLO si conserva admin ----------
     if (protectedUser && body.roles != null) {
       const roles = toStringArray(body.roles);
       if (!hasRole(roles, "admin")) {
@@ -487,12 +616,10 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       update.roles = roles;
     }
 
-    // ---------- nombre ----------
     if (body.name != null || body.nombreCompleto != null) {
       update.name = String(body.name || body.nombreCompleto || "").trim();
     }
 
-    // ---------- mustChangePassword ----------
     if (body.mustChangePassword != null || body.forcePwChange != null) {
       update.mustChangePassword = parseBool(
         body.mustChangePassword ?? body.forcePwChange,
@@ -500,7 +627,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       );
     }
 
-    // ---------- password ----------
     if (body.password != null) {
       const pwd = String(body.password).trim();
       if (pwd.length > 0) {
@@ -518,7 +644,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       }
     }
 
-    // ---------- hardening adicional ----------
     if (protectedUser && update.email && !isProtectedAdminEmail(update.email)) {
       return res.status(400).json({
         ok: false,
@@ -533,8 +658,30 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     ).lean();
 
     if (!u) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
+
+    const beforeData = {
+      email: before.email,
+      name: before.name,
+      roles: before.roles || [],
+      active: before.active !== false,
+      mustChangePassword: !!before.mustChangePassword,
+      passwordChangedAt: before.passwordChangedAt || null,
+      passwordExpiresAt: before.passwordExpiresAt || null,
+    };
+
+    const afterData = {
+      email: u.email,
+      name: u.name,
+      roles: u.roles || [],
+      active: u.active !== false,
+      mustChangePassword: !!u.mustChangePassword,
+      passwordChangedAt: u.passwordChangedAt || null,
+      passwordExpiresAt: u.passwordExpiresAt || null,
+    };
 
     await auditSafe(
       req,
@@ -542,20 +689,25 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
         action: "update",
         entity: "user",
         entityId: id,
-        before: {
-          email: before.email,
-          name: before.name,
-          roles: before.roles || [],
-          active: before.active !== false,
-          mustChangePassword: !!before.mustChangePassword,
-        },
-        after: {
-          email: u.email,
-          name: u.name,
-          roles: u.roles || [],
-          active: u.active !== false,
-          mustChangePassword: !!u.mustChangePassword,
-        },
+        before: beforeData,
+        after: afterData,
+      },
+      "update user"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "USER_UPDATE",
+        entidad: "IamUser",
+        entidadId: id,
+        titulo: `Usuario actualizado: ${u.email}`,
+        descripcion: `Se actualizó el usuario ${u.email}.`,
+        before: beforeData,
+        after: afterData,
+        estado: "Exitoso",
+        prioridad: "Media",
+        nombre: u.name || u.email,
       },
       "update user"
     );
@@ -563,7 +715,10 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
     return res.json({ ok: true, item: pickUser(u) });
   } catch (e) {
     if (e?.code === 11000) {
-      return res.status(409).json({ ok: false, message: "Ya existe un usuario con ese correo" });
+      return res.status(409).json({
+        ok: false,
+        message: "Ya existe un usuario con ese correo",
+      });
     }
     next(e);
   }
@@ -578,7 +733,9 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
 
     const before = await IamUser.findById(id).lean();
     if (!before) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     const u = await IamUser.findByIdAndUpdate(
@@ -588,7 +745,9 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
     ).lean();
 
     if (!u) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     await auditSafe(
@@ -599,6 +758,23 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
         entityId: id,
         before: { active: before.active !== false },
         after: { active: true },
+      },
+      "enable user"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "USER_ENABLE",
+        entidad: "IamUser",
+        entidadId: id,
+        titulo: `Usuario habilitado: ${u.email}`,
+        descripcion: `Se habilitó el usuario ${u.email}.`,
+        before: { active: before.active !== false },
+        after: { active: true },
+        estado: "Exitoso",
+        prioridad: "Media",
+        nombre: u.name || u.email,
       },
       "enable user"
     );
@@ -618,7 +794,9 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
 
     const before = await IamUser.findById(id).lean();
     if (!before) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     if (isProtectedAdminEmail(before.email)) {
@@ -635,7 +813,9 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
     ).lean();
 
     if (!u) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     await auditSafe(
@@ -646,6 +826,23 @@ r.post("/:id/disable", MW_USERS_MANAGE, async (req, res, next) => {
         entityId: id,
         before: { active: before.active !== false },
         after: { active: false },
+      },
+      "disable user"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "USER_DISABLE",
+        entidad: "IamUser",
+        entidadId: id,
+        titulo: `Usuario deshabilitado: ${u.email}`,
+        descripcion: `Se deshabilitó el usuario ${u.email}.`,
+        before: { active: before.active !== false },
+        after: { active: false },
+        estado: "Exitoso",
+        prioridad: "Alta",
+        nombre: u.name || u.email,
       },
       "disable user"
     );
@@ -665,7 +862,9 @@ r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
 
     const before = await IamUser.findById(id).lean();
     if (!before) {
-      return res.status(404).json({ ok: false, message: "Usuario no encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Usuario no encontrado" });
     }
 
     if (isProtectedAdminEmail(before.email)) {
@@ -677,19 +876,39 @@ r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
 
     await IamUser.deleteOne({ _id: id });
 
+    const beforeData = {
+      email: before.email,
+      name: before.name,
+      roles: before.roles || [],
+      active: before.active !== false,
+      mustChangePassword: !!before.mustChangePassword,
+    };
+
     await auditSafe(
       req,
       {
         action: "delete",
         entity: "user",
         entityId: id,
-        before: {
-          email: before.email,
-          name: before.name,
-          roles: before.roles || [],
-          active: before.active !== false,
-        },
+        before: beforeData,
         after: null,
+      },
+      "delete user"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "USER_DELETE",
+        entidad: "IamUser",
+        entidadId: id,
+        titulo: `Usuario eliminado: ${before.email}`,
+        descripcion: `Se eliminó el usuario ${before.email}.`,
+        before: beforeData,
+        after: null,
+        estado: "Exitoso",
+        prioridad: "Alta",
+        nombre: before.name || before.email,
       },
       "delete user"
     );

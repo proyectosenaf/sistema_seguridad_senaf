@@ -1,8 +1,11 @@
 import crypto from "crypto";
 import QRCode from "qrcode";
 import Visita from "./visitas.model.js";
+import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
 const QR_PREFIX = "SENAF_CITA_QR::";
+
+/* ───────────────────────── Helpers ───────────────────────── */
 
 function hasVehicleData(vehiculo) {
   if (!vehiculo || typeof vehiculo !== "object") return false;
@@ -22,6 +25,36 @@ function normalizeVehiculoInput(vehiculo) {
     modelo: String(vehiculo?.modelo || "").trim(),
     placa: String(vehiculo?.placa || "").trim().toUpperCase(),
   };
+}
+
+function cleanText(value) {
+  return String(value || "").trim();
+}
+
+function cleanDoc(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeBoolean(value) {
+  if (typeof value === "boolean") return value;
+
+  const raw = String(value || "").trim().toLowerCase();
+  return ["true", "1", "si", "sí", "yes", "on"].includes(raw);
+}
+
+function normalizeAcompanantesInput(acompanantes) {
+  if (!Array.isArray(acompanantes)) return [];
+
+  return acompanantes
+    .map((item) => ({
+      nombre: cleanText(item?.nombre),
+      documento: cleanText(item?.documento),
+    }))
+    .filter((item) => item.nombre && item.documento);
+}
+
+function hasAcompanantesData(acompanantes) {
+  return Array.isArray(acompanantes) && acompanantes.length > 0;
 }
 
 function buildDayRange(day) {
@@ -71,7 +104,21 @@ function buildMonthRange(month) {
 }
 
 function getActorId(req) {
-  return req?.user?._id || req?.user?.id || null;
+  return req?.user?._id || req?.user?.id || req?.user?.sub || null;
+}
+
+function getActorEmail(req) {
+  return req?.user?.email || "";
+}
+
+function getActorName(req) {
+  return req?.user?.name || req?.user?.email || "Sistema de Visitas";
+}
+
+function toPlain(doc) {
+  if (!doc) return null;
+  if (typeof doc.toObject === "function") return doc.toObject();
+  return JSON.parse(JSON.stringify(doc));
 }
 
 function normalizeEstadoInput(estado) {
@@ -96,9 +143,95 @@ function canEnterByEstado(estado) {
   return ["Programada", "En revisión", "Autorizada"].includes(estado);
 }
 
+function buildVisitaDescripcion(visita, prefix = "Visita") {
+  const acompanantesTxt =
+    Array.isArray(visita.acompanantes) && visita.acompanantes.length > 0
+      ? ` Acompañantes: ${visita.acompanantes.length}.`
+      : "";
+
+  return `${prefix} de ${visita.nombre || "Visitante"} para ${
+    visita.empleado || "N/D"
+  }. Motivo: ${visita.motivo || "N/D"}. Estado: ${
+    visita.estado || "Registrado"
+  }. Empresa: ${visita.empresa || "N/D"}.${acompanantesTxt}`;
+}
+
+async function auditVisita(req, payload = {}) {
+  await logBitacoraEvent({
+    modulo: "Control de Visitas",
+    tipo: "Visita",
+    accion: payload.accion || "CREAR",
+    entidad: payload.entidad || "Visita",
+    entidadId: payload.entidadId || "",
+    agente: payload.agente || getActorName(req),
+    actorId: getActorId(req) || "",
+    actorEmail: getActorEmail(req),
+    titulo: payload.titulo || "",
+    descripcion: payload.descripcion || "",
+    prioridad: payload.prioridad || "Baja",
+    estado: payload.estado || "Registrado",
+    nombre: payload.nombre || "",
+    empresa: payload.empresa || "",
+    source: payload.source || "visitas",
+    ip: req.ip || "",
+    userAgent: req.get("user-agent") || "",
+    before: payload.before || null,
+    after: payload.after || null,
+    meta: payload.meta || {},
+  });
+}
+
+function buildCommonPayload(body = {}) {
+  const {
+    nombre,
+    documento,
+    empresa,
+    empleado,
+    motivo,
+    telefono,
+    correo,
+    llegoEnVehiculo,
+    vehiculo,
+    acompanado,
+    acompanantes,
+  } = body;
+
+  const normalizedVehiculo = normalizeVehiculoInput(vehiculo);
+  const hasVehiculo = !!normalizedVehiculo;
+
+  const normalizedAcompanantes = normalizeAcompanantesInput(acompanantes);
+  const hasAcompanantes = hasAcompanantesData(normalizedAcompanantes);
+
+  const finalAcompanado =
+    typeof acompanado !== "undefined"
+      ? normalizeBoolean(acompanado)
+      : hasAcompanantes;
+
+  return {
+    nombre,
+    documento,
+    empresa: empresa || null,
+    empleado: empleado || null,
+    motivo,
+    telefono: telefono || null,
+    correo: correo || null,
+    llegoEnVehiculo:
+      typeof llegoEnVehiculo !== "undefined"
+        ? !!llegoEnVehiculo
+        : hasVehiculo,
+    vehiculo:
+      typeof llegoEnVehiculo !== "undefined"
+        ? !!llegoEnVehiculo
+          ? normalizedVehiculo
+          : null
+        : normalizedVehiculo,
+    acompanado: finalAcompanado,
+    acompanantes: finalAcompanado ? normalizedAcompanantes : [],
+  };
+}
+
 /**
  * GET /api/visitas
- * Lista de visitas (ingresos reales + historial)
  */
 export async function getVisitas(req, res) {
   try {
@@ -115,50 +248,46 @@ export async function getVisitas(req, res) {
 
 /**
  * POST /api/visitas
- * Crear una visita tipo "Ingreso" directa (guardia registra cuando llega)
  */
 export async function createVisita(req, res) {
   try {
-    const {
-      nombre,
-      documento,
-      empresa,
-      empleado,
-      motivo,
-      telefono,
-      correo,
-      tipo, // compatibilidad
-      llegoEnVehiculo,
-      vehiculo,
-      citaAt,
-    } = req.body || {};
+    const { tipo, citaAt } = req.body || {};
 
-    const normalizedVehiculo = normalizeVehiculoInput(vehiculo);
-    const hasVehiculo = !!normalizedVehiculo;
+    const payload = buildCommonPayload(req.body || {});
 
     const visita = new Visita({
-      nombre,
-      documento,
-      empresa: empresa || null,
-      empleado: empleado || null,
-      motivo,
-      telefono: telefono || null,
-      correo: correo || null,
+      ...payload,
       tipo: tipo || "Ingreso",
-      llegoEnVehiculo:
-        typeof llegoEnVehiculo !== "undefined"
-          ? !!llegoEnVehiculo
-          : hasVehiculo,
-      vehiculo:
-        typeof llegoEnVehiculo !== "undefined"
-          ? !!llegoEnVehiculo
-            ? normalizedVehiculo
-            : null
-          : normalizedVehiculo,
       citaAt: citaAt || null,
     });
 
     await visita.save();
+
+    await auditVisita(req, {
+      accion: "CREAR",
+      entidad: "Visita",
+      entidadId: visita._id?.toString(),
+      titulo: "Visita registrada",
+      descripcion: buildVisitaDescripcion(visita, "Visita"),
+      estado: visita.estado || "Registrado",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "visitas",
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        empleado: visita.empleado || "",
+        motivo: visita.motivo || "",
+        tipo: visita.tipo || "Ingreso",
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+        acompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes
+          : [],
+      },
+    });
 
     return res.status(201).json({
       ok: true,
@@ -172,7 +301,6 @@ export async function createVisita(req, res) {
 
 /**
  * PATCH /api/visitas/:id/cerrar
- * Cerrar visita (marcar salida / finalizada)
  */
 export async function closeVisita(req, res) {
   try {
@@ -186,6 +314,8 @@ export async function closeVisita(req, res) {
       });
     }
 
+    const before = toPlain(visita);
+
     if (!visita.fechaSalida) {
       visita.fechaSalida = new Date();
     }
@@ -193,6 +323,28 @@ export async function closeVisita(req, res) {
     visita.estado = "Finalizada";
 
     await visita.save();
+
+    await auditVisita(req, {
+      accion: "CERRAR",
+      entidad: "Visita",
+      entidadId: visita._id?.toString(),
+      titulo: "Visita finalizada",
+      descripcion: `Se finalizó la visita de ${visita.nombre || "Visitante"}.`,
+      estado: "Finalizada",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "visitas",
+      before,
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        fechaSalida: visita.fechaSalida || null,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+      },
+    });
 
     return res.json({ ok: true, item: visita });
   } catch (err) {
@@ -203,29 +355,12 @@ export async function closeVisita(req, res) {
 
 /**
  * POST /api/citas
- * Crear una cita agendada futura
- * Genera:
- * - qrToken
- * - qrPayload
- * - qrDataUrl
  */
 export async function createCita(req, res) {
   try {
-    const {
-      nombre,
-      documento,
-      empresa,
-      empleado,
-      motivo,
-      telefono,
-      correo,
-      citaAt,
-      llegoEnVehiculo,
-      vehiculo,
-    } = req.body || {};
+    const { citaAt } = req.body || {};
 
-    const normalizedVehiculo = normalizeVehiculoInput(vehiculo);
-    const hasVehiculo = !!normalizedVehiculo;
+    const payload = buildCommonPayload(req.body || {});
 
     const citaDate = citaAt ? new Date(citaAt) : null;
     if (!citaDate || Number.isNaN(citaDate.getTime())) {
@@ -239,31 +374,45 @@ export async function createCita(req, res) {
     const qrPayload = `${QR_PREFIX}${qrToken}`;
 
     const visita = new Visita({
-      nombre,
-      documento,
-      empresa: empresa || null,
-      empleado: empleado || null,
-      motivo,
-      telefono: telefono || null,
-      correo: correo || null,
+      ...payload,
       tipo: "Agendada",
       estado: "Programada",
       citaAt: citaDate,
-      llegoEnVehiculo:
-        typeof llegoEnVehiculo !== "undefined"
-          ? !!llegoEnVehiculo
-          : hasVehiculo,
-      vehiculo:
-        typeof llegoEnVehiculo !== "undefined"
-          ? !!llegoEnVehiculo
-            ? normalizedVehiculo
-            : null
-          : normalizedVehiculo,
       qrToken,
       qrPayload,
     });
 
     await visita.save();
+
+    await auditVisita(req, {
+      accion: "CREAR",
+      entidad: "Cita",
+      entidadId: visita._id?.toString(),
+      titulo: "Cita creada",
+      descripcion: `Cita programada para ${visita.nombre || "Visitante"} con ${
+        visita.empleado || "N/D"
+      } el ${
+        visita.citaAt ? new Date(visita.citaAt).toLocaleString() : "N/D"
+      }.`,
+      estado: visita.estado || "Programada",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "citas",
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        motivo: visita.motivo || "",
+        citaAt: visita.citaAt || null,
+        qrToken,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+        acompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes
+          : [],
+      },
+    });
 
     const qrDataUrl = await QRCode.toDataURL(qrPayload, {
       width: 320,
@@ -290,13 +439,97 @@ export async function createCita(req, res) {
 }
 
 /**
+ * PATCH /api/citas/:id
+ * Editar cita
+ */
+export async function updateCita(req, res) {
+  try {
+    const { id } = req.params;
+    const { citaAt, estado } = req.body || {};
+
+    const visita = await Visita.findById(id);
+    if (!visita) {
+      return res.status(404).json({
+        ok: false,
+        error: "Cita/visita no encontrada",
+      });
+    }
+
+    if (visita.tipo !== "Agendada") {
+      return res.status(400).json({
+        ok: false,
+        error: "El registro indicado no corresponde a una cita agendada",
+      });
+    }
+
+    const before = toPlain(visita);
+    const payload = buildCommonPayload(req.body || {});
+
+    visita.nombre = payload.nombre;
+    visita.documento = payload.documento;
+    visita.empresa = payload.empresa;
+    visita.empleado = payload.empleado;
+    visita.motivo = payload.motivo;
+    visita.telefono = payload.telefono;
+    visita.correo = payload.correo;
+    visita.llegoEnVehiculo = payload.llegoEnVehiculo;
+    visita.vehiculo = payload.vehiculo;
+    visita.acompanado = payload.acompanado;
+    visita.acompanantes = payload.acompanantes;
+
+    if (typeof citaAt !== "undefined") {
+      const citaDate = citaAt ? new Date(citaAt) : null;
+      if (!citaDate || Number.isNaN(citaDate.getTime())) {
+        return res.status(400).json({
+          ok: false,
+          error: "Debe indicar una fecha/hora de cita válida",
+        });
+      }
+      visita.citaAt = citaDate;
+    }
+
+    if (typeof estado !== "undefined" && estado !== "") {
+      visita.estado = normalizeEstadoInput(estado);
+    }
+
+    await visita.save();
+
+    await auditVisita(req, {
+      accion: "ACTUALIZAR",
+      entidad: "Cita",
+      entidadId: visita._id?.toString(),
+      titulo: "Cita actualizada",
+      descripcion: `Se actualizó la cita de ${visita.nombre || "Visitante"}.`,
+      estado: visita.estado || "Programada",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "citas",
+      before,
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        empleado: visita.empleado || "",
+        motivo: visita.motivo || "",
+        citaAt: visita.citaAt || null,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+        acompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes
+          : [],
+      },
+    });
+
+    return res.json({ ok: true, item: visita });
+  } catch (err) {
+    console.error("[visitas] updateCita", err);
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+}
+
+/**
  * GET /api/citas
- * Listar citas programadas
- * Soporta:
- *  - ?day=YYYY-MM-DD
- *  - ?month=YYYY-MM
- *  - ?estado=Programada
- *  - ?q=texto
  */
 export async function listCitas(req, res) {
   try {
@@ -336,6 +569,8 @@ export async function listCitas(req, res) {
         { empresa: rx },
         { empleado: rx },
         { motivo: rx },
+        { "acompanantes.nombre": rx },
+        { "acompanantes.documento": rx },
       ];
     }
 
@@ -352,7 +587,6 @@ export async function listCitas(req, res) {
 
 /**
  * PATCH /api/citas/:id/checkin
- * Registrar check-in de una cita
  */
 export async function checkinCita(req, res) {
   try {
@@ -404,6 +638,7 @@ export async function checkinCita(req, res) {
       });
     }
 
+    const before = toPlain(visita);
     const actorId = getActorId(req);
     const now = new Date();
 
@@ -431,6 +666,28 @@ export async function checkinCita(req, res) {
 
     await visita.save();
 
+    await auditVisita(req, {
+      accion: "CHECKIN",
+      entidad: "Cita",
+      entidadId: visita._id?.toString(),
+      titulo: "Check-in de cita",
+      descripcion: `Ingreso registrado para ${visita.nombre || "Visitante"}.`,
+      estado: visita.estado || "Dentro",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "citas",
+      before,
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        fechaEntrada: visita.fechaEntrada || null,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+      },
+    });
+
     return res.json({ ok: true, item: visita });
   } catch (err) {
     console.error("[visitas] checkinCita", err);
@@ -440,7 +697,6 @@ export async function checkinCita(req, res) {
 
 /**
  * PATCH /api/citas/:id/estado
- * Actualiza el estado de la cita
  */
 export async function updateCitaEstado(req, res) {
   try {
@@ -462,14 +718,42 @@ export async function updateCitaEstado(req, res) {
       });
     }
 
+    const before = toPlain(visita);
     const nextEstado = normalizeEstadoInput(estado);
+
     visita.estado = nextEstado;
 
     if (nextEstado === "Dentro" && !visita.fechaEntrada) {
       visita.fechaEntrada = new Date();
     }
 
+    if (nextEstado === "Finalizada" && !visita.fechaSalida) {
+      visita.fechaSalida = new Date();
+    }
+
     await visita.save();
+
+    await auditVisita(req, {
+      accion: "ACTUALIZAR",
+      entidad: "Cita",
+      entidadId: visita._id?.toString(),
+      titulo: "Estado de cita actualizado",
+      descripcion: `La cita de ${visita.nombre || "Visitante"} cambió a estado "${nextEstado}".`,
+      estado: nextEstado,
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "citas",
+      before,
+      after: toPlain(visita),
+      meta: {
+        documento: visita.documento || "",
+        estado: nextEstado,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+      },
+    });
 
     return res.json({ ok: true, item: visita });
   } catch (err) {
@@ -480,7 +764,6 @@ export async function updateCitaEstado(req, res) {
 
 /**
  * POST /api/citas/scan-qr
- * Escanea QR y registra ingreso inmediato
  */
 export async function scanQrCita(req, res) {
   try {
@@ -559,6 +842,7 @@ export async function scanQrCita(req, res) {
       });
     }
 
+    const before = toPlain(visita);
     const actorId = getActorId(req);
     const now = new Date();
 
@@ -583,6 +867,29 @@ export async function scanQrCita(req, res) {
 
     await visita.save();
 
+    await auditVisita(req, {
+      accion: "SCAN_QR",
+      entidad: "Cita",
+      entidadId: visita._id?.toString(),
+      titulo: "Ingreso por QR",
+      descripcion: `Ingreso por QR registrado para ${visita.nombre || "Visitante"}.`,
+      estado: visita.estado || "Dentro",
+      nombre: visita.nombre || "",
+      empresa: visita.empresa || "",
+      source: "citas-qr",
+      before,
+      after: toPlain(visita),
+      meta: {
+        qrToken,
+        documento: visita.documento || "",
+        fechaEntrada: visita.fechaEntrada || null,
+        acompanado: !!visita.acompanado,
+        cantidadAcompanantes: Array.isArray(visita.acompanantes)
+          ? visita.acompanantes.length
+          : 0,
+      },
+    });
+
     return res.json({
       ok: true,
       item: visita,
@@ -605,10 +912,7 @@ export async function listVehiculosVisitasEnSitio(req, res) {
     const visitasDentro = await Visita.find({
       estado: "Dentro",
       llegoEnVehiculo: true,
-      $or: [
-        { "vehiculo.placa": { $exists: true, $ne: "" } },
-        { placa: { $exists: true, $ne: "" } },
-      ],
+      $or: [{ "vehiculo.placa": { $exists: true, $ne: "" } }],
     })
       .sort({ fechaEntrada: -1, createdAt: -1 })
       .lean();
@@ -617,10 +921,7 @@ export async function listVehiculosVisitasEnSitio(req, res) {
       tipo: "Agendada",
       estado: { $in: ["Programada", "En revisión", "Autorizada"] },
       llegoEnVehiculo: true,
-      $or: [
-        { "vehiculo.placa": { $exists: true, $ne: "" } },
-        { placa: { $exists: true, $ne: "" } },
-      ],
+      $or: [{ "vehiculo.placa": { $exists: true, $ne: "" } }],
     })
       .sort({ citaAt: 1, createdAt: -1 })
       .lean();
@@ -628,44 +929,44 @@ export async function listVehiculosVisitasEnSitio(req, res) {
     const items = [
       ...visitasDentro.map((v) => {
         const veh = v.vehiculo;
-        const marca = typeof veh === "string" ? veh : veh?.marca || "";
-        const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa =
-          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
-
         return {
           id: v._id.toString(),
           visitante: v.nombre,
           documento: v.documento,
           empresa: v.empresa,
           empleadoAnfitrion: v.empleado,
-          vehiculoMarca: marca,
-          vehiculoModelo: modelo,
-          placa,
+          vehiculoMarca: veh?.marca || "",
+          vehiculoModelo: veh?.modelo || "",
+          placa: veh?.placa || "",
           horaEntrada: v.fechaEntrada,
           tipo: v.tipo,
           estado: v.estado,
+          acompanado: !!v.acompanado,
+          cantidadAcompanantes: Array.isArray(v.acompanantes)
+            ? v.acompanantes.length
+            : 0,
+          acompanantes: Array.isArray(v.acompanantes) ? v.acompanantes : [],
         };
       }),
       ...citasConVehiculo.map((v) => {
         const veh = v.vehiculo;
-        const marca = typeof veh === "string" ? veh : veh?.marca || "";
-        const modelo = typeof veh === "string" ? "" : veh?.modelo || "";
-        const placa =
-          (veh && typeof veh === "object" && veh.placa) || v.placa || "";
-
         return {
           id: v._id.toString(),
           visitante: v.nombre,
           documento: v.documento,
           empresa: v.empresa,
           empleadoAnfitrion: v.empleado,
-          vehiculoMarca: marca,
-          vehiculoModelo: modelo,
-          placa,
+          vehiculoMarca: veh?.marca || "",
+          vehiculoModelo: veh?.modelo || "",
+          placa: veh?.placa || "",
           horaEntrada: v.citaAt,
           tipo: v.tipo,
           estado: v.estado,
+          acompanado: !!v.acompanado,
+          cantidadAcompanantes: Array.isArray(v.acompanantes)
+            ? v.acompanantes.length
+            : 0,
+          acompanantes: Array.isArray(v.acompanantes) ? v.acompanantes : [],
         };
       }),
     ];
@@ -685,6 +986,7 @@ export default {
   createVisita,
   closeVisita,
   createCita,
+  updateCita,
   listCitas,
   checkinCita,
   updateCitaEstado,

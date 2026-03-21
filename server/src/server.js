@@ -1,4 +1,3 @@
-// server/src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -43,6 +42,9 @@ import accesoRoutes from "../modules/controldeacceso/routes/acceso.routes.js";
 import uploadRoutes from "../modules/controldeacceso/routes/upload.routes.js";
 import visitasRoutes from "../modules/visitas/visitas.routes.js";
 
+// ✅ Bitácora
+import bitacoraRouter from "../modules/bitacora/routes/bitacora.routes.js";
+
 // ✅ Chat
 import chatRoutes from "./routes/chat.routes.js";
 
@@ -68,7 +70,8 @@ app.set("etag", false);
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
-const DEV_OPEN = String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
+const DEV_OPEN =
+  String(process.env.DEV_OPEN || (DISABLE_AUTH ? "1" : "0")) === "1";
 
 console.log("[env] NODE_ENV:", process.env.NODE_ENV);
 console.log("[env] DISABLE_AUTH:", DISABLE_AUTH ? "1" : "0");
@@ -135,7 +138,10 @@ app.use(express.urlencoded({ extended: true, limit: "30mb" }));
  * ✅ Anti-cache para TODA la API
  */
 app.use("/api", (req, res, next) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   res.setHeader("Surrogate-Control", "no-store");
@@ -147,7 +153,11 @@ function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
   if (!(DEV_OPEN || DISABLE_AUTH)) return next();
 
-  const email = (req.header("x-user-email") || process.env.SUPERADMIN_EMAIL || "dev@local")
+  const email = (
+    req.header("x-user-email") ||
+    process.env.SUPERADMIN_EMAIL ||
+    "dev@local"
+  )
     .toLowerCase()
     .trim();
 
@@ -217,7 +227,10 @@ const io = new SocketIOServer(server, {
       if (!origin) return cb(null, true);
       if (!origins || origins.length === 0) return cb(null, true);
       if (origins.includes(origin)) return cb(null, true);
-      return cb(new Error(`Socket.IO CORS blocked for origin: ${origin}`), false);
+      return cb(
+        new Error(`Socket.IO CORS blocked for origin: ${origin}`),
+        false
+      );
     },
     methods: ["GET", "POST"],
     credentials: true,
@@ -240,8 +253,12 @@ if (!mongoUri) {
 
 mongoose.set("bufferCommands", false);
 
-mongoose.connection.on("error", (e) => console.error("[db] mongoose error:", e?.message || e));
-mongoose.connection.on("disconnected", () => console.warn("[db] mongoose disconnected"));
+mongoose.connection.on("error", (e) =>
+  console.error("[db] mongoose error:", e?.message || e)
+);
+mongoose.connection.on("disconnected", () =>
+  console.warn("[db] mongoose disconnected")
+);
 
 await mongoose
   .connect(mongoUri, {
@@ -347,7 +364,9 @@ startDailyAssignmentCron(app);
 app.get("/api/_debug/ping-assign", (req, res) => {
   const userId = String(req.query.userId || "dev|local");
   const title = String(req.query.title || "Nueva ronda asignada (prueba)");
-  const body = String(req.query.body || "Debes comenzar la ronda de prueba en el punto A.");
+  const body = String(
+    req.query.body || "Debes comenzar la ronda de prueba en el punto A."
+  );
 
   io.to(`user-${userId}`).emit("rondasqr:nueva-asignacion", {
     title,
@@ -370,8 +389,10 @@ app.use("/chat", chatRoutes);
 
 /* ────────────────────── Rondas QR (v1) ─────────────────────── */
 
-const pingHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/ping" });
-const pingCheckinHandler = (_req, res) => res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
+const pingHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/ping" });
+const pingCheckinHandler = (_req, res) =>
+  res.json({ ok: true, where: "/rondasqr/v1/checkin/ping" });
 
 console.log("[routes] mount rondasqr -> /api/rondasqr/v1 y /rondasqr/v1");
 
@@ -410,6 +431,11 @@ app.use("/incidentes", incidentesRoutes);
 // Alias compatibles
 app.use("/api/rondasqr/v1/incidentes", incidentesRoutes);
 app.use("/rondasqr/v1/incidentes", incidentesRoutes);
+
+/* ───────────────── BITÁCORA ───────────────── */
+
+app.use("/api/bitacora", bitacoraRouter);
+app.use("/bitacora", bitacoraRouter);
 
 /* ────────────────────── Error handler (500) ───────────────────── */
 
@@ -512,7 +538,9 @@ function isVisitorRole(role) {
 
 function joinRoomsByIdentity(socket, identity = {}) {
   const userId = identity?.userId ? String(identity.userId).trim() : "";
-  const email = identity?.email ? String(identity.email).trim().toLowerCase() : "";
+  const email = identity?.email
+    ? String(identity.email).trim().toLowerCase()
+    : "";
   const roles = normalizeRoles(identity?.roles || identity?.role);
 
   if (userId) {
@@ -614,7 +642,8 @@ io.on("connection", (s) => {
       fromEmail: identity.email || payload.email || null,
       fromRoles: roles,
       source: payload?.source || "rondas",
-      message: payload?.message || payload?.body || "Alerta de emergencia activada",
+      message:
+        payload?.message || payload?.body || "Alerta de emergencia activada",
       title: payload?.title || "ALERTA",
       area: payload?.area || payload?.module || "Rondas de Vigilancia",
       priority: payload?.priority || "critical",
@@ -674,5 +703,9 @@ function shutdown(sig) {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("unhandledRejection", (err) => console.error("[api] UnhandledRejection:", err));
-process.on("uncaughtException", (err) => console.error("[api] UncaughtException:", err));
+process.on("unhandledRejection", (err) =>
+  console.error("[api] UnhandledRejection:", err)
+);
+process.on("uncaughtException", (err) =>
+  console.error("[api] UncaughtException:", err)
+);

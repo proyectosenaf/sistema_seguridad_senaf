@@ -1,0 +1,107 @@
+/* =========================================================
+   BASE
+   ========================================================= */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.layer-content {
+  position: relative;
+  z-index: 1;
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.card {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card-solid);
+  color: var(--text);
+  padding: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Focus ring accesible */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+/* =========================================================
+   PRINT
+   ========================================================= */
+@media print {
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  header,
+  nav,
+  footer,
+  .app-header,
+  .app-topbar,
+  .app-sidebar,
+  .app-footer {
+    display: none !important;
+  }
+
+  #root {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-content {
+    margin: 0 !important;
+    padding: 24px 32px !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .print-content .card,
+  .print-content .tbl,
+  .print-content .rounded-2xl,
+  .print-content .glass,
+  .print-content .glass-soft {
+    background: #ffffff !important;
+    border-color: #e5e7eb !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}

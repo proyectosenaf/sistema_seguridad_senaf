@@ -16,11 +16,76 @@ import permissionsRoutes from "./routes/permissions.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
 
 import { parseExcelRolesPermissions, seedFromParsed } from "./utils/seed.util.js";
+import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
 const ah =
   (fn) =>
   (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
+
+function clientIp(req) {
+  return (
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    req.connection?.remoteAddress ||
+    ""
+  );
+}
+
+function normalizeRoleValue(role) {
+  if (!role) return "";
+
+  if (typeof role === "string") return role.trim();
+
+  if (typeof role === "object") {
+    return String(
+      role.name ||
+        role.slug ||
+        role.code ||
+        role.key ||
+        role.nombre ||
+        role.label ||
+        ""
+    ).trim();
+  }
+
+  return String(role).trim();
+}
+
+function getPrimaryRole(userLike) {
+  const roles = Array.isArray(userLike?.roles) ? userLike.roles : [];
+  return normalizeRoleValue(roles[0] || "");
+}
+
+async function logIamModuleEvent(req, payload = {}) {
+  try {
+    await logBitacoraEvent({
+      modulo: "IAM",
+      tipo: "IAM",
+      prioridad: payload.prioridad || "Media",
+      estado: payload.estado || "Registrado",
+      source: payload.source || "iam-module",
+      agente:
+        req?.user?.email ||
+        req?.user?.name ||
+        payload.agente ||
+        "Sistema IAM",
+      actorId:
+        req?.user?.sub ||
+        req?.user?._id ||
+        req?.user?.id ||
+        payload.actorId ||
+        "",
+      actorEmail: req?.user?.email || payload.actorEmail || "",
+      actorRol: getPrimaryRole(req?.user) || payload.actorRol || "",
+      ip: clientIp(req),
+      userAgent: req?.get?.("user-agent") || "",
+      ...payload,
+    });
+  } catch (err) {
+    console.error("[IAM][bitacora][index]", err?.message || err);
+  }
+}
 
 export async function registerIAMModule({
   app,
@@ -34,7 +99,6 @@ export async function registerIAMModule({
 
   router.use(express.json({ limit: jsonLimit }));
 
-  // Anti-cache
   router.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
@@ -42,7 +106,6 @@ export async function registerIAMModule({
     next();
   });
 
-  // OPTIONS preflight rápido
   router.use((req, res, next) => {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -57,7 +120,6 @@ export async function registerIAMModule({
 
   /* ================= AUTH ================= */
 
-  // 🔥 SOLO ESTAS DOS (authRoutes NO EXISTE)
   router.use("/auth", authOtpRoutes);
   router.use("/auth", registerVisitorRoutes);
 
@@ -85,6 +147,17 @@ export async function registerIAMModule({
     ah(async (req, res) => {
       const up = req?.files?.file;
       if (!up) {
+        await logIamModuleEvent(req, {
+          accion: "IMPORT_EXCEL",
+          entidad: "IAMSeed",
+          titulo: "Importación IAM sin archivo",
+          descripcion:
+            "Se intentó importar un Excel de roles/permisos sin adjuntar archivo.",
+          estado: "Fallido",
+          prioridad: "Media",
+          source: "iam-import",
+        });
+
         return res.status(400).json({
           ok: false,
           message: "Sube un archivo Excel en el campo 'file'.",
@@ -94,6 +167,20 @@ export async function registerIAMModule({
       const file = Array.isArray(up) ? up[0] : up;
 
       if (!Buffer.isBuffer(file?.data)) {
+        await logIamModuleEvent(req, {
+          accion: "IMPORT_EXCEL",
+          entidad: "IAMSeed",
+          titulo: "Importación IAM con archivo inválido",
+          descripcion: "No se pudo leer el archivo cargado para importación.",
+          estado: "Fallido",
+          prioridad: "Media",
+          source: "iam-import",
+          meta: {
+            fileName: file?.name || "",
+            mimeType: file?.mimetype || "",
+          },
+        });
+
         return res.status(400).json({
           ok: false,
           message: "No se pudo leer el archivo.",
@@ -102,6 +189,23 @@ export async function registerIAMModule({
 
       const parsed = parseExcelRolesPermissions(file.data);
       await seedFromParsed(parsed);
+
+      await logIamModuleEvent(req, {
+        accion: "IMPORT_EXCEL",
+        entidad: "IAMSeed",
+        titulo: "Importación IAM completada",
+        descripcion:
+          "Se importaron correctamente roles y permisos desde archivo Excel.",
+        estado: "Exitoso",
+        prioridad: "Media",
+        source: "iam-import",
+        meta: {
+          fileName: file?.name || "",
+          mimeType: file?.mimetype || "",
+          importedRoles: Object.keys(parsed.roles || {}).length,
+          importedPermissions: (parsed.permissions || []).length,
+        },
+      });
 
       return res.json({
         ok: true,
@@ -115,8 +219,23 @@ export async function registerIAMModule({
 
   /* ================= ERROR HANDLER ================= */
 
-  router.use((err, _req, res, _next) => {
+  router.use(async (err, req, res, _next) => {
     console.error("[IAM]", err?.stack || err);
+
+    await logIamModuleEvent(req, {
+      accion: "IAM_ERROR",
+      entidad: "IAMModule",
+      titulo: "Error interno en módulo IAM",
+      descripcion: err?.message || "Internal Server Error",
+      estado: "Fallido",
+      prioridad: "Alta",
+      source: "iam-module",
+      meta: {
+        method: req?.method || "",
+        path: req?.originalUrl || req?.url || "",
+      },
+    });
+
     res.status(err?.status || 500).json({
       ok: false,
       error: err?.message || "Internal Server Error",

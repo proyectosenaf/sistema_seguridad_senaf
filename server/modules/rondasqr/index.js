@@ -12,6 +12,7 @@ import RqPlan from "./models/RqPlan.model.js";
 import RqMark from "./models/RqMark.model.js";
 import RqIncident from "./models/RqIncident.model.js";
 import RqDevice from "./models/RqDevice.model.js";
+import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
 // ⬇️ Rutas de asignaciones (crear/listar/borrar)
 import assignmentsRoutes from "./routes/assignments.routes.js";
@@ -29,7 +30,8 @@ router.use((req, _res, next) => {
 
 /* ───────────────── Auth liviano ───────────────── */
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
-const IAM_ALLOW_DEV_HEADERS = String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
+const IAM_ALLOW_DEV_HEADERS =
+  String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
 
 function auth(req, _res, next) {
   if (req.user?.email) return next();
@@ -123,8 +125,53 @@ async function qrPngBufferFromText(text) {
   });
 }
 
+function toPlain(doc) {
+  if (!doc) return null;
+  if (typeof doc.toObject === "function") return doc.toObject();
+  return JSON.parse(JSON.stringify(doc));
+}
+
+function getActorId(req) {
+  return req?.user?.sub || req?.user?._id || req?.user?.id || "";
+}
+
+function getActorEmail(req) {
+  return req?.user?.email || "";
+}
+
+function getActorName(req, fallback = "Guardia") {
+  return req?.user?.name || req?.user?.email || fallback;
+}
+
+async function auditRonda(req, payload = {}) {
+  await logBitacoraEvent({
+    modulo: payload.modulo || "Rondas de Vigilancia",
+    tipo: payload.tipo || "Ronda",
+    accion: payload.accion || "CREAR",
+    entidad: payload.entidad || "",
+    entidadId: payload.entidadId || "",
+    agente: payload.agente || getActorName(req, "Guardia"),
+    actorId: getActorId(req),
+    actorEmail: getActorEmail(req),
+    titulo: payload.titulo || "",
+    descripcion: payload.descripcion || "",
+    prioridad: payload.prioridad || "Baja",
+    estado: payload.estado || "Registrado",
+    nombre: payload.nombre || "",
+    empresa: payload.empresa || "",
+    source: payload.source || "rondasqr",
+    ip: req.ip || "",
+    userAgent: req.get("user-agent") || "",
+    before: payload.before || null,
+    after: payload.after || null,
+    meta: payload.meta || {},
+  });
+}
+
 /* ───────────────── PING/DEBUG ───────────────── */
-router.get("/ping", (_req, res) => res.json({ ok: true, where: "/api/rondasqr/v1/ping" }));
+router.get("/ping", (_req, res) =>
+  res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
+);
 
 router.get("/checkin/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/rondasqr/v1/checkin/ping" })
@@ -251,7 +298,9 @@ admin.post("/rounds", auth, async (req, res) => {
     if (rawSiteIdInput && mongoose.Types.ObjectId.isValid(rawSiteIdInput)) {
       site = await RqSite.findById(rawSiteIdInput).lean();
       if (!site) {
-        return res.status(400).json({ ok: false, error: "site_not_found_by_id" });
+        return res
+          .status(400)
+          .json({ ok: false, error: "site_not_found_by_id" });
       }
     }
 
@@ -266,7 +315,9 @@ admin.post("/rounds", auth, async (req, res) => {
       }).lean();
 
       if (!site) {
-        return res.status(400).json({ ok: false, error: "site_not_found_by_name" });
+        return res
+          .status(400)
+          .json({ ok: false, error: "site_not_found_by_name" });
       }
     }
 
@@ -288,7 +339,9 @@ admin.post("/rounds", auth, async (req, res) => {
     return res.status(201).json({ ok: true, item: doc });
   } catch (e) {
     console.error("[admin.rounds.create]", e);
-    return res.status(500).json({ ok: false, error: e?.message || "internal_error" });
+    return res
+      .status(500)
+      .json({ ok: false, error: e?.message || "internal_error" });
   }
 });
 
@@ -323,7 +376,9 @@ admin.get("/points", auth, async (req, res, next) => {
     if (roundId) filter.roundId = roundId;
     if (siteId) filter.siteId = siteId;
 
-    const items = await RqPoint.find(filter).sort({ order: 1, createdAt: 1 }).lean();
+    const items = await RqPoint.find(filter)
+      .sort({ order: 1, createdAt: 1 })
+      .lean();
     res.json({ ok: true, items });
   } catch (e) {
     next(e);
@@ -337,19 +392,27 @@ admin.post("/points", auth, async (req, res, next) => {
     const roundId = String(b.roundId || "").trim();
     const name = String(b.name || "").trim();
 
-    if (!isId(siteId)) return res.status(400).json({ ok: false, error: "invalid_siteId" });
-    if (!isId(roundId)) return res.status(400).json({ ok: false, error: "invalid_roundId" });
-    if (!name) return res.status(400).json({ ok: false, error: "name_required" });
+    if (!isId(siteId))
+      return res.status(400).json({ ok: false, error: "invalid_siteId" });
+    if (!isId(roundId))
+      return res.status(400).json({ ok: false, error: "invalid_roundId" });
+    if (!name)
+      return res.status(400).json({ ok: false, error: "name_required" });
 
     const [site, round] = await Promise.all([
       RqSite.findById(siteId).lean(),
       RqRound.findById(roundId).lean(),
     ]);
 
-    if (!site) return res.status(404).json({ ok: false, error: "site_not_found" });
-    if (!round) return res.status(404).json({ ok: false, error: "round_not_found" });
+    if (!site)
+      return res.status(404).json({ ok: false, error: "site_not_found" });
+    if (!round)
+      return res.status(404).json({ ok: false, error: "round_not_found" });
 
-    let order = normalizeOrder(b.order) ?? normalizeOrder(b.ord) ?? normalizeOrder(b.index);
+    let order =
+      normalizeOrder(b.order) ??
+      normalizeOrder(b.ord) ??
+      normalizeOrder(b.index);
     if (order === null) order = await nextOrderForRound(roundId);
 
     const rawQr = typeof b.qr === "string" ? b.qr.trim() : "";
@@ -399,7 +462,10 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
     if (typeof b.qrNo === "string") updates.qrNo = b.qrNo.trim();
     if (typeof b.code === "string") updates.code = b.code.trim();
 
-    const order = normalizeOrder(b.order) ?? normalizeOrder(b.ord) ?? normalizeOrder(b.index);
+    const order =
+      normalizeOrder(b.order) ??
+      normalizeOrder(b.ord) ??
+      normalizeOrder(b.index);
     if (order !== null) updates.order = order;
 
     if (Object.keys(updates).length === 0) {
@@ -410,7 +476,11 @@ admin.patch("/points/:id", auth, async (req, res, next) => {
       });
     }
 
-    const doc = await RqPoint.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
+    const doc = await RqPoint.findByIdAndUpdate(
+      id,
+      { $set: updates },
+      { new: true }
+    ).lean();
     res.json({ ok: true, item: doc });
   } catch (e) {
     if (e?.code === 11000) {
@@ -459,7 +529,8 @@ admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
     point.qr = qrToken();
     if (RqPoint.schema.path("qrNo")) point.qrNo = point.qr;
     if (RqPoint.schema.path("code")) point.code = point.qr;
-    if (RqPoint.schema.path("qrVersion")) point.qrVersion = Number(point.qrVersion || 1) + 1;
+    if (RqPoint.schema.path("qrVersion"))
+      point.qrVersion = Number(point.qrVersion || 1) + 1;
     if (RqPoint.schema.path("qrRotatedAt")) point.qrRotatedAt = new Date();
 
     await point.save();
@@ -469,7 +540,8 @@ admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
       return res.status(409).json({
         ok: false,
         error: "duplicate_point_qr",
-        message: "No se pudo rotar QR porque se generó uno duplicado. Intenta de nuevo.",
+        message:
+          "No se pudo rotar QR porque se generó uno duplicado. Intenta de nuevo.",
       });
     }
     next(e);
@@ -604,9 +676,12 @@ admin.get("/points/:id/qr.pdf", auth, async (req, res, next) => {
     });
 
     doc.moveDown(15);
-    doc.fontSize(10).fillColor("#444").text("SENAF • Repositorio de códigos QR", {
-      align: "center",
-    });
+    doc
+      .fontSize(10)
+      .fillColor("#444")
+      .text("SENAF • Repositorio de códigos QR", {
+        align: "center",
+      });
 
     doc.end();
   } catch (e) {
@@ -639,7 +714,8 @@ admin.put("/points/reorder", auth, async (req, res, next) => {
       return res.status(409).json({
         ok: false,
         error: "duplicate_order",
-        message: "No se pudo reordenar porque hay conflicto de orden duplicado.",
+        message:
+          "No se pudo reordenar porque hay conflicto de orden duplicado.",
       });
     }
     next(e);
@@ -670,7 +746,9 @@ admin.get("/qr-repo", auth, async (req, res, next) => {
     if (roundId) filter.roundId = roundId;
 
     const [points, sites, rounds] = await Promise.all([
-      RqPoint.find(filter).sort({ siteId: 1, roundId: 1, order: 1, createdAt: 1 }).lean(),
+      RqPoint.find(filter)
+        .sort({ siteId: 1, roundId: 1, order: 1, createdAt: 1 })
+        .lean(),
       RqSite.find(siteId ? { _id: siteId } : {}).lean(),
       RqRound.find(roundId ? { _id: roundId } : siteId ? { siteId } : {}).lean(),
     ]);
@@ -757,11 +835,13 @@ admin.get("/plans", auth, async (req, res, next) => {
 
     const filter = {};
     if (siteId) {
-      if (!isId(siteId)) return res.status(400).json({ ok: false, error: "invalid_siteId" });
+      if (!isId(siteId))
+        return res.status(400).json({ ok: false, error: "invalid_siteId" });
       filter.siteId = siteId;
     }
     if (roundId) {
-      if (!isId(roundId)) return res.status(400).json({ ok: false, error: "invalid_roundId" });
+      if (!isId(roundId))
+        return res.status(400).json({ ok: false, error: "invalid_roundId" });
       filter.roundId = roundId;
     }
 
@@ -769,7 +849,9 @@ admin.get("/plans", auth, async (req, res, next) => {
 
     const items = plans.map((plan) => ({
       ...plan,
-      pointIds: plan.pointIds?.length ? plan.pointIds : (plan.points || []).map((p) => p.pointId),
+      pointIds: plan.pointIds?.length
+        ? plan.pointIds
+        : (plan.points || []).map((p) => p.pointId),
     }));
 
     res.json({ ok: true, items, count: items.length });
@@ -819,7 +901,9 @@ admin.post("/plans", auth, async (req, res, next) => {
 
     const validSet = new Set(
       dbPoints
-        .filter((p) => String(p.siteId) === siteId && String(p.roundId) === roundId)
+        .filter(
+          (p) => String(p.siteId) === siteId && String(p.roundId) === roundId
+        )
         .map((p) => String(p._id))
     );
 
@@ -942,6 +1026,36 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
       guardName: req?.user?.name || req?.user?.email || "",
     });
 
+    await auditRonda(req, {
+      modulo: "Rondas de Vigilancia",
+      tipo: "Ronda",
+      accion: "CHECKIN",
+      entidad: "RqMark",
+      entidadId: mark._id?.toString(),
+      agente: mark.officerName || mark.officerEmail || "Guardia",
+      titulo: "Punto de ronda registrado",
+      descripcion: `Marcación en sitio "${site?.name || "N/D"}", ronda "${
+        round?.name || "N/D"
+      }", punto "${point?.name || "N/D"}".`,
+      prioridad: "Baja",
+      estado: "Registrado",
+      nombre: mark.officerName || mark.officerEmail || "",
+      empresa: site?.name || "",
+      source: "rondas-mark",
+      after: toPlain(mark),
+      meta: {
+        siteId: point.siteId || null,
+        siteName: site?.name || "",
+        roundId: point.roundId || null,
+        roundName: round?.name || "",
+        pointId: point._id?.toString(),
+        pointName: point.name || "",
+        qr: qrValue || qr,
+        hardwareId: b.hardwareId || "",
+        steps: typeof b.steps === "number" ? b.steps : null,
+      },
+    });
+
     req.io?.emit?.("rondasqr:mark", { item: mark });
 
     res.json({
@@ -982,6 +1096,27 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
       guardName: req?.user?.name || req?.user?.email || "",
     });
 
+    await auditRonda(req, {
+      modulo: "Rondas de Vigilancia",
+      tipo: "Incidente",
+      accion: "CREAR",
+      entidad: "RqIncident",
+      entidadId: doc._id?.toString(),
+      agente: doc.officerName || doc.officerEmail || "Guardia",
+      titulo: "Incidente de ronda registrado",
+      descripcion: `Incidente manual reportado: ${b.text}`,
+      prioridad: "Media",
+      estado: "Abierto",
+      nombre: doc.officerName || doc.officerEmail || "",
+      empresa: "",
+      source: "rondas-incident",
+      after: toPlain(doc),
+      meta: {
+        incidentType: "custom",
+        photosCount: Array.isArray(doc.photos) ? doc.photos.length : 0,
+      },
+    });
+
     req.io?.emit?.("rondasqr:incident", { kind: "message", item: doc });
     res.json({ ok: true, item: doc });
   } catch (e) {
@@ -1005,6 +1140,26 @@ router.post("/checkin/panic", auth, async (req, res, next) => {
       officerName: req?.user?.name || req?.user?.email || "",
       guardId: req?.user?.sub || "",
       guardName: req?.user?.name || req?.user?.email || "",
+    });
+
+    await auditRonda(req, {
+      modulo: "Rondas de Vigilancia",
+      tipo: "Incidente",
+      accion: "PANICO",
+      entidad: "RqIncident",
+      entidadId: doc._id?.toString(),
+      agente: doc.officerName || doc.officerEmail || "Guardia",
+      titulo: "Botón de pánico activado",
+      descripcion: "Se activó una alerta de pánico desde la app de rondas.",
+      prioridad: "Alta",
+      estado: "Abierto",
+      nombre: doc.officerName || doc.officerEmail || "",
+      empresa: "",
+      source: "rondas-panic",
+      after: toPlain(doc),
+      meta: {
+        incidentType: "panic",
+      },
     });
 
     req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
@@ -1042,6 +1197,31 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
       guardName: req?.user?.name || req?.user?.email || "",
     });
 
+    await auditRonda(req, {
+      modulo: "Rondas de Vigilancia",
+      tipo: "Incidente",
+      accion: "INACTIVIDAD",
+      entidad: "RqIncident",
+      entidadId: doc._id?.toString(),
+      agente: doc.officerName || doc.officerEmail || "Guardia",
+      titulo: "Alerta de inactividad",
+      descripcion: `Inmovilidad detectada de ${b.minutes ?? "?"} minutos.`,
+      prioridad: "Media",
+      estado: "Abierto",
+      nombre: doc.officerName || doc.officerEmail || "",
+      empresa: doc.siteName || "",
+      source: "rondas-inactivity",
+      after: toPlain(doc),
+      meta: {
+        incidentType: "inactivity",
+        durationMin: doc.durationMin || 0,
+        stepsAtAlert: doc.stepsAtAlert ?? null,
+        siteId: doc.siteId || null,
+        roundId: doc.roundId || null,
+        pointId: doc.pointId || null,
+      },
+    });
+
     req.io?.emit?.("rondasqr:alert", { kind: "inactivity", item: doc });
     req.io?.emit?.("rondasqr:incident", { kind: "inactivity", item: doc });
 
@@ -1059,7 +1239,11 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
 
     const doc = await RqIncident.create({
       type: "fall",
-      text: `Hombre caído${b.afterInactivityMin ? ` tras ${b.afterInactivityMin} min de inmovilidad` : ""}`,
+      text: `Hombre caído${
+        b.afterInactivityMin
+          ? ` tras ${b.afterInactivityMin} min de inmovilidad`
+          : ""
+      }`,
       gps,
       loc,
       at: new Date(),
@@ -1069,6 +1253,28 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
       officerName: req?.user?.name || req?.user?.email || "",
       guardId: req?.user?.sub || "",
       guardName: req?.user?.name || req?.user?.email || "",
+    });
+
+    await auditRonda(req, {
+      modulo: "Rondas de Vigilancia",
+      tipo: "Incidente",
+      accion: "CAIDA",
+      entidad: "RqIncident",
+      entidadId: doc._id?.toString(),
+      agente: doc.officerName || doc.officerEmail || "Guardia",
+      titulo: "Alerta de hombre caído",
+      descripcion: doc.text || "Se detectó un evento de caída.",
+      prioridad: "Alta",
+      estado: "Abierto",
+      nombre: doc.officerName || doc.officerEmail || "",
+      empresa: "",
+      source: "rondas-fall",
+      after: toPlain(doc),
+      meta: {
+        incidentType: "fall",
+        stepsAtAlert: doc.stepsAtAlert ?? null,
+        fallDetected: !!doc.fallDetected,
+      },
     });
 
     req.io?.emit?.("rondasqr:alert", { kind: "fall", item: doc });
@@ -1084,7 +1290,8 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
 router.post("/_dev/seed/:code", async (req, res, next) => {
   try {
     const code = String(req.params.code || "").trim();
-    if (!code) return res.status(400).json({ ok: false, error: "code_required" });
+    if (!code)
+      return res.status(400).json({ ok: false, error: "code_required" });
 
     const idFields = getPointIdFields();
     if (idFields.length === 0) {

@@ -1,0 +1,113 @@
+/* =========================================================
+   BOTONES
+   ========================================================= */
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.btn-neon {
+  position: relative;
+  padding: 0.7rem 1.1rem;
+  border-radius: 0.9rem;
+  font-weight: 600;
+  color: #0b0b12;
+  background: linear-gradient(90deg, var(--fx1), var(--fx2), var(--fx3));
+  box-shadow:
+    0 8px 18px color-mix(in oklab, var(--fx2) 35%, transparent),
+    0 0 20px color-mix(in oklab, var(--fx1) 45%, transparent);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+}
+
+.btn-neon:hover {
+  transform: translateY(-1px) scale(1.02);
+  filter: saturate(115%);
+}
+
+/* =========================================================
+   INPUTS FX + CALENDARIO
+   ========================================================= */
+.input-fx {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(120, 120, 120, 0.25);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--text);
+}
+
+.dark .input-fx {
+  border-color: rgba(120, 120, 120, 0.45);
+  background: rgba(12, 12, 16, 0.6);
+}
+
+.input-fx:focus {
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--fx2) 35%, transparent),
+    0 0 0 6px color-mix(in oklab, var(--fx1) 22%, transparent);
+}
+
+:root input.input-fx[type="date"],
+:root input.input-fx[type="time"],
+:root input.input-fx[type="datetime-local"] {
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+  background-image: initial !important;
+  padding-right: 2.25rem;
+}
+
+:root input.input-fx[type="date"]::-webkit-calendar-picker-indicator,
+:root input.input-fx[type="time"]::-webkit-calendar-picker-indicator,
+:root input.input-fx[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  display: inline-block !important;
+  opacity: 1 !important;
+  width: 1.5rem;
+  height: 1.5rem;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+
+.dark input.input-fx[type="date"]::-webkit-calendar-picker-indicator,
+.dark input.input-fx[type="time"]::-webkit-calendar-picker-indicator,
+.dark input.input-fx[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.2) contrast(1.1);
+  opacity: 0.95;
+}
+
+.input-icon--decorative {
+  pointer-events: none;
+}
+
+.input-fx--with-bubble {
+  background-image: radial-gradient(
+    12px 12px at calc(100% - 1.25rem) 50%,
+    rgba(255, 255, 255, 0.1),
+    transparent 60%
+  );
+  background-repeat: no-repeat;
+}
+
+.dark .input-fx--with-bubble {
+  background-image: radial-gradient(
+    12px 12px at calc(100% - 1.25rem) 50%,
+    rgba(255, 255, 255, 0.14),
+    transparent 60%
+  );
+}
+
+/* =========================================================
+   FOOTER
+   ========================================================= */
+.footer--static {
+  position: static !important;
+  inset: auto !important;
+}

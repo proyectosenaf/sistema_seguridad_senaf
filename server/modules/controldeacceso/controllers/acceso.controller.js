@@ -3,6 +3,50 @@ import Empleado from "../models/Empleado.js";
 import Vehiculo from "../models/Vehiculo.js";
 import MovimientoVehiculo from "../models/MovimientoVehiculo.js";
 import MovimientoManual from "../models/MovimientoManual.js";
+import { logBitacoraEvent } from "../../bitacora/services/bitacora.service.js";
+
+/* ───────────────────────── Helpers bitácora ───────────────────────── */
+
+function getActor(req) {
+  return {
+    actorId: req.user?.sub || req.user?._id || req.user?.id || "",
+    actorEmail: req.user?.email || "",
+    agente: req.user?.name || req.user?.email || "Sistema",
+  };
+}
+
+function toPlain(doc) {
+  if (!doc) return null;
+  if (typeof doc.toObject === "function") return doc.toObject();
+  return JSON.parse(JSON.stringify(doc));
+}
+
+async function auditAcceso(req, payload = {}) {
+  const actor = getActor(req);
+
+  await logBitacoraEvent({
+    modulo: "Control de Acceso",
+    tipo: "Acceso",
+    accion: payload.accion || "CREAR",
+    entidad: payload.entidad || "",
+    entidadId: payload.entidadId || "",
+    agente: payload.agente || actor.agente,
+    actorId: actor.actorId,
+    actorEmail: actor.actorEmail,
+    titulo: payload.titulo || "",
+    descripcion: payload.descripcion || "",
+    prioridad: payload.prioridad || "Baja",
+    estado: payload.estado || "Registrado",
+    nombre: payload.nombre || "",
+    empresa: payload.empresa || "Interno",
+    source: payload.source || "acceso",
+    ip: req.ip || "",
+    userAgent: req.get("user-agent") || "",
+    before: payload.before || null,
+    after: payload.after || null,
+    meta: payload.meta || {},
+  });
+}
 
 /**
  * Crea un registro manual (entrada, salida o permiso).
@@ -36,6 +80,31 @@ export async function crearMovimientoManual(req, res) {
     });
 
     await mov.save();
+
+    await auditAcceso(req, {
+      accion: "CREAR",
+      entidad: "MovimientoManual",
+      entidadId: mov._id?.toString(),
+      titulo: "Movimiento manual registrado",
+      descripcion: `Movimiento manual tipo "${tipo || "N/D"}" de ${
+        persona || "N/D"
+      }. Placa: ${placa || "N/D"}. Departamento: ${
+        departamento || "N/D"
+      }. Observación: ${observacion || "Sin observación"}.`,
+      estado: "Registrado",
+      nombre: persona || "",
+      source: "acceso-manual",
+      after: toPlain(mov),
+      meta: {
+        tipo,
+        placa,
+        departamento,
+        noRegresa: !!noRegresa,
+        fechaHora: mov.fechaHora,
+        fechaFin: mov.fechaFin,
+      },
+    });
+
     res.status(201).json({ ok: true, item: mov });
   } catch (err) {
     console.error("[acceso] crearMovimientoManual", err);
@@ -144,6 +213,26 @@ export async function crearEmpleado(req, res) {
     });
 
     await emp.save();
+
+    await auditAcceso(req, {
+      accion: "CREAR",
+      entidad: "Empleado",
+      entidadId: emp._id?.toString(),
+      titulo: "Empleado creado",
+      descripcion: `Se creó el empleado ${emp.nombreCompleto || "N/D"} del departamento ${
+        emp.departamento || "N/D"
+      }.`,
+      estado: emp.activo ? "Activo" : "Inactivo",
+      nombre: emp.nombreCompleto || "",
+      source: "empleados",
+      after: toPlain(emp),
+      meta: {
+        dni: emp.dni || "",
+        cargo: emp.cargo || "",
+        departamento: emp.departamento || "",
+      },
+    });
+
     res.status(201).json({ ok: true, item: emp });
   } catch (err) {
     console.error("[acceso] crearEmpleado", err);
@@ -154,6 +243,13 @@ export async function crearEmpleado(req, res) {
 export async function actualizarEmpleado(req, res) {
   try {
     const { id } = req.params;
+
+    const before = await Empleado.findById(id);
+    if (!before) {
+      return res
+        .status(404)
+        .json({ ok: false, error: "Empleado no encontrado" });
+    }
 
     const update = {
       idInterno: req.body.idInterno,
@@ -182,11 +278,23 @@ export async function actualizarEmpleado(req, res) {
       { new: true }
     );
 
-    if (!emp) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "Empleado no encontrado" });
-    }
+    await auditAcceso(req, {
+      accion: "ACTUALIZAR",
+      entidad: "Empleado",
+      entidadId: emp._id?.toString(),
+      titulo: "Empleado actualizado",
+      descripcion: `Se actualizó el empleado ${emp.nombreCompleto || "N/D"}.`,
+      estado: emp.activo ? "Activo" : "Inactivo",
+      nombre: emp.nombreCompleto || "",
+      source: "empleados",
+      before: toPlain(before),
+      after: toPlain(emp),
+      meta: {
+        dni: emp.dni || "",
+        cargo: emp.cargo || "",
+        departamento: emp.departamento || "",
+      },
+    });
 
     res.json({ ok: true, item: emp });
   } catch (err) {
@@ -200,17 +308,36 @@ export async function actualizarEmpleadoActivo(req, res) {
     const { id } = req.params;
     const { activo } = req.body;
 
+    const before = await Empleado.findById(id);
+    if (!before) {
+      return res
+        .status(404)
+        .json({ ok: false, error: "Empleado no encontrado" });
+    }
+
     const emp = await Empleado.findByIdAndUpdate(
       id,
       { $set: { activo: !!activo } },
       { new: true }
     );
 
-    if (!emp) {
-      return res
-        .status(404)
-        .json({ ok: false, error: "Empleado no encontrado" });
-    }
+    await auditAcceso(req, {
+      accion: "ACTUALIZAR",
+      entidad: "Empleado",
+      entidadId: emp._id?.toString(),
+      titulo: "Estado de empleado actualizado",
+      descripcion: `El empleado ${emp.nombreCompleto || "N/D"} fue marcado como ${
+        emp.activo ? "Activo" : "Inactivo"
+      }.`,
+      estado: emp.activo ? "Activo" : "Inactivo",
+      nombre: emp.nombreCompleto || "",
+      source: "empleados",
+      before: toPlain(before),
+      after: toPlain(emp),
+      meta: {
+        activo: !!emp.activo,
+      },
+    });
 
     res.json({ ok: true, item: emp });
   } catch (err) {
@@ -231,6 +358,22 @@ export async function eliminarEmpleado(req, res) {
     }
 
     await Vehiculo.deleteMany({ empleado: id });
+
+    await auditAcceso(req, {
+      accion: "ELIMINAR",
+      entidad: "Empleado",
+      entidadId: id,
+      titulo: "Empleado eliminado",
+      descripcion: `Se eliminó el empleado ${emp.nombreCompleto || "N/D"} y sus vehículos asociados.`,
+      estado: "Eliminado",
+      nombre: emp.nombreCompleto || "",
+      source: "empleados",
+      before: toPlain(emp),
+      meta: {
+        dni: emp.dni || "",
+        departamento: emp.departamento || "",
+      },
+    });
 
     res.json({ ok: true, item: emp });
   } catch (err) {
@@ -253,6 +396,28 @@ export async function crearVehiculo(req, res) {
     });
 
     await veh.save();
+
+    await auditAcceso(req, {
+      accion: "CREAR",
+      entidad: "Vehiculo",
+      entidadId: veh._id?.toString(),
+      titulo: "Vehículo creado",
+      descripcion: `Se registró el vehículo ${veh.placa || "N/D"} (${veh.marca || "N/D"} ${
+        veh.modelo || ""
+      }).`,
+      estado: veh.enEmpresa ? "Dentro" : "Fuera",
+      nombre: veh.placa || "",
+      source: "vehiculos",
+      after: toPlain(veh),
+      meta: {
+        empleadoId: veh.empleado?.toString?.() || veh.empleado || "",
+        marca: veh.marca || "",
+        modelo: veh.modelo || "",
+        placa: veh.placa || "",
+        activo: !!veh.activo,
+      },
+    });
+
     res.status(201).json({ ok: true, item: veh });
   } catch (err) {
     console.error("[acceso] crearVehiculo", err);
@@ -272,6 +437,8 @@ export async function toggleEnEmpresa(req, res) {
         .json({ ok: false, error: "Vehículo no encontrado" });
     }
 
+    const beforeVeh = toPlain(veh);
+
     if (typeof enEmpresa === "boolean") {
       veh.enEmpresa = enEmpresa;
     } else {
@@ -281,13 +448,41 @@ export async function toggleEnEmpresa(req, res) {
     veh.ultimoMovimiento = new Date();
     await veh.save();
 
-    await MovimientoVehiculo.create({
+    const mov = await MovimientoVehiculo.create({
       vehiculo: veh._id,
       empleado: veh.empleado?._id || null,
       tipo: "TOGGLE",
       estadoEnEmpresa: veh.enEmpresa,
       observacion,
       usuarioGuardia,
+    });
+
+    await auditAcceso(req, {
+      accion: "ACTUALIZAR",
+      entidad: "MovimientoVehiculo",
+      entidadId: mov._id?.toString(),
+      agente:
+        usuarioGuardia || req.user?.name || req.user?.email || "Guardia",
+      titulo: "Movimiento de vehículo registrado",
+      descripcion: `Vehículo ${
+        veh.placa || "N/D"
+      } cambiado a estado en empresa: ${
+        veh.enEmpresa ? "Sí" : "No"
+      }. Empleado: ${veh.empleado?.nombreCompleto || "N/D"}. Observación: ${
+        observacion || "Sin observación"
+      }.`,
+      estado: veh.enEmpresa ? "Dentro" : "Fuera",
+      nombre: veh.empleado?.nombreCompleto || veh.placa || "",
+      source: "acceso-vehiculo",
+      before: beforeVeh,
+      after: toPlain(mov),
+      meta: {
+        vehiculoId: veh._id?.toString(),
+        placa: veh.placa || "",
+        empleadoId: veh.empleado?._id?.toString() || "",
+        empleadoNombre: veh.empleado?.nombreCompleto || "",
+        usuarioGuardia,
+      },
     });
 
     res.json({ ok: true, item: veh });
@@ -331,7 +526,15 @@ const VEHICLE_CATALOG = [
   },
   {
     brand: "Nissan",
-    models: ["Versa", "Frontier", "Sentra", "Kicks", "X-Trail", "Altima", "Navara"],
+    models: [
+      "Versa",
+      "Frontier",
+      "Sentra",
+      "Kicks",
+      "X-Trail",
+      "Altima",
+      "Navara",
+    ],
   },
   {
     brand: "Hyundai",

@@ -10,6 +10,23 @@ const VehiculoVisitanteSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/* Subdocumento para acompañantes */
+const AcompananteVisitanteSchema = new mongoose.Schema(
+  {
+    nombre: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    documento: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+  },
+  { _id: false }
+);
+
 const ESTADOS_VISITA = [
   "Programada",
   "En revisión",
@@ -38,6 +55,14 @@ function normalizeEstado(value) {
   };
 
   return map[raw] || value;
+}
+
+function cleanText(value) {
+  return String(value || "").trim();
+}
+
+function cleanDoc(value) {
+  return String(value || "").replace(/\D/g, "");
 }
 
 const VisitaSchema = new mongoose.Schema(
@@ -86,7 +111,8 @@ const VisitaSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       validate: {
-        validator: (v) => v == null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+        validator: (v) =>
+          v == null || v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
         message: "Correo no válido",
       },
     },
@@ -106,6 +132,18 @@ const VisitaSchema = new mongoose.Schema(
         return this.tipo === "Agendada" ? "Programada" : "Dentro";
       },
       index: true,
+    },
+
+    /* Acompañantes */
+    acompanado: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    acompanantes: {
+      type: [AcompananteVisitanteSchema],
+      default: [],
     },
 
     /* Vehículo del visitante */
@@ -190,12 +228,24 @@ VisitaSchema.index({ createdAt: -1 });
 VisitaSchema.index({ estado: 1, llegoEnVehiculo: 1 });
 VisitaSchema.index({ qrToken: 1 });
 VisitaSchema.index({ documento: 1, tipo: 1, createdAt: -1 });
+VisitaSchema.index({ acompanado: 1, createdAt: -1 });
 
 /* Hook: normalización previa */
 VisitaSchema.pre("validate", function (next) {
   if (this.estado) {
     this.estado = normalizeEstado(this.estado);
   }
+
+  this.nombre = cleanText(this.nombre);
+  this.documento = cleanText(this.documento);
+  this.empresa = this.empresa == null ? null : cleanText(this.empresa) || null;
+  this.empleado =
+    this.empleado == null ? null : cleanText(this.empleado) || null;
+  this.motivo = cleanText(this.motivo);
+  this.telefono =
+    this.telefono == null ? null : cleanText(this.telefono) || null;
+  this.correo =
+    this.correo == null ? null : cleanText(this.correo).toLowerCase() || null;
 
   if (this.tipo && !TIPOS_VISITA.includes(this.tipo)) {
     return next(new Error("Tipo de visita no válido"));
@@ -205,28 +255,92 @@ VisitaSchema.pre("validate", function (next) {
     return next(new Error("Estado de visita no válido"));
   }
 
+  if (this.tipo === "Agendada" && !this.citaAt) {
+    return next(
+      new Error("Las visitas agendadas deben tener fecha y hora en citaAt")
+    );
+  }
+
   next();
 });
 
 /* Hook: autollenado y normalización */
 VisitaSchema.pre("save", function (next) {
-  // Para ingresos directos, si es nuevo y no trae fechaEntrada, se llena automáticamente
   if (this.isNew && this.tipo === "Ingreso" && !this.fechaEntrada) {
     this.fechaEntrada = new Date();
   }
 
-  // Si la cita entra en estado Dentro y no tiene fechaEntrada, se completa
   if (this.estado === "Dentro" && !this.fechaEntrada) {
     this.fechaEntrada = new Date();
   }
 
-  // Normalización defensiva del vehículo
+  if (this.estado === "Finalizada" && !this.fechaSalida) {
+    this.fechaSalida = new Date();
+  }
+
+  if (!Array.isArray(this.acompanantes)) {
+    this.acompanantes = [];
+  }
+
+  this.acompanantes = this.acompanantes
+    .map((item) => ({
+      nombre: cleanText(item?.nombre),
+      documento: cleanText(item?.documento),
+    }))
+    .filter((item) => item.nombre && item.documento);
+
+  if (this.acompanantes.length > 0) {
+    this.acompanado = true;
+  }
+
+  if (this.acompanado && this.acompanantes.length === 0) {
+    return next(
+      new Error(
+        "Debe registrar al menos un acompañante cuando acompanado es true"
+      )
+    );
+  }
+
+  if (this.acompanado && Array.isArray(this.acompanantes)) {
+    const documentoPrincipal = cleanDoc(this.documento);
+
+    const sameDoc = this.acompanantes.some(
+      (item) => cleanDoc(item.documento) === documentoPrincipal
+    );
+
+    if (sameDoc) {
+      return next(
+        new Error(
+          "Un acompañante no puede tener el mismo documento del visitante principal"
+        )
+      );
+    }
+  }
+
+  if (this.acompanantes.length > 1) {
+    const seen = new Set();
+
+    for (const item of this.acompanantes) {
+      const doc = cleanDoc(item.documento);
+      if (seen.has(doc)) {
+        return next(
+          new Error("No se permiten acompañantes con el mismo documento")
+        );
+      }
+      seen.add(doc);
+    }
+  }
+
+  if (!this.acompanado) {
+    this.acompanantes = [];
+  }
+
   if (!this.llegoEnVehiculo) {
     this.vehiculo = null;
   } else if (this.vehiculo) {
-    this.vehiculo.placa = (this.vehiculo.placa || "").toUpperCase().trim();
-    this.vehiculo.marca = (this.vehiculo.marca || "").trim();
-    this.vehiculo.modelo = (this.vehiculo.modelo || "").trim();
+    this.vehiculo.placa = cleanText(this.vehiculo.placa).toUpperCase();
+    this.vehiculo.marca = cleanText(this.vehiculo.marca);
+    this.vehiculo.modelo = cleanText(this.vehiculo.modelo);
 
     const hasVehiculoReal =
       this.vehiculo.placa || this.vehiculo.marca || this.vehiculo.modelo;
@@ -237,9 +351,9 @@ VisitaSchema.pre("save", function (next) {
     }
   } else {
     this.llegoEnVehiculo = false;
+    this.vehiculo = null;
   }
 
-  // Limpieza mínima de QR
   if (this.qrToken !== null) {
     this.qrToken = String(this.qrToken || "").trim() || null;
   }
@@ -251,7 +365,6 @@ VisitaSchema.pre("save", function (next) {
   next();
 });
 
-/* Modelo */
 const Visita =
   mongoose.models.Visita || mongoose.model("Visita", VisitaSchema);
 

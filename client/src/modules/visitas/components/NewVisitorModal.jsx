@@ -24,6 +24,7 @@ const COMPANY_MAX = 20;
 const EMP_MAX = 20;
 const REASON_MAX = 20;
 const EMAIL_MAX = 60;
+const COMPANION_NAME_MAX = 40;
 
 function sxCard(extra = {}) {
   return {
@@ -62,6 +63,16 @@ function sxPrimaryBtn(extra = {}) {
     color: "#fff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
     ...extra,
   };
 }
@@ -117,6 +128,25 @@ function formatPhoneHN(value) {
   return `+504 ${digits.slice(0, 4)}-${digits.slice(4)}`;
 }
 
+function createEmptyCompanion() {
+  return {
+    id: `comp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: "",
+    document: "",
+  };
+}
+
+function normalizeCompanionItem(item, index = 0) {
+  return {
+    id:
+      item?.id ||
+      item?._id ||
+      `comp-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+    name: String(item?.name || item?.nombre || "").slice(0, COMPANION_NAME_MAX),
+    document: formatDniInput(item?.document || item?.documento || item?.dni || ""),
+  };
+}
+
 export default function NewVisitorModal({
   onClose,
   onSubmit,
@@ -136,6 +166,7 @@ export default function NewVisitorModal({
 
   const [visitType, setVisitType] = useState("Personal");
   const [acompanado, setAcompanado] = useState(false);
+  const [companions, setCompanions] = useState([]);
 
   const [hasVehicle, setHasVehicle] = useState(false);
   const [vehicleBrand, setVehicleBrand] = useState("");
@@ -266,6 +297,18 @@ export default function NewVisitorModal({
     );
     setAcompanado(!!editingVisitor.acompanado);
 
+    const incomingCompanions = Array.isArray(editingVisitor.acompanantes)
+      ? editingVisitor.acompanantes.map(normalizeCompanionItem)
+      : [];
+
+    setCompanions(
+      editingVisitor.acompanado
+        ? incomingCompanions.length
+          ? incomingCompanions
+          : [createEmptyCompanion()]
+        : []
+    );
+
     const hasVeh =
       !!editingVisitor.vehiclePlate ||
       !!editingVisitor.vehicleBrand ||
@@ -312,6 +355,18 @@ export default function NewVisitorModal({
     setEmail(visitor.email || "");
     setAcompanado(!!visitor.acompanado);
 
+    const knownCompanions = Array.isArray(visitor.acompanantes)
+      ? visitor.acompanantes.map(normalizeCompanionItem)
+      : [];
+
+    setCompanions(
+      visitor.acompanado
+        ? knownCompanions.length
+          ? knownCompanions
+          : [createEmptyCompanion()]
+        : []
+    );
+
     if (visitor.company && visitor.company !== "—") {
       setVisitType("Profesional");
     } else {
@@ -346,6 +401,7 @@ export default function NewVisitorModal({
       vehicleBrand: undefined,
       vehicleModel: undefined,
       vehiclePlate: undefined,
+      acompanantes: undefined,
     }));
   }
 
@@ -485,6 +541,56 @@ export default function NewVisitorModal({
     setErrors((prev) => ({ ...prev, vehiclePlate: undefined }));
   };
 
+  function handleAcompanadoChange(checked) {
+    setAcompanado(checked);
+    setErrors((prev) => ({ ...prev, acompanantes: undefined }));
+
+    if (checked) {
+      setCompanions((prev) => (prev.length ? prev : [createEmptyCompanion()]));
+    } else {
+      setCompanions([]);
+    }
+  }
+
+  function addCompanion() {
+    setCompanions((prev) => [...prev, createEmptyCompanion()]);
+    setErrors((prev) => ({ ...prev, acompanantes: undefined }));
+  }
+
+  function removeCompanion(id) {
+    setCompanions((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      return next;
+    });
+    setErrors((prev) => ({ ...prev, acompanantes: undefined }));
+  }
+
+  function updateCompanion(id, field, value) {
+    setCompanions((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              [field]: value,
+            }
+          : item
+      )
+    );
+    setErrors((prev) => ({ ...prev, acompanantes: undefined }));
+  }
+
+  function handleCompanionNameChange(id, value) {
+    const clean = value
+      .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+      .slice(0, COMPANION_NAME_MAX);
+
+    updateCompanion(id, "name", clean);
+  }
+
+  function handleCompanionDocumentChange(id, value) {
+    updateCompanion(id, "document", formatDniInput(value));
+  }
+
   function validateForm() {
     const newErrors = {};
 
@@ -580,6 +686,40 @@ export default function NewVisitorModal({
       }
     }
 
+    if (acompanado) {
+      const sanitizedCompanions = companions
+        .map((item) => ({
+          ...item,
+          name: String(item.name || "").trim(),
+          document: String(item.document || "").trim(),
+        }))
+        .filter((item) => item.name || item.document);
+
+      if (sanitizedCompanions.length === 0) {
+        newErrors.acompanantes =
+          "Debe registrar al menos un acompañante si marcó que viene acompañado.";
+      } else {
+        const hasInvalid = sanitizedCompanions.some((item) => {
+          const nameParts = item.name.split(/\s+/).filter(Boolean);
+          const docDigits = item.document.replace(/\D/g, "");
+
+          if (!item.name) return true;
+          if (item.name.length > COMPANION_NAME_MAX) return true;
+          if (nameParts.length < 2) return true;
+          if (!item.document) return true;
+          if (docDigits.length !== DNI_DIGITS) return true;
+          if (normalizeDni(item.document) === normalizeDni(document)) return true;
+
+          return false;
+        });
+
+        if (hasInvalid) {
+          newErrors.acompanantes =
+            "Revise los acompañantes: cada uno debe tener nombre completo y DNI válido de 13 dígitos, distinto al visitante principal.";
+        }
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   }
@@ -599,6 +739,15 @@ export default function NewVisitorModal({
           : vehicleModel === "__custom"
           ? vehicleModelCustom.trim()
           : vehicleModel.trim();
+
+      const acompaniantesPayload = acompanado
+        ? companions
+            .map((item) => ({
+              name: String(item.name || "").trim(),
+              document: String(item.document || "").trim(),
+            }))
+            .filter((item) => item.name && item.document)
+        : [];
 
       const now = new Date();
 
@@ -620,6 +769,7 @@ export default function NewVisitorModal({
         email: email.trim(),
         visitType: normalizeVisitType(visitType),
         acompanado,
+        acompanantes: acompaniantesPayload,
         vehicle: hasVehicle
           ? {
               brand: vehicleBrand.trim(),
@@ -654,7 +804,7 @@ export default function NewVisitorModal({
       onMouseDown={handleBackdrop}
     >
       <div
-        className="w-full max-w-[560px] max-h-[90vh] overflow-y-auto rounded-[24px] p-4 md:p-5"
+        className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-[24px] p-4 md:p-5"
         style={sxCard()}
         role="dialog"
         aria-modal="true"
@@ -875,7 +1025,7 @@ export default function NewVisitorModal({
                 type="checkbox"
                 className="h-4 w-4"
                 checked={acompanado}
-                onChange={(e) => setAcompanado(e.target.checked)}
+                onChange={(e) => handleAcompanadoChange(e.target.checked)}
               />
               <label
                 htmlFor="acompanado"
@@ -886,6 +1036,117 @@ export default function NewVisitorModal({
               </label>
             </div>
           </div>
+
+          {acompanado && (
+            <div
+              className="md:col-span-2 rounded-[18px] p-3"
+              style={sxCard({
+                background:
+                  "color-mix(in srgb, var(--card-solid) 75%, transparent)",
+                boxShadow: "var(--shadow-sm)",
+              })}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+                <div>
+                  <div
+                    className="text-sm font-semibold"
+                    style={{ color: "var(--text)" }}
+                  >
+                    Acompañantes
+                  </div>
+                  <p
+                    className="text-xs"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Registre uno o más acompañantes del visitante principal.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addCompanion}
+                  className="px-3 py-2 text-xs rounded-lg font-semibold transition"
+                  style={sxPrimaryBtn()}
+                >
+                  + Agregar acompañante
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {companions.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3 items-end rounded-[16px] p-3"
+                    style={sxCard({
+                      background:
+                        "color-mix(in srgb, var(--card) 78%, transparent)",
+                      boxShadow: "var(--shadow-sm)",
+                    })}
+                  >
+                    <div>
+                      <label
+                        className="text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        Nombre completo del acompañante #{index + 1}
+                      </label>
+                      <input
+                        className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                        style={sxInput()}
+                        value={item.name}
+                        onChange={(e) =>
+                          handleCompanionNameChange(item.id, e.target.value)
+                        }
+                        placeholder="Ej. Juan Carlos Pérez"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        className="text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        DNI
+                      </label>
+                      <input
+                        className="w-full rounded-[14px] px-3 py-2 text-sm outline-none transition"
+                        style={sxInput()}
+                        value={item.document}
+                        onChange={(e) =>
+                          handleCompanionDocumentChange(item.id, e.target.value)
+                        }
+                        placeholder="0801-YYYY-XXXXX"
+                        inputMode="numeric"
+                      />
+                    </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => removeCompanion(item.id)}
+                        className="w-full md:w-auto px-3 py-2 text-xs rounded-lg font-semibold transition"
+                        style={sxDangerBtn()}
+                        disabled={companions.length === 1}
+                        title={
+                          companions.length === 1
+                            ? "Debe dejar al menos un acompañante"
+                            : "Quitar acompañante"
+                        }
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {errors.acompanantes && (
+                <p className="text-xs mt-2" style={{ color: "#f87171" }}>
+                  {errors.acompanantes}
+                </p>
+              )}
+            </div>
+          )}
 
           <div
             className="md:col-span-2 mt-1 pt-3"

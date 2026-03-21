@@ -5,6 +5,7 @@ import IamRole from "../models/IamRole.model.js";
 import IamPermission from "../models/IamPermission.model.js";
 import { devOr, requirePerm } from "../utils/rbac.util.js";
 import { writeAudit } from "../utils/audit.util.js";
+import { logBitacoraEvent } from "../../bitacora/services/bitacora.service.js";
 
 const r = Router();
 
@@ -16,7 +17,45 @@ function isValidObjectId(id) {
 }
 
 function cleanKeys(arr) {
-  return [...new Set((arr || []).map((k) => String(k || "").trim().toLowerCase()))].filter(Boolean);
+  return [
+    ...new Set(
+      (arr || []).map((k) => String(k || "").trim().toLowerCase())
+    ),
+  ].filter(Boolean);
+}
+
+function clientIp(req) {
+  return (
+    req.ip ||
+    req.headers["x-forwarded-for"] ||
+    req.connection?.remoteAddress ||
+    ""
+  );
+}
+
+function normalizeRoleValue(role) {
+  if (!role) return "";
+
+  if (typeof role === "string") return role.trim();
+
+  if (typeof role === "object") {
+    return String(
+      role.name ||
+        role.slug ||
+        role.code ||
+        role.key ||
+        role.nombre ||
+        role.label ||
+        ""
+    ).trim();
+  }
+
+  return String(role).trim();
+}
+
+function getPrimaryRole(userLike) {
+  const roles = Array.isArray(userLike?.roles) ? userLike.roles : [];
+  return normalizeRoleValue(roles[0] || "");
 }
 
 async function assertPermKeysExist(keys = []) {
@@ -27,7 +66,9 @@ async function assertPermKeysExist(keys = []) {
     .select("key")
     .lean();
 
-  const have = new Set(existing.map((x) => String(x.key || "").trim().toLowerCase()));
+  const have = new Set(
+    existing.map((x) => String(x.key || "").trim().toLowerCase())
+  );
 
   if (have.size !== clean.length) {
     const missing = clean.filter((k) => !have.has(k));
@@ -48,8 +89,38 @@ async function auditSafe(req, payload, label) {
   }
 }
 
+async function bitacoraSafe(req, payload, label) {
+  try {
+    await logBitacoraEvent({
+      modulo: "IAM",
+      tipo: "IAM",
+      prioridad: payload.prioridad || "Media",
+      estado: payload.estado || "Registrado",
+      source: payload.source || "iam-roles",
+      agente:
+        req?.user?.email ||
+        req?.user?.name ||
+        payload.agente ||
+        "Sistema IAM",
+      actorId:
+        req?.user?.sub ||
+        req?.user?._id ||
+        req?.user?.id ||
+        payload.actorId ||
+        "",
+      actorEmail: req?.user?.email || payload.actorEmail || "",
+      actorRol: getPrimaryRole(req?.user) || payload.actorRol || "",
+      ip: clientIp(req),
+      userAgent: req?.get?.("user-agent") || "",
+      ...payload,
+    });
+  } catch (e) {
+    console.warn(`[IAM][BITACORA ${label}] error (no bloquea):`, e?.message || e);
+  }
+}
+
 /**
- * ✅ compatible con canónico + legacy
+ * compatible con canónico + legacy
  */
 const MW_ROLES_MANAGE = devOr(
   requirePerm(["iam.roles.write", "iam.roles.manage"])
@@ -74,6 +145,20 @@ r.get("/", MW_ROLES_MANAGE, async (req, res) => {
     return res.json({ ok: true, items });
   } catch (err) {
     console.error("[IAM][GET /roles] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_LIST",
+        entidad: "IamRole",
+        titulo: "Error al listar roles",
+        descripcion: err?.message || "Error interno al listar roles",
+        estado: "Fallido",
+        prioridad: "Alta",
+      },
+      "list roles"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al listar roles",
@@ -83,7 +168,12 @@ r.get("/", MW_ROLES_MANAGE, async (req, res) => {
 
 r.post("/", MW_ROLES_MANAGE, async (req, res) => {
   try {
-    const { code: rawCode, name, description, permissions = [] } = req.body || {};
+    const {
+      code: rawCode,
+      name,
+      description,
+      permissions = [],
+    } = req.body || {};
 
     if (!name) {
       return res.status(400).json({ ok: false, message: "name es requerido" });
@@ -105,6 +195,13 @@ r.post("/", MW_ROLES_MANAGE, async (req, res) => {
       permissions: cleanPerms,
     });
 
+    const after = {
+      code: doc.code,
+      name: doc.name,
+      description: doc.description ?? null,
+      permissions: doc.permissions || [],
+    };
+
     await auditSafe(
       req,
       {
@@ -112,11 +209,28 @@ r.post("/", MW_ROLES_MANAGE, async (req, res) => {
         entity: "role",
         entityId: doc._id.toString(),
         before: null,
-        after: {
-          code: doc.code,
-          name: doc.name,
-          description: doc.description ?? null,
-          permissions: doc.permissions || [],
+        after,
+      },
+      "create role"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_CREATE",
+        entidad: "IamRole",
+        entidadId: doc._id.toString(),
+        titulo: `Rol creado: ${doc.name}`,
+        descripcion: `Se creó el rol ${doc.name} con code ${doc.code}.`,
+        before: null,
+        after,
+        estado: "Exitoso",
+        prioridad: "Media",
+        nombre: doc.name,
+        meta: {
+          permissionsCount: Array.isArray(doc.permissions)
+            ? doc.permissions.length
+            : 0,
         },
       },
       "create role"
@@ -128,6 +242,7 @@ r.post("/", MW_ROLES_MANAGE, async (req, res) => {
     });
   } catch (err) {
     const status = err?.status || 500;
+
     if (status === 400) {
       return res.status(400).json({
         ok: false,
@@ -135,7 +250,23 @@ r.post("/", MW_ROLES_MANAGE, async (req, res) => {
         ...(err.payload ? err.payload : null),
       });
     }
+
     console.error("[IAM][POST /roles] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_CREATE",
+        entidad: "IamRole",
+        titulo: "Error al crear rol",
+        descripcion: err?.message || "Error interno al crear rol",
+        estado: "Fallido",
+        prioridad: "Alta",
+        after: req.body || null,
+      },
+      "create role error"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al crear rol",
@@ -163,7 +294,9 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
     if (typeof name !== "undefined") {
       const cleanName = String(name).trim();
       if (!cleanName) {
-        return res.status(400).json({ ok: false, message: "name no puede ir vacío" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "name no puede ir vacío" });
       }
 
       if (protectedRole) {
@@ -186,7 +319,9 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
     if (typeof code !== "undefined") {
       const cleanCode = normCode(code);
       if (!cleanCode) {
-        return res.status(400).json({ ok: false, message: "code no puede ir vacío" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "code no puede ir vacío" });
       }
 
       if (protectedRole && cleanCode !== "admin") {
@@ -215,22 +350,43 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
       { new: true, runValidators: true }
     ).lean();
 
+    const beforeData = {
+      code: before.code,
+      name: before.name,
+      description: before.description ?? null,
+    };
+
+    const afterData = {
+      code: doc.code,
+      name: doc.name,
+      description: doc.description ?? null,
+    };
+
     await auditSafe(
       req,
       {
         action: "update",
         entity: "role",
         entityId: id,
-        before: {
-          code: before.code,
-          name: before.name,
-          description: before.description ?? null,
-        },
-        after: {
-          code: doc.code,
-          name: doc.name,
-          description: doc.description ?? null,
-        },
+        before: beforeData,
+        after: afterData,
+      },
+      "update role"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_UPDATE",
+        entidad: "IamRole",
+        entidadId: id,
+        titulo: `Rol actualizado: ${doc.name}`,
+        descripcion: `Se actualizó el rol ${doc.name}.`,
+        before: beforeData,
+        after: afterData,
+        estado: "Exitoso",
+        prioridad: "Media",
+        nombre: doc.name,
       },
       "update role"
     );
@@ -238,6 +394,22 @@ r.patch("/:id", MW_ROLES_MANAGE, async (req, res) => {
     return res.json({ ok: true, item: doc });
   } catch (err) {
     console.error("[IAM][PATCH /roles/:id] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_UPDATE",
+        entidad: "IamRole",
+        entidadId: req.params?.id || "",
+        titulo: "Error al actualizar rol",
+        descripcion: err?.message || "Error interno al actualizar rol",
+        estado: "Fallido",
+        prioridad: "Alta",
+        after: req.body || null,
+      },
+      "update role error"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al actualizar rol",
@@ -266,19 +438,38 @@ r.delete("/:id", MW_ROLES_MANAGE, async (req, res) => {
 
     await IamRole.deleteOne({ _id: id });
 
+    const beforeData = {
+      code: role.code,
+      name: role.name,
+      description: role.description ?? null,
+      permissions: role.permissions || [],
+    };
+
     await auditSafe(
       req,
       {
         action: "delete",
         entity: "role",
         entityId: id,
-        before: {
-          code: role.code,
-          name: role.name,
-          description: role.description ?? null,
-          permissions: role.permissions || [],
-        },
+        before: beforeData,
         after: null,
+      },
+      "delete role"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_DELETE",
+        entidad: "IamRole",
+        entidadId: id,
+        titulo: `Rol eliminado: ${role.name}`,
+        descripcion: `Se eliminó el rol ${role.name}.`,
+        before: beforeData,
+        after: null,
+        estado: "Exitoso",
+        prioridad: "Alta",
+        nombre: role.name,
       },
       "delete role"
     );
@@ -286,6 +477,21 @@ r.delete("/:id", MW_ROLES_MANAGE, async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error("[IAM][DELETE /roles/:id] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_DELETE",
+        entidad: "IamRole",
+        entidadId: req.params?.id || "",
+        titulo: "Error al eliminar rol",
+        descripcion: err?.message || "Error interno al eliminar rol",
+        estado: "Fallido",
+        prioridad: "Alta",
+      },
+      "delete role error"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al eliminar rol",
@@ -311,6 +517,21 @@ r.get("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
     });
   } catch (err) {
     console.error("[IAM][GET /roles/:id/permissions] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_PERMISSIONS_READ",
+        entidad: "IamRole",
+        entidadId: req.params?.id || "",
+        titulo: "Error al obtener permisos del rol",
+        descripcion: err?.message || "Error interno al obtener permisos del rol",
+        estado: "Fallido",
+        prioridad: "Alta",
+      },
+      "get role permissions error"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al obtener permisos del rol",
@@ -352,16 +573,46 @@ r.put("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
       { new: true, runValidators: true }
     ).lean();
 
+    const beforeData = { permissions: cleanKeys(before?.permissions || []) };
+    const afterData = { permissions: cleanKeys(doc?.permissions || []) };
+
     await auditSafe(
       req,
       {
         action: "update",
         entity: "role",
         entityId: id,
-        before: { permissions: cleanKeys(before?.permissions || []) },
-        after: { permissions: cleanKeys(doc?.permissions || []) },
+        before: beforeData,
+        after: afterData,
       },
       "update role perms"
+    );
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_PERMISSIONS_UPDATE",
+        entidad: "IamRole",
+        entidadId: id,
+        titulo: `Permisos actualizados del rol ${doc?.name || before?.name || ""}`,
+        descripcion: `Se actualizaron los permisos del rol ${
+          doc?.name || before?.name || ""
+        }.`,
+        before: beforeData,
+        after: afterData,
+        estado: "Exitoso",
+        prioridad: "Alta",
+        nombre: doc?.name || before?.name || "",
+        meta: {
+          added: afterData.permissions.filter(
+            (p) => !beforeData.permissions.includes(p)
+          ),
+          removed: beforeData.permissions.filter(
+            (p) => !afterData.permissions.includes(p)
+          ),
+        },
+      },
+      "update role permissions"
     );
 
     return res.json({
@@ -371,6 +622,7 @@ r.put("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
     });
   } catch (err) {
     const status = err?.status || 500;
+
     if (status === 400) {
       return res.status(400).json({
         ok: false,
@@ -378,7 +630,25 @@ r.put("/:id/permissions", MW_ROLES_MANAGE, async (req, res) => {
         ...(err.payload ? err.payload : null),
       });
     }
+
     console.error("[IAM][PUT /roles/:id/permissions] ERROR:", err);
+
+    await bitacoraSafe(
+      req,
+      {
+        accion: "ROLE_PERMISSIONS_UPDATE",
+        entidad: "IamRole",
+        entidadId: req.params?.id || "",
+        titulo: "Error al actualizar permisos del rol",
+        descripcion:
+          err?.message || "Error interno al actualizar permisos del rol",
+        estado: "Fallido",
+        prioridad: "Alta",
+        after: req.body || null,
+      },
+      "update role permissions error"
+    );
+
     return res.status(500).json({
       ok: false,
       message: "Error interno al actualizar permisos del rol",

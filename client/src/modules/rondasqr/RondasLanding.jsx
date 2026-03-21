@@ -19,12 +19,29 @@ function Tile({ title, subtitle, Icon, onClick }) {
   );
 }
 
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map(String);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      normalizeArray(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 function resolvePrincipal(me) {
   if (!me || typeof me !== "object") return null;
 
   if (me.user && typeof me.user === "object") {
-    return {
+    const merged = {
       ...me.user,
+      ...me,
       can:
         me?.can && typeof me.can === "object"
           ? me.can
@@ -36,14 +53,39 @@ function resolvePrincipal(me) {
         me?.isSuperAdmin === true ||
         me?.user?.superadmin === true ||
         me?.user?.isSuperAdmin === true,
+      isSuperAdmin:
+        me?.isSuperAdmin === true ||
+        me?.superadmin === true ||
+        me?.user?.isSuperAdmin === true ||
+        me?.user?.superadmin === true,
+    };
+
+    const perms = uniqLower(merged?.perms || merged?.permissions || []);
+    return {
+      ...merged,
+      perms,
+      permissions: perms,
     };
   }
+
+  const perms = uniqLower(me?.perms || me?.permissions || []);
 
   return {
     ...me,
     can: me?.can && typeof me.can === "object" ? me.can : {},
     superadmin: me?.superadmin === true || me?.isSuperAdmin === true,
+    isSuperAdmin: me?.isSuperAdmin === true || me?.superadmin === true,
+    perms,
+    permissions: perms,
   };
+}
+
+function hasPermLike(principal, key) {
+  const wanted = String(key || "").trim().toLowerCase();
+  if (!wanted) return false;
+
+  const perms = uniqLower(principal?.perms || principal?.permissions || []);
+  return perms.includes("*") || perms.includes(wanted);
 }
 
 export default function RondasLanding({ me }) {
@@ -51,13 +93,57 @@ export default function RondasLanding({ me }) {
 
   const principal = resolvePrincipal(me);
   const can = principal?.can || {};
-  const isSuperadmin = principal?.superadmin === true;
+  const isSuperadmin =
+    principal?.superadmin === true || principal?.isSuperAdmin === true;
 
-  // ✅ Fuente única: backend (/api/iam/v1/me)
-  // superadmin backend ve todo el módulo
-  const allowScan = isSuperadmin || can["rondasqr.scan"] === true;
-  const allowReports = isSuperadmin || can["rondasqr.reports"] === true;
-  const allowAdmin = isSuperadmin || can["rondasqr.admin"] === true;
+  // acceso general al módulo
+  const allowModule =
+    isSuperadmin ||
+    can["nav.rondas"] === true ||
+    can["rondas.panel"] === true ||
+    can["rondasqr.scan"] === true ||
+    can["rondasqr.reports"] === true ||
+    can["rondasqr.admin"] === true ||
+    hasPermLike(principal, "rondasqr.scan.execute") ||
+    hasPermLike(principal, "rondasqr.scan.manual") ||
+    hasPermLike(principal, "rondasqr.checks.write") ||
+    hasPermLike(principal, "rondasqr.reports.read") ||
+    hasPermLike(principal, "rondasqr.assignments.read") ||
+    hasPermLike(principal, "rondasqr.rounds.read");
+
+  // acceso por secciones
+  const allowScan =
+    isSuperadmin ||
+    can["rondasqr.scan"] === true ||
+    can["rondas.panel"] === true ||
+    hasPermLike(principal, "rondasqr.scan.execute") ||
+    hasPermLike(principal, "rondasqr.scan.manual") ||
+    hasPermLike(principal, "rondasqr.checks.write");
+
+  const allowReports =
+    isSuperadmin ||
+    can["rondasqr.reports"] === true ||
+    hasPermLike(principal, "rondasqr.reports.read") ||
+    hasPermLike(principal, "rondasqr.reports.query") ||
+    hasPermLike(principal, "rondasqr.reports.export") ||
+    hasPermLike(principal, "rondasqr.reports.print") ||
+    hasPermLike(principal, "rondasqr.reports.map") ||
+    hasPermLike(principal, "rondasqr.reports.highlight");
+
+  const allowAdmin =
+    isSuperadmin ||
+    can["rondasqr.admin"] === true ||
+    hasPermLike(principal, "rondasqr.assignments.read") ||
+    hasPermLike(principal, "rondasqr.assignments.write") ||
+    hasPermLike(principal, "rondasqr.rounds.read") ||
+    hasPermLike(principal, "rondasqr.rounds.write") ||
+    hasPermLike(principal, "rondasqr.checkpoints.read") ||
+    hasPermLike(principal, "rondasqr.checkpoints.write") ||
+    hasPermLike(principal, "rondasqr.sites.read") ||
+    hasPermLike(principal, "rondasqr.sites.write") ||
+    hasPermLike(principal, "rondasqr.qr.read") ||
+    hasPermLike(principal, "rondasqr.qr.generate") ||
+    hasPermLike(principal, "rondasqr.qr.export");
 
   const tiles = useMemo(() => {
     const list = [];
@@ -94,6 +180,19 @@ export default function RondasLanding({ me }) {
 
     return list;
   }, [allowScan, allowReports, allowAdmin]);
+
+  if (!allowModule) {
+    return (
+      <div className="space-y-6 layer-content">
+        <div className={fxCard + " p-5"}>
+          <h2 className="text-2xl font-extrabold tracking-tight">Rondas de Vigilancia</h2>
+          <p className="text-sm mt-1 text-neutral-600 dark:text-white/70">
+            No tienes permisos para acceder a este módulo.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 layer-content">

@@ -6,15 +6,60 @@ import { stringify } from "csv-stringify/sync";
 import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 
-// Modelos
 import RqMark from "../models/RqMark.model.js";
 import RqIncident from "../models/RqIncident.model.js";
 import RqAssignment from "../models/RqAssignment.model.js";
 import RqPlan from "../models/RqPlan.model.js";
 import RqPoint from "../models/RqPoint.model.js";
 
+import { requirePermission } from "../../../src/middleware/permissions.js";
+
 dayjs.extend(utc);
 const router = express.Router();
+
+const RONDASQR_PERMS = {
+  REPORTS_READ: "rondasqr.reports.read",
+  REPORTS_EXPORT: "rondasqr.reports.export",
+  ROUND_READ: "rondasqr.rounds.read",
+  ROUND_WRITE: "rondasqr.rounds.write",
+  INCIDENTS_READ: "rondasqr.incidents.read",
+  ALERTS_READ: "rondasqr.alerts.read",
+  ASSIGNMENTS_READ: "rondasqr.assignments.read",
+  POINTS_READ: "rondasqr.points.read",
+  SCAN_EXECUTE: "rondasqr.scan.execute",
+
+  READ_LEGACY: "rondasqr.read",
+  WRITE_LEGACY: "rondasqr.write",
+
+  ALL: "*",
+};
+
+function requireReportsRead() {
+  return requirePermission(
+    RONDASQR_PERMS.REPORTS_READ,
+    RONDASQR_PERMS.ROUND_READ,
+    RONDASQR_PERMS.INCIDENTS_READ,
+    RONDASQR_PERMS.ALERTS_READ,
+    RONDASQR_PERMS.ASSIGNMENTS_READ,
+    RONDASQR_PERMS.POINTS_READ,
+    RONDASQR_PERMS.READ_LEGACY,
+    RONDASQR_PERMS.ALL
+  );
+}
+
+function requireReportsExport() {
+  return requirePermission(
+    RONDASQR_PERMS.REPORTS_EXPORT,
+    RONDASQR_PERMS.REPORTS_READ,
+    RONDASQR_PERMS.ROUND_READ,
+    RONDASQR_PERMS.INCIDENTS_READ,
+    RONDASQR_PERMS.ALERTS_READ,
+    RONDASQR_PERMS.ASSIGNMENTS_READ,
+    RONDASQR_PERMS.POINTS_READ,
+    RONDASQR_PERMS.READ_LEGACY,
+    RONDASQR_PERMS.ALL
+  );
+}
 
 /* ---------------------------- helpers ---------------------------- */
 function parseRange(q) {
@@ -40,7 +85,6 @@ function baseMatch(q) {
   return m;
 }
 
-// geo helpers (lat/lon desde gps o loc)
 const geoProject = {
   lat: {
     $ifNull: [
@@ -53,7 +97,7 @@ const geoProject = {
               { $gte: [{ $size: "$loc.coordinates" }, 2] },
             ],
           },
-          { $arrayElemAt: ["$loc.coordinates", 1] }, // [lon, lat] -> lat
+          { $arrayElemAt: ["$loc.coordinates", 1] },
           null,
         ],
       },
@@ -70,7 +114,7 @@ const geoProject = {
               { $gte: [{ $size: "$loc.coordinates" }, 2] },
             ],
           },
-          { $arrayElemAt: ["$loc.coordinates", 0] }, // [lon, lat] -> lon
+          { $arrayElemAt: ["$loc.coordinates", 0] },
           null,
         ],
       },
@@ -111,15 +155,9 @@ function escapeXml(s) {
     .replace(/'/g, "&apos;");
 }
 
-/* ------------------- Ventanas por plan / asignación ------------------- */
-
-// key agrupación por operativa (fecha/guardia/ronda)
 const aggKey = (date, guardId, roundId) => `${date}|${guardId}|${roundId}`;
 
-// Devuelve { startTime, endTime, winMap } para cada (date, guardId, roundId)
-// winMap: pointId -> { startMin, endMin, toleranceMin }
 async function buildAssignmentContexts(rows) {
-  // Necesitamos por cada marca: date (UTC YYYY-MM-DD), guardId, roundId, siteId
   const groups = new Map();
   for (const r of rows) {
     const k = aggKey(r.date, r.guardId || "", r.roundId || "");
@@ -138,7 +176,6 @@ async function buildAssignmentContexts(rows) {
   const guards = [...new Set([...groups.values()].map((g) => g.guardId))];
   const rounds = [...new Set([...groups.values()].map((g) => g.roundId))];
 
-  // Asignaciones del rango para estos conjuntos
   const assignments = await RqAssignment.find({
     date: { $in: dates },
     guardId: { $in: guards },
@@ -157,7 +194,6 @@ async function buildAssignmentContexts(rows) {
     .lean();
 
   const ctx = new Map();
-  // Cargar plan activo para donde haga falta
   const pairKeys = new Set(
     [...groups.values()].map((g) => `${g.siteId}|${g.roundId}`)
   );
@@ -203,7 +239,6 @@ async function buildAssignmentContexts(rows) {
         };
       }
     } else {
-      // sin asignación: sólo plan activo (no hay startTime -> no puede evaluar ventana)
       const pts = planByPair[`${g.siteId}|${g.roundId}`]?.points || [];
       winMap = {};
       for (const p of pts) {
@@ -221,7 +256,6 @@ async function buildAssignmentContexts(rows) {
   return ctx;
 }
 
-// Evalúa si una marca está en ventana usando contexto (startTime + winMap)
 function evalOnWindow(markISO, dateStr, pointId, ctxForKey) {
   if (!ctxForKey) return { onWindow: null };
   const w = ctxForKey.winMap?.[String(pointId || "")];
@@ -236,7 +270,7 @@ function evalOnWindow(markISO, dateStr, pointId, ctxForKey) {
     };
   }
 
-  const base = dayjs.utc(`${dateStr} ${startTime}:00`); // inicio operativo
+  const base = dayjs.utc(`${dateStr} ${startTime}:00`);
   const at = dayjs.utc(markISO);
   const diffMin = Math.floor((at.valueOf() - base.valueOf()) / 60000);
   const tol = w.toleranceMin ?? 0;
@@ -250,11 +284,7 @@ function evalOnWindow(markISO, dateStr, pointId, ctxForKey) {
   };
 }
 
-/* ---------------- datos enriquecidos (para JSON/Excel/PDF) --------------- */
-
-// Trae filas detalladas (con officer, lat/lon, etc.) + onWindow
 async function fetchDetailedRows(q) {
-  // 1) Marcas con campos mínimos para correlación
   const items = await RqMark.aggregate([
     { $match: baseMatch(q) },
     { $sort: { at: 1 } },
@@ -280,7 +310,6 @@ async function fetchDetailedRows(q) {
 
   if (items.length === 0) return [];
 
-  // 2) Definir date (UTC) por marca y construir contexto de asignaciones/plan
   const rowsBase = items.map((i) => ({
     date: dayjs(i.at).utc().format("YYYY-MM-DD"),
     time: dayjs(i.at).utc().format("HH:mm:ss"),
@@ -295,18 +324,14 @@ async function fetchDetailedRows(q) {
     lon: typeof i.lon === "number" ? i.lon : "",
     hardwareId: i.hardwareId || "",
     steps: i.steps || 0,
-
-    // claves para contexto
     siteId: i.siteId ? String(i.siteId) : "",
     roundId: i.roundId ? String(i.roundId) : "",
     pointId: i.pointId ? String(i.pointId) : "",
     guardId: i.guardId ? String(i.guardId) : "",
   }));
 
-  // contexto por (date, guardId, roundId)
   const ctxMap = await buildAssignmentContexts(rowsBase);
 
-  // 3) Enriquecer con onWindow + start/end asignación
   const rows = rowsBase.map((r) => {
     const ctx = ctxMap.get(aggKey(r.date, r.guardId, r.roundId));
     const ev = evalOnWindow(r.at, r.date, r.pointId, ctx);
@@ -314,7 +339,7 @@ async function fetchDetailedRows(q) {
       ...r,
       startTime: ctx?.startTime || "",
       endTime: ctx?.endTime || "",
-      onWindow: ev.onWindow, // true / false / null (no evaluable)
+      onWindow: ev.onWindow,
       windowStartMin: ev.windowStartMin,
       windowEndMin: ev.windowEndMin,
       toleranceMin: ev.toleranceMin,
@@ -324,7 +349,6 @@ async function fetchDetailedRows(q) {
   return rows;
 }
 
-// Omisiones reales (planSnap/plan activo vs marcas)
 async function computeOmissions(q) {
   const { from, to } = parseRange(q);
 
@@ -429,23 +453,16 @@ async function computeOmissions(q) {
   }));
 }
 
-/* ======================================================================
-   GET /reports/detailed  -> Detalle de marcas (ahora con onWindow)
-   ====================================================================== */
-router.get("/reports/detailed", async (req, res, next) => {
+router.get("/reports/detailed", requireReportsRead(), async (req, res, next) => {
   try {
     const rows = await fetchDetailedRows(req.query || {});
-    // Mantener compatibilidad: devolver en `items`
     res.json({ items: rows });
   } catch (e) {
     next(e);
   }
 });
 
-/* ======================================================================
-   GET /reports/summary  -> Resumen + Omisiones + Mensajes/Incidentes
-   ====================================================================== */
-router.get("/reports/summary", async (req, res, next) => {
+router.get("/reports/summary", requireReportsRead(), async (req, res, next) => {
   try {
     const match = baseMatch(req.query);
 
@@ -463,8 +480,6 @@ router.get("/reports/summary", async (req, res, next) => {
           lastAt: { $max: "$at" },
           puntosRegistrados: { $sum: 1 },
           pasos: { $sum: { $ifNull: ["$steps", 0] } },
-
-          // extras para frontend (resolver guardia)
           guardId: { $first: "$guardId" },
           officerName: { $first: "$officerName" },
           officerEmail: { $first: "$officerEmail" },
@@ -494,20 +509,15 @@ router.get("/reports/summary", async (req, res, next) => {
       const officerLabel = r._id.officer || "-";
 
       return {
-        // nombres amigables
         site: siteName,
         siteName,
         round: roundName,
         roundName,
         day: r._id.day,
         officer: officerLabel,
-
-        // datos para resolver guardia
         guardId: r.guardId || "",
         officerName: r.officerName || "",
         officerEmail: r.officerEmail || "",
-
-        // números
         puntosRegistrados: r.puntosRegistrados,
         pasos: r.pasos || 0,
         primeraMarca: r.firstAt,
@@ -566,17 +576,12 @@ router.get("/reports/summary", async (req, res, next) => {
   }
 });
 
-/* ======================================================================
-   GET /reports/export/excel  -> Excel con 3 hojas (Resumen, Detalle, Omisiones)
-   ====================================================================== */
-router.get("/reports/export/excel", async (req, res, next) => {
+router.get("/reports/export/excel", requireReportsExport(), async (req, res, next) => {
   try {
     const wb = new ExcelJS.Workbook();
 
-    // Detalle enriquecido (con onWindow)
     const rowsDet = await fetchDetailedRows(req.query || {});
 
-    // Resumen por oficial y por ventana
     const byOfficer = {};
     for (const r of rowsDet) {
       const k = r.officer || "-";
@@ -586,7 +591,6 @@ router.get("/reports/export/excel", async (req, res, next) => {
       else if (r.onWindow === false) byOfficer[k].offWin += 1;
     }
 
-    // Hoja Resumen
     const ws1 = wb.addWorksheet("Resumen");
     ws1.columns = [
       { header: "Oficial/Guardia", key: "officer", width: 32 },
@@ -599,7 +603,6 @@ router.get("/reports/export/excel", async (req, res, next) => {
     );
     ws1.getRow(1).font = { bold: true };
 
-    // Hoja Detalle
     const ws2 = wb.addWorksheet("Detalle");
     ws2.columns = [
       { header: "Fecha", key: "date", width: 12 },
@@ -629,7 +632,6 @@ router.get("/reports/export/excel", async (req, res, next) => {
     );
     ws2.getRow(1).font = { bold: true };
 
-    // Hoja Omisiones
     const omissions = await computeOmissions(req.query || {});
     const ws3 = wb.addWorksheet("Omisiones");
     ws3.columns = [
@@ -658,10 +660,7 @@ router.get("/reports/export/excel", async (req, res, next) => {
   }
 });
 
-/* ======================================================================
-   GET /reports/export/pdf  -> PDF simple (Resumen + Detalle)
-   ====================================================================== */
-router.get("/reports/export/pdf", async (req, res, next) => {
+router.get("/reports/export/pdf", requireReportsExport(), async (req, res, next) => {
   try {
     const rows = await fetchDetailedRows(req.query || {});
     const sum = rows.reduce(
@@ -678,7 +677,6 @@ router.get("/reports/export/pdf", async (req, res, next) => {
       `attachment; filename="rondas_${Date.now()}.pdf"`
     );
 
-    // 🔧 importante: pipe ANTES de escribir y de end()
     doc.pipe(res);
 
     doc.fontSize(16).text("Informe de Rondas, Omisiones e Incidentes", {
@@ -725,10 +723,7 @@ router.get("/reports/export/pdf", async (req, res, next) => {
   }
 });
 
-/* ======================================================================
-   GET /reports/export/csv  -> CSV en español (encabezados)
-   ====================================================================== */
-router.get("/reports/export/csv", async (req, res, next) => {
+router.get("/reports/export/csv", requireReportsExport(), async (req, res, next) => {
   try {
     const items = await RqMark.aggregate([
       { $match: baseMatch(req.query) },
@@ -790,10 +785,7 @@ router.get("/reports/export/csv", async (req, res, next) => {
   }
 });
 
-/* ======================================================================
-   GET /reports/export/kml  -> KML para Google Earth/Maps
-   ====================================================================== */
-router.get("/reports/export/kml", async (req, res, next) => {
+router.get("/reports/export/kml", requireReportsExport(), async (req, res, next) => {
   try {
     const items = await RqMark.aggregate([
       { $match: baseMatch(req.query) },

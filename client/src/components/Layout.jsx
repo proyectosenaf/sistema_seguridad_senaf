@@ -1,4 +1,3 @@
-// src/components/Layout.jsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
@@ -60,7 +59,7 @@ function clearVisitorSessionSafe() {
 export default function Layout({
   children,
   hideSidebar: hideSidebarProp = false,
-  layoutMode = "app", // "app" | "full" | "visitor"
+  layoutMode = "app",
   hideTopbar: hideTopbarProp,
   hideFooter: hideFooterProp,
   hideChatDock: hideChatDockProp,
@@ -126,7 +125,7 @@ export default function Layout({
   const showSidebar = !hideSidebar;
 
   const sidebarTopClass = hideTopbar ? "top-0" : "top-14";
-  const sidebarHeightClass = hideTopbar ? "bottom-0" : "bottom-0";
+  const sidebarHeightClass = "bottom-0";
   const contentMinHClass = hideTopbar
     ? "min-h-[100svh]"
     : "min-h-[calc(100svh-3.5rem)]";
@@ -196,8 +195,7 @@ export default function Layout({
         <header
           className="sticky top-0 z-40 h-14 backdrop-blur-xl"
           style={{
-            background:
-              "color-mix(in srgb, var(--card) 86%, transparent)",
+            background: "color-mix(in srgb, var(--card) 86%, transparent)",
             borderBottom: "1px solid var(--border)",
             boxShadow: "var(--shadow-sm)",
           }}
@@ -220,15 +218,21 @@ export default function Layout({
             sidebarHeightClass,
           ].join(" ")}
           style={{
-            background:
-              "color-mix(in srgb, var(--card) 88%, transparent)",
-            borderRight: "1px solid var(--border)",
-            boxShadow: "var(--shadow-md)",
-            backdropFilter: "blur(14px) saturate(130%)",
-            WebkitBackdropFilter: "blur(14px) saturate(130%)",
+            background: "var(--sidebar-bg)",
+            borderRight: "1px solid var(--sidebar-border)",
+            boxShadow:
+              "0 18px 40px rgba(2,6,23,0.16), inset -1px 0 0 rgba(255,255,255,0.04)",
+            backdropFilter: "blur(16px) saturate(135%)",
+            WebkitBackdropFilter: "blur(16px) saturate(135%)",
           }}
         >
-          <div className="sidebar-aurora h-full">
+          <div
+            className="h-full"
+            style={{
+              background:
+                "linear-gradient(180deg, color-mix(in srgb, var(--card) 8%, transparent), transparent 24%)",
+            }}
+          >
             <Sidebar />
           </div>
         </aside>
@@ -266,7 +270,7 @@ export default function Layout({
         >
           <div
             className="absolute inset-0"
-            style={{ background: "rgba(2, 6, 23, 0.42)" }}
+            style={{ background: "rgba(2, 6, 23, 0.46)" }}
             onClick={() => setMobileOpen(false)}
           />
 
@@ -277,15 +281,25 @@ export default function Layout({
               mobileOpen ? "translate-x-0" : "-translate-x-full"
             }`}
             style={{
-              background:
-                "color-mix(in srgb, var(--card) 92%, transparent)",
-              borderRight: "1px solid var(--border)",
-              backdropFilter: "blur(16px) saturate(135%)",
-              WebkitBackdropFilter: "blur(16px) saturate(135%)",
+              background: "var(--sidebar-bg)",
+              borderRight: "1px solid var(--sidebar-border)",
+              boxShadow:
+                "0 20px 50px rgba(2,6,23,0.28), inset -1px 0 0 rgba(255,255,255,0.04)",
+              backdropFilter: "blur(18px) saturate(140%)",
+              WebkitBackdropFilter: "blur(18px) saturate(140%)",
             }}
           >
-            <div className="sidebar-aurora h-full">
-              <Sidebar variant="mobile" onNavigate={() => setMobileOpen(false)} />
+            <div
+              className="h-full"
+              style={{
+                background:
+                  "linear-gradient(180deg, color-mix(in srgb, var(--card) 8%, transparent), transparent 24%)",
+              }}
+            >
+              <Sidebar
+                variant="mobile"
+                onNavigate={() => setMobileOpen(false)}
+              />
             </div>
           </div>
         </div>

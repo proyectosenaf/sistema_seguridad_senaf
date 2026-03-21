@@ -35,6 +35,30 @@ function normalizeRoleName(v) {
   return String(v || "").trim().toLowerCase();
 }
 
+function normalizeCompanionItem(item) {
+  return {
+    id:
+      item?.id ||
+      item?._id ||
+      `comp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: String(item?.name || item?.nombre || "").trim(),
+    document: String(item?.document || item?.documento || item?.dni || "").trim(),
+  };
+}
+
+function formatCompanionsSummary(list) {
+  if (!Array.isArray(list) || list.length === 0) return "—";
+  return list
+    .map((item) => {
+      const n = String(item?.name || "").trim();
+      const d = String(item?.document || "").trim();
+      if (n && d) return `${n} (${d})`;
+      return n || d || "";
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function resolveAuthPrincipal(auth) {
   const raw = auth?.me || auth?.user || null;
   if (!raw || typeof raw !== "object") return null;
@@ -515,6 +539,11 @@ function loadFromStorage() {
       entryAt: v.entryAt ? new Date(v.entryAt) : null,
       exitAt: v.exitAt ? new Date(v.exitAt) : null,
       kind: v.kind || "Presencial",
+      acompanado: !!v.acompanado,
+      acompanantes: Array.isArray(v.acompanantes)
+        ? v.acompanantes.map(normalizeCompanionItem)
+        : [],
+      companionsSummary: formatCompanionsSummary(v.acompanantes || []),
     }));
   } catch (e) {
     console.warn("[visitas] no se pudo leer de localStorage:", e);
@@ -578,6 +607,10 @@ function normalizeVisitFromServer(v) {
         }`
       : "—";
 
+  const acompanantes = Array.isArray(v?.acompanantes)
+    ? v.acompanantes.map(normalizeCompanionItem)
+    : [];
+
   return {
     id,
     _id: id,
@@ -616,6 +649,9 @@ function normalizeVisitFromServer(v) {
     vehicleModel,
     vehiclePlate,
     vehicleSummary,
+    acompanado: !!v?.acompanado || acompanantes.length > 0,
+    acompanantes,
+    companionsSummary: formatCompanionsSummary(acompanantes),
     raw: v,
   };
 }
@@ -801,7 +837,8 @@ export default function VisitsPage() {
       : visitors;
 
     return base.filter((v) => {
-      const full = `${v.name} ${v.document} ${v.company} ${v.vehiclePlate}`.toLowerCase();
+      const full =
+        `${v.name} ${v.document} ${v.company} ${v.vehiclePlate} ${v.companionsSummary || ""}`.toLowerCase();
 
       const matchesSearch =
         !hasSearch || !hasMinSearch ? true : full.includes(normalizedSearch);
@@ -869,6 +906,10 @@ export default function VisitsPage() {
     const vehicleBrand = formData.vehicle?.brand || "";
     const vehicleModel = formData.vehicle?.model || "";
     const vehiclePlate = formData.vehicle?.plate || "";
+    const acompanantes = Array.isArray(formData.acompanantes)
+      ? formData.acompanantes.map(normalizeCompanionItem)
+      : [];
+    const companionsSummary = formatCompanionsSummary(acompanantes);
 
     const vehicleSummary =
       vehicleBrand || vehicleModel || vehiclePlate
@@ -893,6 +934,9 @@ export default function VisitsPage() {
                 email: formData.email?.trim() || "",
                 reason: formData.reason?.trim() || "",
                 kind: formData.visitType || row.kind || "Presencial",
+                acompanado: !!formData.acompanado,
+                acompanantes,
+                companionsSummary,
                 vehicleBrand,
                 vehicleModel,
                 vehiclePlate,
@@ -930,6 +974,14 @@ export default function VisitsPage() {
         telefono: formData.phone?.trim() || null,
         correo: formData.email?.trim() || null,
         tipo: "Ingreso",
+        acompanado: !!formData.acompanado,
+        acompanantes:
+          acompanantes.length > 0
+            ? acompanantes.map((item) => ({
+                nombre: item.name,
+                documento: item.document,
+              }))
+            : [],
         llegoEnVehiculo: !!(vehicleBrand || vehicleModel || vehiclePlate),
         vehiculo:
           vehicleBrand || vehicleModel || vehiclePlate
@@ -977,6 +1029,9 @@ export default function VisitsPage() {
       status: "Dentro",
       entryAt: entryDate,
       exitAt: null,
+      acompanado: !!formData.acompanado,
+      acompanantes,
+      companionsSummary,
       vehicleBrand,
       vehicleModel,
       vehiclePlate,
@@ -1139,6 +1194,8 @@ export default function VisitsPage() {
       Empresa: v.company || "",
       Empleado: v.employee || "",
       Tipo: v.kind || "",
+      Acompanado: v.acompanado ? "Sí" : "No",
+      Acompanantes: v.companionsSummary || "—",
       VehiculoMarca: v.vehicleBrand || "",
       VehiculoModelo: v.vehicleModel || "",
       VehiculoPlaca: v.vehiclePlate || "",
@@ -1200,7 +1257,7 @@ export default function VisitsPage() {
         startY: 60,
         head: [headers],
         body,
-        styles: { fontSize: 9 },
+        styles: { fontSize: 8 },
         headStyles: { fillColor: [30, 30, 30], textColor: 255 },
         theme: "grid",
         margin: { left: 20, right: 20 },
@@ -1462,7 +1519,7 @@ export default function VisitsPage() {
               placeholder={
                 isVisitor
                   ? "Buscar por nombre, DNI, empresa o motivo…"
-                  : "Buscar por nombre, DNI, empresa o placa…"
+                  : "Buscar por nombre, DNI, empresa, placa o acompañante…"
               }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -1755,7 +1812,7 @@ export default function VisitsPage() {
             </div>
           </div>
 
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+          <table className="w-full text-left border-collapse min-w-[1200px]">
             <thead
               className="text-xs uppercase"
               style={{ color: "var(--text-muted)" }}
@@ -1770,6 +1827,8 @@ export default function VisitsPage() {
                 <th>Empleado</th>
                 <th>Teléfono</th>
                 <th>Tipo</th>
+                <th>Acompañado</th>
+                <th>Acompañantes</th>
                 <th>Vehículo</th>
                 <th>Entrada</th>
                 <th>Salida</th>
@@ -1781,7 +1840,7 @@ export default function VisitsPage() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={13}
                     className="py-6 text-center text-sm"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -1791,7 +1850,7 @@ export default function VisitsPage() {
               ) : filteredVisitors.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={13}
                     className="py-6 text-center text-sm"
                     style={{ color: "var(--text-muted)" }}
                   >
@@ -1802,7 +1861,7 @@ export default function VisitsPage() {
                 filteredVisitors.map((v) => (
                   <tr
                     key={v.id}
-                    className="text-sm [&>td]:py-3 [&>td]:pr-4"
+                    className="text-sm [&>td]:py-3 [&>td]:pr-4 align-top"
                     style={{ borderBottom: "1px solid var(--border)" }}
                   >
                     <td className="font-medium">{v.name}</td>
@@ -1811,6 +1870,10 @@ export default function VisitsPage() {
                     <td>{v.employee}</td>
                     <td>{v.phone || "—"}</td>
                     <td>{v.kind || "Presencial"}</td>
+                    <td>{v.acompanado ? "Sí" : "No"}</td>
+                    <td className="max-w-[260px] whitespace-pre-wrap break-words">
+                      {v.companionsSummary || "—"}
+                    </td>
                     <td>{v.vehicleSummary}</td>
                     <td>{v.entry}</td>
                     <td style={{ color: "var(--text-muted)" }}>{v.exit}</td>

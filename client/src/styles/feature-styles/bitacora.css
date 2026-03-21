@@ -1,0 +1,261 @@
+/* =========================================================
+   BITÁCORA UNIFORME SENAF
+   ========================================================= */
+.bitacora-uniform {
+  position: relative;
+}
+
+.bitacora-uniform .fx-card {
+  position: relative;
+  border-radius: 1.25rem;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--card) 90%, transparent) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-md) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  backdrop-filter: blur(12px) saturate(130%);
+  color: var(--text) !important;
+}
+
+.bitacora-uniform .fx-card:hover {
+  transform: none !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.bitacora-uniform .fx-kpi {
+  border-radius: 1.25rem;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.bitacora-uniform .fx-card :is(h1, h2, h3, h4, h5, h6, p, span, small, div, a) {
+  color: inherit !important;
+}
+
+.bitacora-uniform .bitacora-tabs {
+  background: color-mix(in srgb, var(--card-solid) 82%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.bitacora-uniform .bitacora-tab {
+  color: var(--text);
+}
+
+.bitacora-uniform .bitacora-tab.is-active {
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+
+.bitacora-uniform .bitacora-tab:not(.is-active):hover {
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.bitacora-uniform .bitacora-outline-btn {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.bitacora-uniform .bitacora-outline-btn:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.bitacora-uniform .fx-card::before,
+.bitacora-uniform .fx-card::after,
+.bitacora-uniform .fx-kpi::before,
+.bitacora-uniform .fx-kpi::after {
+  box-shadow: none !important;
+  background-image: none !important;
+}
+
+/* =========================================================
+   BITÁCORA MODAL DETALLE
+   ========================================================= */
+.bitacora-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.74);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.bitacora-modal-shell {
+  width: min(1120px, calc(100vw - 48px));
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 94%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  backdrop-filter: blur(12px) saturate(130%);
+}
+
+@media (min-width: 1024px) {
+  .bitacora-modal-backdrop {
+    padding-left: 320px;
+    padding-right: 24px;
+    justify-content: center;
+  }
+
+  .bitacora-modal-shell {
+    width: min(1120px, calc(100vw - 320px - 48px));
+  }
+}
+
+.bitacora-modal-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 96%, transparent);
+}
+
+.bitacora-modal-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.bitacora-modal-subtitle {
+  margin-top: 4px;
+  font-size: 0.92rem;
+  color: var(--text-muted);
+}
+
+.bitacora-modal-close {
+  width: 42px;
+  height: 42px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  flex: 0 0 auto;
+}
+
+.bitacora-modal-close:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.bitacora-modal-body {
+  padding: 20px 24px 24px;
+}
+
+.bitacora-modal-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .bitacora-modal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .bitacora-modal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bitacora-modal-card {
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 90%, transparent);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.bitacora-modal-label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.bitacora-modal-value {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.bitacora-modal-section {
+  margin-top: 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 90%, transparent);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.bitacora-modal-section-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.bitacora-modal-section-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.bitacora-modal-section-body {
+  padding: 16px;
+}
+
+.bitacora-modal-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.bitacora-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.bitacora-modal-btn {
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  font-weight: 700;
+}
+
+.bitacora-modal-btn:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.bitacora-modal-btn--danger {
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, #dc2626, #ef4444);
+  color: #fff;
+  box-shadow: 0 10px 20px color-mix(in srgb, #dc2626 22%, transparent);
+}

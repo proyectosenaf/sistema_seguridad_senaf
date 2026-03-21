@@ -216,8 +216,10 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setTokenState] = useState(() => getToken() || "");
   const [isLoading, setIsLoading] = useState(true);
+
   const meRequestRef = useRef(0);
   const lastSavedUserRef = useRef("");
+  const focusSyncRef = useRef(0);
 
   const persistUserIfChanged = useCallback((nextUser) => {
     const payload = nextUser ? JSON.stringify(nextUser) : "";
@@ -237,8 +239,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const syncFromStorage = useCallback(() => {
-    setIsLoading(true);
+  const syncFromStorage = useCallback(({ withLoading = false } = {}) => {
+    if (withLoading) setIsLoading(true);
 
     try {
       const t = getToken() || "";
@@ -267,7 +269,7 @@ export function AuthProvider({ children }) {
       setUser(null);
       return null;
     } finally {
-      setIsLoading(false);
+      if (withLoading) setIsLoading(false);
     }
   }, []);
 
@@ -354,7 +356,7 @@ export function AuthProvider({ children }) {
   }, [persistUserIfChanged]);
 
   useEffect(() => {
-    syncFromStorage();
+    syncFromStorage({ withLoading: true });
   }, [syncFromStorage]);
 
   useEffect(() => {
@@ -373,9 +375,15 @@ export function AuthProvider({ children }) {
   }, [refreshMe, token]);
 
   useEffect(() => {
-    const onStorage = () => syncFromStorage();
-    const onFocus = () => syncFromStorage();
-    const onTokenUpdated = () => syncFromStorage();
+    const onStorage = () => syncFromStorage({ withLoading: false });
+    const onTokenUpdated = () => syncFromStorage({ withLoading: false });
+
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - focusSyncRef.current < 3000) return;
+      focusSyncRef.current = now;
+      syncFromStorage({ withLoading: false });
+    };
 
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", onFocus);
@@ -389,7 +397,7 @@ export function AuthProvider({ children }) {
   }, [syncFromStorage]);
 
   const bootstrap = useCallback(async () => {
-    const hydrated = syncFromStorage();
+    const hydrated = syncFromStorage({ withLoading: true });
     const currentToken = getToken() || "";
     if (currentToken) {
       await refreshMe();

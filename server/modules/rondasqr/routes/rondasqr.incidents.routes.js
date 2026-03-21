@@ -3,126 +3,132 @@ import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import RqIncident from "../models/RqIncident.model.js";
+import { requirePermission } from "../../../src/middleware/permissions.js";
 
 const r = Router();
 
-/**
- * IMPORTANTE:
- * Esta carpeta DEBE coincidir con la carpeta estática expuesta en server.js:
- *
- *   const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
- *   app.use("/uploads", express.static(UPLOADS_ROOT));
- *
- * Por eso aquí guardamos en:
- *   process.cwd()/uploads/incidents
- *
- * y devolvemos URLs públicas como:
- *   /uploads/incidents/archivo.jpg
- */
+const RONDASQR_PERMS = {
+  INCIDENTS_READ: "rondasqr.incidents.read",
+  INCIDENTS_WRITE: "rondasqr.incidents.write",
+  INCIDENTS_DELETE: "rondasqr.incidents.delete",
+  ROUND_READ: "rondasqr.rounds.read",
+  ROUND_WRITE: "rondasqr.rounds.write",
+  CHECKS_WRITE: "rondasqr.checks.write",
+  SCAN_EXECUTE: "rondasqr.scan.execute",
+
+  READ_LEGACY: "rondasqr.read",
+  WRITE_LEGACY: "rondasqr.write",
+
+  ALL: "*",
+};
+
 const UP_BASE = path.resolve(process.cwd(), "uploads", "incidents");
 fs.mkdirSync(UP_BASE, { recursive: true });
 
-/**
- * POST /incidents
- * body: {
- *   siteId?, roundId?, pointId?,
- *   type?,               // opcional, ej: "custom"
- *   text (string),
- *   lat?, lon?,
- *   photosBase64?: [ "data:image/jpeg;base64,...", "..." ]
- * }
- *
- * Nota: este es el endpoint “rápido” del módulo de RONDAS.
- * El módulo grande de INCIDENTES puede tener su propio /api/incidentes.
- */
-r.post("/incidents", async (req, res) => {
-  try {
-    const {
-      siteId,
-      roundId,
-      pointId,
-      type = "custom",
-      text = "",
-      lat,
-      lon,
-      photosBase64 = [],
-    } = req.body || {};
+function safeTrim(value, fallback = "") {
+  return String(value || "").trim() || fallback;
+}
 
-    // Unificamos origen del usuario
-    const u = req.user || req?.auth?.payload || {};
-    const guardName = u.name || u.email || "Anónimo";
-    const guardId = u.sub || "dev";
-    const officerName = u.name || "";
-    const officerEmail = u.email || "";
+function getActor(req) {
+  const u = req.user || req?.auth || req?.auth?.payload || req?.iam?.user || {};
+  return {
+    id: String(u._id || u.id || u.sub || req?.iam?.sub || "dev").trim(),
+    name: String(u.name || u.nombreCompleto || u.email || "Anónimo").trim(),
+    email: String(u.email || req?.iam?.email || "").trim(),
+  };
+}
 
-    // Guardar fotos base64 si vienen
-    const photos = [];
+r.post(
+  "/incidents",
+  requirePermission(
+    RONDASQR_PERMS.INCIDENTS_WRITE,
+    RONDASQR_PERMS.ROUND_WRITE,
+    RONDASQR_PERMS.CHECKS_WRITE,
+    RONDASQR_PERMS.SCAN_EXECUTE,
+    RONDASQR_PERMS.WRITE_LEGACY,
+    RONDASQR_PERMS.ALL
+  ),
+  async (req, res) => {
+    try {
+      const {
+        siteId,
+        roundId,
+        pointId,
+        type = "custom",
+        text = "",
+        lat,
+        lon,
+        photosBase64 = [],
+      } = req.body || {};
 
-    for (const b64 of photosBase64) {
-      if (typeof b64 !== "string") continue;
+      const actor = getActor(req);
 
-      const m = b64.match(/^data:(.+);base64,(.+)$/);
-      if (!m) continue;
+      const photos = [];
 
-      const mime = m[1] || "application/octet-stream";
-      const base64Body = m[2] || "";
+      for (const b64 of Array.isArray(photosBase64) ? photosBase64 : []) {
+        if (typeof b64 !== "string") continue;
 
-      const ext = mime.split("/")[1] || "bin";
-      const buf = Buffer.from(base64Body, "base64");
+        const m = b64.match(/^data:(.+);base64,(.+)$/);
+        if (!m) continue;
 
-      const filename = `${Date.now()}_${Math.random()
-        .toString(36)
-        .slice(2)}.${ext}`;
+        const mime = m[1] || "application/octet-stream";
+        const base64Body = m[2] || "";
 
-      const full = path.join(UP_BASE, filename);
+        const ext = mime.split("/")[1] || "bin";
+        const buf = Buffer.from(base64Body, "base64");
 
-      fs.writeFileSync(full, buf);
+        const filename = `${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2)}.${ext}`;
 
-      // ✅ URL pública consistente con server.js
-      photos.push(`/uploads/incidents/${filename}`);
-    }
+        const full = path.join(UP_BASE, filename);
+        fs.writeFileSync(full, buf);
 
-    const hasLat = lat != null && lat !== "";
-    const hasLon = lon != null && lon !== "";
+        photos.push(`/uploads/incidents/${filename}`);
+      }
 
-    const loc =
-      hasLat && hasLon
-        ? {
-            type: "Point",
-            coordinates: [Number(lon), Number(lat)],
-          }
-        : undefined;
+      const hasLat = lat != null && lat !== "";
+      const hasLon = lon != null && lon !== "";
 
-    const inc = await RqIncident.create({
-      type,
-      text,
-      siteId,
-      roundId,
-      pointId,
-      guardId,
-      guardName,
-      officerName,
-      officerEmail,
-      photos,
-      gps:
+      const loc =
         hasLat && hasLon
-          ? { lat: Number(lat), lon: Number(lon) }
-          : undefined,
-      loc,
-    });
+          ? {
+              type: "Point",
+              coordinates: [Number(lon), Number(lat)],
+            }
+          : undefined;
 
-    return res.json({
-      ok: true,
-      incidentId: inc._id,
-      photos,
-    });
-  } catch (err) {
-    console.error("[incidents] create error:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error al crear incidente",
-    });
+      const inc = await RqIncident.create({
+        type: safeTrim(type, "custom"),
+        text: safeTrim(text),
+        siteId: siteId || null,
+        roundId: roundId || null,
+        pointId: pointId || null,
+        guardId: actor.id,
+        guardName: actor.name,
+        officerName: actor.name,
+        officerEmail: actor.email,
+        photos,
+        gps:
+          hasLat && hasLon
+            ? { lat: Number(lat), lon: Number(lon) }
+            : undefined,
+        loc,
+      });
+
+      return res.json({
+        ok: true,
+        incidentId: inc._id,
+        photos,
+      });
+    } catch (err) {
+      console.error("[rondasqr.incidents] create error:", err);
+      return res.status(500).json({
+        ok: false,
+        message: "Error al crear incidente",
+      });
+    }
   }
-});
+);
 
 export default r;

@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* Dark por clase (Tailwind v4) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@import "./senaf-theme.css";
+@import "./base.css";
+@import "./effects.css";
+@import "./components.css";
+@import "./layout.css";
+@import "./feature-styles/bitacora.css";
+@import "./feature-styles/chat.css";

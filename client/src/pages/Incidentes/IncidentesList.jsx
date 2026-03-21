@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { Mic, MicOff, PencilLine } from "lucide-react";
 
 import CameraCapture from "../../components/CameraCapture.jsx";
 import VideoRecorder from "../../components/VideoRecorder.jsx";
@@ -7,12 +8,109 @@ import AudioRecorder from "../../components/AudioRecorder.jsx";
 
 import api, { API } from "../../lib/api.js";
 import iamApi from "../../iam/api/iamApi.js";
-import useSpeechToText from "../../iam/hooks/useSpeechToText.js";
 
-// 👉 librerías para exportar
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 import * as XLSX from "xlsx";
+
+const USER_KEY = "senaf_user";
+
+/* =========================
+   Auth / permisos helpers
+========================= */
+function safeJSONParse(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function readLocalUser() {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return safeJSONParse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function norm(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+const LEGACY_PERMISSION_ALIASES = {
+  "incidentes.read": "incidentes.records.read",
+  "incidentes.create": "incidentes.records.write",
+  "incidentes.edit": "incidentes.records.write",
+  "incidentes.delete": "incidentes.records.delete",
+  "incidentes.close": "incidentes.records.close",
+  "incidentes.attach": "incidentes.evidences.write",
+  "incidentes.reports": "incidentes.reports.read",
+  "incidentes.export": "incidentes.reports.export",
+
+  "visitas.read": "visitas.records.read",
+  "visitas.write": "visitas.records.write",
+  "visitas.close": "visitas.records.close",
+};
+
+function normalizePermissionKey(key) {
+  const k = norm(key);
+  if (!k) return "";
+  return LEGACY_PERMISSION_ALIASES[k] || k;
+}
+
+function extractRoles(u) {
+  const roles = Array.isArray(u?.roles) ? u.roles : u?.roles ? [u.roles] : [];
+  const NS = "https://senaf.local/roles";
+  const nsRoles = Array.isArray(u?.[NS]) ? u[NS] : [];
+
+  return [...roles, ...nsRoles]
+    .map((r) => {
+      if (typeof r === "string") return norm(r);
+      if (r && typeof r === "object") {
+        return norm(r.code || r.key || r.slug || r.name || r.nombre);
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function extractPermissions(u) {
+  const direct = Array.isArray(u?.permissions) ? u.permissions : [];
+  const permsField = Array.isArray(u?.perms) ? u.perms : [];
+
+  const rolePerms = Array.isArray(u?.roles)
+    ? u.roles.flatMap((r) => {
+        if (!r || typeof r !== "object") return [];
+        return Array.isArray(r.permissions)
+          ? r.permissions
+          : Array.isArray(r.perms)
+          ? r.perms
+          : [];
+      })
+    : [];
+
+  return [
+    ...new Set(
+      [...direct, ...permsField, ...rolePerms]
+        .map((p) => normalizePermissionKey(p))
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function hasPermission(user, ...wanted) {
+  const perms = extractPermissions(user);
+  if (perms.includes("*")) return true;
+  return wanted.map(normalizePermissionKey).some((w) => perms.includes(w));
+}
+
+function hasRole(user, ...wanted) {
+  const roles = extractRoles(user);
+  const normalizedWanted = wanted.map(norm).filter(Boolean);
+  return normalizedWanted.some((r) => roles.includes(r));
+}
 
 /* =========================
    Helpers
@@ -20,6 +118,54 @@ import * as XLSX from "xlsx";
 function guardLabel(g) {
   const name = g?.name || "(Sin nombre)";
   return g?.email ? `${name} — ${g.email}` : name;
+}
+
+function buildSelfGuard(user) {
+  const id = String(user?._id || user?.id || user?.sub || "").trim();
+  const email = String(user?.email || user?.correo || user?.mail || "").trim();
+  const name =
+    String(
+      user?.nombreCompleto ||
+        user?.fullName ||
+        user?.name ||
+        user?.nombre ||
+        user?.nickname ||
+        ""
+    ).trim() || "Guardia";
+
+  return {
+    _id: id,
+    name,
+    email,
+    opId: id,
+    active: true,
+    synthetic: true,
+  };
+}
+
+function findGuardByAnyId(guards, value) {
+  const v = String(value || "").trim();
+  if (!v) return null;
+
+  return (
+    guards.find((g) => String(g._id || "") === v) ||
+    guards.find((g) => String(g.opId || "") === v) ||
+    null
+  );
+}
+
+function matchesCurrentUserGuard(guard, user) {
+  const userId = String(user?._id || user?.id || user?.sub || "").trim();
+  const userEmail = String(user?.email || "").trim().toLowerCase();
+
+  if (!guard) return false;
+  if (userId && (String(guard._id || "") === userId || String(guard.opId || "") === userId)) {
+    return true;
+  }
+  if (userEmail && String(guard.email || "").trim().toLowerCase() === userEmail) {
+    return true;
+  }
+  return false;
 }
 
 function toAbsoluteMediaUrl(src, apiHost) {
@@ -368,6 +514,26 @@ function sxGhostBtn(extra = {}) {
   };
 }
 
+function sxPurpleBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #7c3aed, #ec4899)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #ec4899 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxOrangeBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #d97706, #f97316)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #f59e0b 22%, transparent)",
+    ...extra,
+  };
+}
+
 function sxBadgePriority(priority) {
   const p = safeLower(priority);
   if (p === "alta") {
@@ -518,6 +684,116 @@ function KpiCard({ title, value, tone, dotLabel }) {
 }
 
 export default function IncidentesList() {
+  const localUser = useMemo(() => readLocalUser(), []);
+  const selfGuard = useMemo(() => buildSelfGuard(localUser), [localUser]);
+
+  const canRead =
+    hasPermission(
+      localUser,
+      "incidentes.records.read",
+      "incidentes.reports.read",
+      "incidentes.read.any",
+      "incidentes.reports.any"
+    ) || hasRole(localUser, "admin", "superadmin", "supervisor", "guardia");
+
+  const canCreate =
+    hasPermission(
+      localUser,
+      "incidentes.records.write",
+      "incidentes.create.any"
+    ) || hasRole(localUser, "admin", "superadmin", "supervisor", "guardia");
+
+  const canUpdateAny =
+    hasPermission(localUser, "incidentes.edit.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor");
+
+  const canDeleteAny =
+    hasPermission(localUser, "incidentes.delete.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor");
+
+  const canCloseAny =
+    hasPermission(localUser, "incidentes.close.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor");
+
+  const canExport =
+    hasPermission(localUser, "incidentes.reports.export") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor", "administrador_it");
+
+  const canReadReports =
+    hasPermission(localUser, "incidentes.reports.read", "incidentes.reports.any") ||
+    hasRole(localUser, "admin", "superadmin", "supervisor", "administrador_it");
+
+  const isGuardOnly =
+    hasRole(localUser, "guardia", "guard", "rondasqr.guard") &&
+    !hasRole(localUser, "admin", "superadmin", "supervisor") &&
+    !hasPermission(localUser, "incidentes.create.any", "incidentes.edit.any", "incidentes.delete.any");
+
+  const canChangeStatus = canCloseAny || hasPermission(localUser, "incidentes.records.close");
+
+  function canEditIncident(incident) {
+    if (canUpdateAny) return true;
+    if (!hasPermission(localUser, "incidentes.records.write")) return false;
+
+    const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
+    const myEmail = String(localUser?.email || "").trim().toLowerCase();
+
+    const ownerIds = [
+      incident?.createdByUserId,
+      incident?.reportedByGuardId,
+      incident?.guardId,
+      incident?.reportedByUserId,
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    const ownerEmails = [
+      incident?.reportedByGuardEmail,
+      incident?.guardEmail,
+    ]
+      .map((v) => String(v || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    if (myId && ownerIds.includes(myId)) return true;
+    if (myEmail && ownerEmails.includes(myEmail)) return true;
+
+    return false;
+  }
+
+  function canDeleteIncident(incident) {
+    if (canDeleteAny) return true;
+    if (!hasPermission(localUser, "incidentes.records.delete")) return false;
+
+    const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
+    const myEmail = String(localUser?.email || "").trim().toLowerCase();
+
+    const ownerIds = [
+      incident?.createdByUserId,
+      incident?.reportedByGuardId,
+      incident?.guardId,
+      incident?.reportedByUserId,
+    ]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+
+    const ownerEmails = [
+      incident?.reportedByGuardEmail,
+      incident?.guardEmail,
+    ]
+      .map((v) => String(v || "").trim().toLowerCase())
+      .filter(Boolean);
+
+    if (myId && ownerIds.includes(myId)) return true;
+    if (myEmail && ownerEmails.includes(myEmail)) return true;
+
+    return false;
+  }
+
+  function canCloseIncident(incident) {
+    if (canCloseAny) return true;
+    if (!hasPermission(localUser, "incidentes.records.close")) return false;
+    return canEditIncident(incident);
+  }
+
   const [incidentes, setIncidentes] = useState([]);
   const [stats, setStats] = useState({
     abiertos: 0,
@@ -550,7 +826,9 @@ export default function IncidentesList() {
     const raw = String(API || "").trim();
     if (!raw) return "";
     const idx = raw.indexOf("/api");
-    return idx >= 0 ? raw.slice(0, idx).replace(/\/$/, "") : raw.replace(/\/$/, "");
+    return idx >= 0
+      ? raw.slice(0, idx).replace(/\/$/, "")
+      : raw.replace(/\/$/, "");
   }, []);
 
   const [guards, setGuards] = useState([]);
@@ -609,68 +887,114 @@ export default function IncidentesList() {
 
   const activeEvidence = evidenceItems[activeEvidenceIdx];
 
-  /* ================== Dictado por voz (INLINE) ================== */
-  const {
-    supported: sttSupported,
-    listening: sttListening,
-    transcript: sttTranscript,
-    error: sttError,
-    start: sttStart,
-    stop: sttStop,
-    reset: sttReset,
-  } = useSpeechToText({
-    lang: "es-ES",
-    continuous: false,
-    interimResults: false,
-  });
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
 
-  const lastInsertedRef = useRef("");
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  function normalizeSpeechText(t) {
-    return String(t || "").replace(/\s+/g, " ").trim();
-  }
-
-  function appendTranscriptToDescription(forceText) {
-    const raw = forceText != null ? forceText : sttTranscript;
-    const t = normalizeSpeechText(raw);
-    if (!t) return;
-
-    if (t === lastInsertedRef.current) {
-      sttReset();
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+      recognitionRef.current = null;
       return;
     }
 
-    setForm((prev) => ({
-      ...prev,
-      description: prev.description ? `${prev.description}\n${t}` : t,
-    }));
+    setSpeechSupported(true);
 
-    lastInsertedRef.current = t;
-    sttReset();
-  }
+    const recognition = new SpeechRecognition();
+    recognition.lang = "es-HN";
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-  async function stopAndInsert() {
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = (event) => {
+      console.warn("[IncidentesList] speech error:", event?.error);
+      setIsListening(false);
+    };
+
+    recognition.onresult = (event) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0]?.transcript || "";
+        if (event.results[i].isFinal) finalTranscript += transcript + " ";
+        else interimTranscript += transcript;
+      }
+
+      if (finalTranscript.trim()) {
+        setForm((prev) => ({
+          ...prev,
+          description: `${prev.description}${prev.description ? " " : ""}${finalTranscript.trim()}`.trim(),
+        }));
+      }
+    };
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      try {
+        recognition.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showForm && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setIsListening(false);
+    }
+  }, [showForm]);
+
+  function toggleVoiceDictation() {
+    if (!speechSupported || !recognitionRef.current) {
+      alert("El dictado por voz no está disponible en este navegador.");
+      return;
+    }
+
     try {
-      await sttStop();
-    } finally {
-      setTimeout(() => appendTranscriptToDescription(), 50);
+      if (isListening) {
+        recognitionRef.current.stop();
+      } else {
+        recognitionRef.current.start();
+      }
+    } catch (err) {
+      console.warn("[IncidentesList] toggle voice error:", err);
+      alert("No se pudo iniciar el dictado por voz.");
+      setIsListening(false);
     }
   }
 
-  function clearDictation() {
-    sttReset();
-    lastInsertedRef.current = "";
-  }
-
   function recomputeStats(list) {
-    const abiertos = list.filter((i) => i.status === "abierto").length;
-    const enProceso = list.filter((i) => i.status === "en_proceso").length;
-    const resueltos = list.filter((i) => i.status === "resuelto").length;
-    const alta = list.filter((i) => i.priority === "alta").length;
+    const abiertos = list.filter((i) => normalizeStatus(i.status) === "abierto").length;
+    const enProceso = list.filter(
+      (i) => normalizeStatus(i.status) === "en_proceso"
+    ).length;
+    const resueltos = list.filter(
+      (i) => normalizeStatus(i.status) === "resuelto"
+    ).length;
+    const alta = list.filter((i) => safeLower(i.priority) === "alta").length;
     setStats({ abiertos, enProceso, resueltos, alta });
   }
 
   useEffect(() => {
+    if (!canRead) return;
+
     (async () => {
       try {
         const res = await api.get("/incidentes", { params: { limit: 500 } });
@@ -687,26 +1011,38 @@ export default function IncidentesList() {
         console.error("Error cargando incidentes", err);
       }
     })();
-  }, []);
+  }, [canRead]);
 
   useEffect(() => {
     let mounted = true;
 
     (async () => {
+      if (isGuardOnly) {
+        const mine = selfGuard && (selfGuard._id || selfGuard.email) ? [selfGuard] : [];
+        if (!mounted) return;
+        setGuards(mine);
+        setForm((prev) => ({
+          ...prev,
+          reportedByGuardId: mine[0]?._id || mine[0]?.opId || "",
+          reportedBy: mine[0] ? guardLabel(mine[0]) : "",
+        }));
+        return;
+      }
+
       try {
         let items = [];
 
-        if (typeof iamApi.listGuards === "function") {
+        if (typeof iamApi.listGuardsPicker === "function") {
+          const r = await iamApi.listGuardsPicker("", true);
+          items = Array.isArray(r?.items) ? r.items : [];
+        } else if (typeof iamApi.listGuards === "function") {
           const r = await iamApi.listGuards("", true, undefined);
           items = r.items || r.guards || r.users || [];
         } else if (typeof iamApi.listUsers === "function") {
           const r = await iamApi.listUsers("");
-          const NS = "https://senaf.local/roles";
-          items = (r.items || []).filter((u) => {
-            const roles = [
-              ...(Array.isArray(u.roles) ? u.roles : []),
-              ...(Array.isArray(u[NS]) ? u[NS] : []),
-            ].map((x) => String(x).toLowerCase());
+          const raw = Array.isArray(r?.items) ? r.items : [];
+          items = raw.filter((u) => {
+            const roles = extractRoles(u);
             return (
               roles.includes("guardia") ||
               roles.includes("guard") ||
@@ -715,30 +1051,57 @@ export default function IncidentesList() {
           });
         }
 
-        const normalized = (items || [])
+        let normalized = (items || [])
           .filter(Boolean)
           .map((u) => ({
-            _id: u._id,
-            name: u.name,
-            email: u.email,
-            opId: u.opId || u.sub || u.legacyId || String(u._id),
+            _id: u._id ? String(u._id) : String(u.id || ""),
+            name: u.name || u.nombreCompleto || u.fullName || u.nombre || "",
+            email: u.email || u.correo || u.mail || "",
+            opId: u.opId || u.sub || u.legacyId || String(u._id || u.id || ""),
             active: u.active !== false,
           }))
           .filter((u) => u.active !== false);
 
+        if (selfGuard && (selfGuard._id || selfGuard.email)) {
+          const existsMe = normalized.some((g) => matchesCurrentUserGuard(g, localUser));
+          if (!existsMe) normalized = [selfGuard, ...normalized];
+        }
+
         if (mounted) setGuards(normalized);
       } catch (e) {
         console.error("[IncidentesList] listGuards error:", e);
-        if (mounted) setGuards([]);
+        if (!mounted) return;
+
+        const fallback = selfGuard && (selfGuard._id || selfGuard.email) ? [selfGuard] : [];
+        setGuards(fallback);
       }
     })();
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isGuardOnly, localUser, selfGuard]);
+
+  const availableGuards = useMemo(() => {
+    if (!isGuardOnly) return guards;
+    const mine = guards.filter((g) => matchesCurrentUserGuard(g, localUser));
+    return mine.length ? mine : (selfGuard && (selfGuard._id || selfGuard.email) ? [selfGuard] : []);
+  }, [guards, isGuardOnly, localUser, selfGuard]);
+
+  const selectedGuard = useMemo(() => {
+    return (
+      findGuardByAnyId(availableGuards, form.reportedByGuardId) ||
+      availableGuards.find((g) => matchesCurrentUserGuard(g, localUser)) ||
+      null
+    );
+  }, [availableGuards, form.reportedByGuardId, localUser]);
 
   const actualizarEstado = async (id, nuevoEstado) => {
+    const incident = incidentes.find((x) => x._id === id);
+    if (!incident || !canCloseIncident(incident)) {
+      return alert("No tienes permisos para cambiar el estado de este incidente.");
+    }
+
     try {
       const res = await api.put(`/incidentes/${id}`, { status: nuevoEstado });
 
@@ -760,6 +1123,8 @@ export default function IncidentesList() {
       const msg =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
+        err?.payload?.message ||
+        err?.payload?.error ||
         err?.message ||
         "No se pudo actualizar el estado";
       alert(msg);
@@ -770,11 +1135,16 @@ export default function IncidentesList() {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
   const handleReporterChange = (e) => {
-    const opId = e.target.value;
-    const g = guards.find((x) => String(x.opId) === String(opId));
+    const selectedId = e.target.value;
+    const g = findGuardByAnyId(guards, selectedId);
+
+    if (isGuardOnly && g && !matchesCurrentUserGuard(g, localUser)) {
+      return;
+    }
+
     setForm((prev) => ({
       ...prev,
-      reportedByGuardId: opId,
+      reportedByGuardId: selectedId,
       reportedBy: g ? guardLabel(g) : "",
     }));
   };
@@ -813,37 +1183,69 @@ export default function IncidentesList() {
     setMedia((prev) => prev.filter((_, i) => i !== idx));
 
   const resetForm = () => {
+    const myGuard =
+      guards.find((g) => matchesCurrentUserGuard(g, localUser)) ||
+      (selfGuard && (selfGuard._id || selfGuard.email) ? selfGuard : null);
+
     setForm({
       type: "Acceso no autorizado",
       description: "",
-      reportedBy: "",
-      reportedByGuardId: "",
+      reportedBy: isGuardOnly && myGuard ? guardLabel(myGuard) : "",
+      reportedByGuardId:
+        isGuardOnly && myGuard ? String(myGuard._id || myGuard.opId || "") : "",
       zone: "",
       priority: "alta",
       status: "abierto",
     });
     setMedia([]);
     setEditingId(null);
-    clearDictation();
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (!canCreate) {
+      return alert("No tienes permisos para reportar incidentes.");
+    }
+
+    const editingIncident = editingId ? incidentes.find((x) => x._id === editingId) : null;
+    if (editingIncident && !canEditIncident(editingIncident)) {
+      return alert("No tienes permisos para editar este incidente.");
+    }
+
     if (!form.description.trim()) return alert("Describa el incidente.");
-    if (!form.reportedByGuardId)
+
+    const guard =
+      findGuardByAnyId(guards, form.reportedByGuardId) ||
+      (isGuardOnly ? selectedGuard : null);
+
+    if (!guard) {
       return alert("Seleccione el guardia que reporta el incidente.");
+    }
+
+    if (isGuardOnly && !matchesCurrentUserGuard(guard, localUser)) {
+      return alert("Como guardia, solo puedes reportar incidentes a tu propio nombre.");
+    }
 
     try {
-      const guard = guards.find(
-        (g) => String(g.opId) === String(form.reportedByGuardId)
-      );
       const label = guard ? guardLabel(guard) : form.reportedBy;
+      const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
+
+      const photosBase64 = media
+        .filter((m) => m.type === "image")
+        .map((m) => m.src);
+
+      const videosBase64 = media
+        .filter((m) => m.type === "video")
+        .map((m) => m.src);
+
+      const audiosBase64 = media
+        .filter((m) => m.type === "audio")
+        .map((m) => m.src);
 
       const evidences = media.map((m) => ({
         kind:
           m.type === "image" ? "photo" : m.type === "video" ? "video" : "audio",
-        url: m.src,
         base64: m.src,
       }));
 
@@ -854,9 +1256,21 @@ export default function IncidentesList() {
         priority: form.priority,
         status: normalizeStatus(form.status),
         reportedBy: label,
-        guardId: form.reportedByGuardId || undefined,
-        guardName: guard?.name || undefined,
-        guardEmail: guard?.email || undefined,
+
+        reportedByGuardId: guard?._id || form.reportedByGuardId || "",
+        reportedByGuardName: guard?.name || "",
+        reportedByGuardEmail: guard?.email || "",
+
+        guardId: guard?._id || form.reportedByGuardId || "",
+        guardName: guard?.name || "",
+        guardEmail: guard?.email || "",
+
+        createdByUserId: myId || "",
+        reportedByUserId: myId || "",
+
+        photosBase64,
+        videosBase64,
+        audiosBase64,
         evidences,
       };
 
@@ -886,16 +1300,25 @@ export default function IncidentesList() {
       setShowForm(false);
     } catch (err) {
       console.error("Error guardando incidente", err);
+      console.error("STATUS:", err?.response?.status || err?.status);
+      console.error("DATA:", err?.response?.data || err?.payload);
+
       const msg =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
+        err?.payload?.message ||
+        err?.payload?.error ||
         err?.message ||
         "No se pudo guardar el incidente";
+
       alert(msg);
     }
   };
 
   const startCreate = () => {
+    if (!canCreate) {
+      return alert("No tienes permisos para crear incidentes.");
+    }
     resetForm();
     setShowForm(true);
   };
@@ -907,20 +1330,34 @@ export default function IncidentesList() {
 
   const startEdit = (incidente) => {
     if (!incidente?._id) return;
+    if (!canEditIncident(incidente)) {
+      return alert("No tienes permisos para editar este incidente.");
+    }
 
     setShowForm(true);
     setEditingId(incidente._id);
-    clearDictation();
+
+    const matchedGuard = findGuardByAnyId(
+      guards,
+      incidente.guardId || incidente.opId || incidente.reportedByGuardId || ""
+    );
 
     const guardId =
-      incidente.guardId || incidente.opId || incidente.reportedByGuardId || "";
-    const reportedByLabel = incidente.reportedBy || "";
+      matchedGuard?._id ||
+      incidente.guardId ||
+      incidente.opId ||
+      incidente.reportedByGuardId ||
+      "";
+
+    const reportedByLabel = matchedGuard
+      ? guardLabel(matchedGuard)
+      : incidente.reportedBy || "";
 
     setForm({
       type: incidente.type || "Acceso no autorizado",
       description: incidente.description || "",
       reportedBy: reportedByLabel,
-      reportedByGuardId: guardId,
+      reportedByGuardId: String(guardId),
       zone: incidente.zone || "",
       priority: incidente.priority || "alta",
       status: normalizeStatus(incidente.status || "abierto"),
@@ -930,6 +1367,11 @@ export default function IncidentesList() {
   };
 
   const handleDelete = async (id) => {
+    const incident = incidentes.find((x) => x._id === id);
+    if (!incident || !canDeleteIncident(incident)) {
+      return alert("No tienes permisos para eliminar este incidente.");
+    }
+
     const ok = window.confirm(
       "¿Seguro que deseas eliminar este incidente? Esta acción no se puede deshacer."
     );
@@ -947,6 +1389,8 @@ export default function IncidentesList() {
       const msg =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
+        err?.payload?.message ||
+        err?.payload?.error ||
         err?.message ||
         "No se pudo eliminar el incidente";
       alert(msg);
@@ -959,7 +1403,36 @@ export default function IncidentesList() {
     const fromTs = dateFrom ? parseDateValue(dateFrom + "T00:00:00") : null;
     const toTs = dateTo ? parseDateValue(dateTo + "T23:59:59") : null;
 
-    return (incidentes || []).filter((i) => {
+    let base = incidentes || [];
+
+    if (!hasPermission(localUser, "incidentes.read.any") && !hasRole(localUser, "admin", "superadmin", "supervisor", "administrador_it")) {
+      const myId = String(localUser?._id || localUser?.id || localUser?.sub || "").trim();
+      const myEmail = String(localUser?.email || "").trim().toLowerCase();
+
+      base = base.filter((i) => {
+        const ownerIds = [
+          i?.createdByUserId,
+          i?.reportedByGuardId,
+          i?.guardId,
+          i?.reportedByUserId,
+        ]
+          .map((v) => String(v || "").trim())
+          .filter(Boolean);
+
+        const ownerEmails = [
+          i?.reportedByGuardEmail,
+          i?.guardEmail,
+        ]
+          .map((v) => String(v || "").trim().toLowerCase())
+          .filter(Boolean);
+
+        if (myId && ownerIds.includes(myId)) return true;
+        if (myEmail && ownerEmails.includes(myEmail)) return true;
+        return false;
+      });
+    }
+
+    return base.filter((i) => {
       if (fStatus !== "all" && normalizeStatus(i.status) !== fStatus) return false;
       if (fPriority !== "all" && safeLower(i.priority) !== fPriority) return false;
 
@@ -985,9 +1458,13 @@ export default function IncidentesList() {
 
       return haystack.includes(text);
     });
-  }, [incidentes, q, fStatus, fPriority, dateFrom, dateTo]);
+  }, [incidentes, q, fStatus, fPriority, dateFrom, dateTo, localUser]);
 
   const handleExportPDF = () => {
+    if (!canExport || !canReadReports) {
+      return alert("No tienes permisos para exportar incidentes.");
+    }
+
     if (!filtered.length) return alert("No hay incidentes (filtrados) para exportar.");
 
     const doc = new jsPDF("l", "pt", "a4");
@@ -1039,6 +1516,10 @@ export default function IncidentesList() {
   };
 
   const handleExportExcel = () => {
+    if (!canExport || !canReadReports) {
+      return alert("No tienes permisos para exportar incidentes.");
+    }
+
     if (!filtered.length) return alert("No hay incidentes (filtrados) para exportar.");
 
     const data = filtered.map((i, idx) => {
@@ -1064,6 +1545,21 @@ export default function IncidentesList() {
     XLSX.writeFile(wb, "incidentes_filtrados.xlsx");
   };
 
+  if (!canRead) {
+    return (
+      <div className={UI.page}>
+        <div className="rounded-[24px] p-6 md:p-8" style={sxCard()}>
+          <h2 className="text-xl font-semibold mb-2" style={{ color: "var(--text)" }}>
+            Acceso restringido
+          </h2>
+          <p style={{ color: "var(--text-muted)" }}>
+            No tienes permisos para acceder al módulo de incidentes.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={UI.page}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -1076,16 +1572,18 @@ export default function IncidentesList() {
           </p>
         </div>
 
-        <button
-          onClick={showForm ? closeForm : startCreate}
-          className={UI.btn}
-          style={showForm ? sxDangerBtn() : sxPrimaryBtn()}
-        >
-          {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
-        </button>
+        {canCreate && (
+          <button
+            onClick={showForm ? closeForm : startCreate}
+            className={UI.btn}
+            style={showForm ? sxDangerBtn() : sxPrimaryBtn()}
+          >
+            {showForm ? "Cerrar formulario" : "+ Reportar Incidente"}
+          </button>
+        )}
       </div>
 
-      {showForm && (
+      {showForm && canCreate && (
         <div className="rounded-[24px] p-6 md:p-8 transition-all" style={sxCard()}>
           <h2
             className="text-xl font-semibold mb-6"
@@ -1115,57 +1613,52 @@ export default function IncidentesList() {
 
             <div>
               <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                <label className={UI.label} style={{ color: "var(--text-muted)", marginBottom: 0 }}>
+                <label
+                  className={UI.label}
+                  style={{ color: "var(--text-muted)", marginBottom: 0 }}
+                >
                   Descripción del Incidente
                 </label>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {!sttSupported ? (
-                    <span className={UI.helper} style={{ color: "var(--text-muted)" }}>
-                      🎙️ Dictado no disponible en este navegador
-                    </span>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={sttListening ? stopAndInsert : sttStart}
-                        className={UI.btnSm}
-                        style={sttListening ? sxDangerBtn() : sxGhostBtn()}
-                        title="Iniciar / detener dictado"
-                      >
-                        {sttListening ? "⏹ Detener" : "🎙 Grabar"}
-                      </button>
+                  <span
+                    className="inline-flex items-center gap-1 text-xs"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    <PencilLine className="h-3.5 w-3.5" />
+                    Manual
+                  </span>
 
-                      <button
-                        type="button"
-                        onClick={() => appendTranscriptToDescription()}
-                        disabled={!String(sttTranscript || "").trim()}
-                        className={UI.btnSm}
-                        style={
-                          !String(sttTranscript || "").trim()
-                            ? {
-                                ...sxGhostBtn(),
-                                opacity: 0.5,
-                                cursor: "not-allowed",
-                              }
-                            : sxSuccessBtn()
-                        }
-                        title="Insertar lo dictado"
-                      >
-                        ➕ Insertar
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={clearDictation}
-                        className={UI.btnSm}
-                        style={sxGhostBtn()}
-                        title="Limpiar dictado"
-                      >
-                        🧹 Limpiar dictado
-                      </button>
-                    </>
-                  )}
+                  <button
+                    type="button"
+                    onClick={toggleVoiceDictation}
+                    disabled={!speechSupported}
+                    className="inline-flex items-center gap-1 rounded-[12px] px-2.5 py-1 text-xs transition-all duration-150"
+                    style={{
+                      ...sxGhostBtn(),
+                      opacity: speechSupported ? 1 : 0.55,
+                      border: isListening
+                        ? "1px solid rgba(34, 197, 94, 0.45)"
+                        : "1px solid var(--border)",
+                      boxShadow: isListening
+                        ? "0 0 0 2px rgba(34,197,94,0.12)"
+                        : "var(--shadow-sm)",
+                    }}
+                    title={
+                      speechSupported
+                        ? isListening
+                          ? "Detener dictado"
+                          : "Iniciar dictado por voz"
+                        : "Dictado por voz no disponible"
+                    }
+                  >
+                    {isListening ? (
+                      <MicOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                    <span>{isListening ? "Detener" : "Micrófono"}</span>
+                  </button>
                 </div>
               </div>
 
@@ -1175,31 +1668,22 @@ export default function IncidentesList() {
                 onChange={handleFormChange}
                 className={UI.textarea + " min-h-[110px]"}
                 style={sxInput()}
-                placeholder="Describa detalladamente lo ocurrido..."
+                placeholder="Escriba manualmente o use el micrófono para dictar..."
                 required
               />
 
-              {sttSupported && (sttError || sttTranscript) ? (
-                <div
-                  className="mt-2 rounded-[14px] p-3"
-                  style={sxCardStrong()}
-                >
-                  {sttError ? (
-                    <div className="text-xs" style={{ color: "#fb7185" }}>
-                      ⚠️ {sttError}
-                    </div>
-                  ) : null}
-                  {sttTranscript ? (
-                    <div
-                      className="mt-1 text-xs whitespace-pre-wrap"
-                      style={{ color: "var(--text)" }}
-                    >
-                      <span style={{ color: "var(--text-muted)" }}>Dictado:</span>{" "}
-                      {sttTranscript}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              <div
+                className="mt-2 text-xs"
+                style={{
+                  color: isListening ? "#22c55e" : "var(--text-muted)",
+                }}
+              >
+                {isListening
+                  ? "Escuchando... hable ahora para llenar la descripción del incidente."
+                  : speechSupported
+                  ? "Puede escribir manualmente o usar dictado por voz."
+                  : "Puede escribir manualmente. El dictado por voz no está disponible en este navegador."}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1207,21 +1691,39 @@ export default function IncidentesList() {
                 <label className={UI.label} style={{ color: "var(--text-muted)" }}>
                   Reportado por
                 </label>
-                <select
-                  name="reportedByGuardId"
-                  value={form.reportedByGuardId}
-                  onChange={handleReporterChange}
-                  className={UI.select}
-                  style={sxInput()}
-                  required
-                >
-                  <option value="">Seleccione un guardia…</option>
-                  {guards.map((g) => (
-                    <option key={g._id || g.opId} value={g.opId}>
-                      {guardLabel(g)}
-                    </option>
-                  ))}
-                </select>
+
+                {isGuardOnly ? (
+                  <input
+                    type="text"
+                    value={selectedGuard ? guardLabel(selectedGuard) : form.reportedBy}
+                    readOnly
+                    className={UI.input}
+                    style={sxInput({ opacity: 0.95 })}
+                    placeholder="Tu usuario guardia"
+                  />
+                ) : (
+                  <select
+                    name="reportedByGuardId"
+                    value={form.reportedByGuardId}
+                    onChange={handleReporterChange}
+                    className={UI.select}
+                    style={sxInput()}
+                    required
+                  >
+                    <option value="">Seleccione un guardia…</option>
+                    {availableGuards.map((g) => (
+                      <option key={g._id || g.opId} value={g._id || g.opId}>
+                        {guardLabel(g)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {isGuardOnly && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
+                    Como usuario guardia, el incidente queda reportado automáticamente a tu nombre.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1258,22 +1760,24 @@ export default function IncidentesList() {
                 </select>
               </div>
 
-              <div>
-                <label className={UI.label} style={{ color: "var(--text-muted)" }}>
-                  Estado
-                </label>
-                <select
-                  name="status"
-                  value={form.status}
-                  onChange={handleFormChange}
-                  className={UI.select}
-                  style={sxInput()}
-                >
-                  <option value="abierto">Abierto</option>
-                  <option value="en_proceso">En proceso</option>
-                  <option value="resuelto">Resuelto</option>
-                </select>
-              </div>
+              {!isGuardOnly && canChangeStatus && (
+                <div>
+                  <label className={UI.label} style={{ color: "var(--text-muted)" }}>
+                    Estado
+                  </label>
+                  <select
+                    name="status"
+                    value={form.status}
+                    onChange={handleFormChange}
+                    className={UI.select}
+                    style={sxInput()}
+                  >
+                    <option value="abierto">Abierto</option>
+                    <option value="en_proceso">En proceso</option>
+                    <option value="resuelto">Resuelto</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -1304,13 +1808,7 @@ export default function IncidentesList() {
                   type="button"
                   onClick={() => setShowVideoRecorder(true)}
                   className={UI.btn}
-                  style={{
-                    background: "linear-gradient(135deg, #7c3aed, #ec4899)",
-                    color: "#fff",
-                    border: "1px solid transparent",
-                    boxShadow:
-                      "0 10px 20px color-mix(in srgb, #ec4899 22%, transparent)",
-                  }}
+                  style={sxPurpleBtn()}
                 >
                   🎥 Grabar video
                 </button>
@@ -1319,13 +1817,7 @@ export default function IncidentesList() {
                   type="button"
                   onClick={() => setShowAudioRecorder(true)}
                   className={UI.btn}
-                  style={{
-                    background: "linear-gradient(135deg, #d97706, #f97316)",
-                    color: "#fff",
-                    border: "1px solid transparent",
-                    boxShadow:
-                      "0 10px 20px color-mix(in srgb, #f59e0b 22%, transparent)",
-                  }}
+                  style={sxOrangeBtn()}
                 >
                   🎙️ Grabar audio
                 </button>
@@ -1351,7 +1843,8 @@ export default function IncidentesList() {
                           : "w-28 h-28")
                       }
                       style={sxCardStrong({
-                        background: "color-mix(in srgb, var(--card-solid) 70%, transparent)",
+                        background:
+                          "color-mix(in srgb, var(--card-solid) 70%, transparent)",
                       })}
                     >
                       {item.type === "image" ? (
@@ -1512,23 +2005,27 @@ export default function IncidentesList() {
                 Limpiar
               </button>
 
-              <button
-                type="button"
-                onClick={handleExportPDF}
-                className={UI.btnSm}
-                style={sxPrimaryBtn()}
-              >
-                Exportar PDF
-              </button>
+              {canExport && canReadReports && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleExportPDF}
+                    className={UI.btnSm}
+                    style={sxPrimaryBtn()}
+                  >
+                    Exportar PDF
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                className={UI.btnSm}
-                style={sxSuccessBtn()}
-              >
-                Exportar Excel
-              </button>
+                  <button
+                    type="button"
+                    onClick={handleExportExcel}
+                    className={UI.btnSm}
+                    style={sxSuccessBtn()}
+                  >
+                    Exportar Excel
+                  </button>
+                </>
+              )}
             </div>
 
             <div
@@ -1585,13 +2082,20 @@ export default function IncidentesList() {
                   const d = getIncidentDate(i);
                   const fecha = d ? new Date(d).toLocaleString() : "—";
 
+                  const allowEdit = canEditIncident(i);
+                  const allowDelete = canDeleteIncident(i);
+                  const allowClose = canCloseIncident(i);
+
                   return (
                     <tr
                       key={i._id}
                       className="transition-colors"
                       style={{ borderTop: "1px solid var(--border)" }}
                     >
-                      <td className="px-4 py-3 font-medium" style={{ color: "var(--text)" }}>
+                      <td
+                        className="px-4 py-3 font-medium"
+                        style={{ color: "var(--text)" }}
+                      >
                         {i.type}
                       </td>
                       <td
@@ -1653,7 +2157,7 @@ export default function IncidentesList() {
                       </td>
 
                       <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                        {normalizeStatus(i.status) === "abierto" && (
+                        {allowClose && normalizeStatus(i.status) === "abierto" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "en_proceso")}
                             className={UI.btnSm}
@@ -1663,7 +2167,7 @@ export default function IncidentesList() {
                           </button>
                         )}
 
-                        {normalizeStatus(i.status) === "en_proceso" && (
+                        {allowClose && normalizeStatus(i.status) === "en_proceso" && (
                           <button
                             onClick={() => actualizarEstado(i._id, "resuelto")}
                             className={UI.btnSm}
@@ -1673,23 +2177,27 @@ export default function IncidentesList() {
                           </button>
                         )}
 
-                        <button
-                          type="button"
-                          onClick={() => startEdit(i)}
-                          className={UI.btnSm}
-                          style={sxPrimaryBtn()}
-                        >
-                          Editar
-                        </button>
+                        {allowEdit && (
+                          <button
+                            type="button"
+                            onClick={() => startEdit(i)}
+                            className={UI.btnSm}
+                            style={sxPrimaryBtn()}
+                          >
+                            Editar
+                          </button>
+                        )}
 
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(i._id)}
-                          className={UI.btnSm}
-                          style={sxDangerBtn()}
-                        >
-                          Eliminar
-                        </button>
+                        {allowDelete && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(i._id)}
+                            className={UI.btnSm}
+                            style={sxDangerBtn()}
+                          >
+                            Eliminar
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1921,7 +2429,8 @@ export default function IncidentesList() {
                                 ...sxCardStrong(),
                                 background:
                                   "color-mix(in srgb, #06b6d4 12%, var(--card-solid))",
-                                border: "1px solid color-mix(in srgb, #06b6d4 42%, transparent)",
+                                border:
+                                  "1px solid color-mix(in srgb, #06b6d4 42%, transparent)",
                               }
                             : sxCardStrong()
                         }
@@ -1942,7 +2451,9 @@ export default function IncidentesList() {
                                 />
                               </div>
                             ) : (
-                              <div className="text-lg">{m.type === "video" ? "🎥" : "🎙️"}</div>
+                              <div className="text-lg">
+                                {m.type === "video" ? "🎥" : "🎙️"}
+                              </div>
                             )}
                           </div>
 

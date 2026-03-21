@@ -16,107 +16,176 @@ import {
   obtenerCatalogosAcceso,
 } from "../controllers/acceso.controller.js";
 
+import { requirePermission } from "../../../src/middleware/permissions.js";
+
 const router = Router();
 
-/* Healthcheck simple */
+const ACCESO_PERMS = {
+  RECORDS_READ: "accesos.records.read",
+  RECORDS_WRITE: "accesos.records.write",
+  RECORDS_DELETE: "accesos.records.delete",
+  RECORDS_CLOSE: "accesos.records.close",
+  REPORTS_READ: "accesos.reports.read",
+  REPORTS_EXPORT: "accesos.reports.export",
+  CATALOGS_READ: "accesos.catalogs.read",
+
+  READ_LEGACY: "accesos.read",
+  WRITE_LEGACY: "accesos.write",
+  DELETE_LEGACY: "accesos.delete",
+
+  ALL: "*",
+};
+
 router.get("/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/acceso/ping" })
 );
 
-/* ───────── Catálogos backend (para reemplazar quemado en frontend) ───────── */
+router.get(
+  "/catalogos",
+  requirePermission(
+    ACCESO_PERMS.CATALOGS_READ,
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  obtenerCatalogosAcceso
+);
 
-/**
- * GET /api/acceso/catalogos
- * Devuelve catálogos completos del módulo acceso
- */
-router.get("/catalogos", obtenerCatalogosAcceso);
+router.get(
+  "/catalogos/vehiculos",
+  requirePermission(
+    ACCESO_PERMS.CATALOGS_READ,
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  obtenerCatalogoVehiculos
+);
 
-/**
- * GET /api/acceso/catalogos/vehiculos
- * Devuelve catálogo de marcas/modelos/años
- */
-router.get("/catalogos/vehiculos", obtenerCatalogoVehiculos);
+router.get(
+  "/catalogos/empleados",
+  requirePermission(
+    ACCESO_PERMS.CATALOGS_READ,
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  obtenerCatalogoEmpleados
+);
 
-/**
- * GET /api/acceso/catalogos/empleados
- * Devuelve catálogo de sexos, estados, departamentos, cargos
- */
-router.get("/catalogos/empleados", obtenerCatalogoEmpleados);
+router.get(
+  "/empleados-vehiculos",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.REPORTS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  listarEmpleadosVehiculos
+);
 
-/* ───────── Empleados + vehículos (tabla principal) ───────── */
+router.get(
+  "/empleados",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  listarEmpleados
+);
 
-/**
- * GET /api/acceso/empleados-vehiculos
- * Devuelve empleados con sus vehículos
- */
-router.get("/empleados-vehiculos", listarEmpleadosVehiculos);
+router.post(
+  "/empleados",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  crearEmpleado
+);
 
-/**
- * GET /api/acceso/empleados
- * Lista simple de empleados
- */
-router.get("/empleados", listarEmpleados);
+router.patch(
+  "/empleados/:id",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  actualizarEmpleado
+);
 
-/**
- * POST /api/acceso/empleados
- * Crear nuevo empleado
- */
-router.post("/empleados", crearEmpleado);
+router.patch(
+  "/empleados/:id/activo",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.RECORDS_CLOSE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  actualizarEmpleadoActivo
+);
 
-/**
- * PATCH /api/acceso/empleados/:id
- * Actualizar empleado completo
- */
-router.patch("/empleados/:id", actualizarEmpleado);
+router.delete(
+  "/empleados/:id",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_DELETE,
+    ACCESO_PERMS.DELETE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  eliminarEmpleado
+);
 
-/**
- * PATCH /api/acceso/empleados/:id/activo
- * Cambiar solo estado activo/inactivo
- */
-router.patch("/empleados/:id/activo", actualizarEmpleadoActivo);
+router.post(
+  "/vehiculos",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  crearVehiculo
+);
 
-/**
- * DELETE /api/acceso/empleados/:id
- * Eliminar empleado y sus vehículos
- */
-router.delete("/empleados/:id", eliminarEmpleado);
+router.patch(
+  "/vehiculos/:idVehiculo/en-empresa",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.RECORDS_CLOSE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  toggleEnEmpresa
+);
 
-/* ───────── Vehículos de empleados ───────── */
+router.get(
+  "/movimientos",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.REPORTS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  listarMovimientos
+);
 
-/**
- * POST /api/acceso/vehiculos
- * Crear vehículo ligado a un empleado
- */
-router.post("/vehiculos", crearVehiculo);
+router.post(
+  "/movimientos-manual",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_WRITE,
+    ACCESO_PERMS.WRITE_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  crearMovimientoManual
+);
 
-/**
- * PATCH /api/acceso/vehiculos/:idVehiculo/en-empresa
- * Cambiar estado enEmpresa
- * Acepta body opcional:
- * { enEmpresa: true/false, observacion: "", usuarioGuardia: "" }
- */
-router.patch("/vehiculos/:idVehiculo/en-empresa", toggleEnEmpresa);
-
-/* ───────── Historial de movimientos de vehículos ───────── */
-
-/**
- * GET /api/acceso/movimientos?vehiculo=ID
- * Lista últimos movimientos de vehículos
- */
-router.get("/movimientos", listarMovimientos);
-
-/* ───────── Movimientos manuales (entradas, salidas, permisos) ───────── */
-
-/**
- * POST /api/acceso/movimientos-manual
- * Crear movimiento manual
- */
-router.post("/movimientos-manual", crearMovimientoManual);
-
-/**
- * GET /api/acceso/movimientos-manual
- * Listar movimientos manuales
- */
-router.get("/movimientos-manual", listarMovimientosManual);
+router.get(
+  "/movimientos-manual",
+  requirePermission(
+    ACCESO_PERMS.RECORDS_READ,
+    ACCESO_PERMS.REPORTS_READ,
+    ACCESO_PERMS.READ_LEGACY,
+    ACCESO_PERMS.ALL
+  ),
+  listarMovimientosManual
+);
 
 export default router;

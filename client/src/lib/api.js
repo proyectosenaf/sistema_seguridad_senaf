@@ -89,7 +89,6 @@ export function getToken() {
 
   const legacy = safeStorageGet(TOKEN_KEY_LEGACY);
   if (legacy) {
-    // migración suave: guarda en canónico y limpia legacy
     safeStorageSet(TOKEN_KEY, legacy);
     safeStorageRemove(TOKEN_KEY_LEGACY);
     emitTokenUpdated();
@@ -129,26 +128,23 @@ export function clearToken() {
    Axios instance
 ========================= */
 
-/** Axios instance (JWT local por Authorization header) */
 const api = axios.create({
   baseURL: API_ROOT,
-  withCredentials: false, // ✅ JWT por header, no cookies
+  withCredentials: false,
   timeout: 30000,
 });
 
-// ✅ Adjunta token local automáticamente (si existe)
 api.interceptors.request.use(
   (config) => {
     const token = getToken();
     config.headers = config.headers || {};
 
-    // ✅ FIX defensivo: nunca sobreescribir si ya venía Authorization
     if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Evita 304/caches raros (especialmente en dev / proxies)
-    config.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
+    config.headers["Cache-Control"] =
+      "no-store, no-cache, must-revalidate, proxy-revalidate";
     config.headers.Pragma = "no-cache";
 
     return config;
@@ -164,21 +160,17 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     const status = error?.response?.status;
-    const msg =
-      error?.response?.data?.message ||
-      error?.response?.data?.error ||
-      error?.message ||
-      "Error";
 
     if (status === 401 && SHOULD_CLEAR_ON_401) {
       clearToken();
     }
 
-    // re-lanza un error “limpio”
-    const e = new Error(msg);
-    e.status = status;
-    e.payload = error?.response?.data;
-    return Promise.reject(e);
+    // ✅ Importante:
+    // conservar el error original de Axios para no perder:
+    // - error.response.data
+    // - error.response.status
+    // - error.config
+    return Promise.reject(error);
   }
 );
 

@@ -60,12 +60,29 @@ function buildAssignmentKey(a) {
   );
 }
 
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map(String);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      normalizeArray(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 function resolvePrincipal(user) {
   if (!user || typeof user !== "object") return null;
 
   if (user.user && typeof user.user === "object") {
-    return {
+    const merged = {
       ...user.user,
+      ...user,
       can:
         user?.can && typeof user.can === "object"
           ? user.can
@@ -77,14 +94,39 @@ function resolvePrincipal(user) {
         user?.isSuperAdmin === true ||
         user?.user?.superadmin === true ||
         user?.user?.isSuperAdmin === true,
+      isSuperAdmin:
+        user?.isSuperAdmin === true ||
+        user?.superadmin === true ||
+        user?.user?.isSuperAdmin === true ||
+        user?.user?.superadmin === true,
+    };
+
+    const perms = uniqLower(merged?.perms || merged?.permissions || []);
+    return {
+      ...merged,
+      perms,
+      permissions: perms,
     };
   }
+
+  const perms = uniqLower(user?.perms || user?.permissions || []);
 
   return {
     ...user,
     can: user?.can && typeof user.can === "object" ? user.can : {},
     superadmin: user?.superadmin === true || user?.isSuperAdmin === true,
+    isSuperAdmin: user?.isSuperAdmin === true || user?.superadmin === true,
+    perms,
+    permissions: perms,
   };
+}
+
+function hasPermLike(principal, key) {
+  const wanted = String(key || "").trim().toLowerCase();
+  if (!wanted) return false;
+
+  const perms = uniqLower(principal?.perms || principal?.permissions || []);
+  return perms.includes("*") || perms.includes(wanted);
 }
 
 export default function ScanPage() {
@@ -92,7 +134,7 @@ export default function ScanPage() {
   const { pathname, hash } = useLocation();
 
   // ✅ SOLO desde AuthProvider
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, hasPerm, isSuperAdmin } = useAuth();
   const principal = resolvePrincipal(user) || {};
   const safeUser = principal;
 
@@ -102,15 +144,69 @@ export default function ScanPage() {
    * Solo consume señales resueltas por backend:
    * - superadmin / isSuperAdmin
    * - user.can["rondasqr.*"]
+   * - permissions directos si existen
    */
   const can = safeUser?.can && typeof safeUser.can === "object" ? safeUser.can : {};
-  const isSuperadmin = safeUser?.superadmin === true;
+  const isSuperadmin = safeUser?.superadmin === true || safeUser?.isSuperAdmin === true || isSuperAdmin === true;
+
+  const authHasPerm =
+    typeof hasPerm === "function"
+      ? hasPerm
+      : (key) => hasPermLike(safeUser, key);
+
+  // 🔒 Acceso general al módulo
+  const allowModule =
+    isSuperadmin ||
+    can["nav.rondas"] === true ||
+    can["rondas.panel"] === true ||
+    can["rondasqr.scan"] === true ||
+    can["rondasqr.reports"] === true ||
+    can["rondasqr.admin"] === true ||
+    authHasPerm("rondasqr.scan.execute") ||
+    authHasPerm("rondasqr.scan.manual") ||
+    authHasPerm("rondasqr.checks.write") ||
+    authHasPerm("rondasqr.assignments.read") ||
+    authHasPerm("rondasqr.rounds.read") ||
+    authHasPerm("rondasqr.panic.read") ||
+    authHasPerm("rondasqr.panic.write") ||
+    authHasPerm("rondasqr.offline.read") ||
+    authHasPerm("rondasqr.offline.write");
+
+  // 🔒 Escaneo / operación principal
+  const allowScan =
+    isSuperadmin ||
+    can["rondasqr.scan"] === true ||
+    can["rondas.panel"] === true ||
+    authHasPerm("rondasqr.scan.execute") ||
+    authHasPerm("rondasqr.scan.manual") ||
+    authHasPerm("rondasqr.checks.write");
+
+  // 🔒 Pánico
+  const allowPanic =
+    isSuperadmin ||
+    authHasPerm("rondasqr.panic.write") ||
+    authHasPerm("rondasqr.panic.read");
+
+  // 🔒 Dump / offline
+  const allowOffline =
+    isSuperadmin ||
+    authHasPerm("rondasqr.offline.read") ||
+    authHasPerm("rondasqr.offline.write");
+
+  // 🔒 Incidente rápido
+  const allowIncidentMessage =
+    isSuperadmin ||
+    authHasPerm("incidentes.records.write") ||
+    authHasPerm("incidentes.create") ||
+    authHasPerm("incidentes.evidences.write");
 
   // 🔒 Debug visible SOLO en desarrollo si tú lo activas
   const DEBUG_PERMS = import.meta.env.DEV && false;
 
   /* ===== notificaciones ===== */
   useEffect(() => {
+    if (!allowModule) return;
+
     try {
       if (typeof window !== "undefined" && "Notification" in window) {
         if (Notification.permission === "default") {
@@ -118,7 +214,7 @@ export default function ScanPage() {
         }
       }
     } catch {}
-  }, []);
+  }, [allowModule]);
 
   /* ===== qué pestaña ===== */
   const tab = useMemo(() => {
@@ -132,8 +228,10 @@ export default function ScanPage() {
 
   // redirección msg al módulo global de incidentes
   useEffect(() => {
-    if (tab === "msg") nav("/incidentes/nuevo?from=ronda", { replace: true });
-  }, [tab, nav]);
+    if (tab === "msg" && allowIncidentMessage) {
+      nav("/incidentes/nuevo?from=ronda", { replace: true });
+    }
+  }, [tab, nav, allowIncidentMessage]);
 
   /* ===== estados ===== */
   const [msg, setMsg] = useState("");
@@ -145,6 +243,8 @@ export default function ScanPage() {
   /* ===== puntos de ronda ===== */
   const [points, setPoints] = useState([]);
   useEffect(() => {
+    if (!allowScan) return;
+
     let alive = true;
     (async () => {
       try {
@@ -162,10 +262,11 @@ export default function ScanPage() {
         console.warn("[ScanPage] No se pudieron cargar puntos", e);
       }
     })();
+
     return () => {
       alive = false;
     };
-  }, []);
+  }, [allowScan]);
 
   /* ===== progreso local ===== */
   const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
@@ -178,8 +279,9 @@ export default function ScanPage() {
   }
 
   useEffect(() => {
+    if (!allowModule) return;
     loadLocalProgress();
-  }, []);
+  }, [allowModule]);
 
   /* ===== RONDAS ASIGNADAS ===== */
   const [myAssignments, setMyAssignments] = useState([]);
@@ -244,12 +346,22 @@ export default function ScanPage() {
   }
 
   function handleStartRound(a) {
+    if (!allowScan) {
+      alert("No tienes permiso para iniciar rondas.");
+      return;
+    }
+
     setActiveAssignment(a);
     updateAssignmentStatus(a, "en_progreso", { startedAt: new Date().toISOString() });
     nav("/rondasqr/scan/qr");
   }
 
   function handleFinishRound(a) {
+    if (!allowScan) {
+      alert("No tienes permiso para finalizar rondas.");
+      return;
+    }
+
     updateAssignmentStatus(a, "terminada", {
       finishedAt: new Date().toISOString(),
       progressPct: progress.pct,
@@ -283,6 +395,8 @@ export default function ScanPage() {
   }
 
   useEffect(() => {
+    if (!allowModule) return;
+
     const hasIdentity = !!(safeUser?._id || safeUser?.email || safeUser?.name);
     if (!hasIdentity) return;
 
@@ -299,12 +413,18 @@ export default function ScanPage() {
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, [safeUser?._id, safeUser?.email, safeUser?.name]);
+  }, [safeUser?._id, safeUser?.email, safeUser?.name, allowModule]);
 
   /* ===== enviar alerta de pánico ===== */
   const sendAlert = useCallback(async () => {
+    if (!allowPanic) {
+      alert("No tienes permiso para enviar alertas de pánico.");
+      return false;
+    }
+
     if (sendingAlert) return false;
     setSendingAlert(true);
+
     try {
       let gps;
       if (typeof navigator !== "undefined" && "geolocation" in navigator) {
@@ -322,7 +442,6 @@ export default function ScanPage() {
 
       await rondasqrApi.panic(gps || null);
 
-      // El sonido/indicador visual local y remoto queda centralizado en GlobalPanicListener
       emitLocalPanic({
         source: "home-button",
         title: "🚨 Alerta de pánico",
@@ -339,20 +458,25 @@ export default function ScanPage() {
     } finally {
       setSendingAlert(false);
     }
-  }, [sendingAlert, safeUser?.name, safeUser?.email]);
+  }, [sendingAlert, safeUser?.name, safeUser?.email, allowPanic]);
 
   /* ===== alerta rápida por hash #alert ===== */
   useEffect(() => {
-    if (hash === "#alert") {
+    if (hash === "#alert" && allowPanic) {
       (async () => {
-        await sendAlert();
-        nav("/rondasqr/scan", { replace: true });
+        const ok = await sendAlert();
+        if (ok) nav("/rondasqr/scan", { replace: true });
       })();
     }
-  }, [hash, nav, sendAlert]);
+  }, [hash, nav, sendAlert, allowPanic]);
 
   /* ===== manejar QR ESCANEADO ===== */
   async function handleScan(result) {
+    if (!allowScan) {
+      alert("No tienes permiso para registrar puntos.");
+      return;
+    }
+
     const qr = typeof result === "string" ? result : result?.text;
     if (!qr) return;
 
@@ -403,11 +527,17 @@ export default function ScanPage() {
 
   /* ===== mensaje legacy ===== */
   async function sendMessage() {
+    if (!allowIncidentMessage) {
+      alert("No tienes permiso para enviar incidentes.");
+      return;
+    }
+
     if (sendingMsg) return;
     if (!msg.trim()) {
       alert("Escribe un mensaje.");
       return;
     }
+
     setSendingMsg(true);
     try {
       await rondasqrApi.postIncident({ text: msg.trim() });
@@ -423,12 +553,18 @@ export default function ScanPage() {
 
   /* ===== fotos ===== */
   async function sendPhotos() {
+    if (!allowIncidentMessage) {
+      alert("No tienes permiso para enviar fotos/incidentes.");
+      return;
+    }
+
     if (sendingPhotos) return;
     const base64s = photos.filter(Boolean);
     if (!base64s.length) {
       alert("Selecciona al menos una foto.");
       return;
     }
+
     setSendingPhotos(true);
     try {
       await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
@@ -448,6 +584,10 @@ export default function ScanPage() {
   const refreshOutbox = () => setOutbox(getOutbox());
 
   async function sendCheckinViaApi(it) {
+    if (!allowScan) {
+      throw new Error("Sin permiso para transmitir checkins");
+    }
+
     if (typeof rondasqrApi.checkinScan === "function") {
       await rondasqrApi.checkinScan({ qr: it.qr, gps: it.gps || null });
       return;
@@ -460,10 +600,16 @@ export default function ScanPage() {
   }
 
   async function transmitNow() {
+    if (!allowScan) {
+      alert("No tienes permiso para transmitir rondas.");
+      return;
+    }
+
     if (!outbox.length) {
       alert("No hay rondas pendientes.");
       return;
     }
+
     setSyncing(true);
     try {
       const res = await transmitOutbox(sendCheckinViaApi);
@@ -478,8 +624,8 @@ export default function ScanPage() {
   }
 
   useEffect(() => {
-    if (tab === "outbox") refreshOutbox();
-  }, [tab]);
+    if (tab === "outbox" && allowModule) refreshOutbox();
+  }, [tab, allowModule]);
 
   /* ===== payload offline ===== */
   function buildOfflinePayload(currentUser) {
@@ -525,9 +671,15 @@ export default function ScanPage() {
   }
 
   async function sendOfflineDump() {
+    if (!allowOffline) {
+      alert("No tienes permiso para manejar modo offline.");
+      return;
+    }
+
     try {
       const payload = buildOfflinePayload(safeUser);
       const pending = payload.outbox;
+
       if (!pending || !pending.length) {
         alert("No hay información offline para enviar.");
         return;
@@ -548,6 +700,8 @@ export default function ScanPage() {
 
   /* ===== AUTO-SYNC ===== */
   useEffect(() => {
+    if (!allowModule) return;
+
     let stop = false;
 
     async function autoSync() {
@@ -558,7 +712,7 @@ export default function ScanPage() {
         const pendingOutbox = getOutbox();
         const hasOutbox = Array.isArray(pendingOutbox) && pendingOutbox.length > 0;
 
-        if (hasOutbox) {
+        if (hasOutbox && allowScan) {
           try {
             await transmitOutbox(sendCheckinViaApi);
             refreshOutbox();
@@ -574,7 +728,7 @@ export default function ScanPage() {
 
         if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
 
-        if (typeof rondasqrApi.offlineDump === "function") {
+        if (allowOffline && typeof rondasqrApi.offlineDump === "function") {
           try {
             await rondasqrApi.offlineDump(payload);
           } catch (e) {
@@ -599,7 +753,7 @@ export default function ScanPage() {
         window.removeEventListener("online", handleOnline);
       };
     }
-  }, [safeUser?._id]); // intencional
+  }, [safeUser?._id, allowModule, allowScan, allowOffline]); // intencional
 
   /* ===== estilos ===== */
   const pageClass = "space-y-6 layer-content";
@@ -640,6 +794,11 @@ export default function ScanPage() {
   }, [currentAssignmentKey]);
 
   function finishActiveIfAny() {
+    if (!allowScan) {
+      alert("No tienes permiso para finalizar rondas.");
+      return;
+    }
+
     if (activeAssignment) handleFinishRound(activeAssignment);
     nav("/rondasqr/scan", { replace: true });
   }
@@ -649,6 +808,34 @@ export default function ScanPage() {
       <div className={pageClass}>
         <section className={[cardClass, cardFallback].join(" ")}>
           <div className="text-sm opacity-70">Cargando sesión...</div>
+        </section>
+      </div>
+    );
+  }
+
+  // 🔒 Bloqueo real del módulo
+  if (!allowModule) {
+    return (
+      <div className={pageClass}>
+        <section className={[cardClass, cardFallback].join(" ")}>
+          <h3 className="text-lg font-semibold">Acceso denegado</h3>
+          <p className="mt-2 text-sm text-slate-600 dark:text-white/80">
+            No tienes permisos para acceder al módulo de Rondas de Vigilancia.
+          </p>
+
+          {DEBUG_PERMS && (
+            <pre className="mt-4 text-[10px] opacity-60 overflow-auto">
+              {JSON.stringify(
+                {
+                  can,
+                  perms: safeUser?.perms || safeUser?.permissions || [],
+                  isSuperadmin,
+                },
+                null,
+                2
+              )}
+            </pre>
+          )}
         </section>
       </div>
     );
@@ -674,7 +861,7 @@ export default function ScanPage() {
 
         <div className="text-right text-xs sm:text-sm">
           <div className="opacity-70">Rondas pendientes por enviar</div>
-          <div className="font-semibold text-lg sm:text-xl">{countOutbox()}</div>
+          <div className="font-semibold text-lg sm:text-xl">{allowScan ? countOutbox() : 0}</div>
         </div>
       </div>
 
@@ -687,38 +874,53 @@ export default function ScanPage() {
                   const ok = await sendAlert();
                   if (ok) nav("/rondasqr/scan", { replace: true });
                 }}
-                disabled={sendingAlert}
+                disabled={sendingAlert || !allowPanic}
                 className={[
                   "rounded-full font-extrabold text-white",
                   "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
                   "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
-                  sendingAlert ? "cursor-not-allowed opacity-80" : "",
+                  sendingAlert || !allowPanic ? "cursor-not-allowed opacity-80" : "",
                 ].join(" ")}
                 type="button"
               >
                 {sendingAlert ? "ENVIANDO..." : "ALERTA"}
               </button>
-              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">Oprima en caso de emergencia</p>
+              <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
+                {allowPanic ? "Oprima en caso de emergencia" : "No autorizado para alertas"}
+              </p>
             </div>
 
             <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
-              <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
-                Registrador Punto Control
-              </button>
-              <button
-                type="button"
-                onClick={() => nav("/incidentes/nuevo?from=ronda")}
-                className="w-full btn-neon btn-neon-purple"
-              >
-                Mensaje Incidente
-              </button>
+              {allowScan && (
+                <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
+                  Registrador Punto Control
+                </button>
+              )}
+
+              {allowIncidentMessage && (
+                <button
+                  type="button"
+                  onClick={() => nav("/incidentes/nuevo?from=ronda")}
+                  className="w-full btn-neon btn-neon-purple"
+                >
+                  Mensaje Incidente
+                </button>
+              )}
+
+              {!allowScan && !allowIncidentMessage && !allowPanic && (
+                <div className="text-sm opacity-70">No tienes acciones disponibles en este módulo.</div>
+              )}
             </div>
           </section>
 
           <section className={[cardClass, cardFallback].join(" ")}>
             <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
 
-            {progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
+            {!allowScan ? (
+              <p className="text-sm text-slate-600 dark:text-white/80">
+                No tienes permiso para operar rondas.
+              </p>
+            ) : progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
               <>
                 <div className="text-sm space-y-1 mb-3">
                   {progress.lastPoint && (
@@ -765,10 +967,10 @@ export default function ScanPage() {
 
           <section className={[cardClass, cardFallback, "md:col-span-2"].join(" ")}>
             <div className="text-sm opacity-70">
-              Asignaciones cargadas: <b>{myAssignments.length}</b>
+              Asignaciones cargadas: <b>{allowScan ? myAssignments.length : 0}</b>
             </div>
 
-            {!!myAssignments.length && (
+            {!!myAssignments.length && allowScan && (
               <div className="mt-4 grid gap-3">
                 {myAssignments.map((a, idx) => {
                   const key = buildAssignmentKey(a);
@@ -810,38 +1012,47 @@ export default function ScanPage() {
       {tab === "qr" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
-          <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-black/5 dark:bg-black/40">
-            <QrScanner
-              facingMode="environment"
-              once={true}
-              enableTorch
-              enableFlip
-              onResult={handleScan}
-              onError={(e) => console.warn("QR error", e)}
-            />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                nav("/rondasqr/scan");
-              }}
-              className="btn-neon btn-neon-amber"
-            >
-              Finalizar
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent("qrscanner:stop"));
-                nav("/rondasqr/scan/qr");
-              }}
-              className="btn-neon btn-neon-green"
-            >
-              Reintentar
-            </button>
-          </div>
+
+          {!allowScan ? (
+            <p className="text-sm text-slate-600 dark:text-white/80">
+              No tienes permiso para registrar puntos de control.
+            </p>
+          ) : (
+            <>
+              <div className="aspect-[3/2] rounded-xl overflow-hidden relative bg-black/5 dark:bg-black/40">
+                <QrScanner
+                  facingMode="environment"
+                  once={true}
+                  enableTorch
+                  enableFlip
+                  onResult={handleScan}
+                  onError={(e) => console.warn("QR error", e)}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                    nav("/rondasqr/scan");
+                  }}
+                  className="btn-neon btn-neon-amber"
+                >
+                  Finalizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("qrscanner:stop"));
+                    nav("/rondasqr/scan/qr");
+                  }}
+                  className="btn-neon btn-neon-green"
+                >
+                  Reintentar
+                </button>
+              </div>
+            </>
+          )}
         </section>
       )}
 
@@ -851,7 +1062,7 @@ export default function ScanPage() {
             <h3 className="font-semibold text-lg">Pendientes por enviar</h3>
             <button
               type="button"
-              disabled={syncing}
+              disabled={syncing || !allowScan}
               onClick={transmitNow}
               className="btn-neon btn-neon-green"
             >
@@ -859,14 +1070,19 @@ export default function ScanPage() {
             </button>
           </div>
 
-          <div className="text-sm opacity-80">Pendientes: {outbox.length}</div>
+          <div className="text-sm opacity-80">Pendientes: {allowScan ? outbox.length : 0}</div>
         </section>
       )}
 
       {tab === "dump" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Enviar base offline</h3>
-          <button type="button" onClick={sendOfflineDump} className="btn-neon">
+          <button
+            type="button"
+            onClick={sendOfflineDump}
+            disabled={!allowOffline}
+            className="btn-neon"
+          >
             Enviar
           </button>
         </section>
@@ -875,17 +1091,26 @@ export default function ScanPage() {
       {tab === "fotos" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <h3 className="font-semibold text-lg mb-3">Fotos</h3>
-          <PhotoPicker photos={photos} setPhotos={setPhotos} />
-          <div className="mt-4">
-            <button
-              type="button"
-              disabled={sendingPhotos}
-              onClick={sendPhotos}
-              className="btn-neon btn-neon-green"
-            >
-              {sendingPhotos ? "Enviando..." : "Enviar fotos"}
-            </button>
-          </div>
+
+          {!allowIncidentMessage ? (
+            <p className="text-sm text-slate-600 dark:text-white/80">
+              No tienes permiso para adjuntar evidencias o incidentes.
+            </p>
+          ) : (
+            <>
+              <PhotoPicker photos={photos} setPhotos={setPhotos} />
+              <div className="mt-4">
+                <button
+                  type="button"
+                  disabled={sendingPhotos}
+                  onClick={sendPhotos}
+                  className="btn-neon btn-neon-green"
+                >
+                  {sendingPhotos ? "Enviando..." : "Enviar fotos"}
+                </button>
+              </div>
+            </>
+          )}
         </section>
       )}
     </div>

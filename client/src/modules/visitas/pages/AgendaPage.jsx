@@ -29,6 +29,7 @@ const COMPANY_MAX = 20;
 const EMP_MAX = 20;
 const REASON_MAX = 20;
 const EMAIL_MAX = 60;
+const COMPANION_NAME_MAX = 40;
 
 /* ================== Storage local para citas ================== */
 const CITA_STORAGE_KEY = "citas_demo";
@@ -87,6 +88,62 @@ function normalizeDocumento(raw) {
   return String(raw || "").replace(/\D/g, "");
 }
 
+function formatDocumentoInput(value) {
+  const digits = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, DNI_DIGITS);
+
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
+}
+
+function createEmptyCompanion() {
+  return {
+    nombre: "",
+    documento: "",
+  };
+}
+
+function normalizeCompanionArray(list) {
+  if (!Array.isArray(list)) return [];
+
+  return list
+    .map((item) => {
+      if (!item) return null;
+
+      if (typeof item === "string") {
+        const nombre = item.trim();
+        if (!nombre) return null;
+        return {
+          nombre,
+          documento: "",
+        };
+      }
+
+      const nombre = String(
+        item.nombre ||
+          item.name ||
+          item.fullName ||
+          item.acompanante ||
+          item.visitante ||
+          ""
+      ).trim();
+
+      const documento = formatDocumentoInput(
+        item.documento || item.dni || item.identidad || item.idNumber || ""
+      );
+
+      if (!nombre && !documento) return null;
+
+      return {
+        nombre,
+        documento,
+      };
+    })
+    .filter(Boolean);
+}
+
 function loadStoredCitas() {
   try {
     const raw = localStorage.getItem(CITA_STORAGE_KEY);
@@ -109,6 +166,13 @@ function loadStoredCitas() {
         ...it,
         _id,
         citaAt,
+        acompanado:
+          typeof it.acompanado === "boolean"
+            ? it.acompanado
+            : !!it.tieneAcompanante ||
+              !!it.conAcompanante ||
+              !!(Array.isArray(it.acompanantes) && it.acompanantes.length),
+        acompanantes: normalizeCompanionArray(it.acompanantes),
       };
     });
   } catch (e) {
@@ -182,6 +246,16 @@ function sxSuccessBtn(extra = {}) {
     color: "#fff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
+    ...extra,
+  };
+}
+
+function sxDangerBtn(extra = {}) {
+  return {
+    background: "linear-gradient(135deg, #dc2626, #ef4444)",
+    color: "#fff",
+    border: "1px solid transparent",
+    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
     ...extra,
   };
 }
@@ -332,7 +406,16 @@ function mergeServerAndLocal(serverList, localList) {
   for (const it of serverList || []) {
     const key = it?._id || it?.id;
     if (!key) continue;
-    map.set(key, { ...it });
+    map.set(key, {
+      ...it,
+      acompanado:
+        typeof it?.acompanado === "boolean"
+          ? it.acompanado
+          : !!it?.tieneAcompanante ||
+            !!it?.conAcompanante ||
+            !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
+      acompanantes: normalizeCompanionArray(it?.acompanantes),
+    });
   }
 
   for (const local of localList || []) {
@@ -343,13 +426,30 @@ function mergeServerAndLocal(serverList, localList) {
       map.set(key, {
         ...local,
         ...map.get(key),
-        // preservamos QR si vino del backend
+        acompanado:
+          typeof map.get(key)?.acompanado === "boolean"
+            ? map.get(key)?.acompanado
+            : typeof local?.acompanado === "boolean"
+            ? local.acompanado
+            : !!(map.get(key)?.acompanantes?.length || local?.acompanantes?.length),
+        acompanantes: normalizeCompanionArray(
+          map.get(key)?.acompanantes?.length
+            ? map.get(key)?.acompanantes
+            : local?.acompanantes
+        ),
         qrDataUrl: map.get(key)?.qrDataUrl || local?.qrDataUrl || "",
         qrPayload: map.get(key)?.qrPayload || local?.qrPayload || "",
         qrToken: map.get(key)?.qrToken || local?.qrToken || "",
       });
     } else {
-      map.set(key, { ...local });
+      map.set(key, {
+        ...local,
+        acompanado:
+          typeof local?.acompanado === "boolean"
+            ? local.acompanado
+            : !!(local?.acompanantes?.length),
+        acompanantes: normalizeCompanionArray(local?.acompanantes),
+      });
     }
   }
 
@@ -414,6 +514,7 @@ export default function AgendaPage() {
 
   // Acompañante
   const [hasCompanion, setHasCompanion] = useState(false);
+  const [companions, setCompanions] = useState([]);
 
   // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
@@ -431,6 +532,20 @@ export default function AgendaPage() {
   // Cita que se está editando
   const [editingCita, setEditingCita] = useState(null);
 
+  // Listado
+  const [mode, setMode] = useState("day");
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const [dateFilter, setDateFilter] = useState("");
+  const [showMyCitas, setShowMyCitas] = useState(
+    !!(isVisitante && currentDocumento)
+  );
+  const [myDocumento, setMyDocumento] = useState(currentDocumento || "");
+  const [citasSearch, setCitasSearch] = useState("");
+  const [citasEstado, setCitasEstado] = useState("todos");
+
   // Modal QR
   const [qrModal, setQrModal] = useState({
     open: false,
@@ -440,7 +555,8 @@ export default function AgendaPage() {
     cita: null,
   });
 
-  // 🔹 CARGAR MARCAS DESDE BACKEND
+  /* ===================== Catálogos ===================== */
+
   useEffect(() => {
     let mounted = true;
 
@@ -477,7 +593,6 @@ export default function AgendaPage() {
     };
   }, []);
 
-  // 🔹 CARGAR MODELOS DESDE BACKEND
   useEffect(() => {
     let mounted = true;
 
@@ -529,6 +644,7 @@ export default function AgendaPage() {
       documento: currentDocumento || "",
     });
     setHasCompanion(false);
+    setCompanions([]);
     setHasVehicle(false);
     setVehicleBrand("");
     setVehicleModel("");
@@ -536,6 +652,54 @@ export default function AgendaPage() {
     setVehiclePlate("");
     setEditingCita(null);
     setErrors({});
+  }
+
+  function addCompanion() {
+    setCompanions((prev) => [...prev, createEmptyCompanion()]);
+  }
+
+  function removeCompanion(index) {
+    setCompanions((prev) => prev.filter((_, i) => i !== index));
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[`companionNombre_${index}`];
+      delete next[`companionDocumento_${index}`];
+      return next;
+    });
+  }
+
+  function updateCompanion(index, field, rawValue) {
+    setCompanions((prev) =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+
+        let value = rawValue;
+
+        if (field === "nombre") {
+          value = rawValue
+            .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
+            .slice(0, COMPANION_NAME_MAX);
+        }
+
+        if (field === "documento") {
+          value = formatDocumentoInput(rawValue);
+        }
+
+        return {
+          ...item,
+          [field]: value,
+        };
+      })
+    );
+
+    setErrors((prev) => ({
+      ...prev,
+      [`companion${field === "nombre" ? "Nombre" : "Documento"}_${index}`]: "",
+      companions: "",
+    }));
+
+    setOkMsg("");
+    setErrorMsg("");
   }
 
   function onChange(e) {
@@ -547,17 +711,7 @@ export default function AgendaPage() {
         .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
         .slice(0, NAME_MAX);
     } else if (name === "documento") {
-      const digits = value.replace(/\D/g, "").slice(0, DNI_DIGITS);
-      if (digits.length <= 4) {
-        newValue = digits;
-      } else if (digits.length <= 8) {
-        newValue = `${digits.slice(0, 4)}-${digits.slice(4)}`;
-      } else {
-        newValue = `${digits.slice(0, 4)}-${digits.slice(
-          4,
-          8
-        )}-${digits.slice(8)}`;
-      }
+      newValue = formatDocumentoInput(value);
     } else if (name === "empresa") {
       newValue = value
         .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]/g, "")
@@ -585,8 +739,6 @@ export default function AgendaPage() {
       newValue = `+504 ${localFormatted}`;
     } else if (name === "correo") {
       newValue = value.replace(/\s/g, "").slice(0, EMAIL_MAX);
-    } else if (name === "tipoCita") {
-      newValue = value;
     }
 
     setForm((f) => {
@@ -689,6 +841,40 @@ export default function AgendaPage() {
       }
     }
 
+    if (hasCompanion) {
+      if (!companions.length) {
+        e.companions = "Debe registrar al menos un acompañante.";
+      } else {
+        companions.forEach((comp, index) => {
+          const compNombre = String(comp?.nombre || "").trim();
+          const compNombreParts = compNombre.split(/\s+/).filter(Boolean);
+          const compDocumentoDigits = String(comp?.documento || "").replace(
+            /\D/g,
+            ""
+          );
+
+          if (!compNombre) {
+            e[`companionNombre_${index}`] =
+              "El nombre del acompañante es obligatorio.";
+          } else if (compNombre.length > COMPANION_NAME_MAX) {
+            e[`companionNombre_${index}`] =
+              `El nombre no debe superar ${COMPANION_NAME_MAX} caracteres.`;
+          } else if (compNombreParts.length < 2) {
+            e[`companionNombre_${index}`] =
+              "Ingrese el nombre completo del acompañante.";
+          }
+
+          if (!comp.documento?.trim()) {
+            e[`companionDocumento_${index}`] =
+              "El documento del acompañante es obligatorio.";
+          } else if (compDocumentoDigits.length !== DNI_DIGITS) {
+            e[`companionDocumento_${index}`] =
+              `El documento debe tener exactamente ${DNI_DIGITS} dígitos.`;
+          }
+        });
+      }
+    }
+
     if (hasVehicle) {
       if (!vehicleBrand.trim()) e.vehicleBrand = "Requerido";
 
@@ -736,282 +922,6 @@ export default function AgendaPage() {
       cita: null,
     });
   }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!validate()) return;
-
-    setSubmitting(true);
-    setOkMsg("");
-    setErrorMsg("");
-
-    const fecha = form.fecha;
-    const hora = form.hora;
-    const citaAtISO = buildISOFromDateAndTime(fecha, hora);
-
-    if (!citaAtISO) {
-      setErrorMsg("La fecha u hora de la cita no es válida.");
-      setSubmitting(false);
-      return;
-    }
-
-    const finalModel =
-      vehicleModel === "__custom"
-        ? vehicleModelCustom.trim()
-        : vehicleBrand === "Otra"
-        ? vehicleModelCustom.trim()
-        : vehicleModel.trim();
-
-    const tipo = form.tipoCita || "personal";
-
-    try {
-      // ========== MODO EDICIÓN ==========
-      // Tu backend actual no expone endpoint de edición de cita desde esta vista,
-      // por eso mantenemos edición local sin romper tu flujo existente.
-      if (editingCita) {
-        const updated = {
-          ...editingCita,
-          nombre: form.visitante.trim(),
-          documento: form.documento.trim(),
-          tipoCita: tipo,
-          empresa: form.empresa.trim(),
-          empleado: form.empleado.trim(),
-          motivo: form.motivo.trim(),
-          telefono: form.telefono.trim() || undefined,
-          correo: form.correo.trim() || undefined,
-          fecha,
-          hora,
-          citaAt: citaAtISO,
-          tieneAcompanante: !!hasCompanion,
-          vehiculo: hasVehicle
-            ? {
-                marca: vehicleBrand.trim(),
-                modelo: finalModel,
-                placa: vehiclePlate.trim(),
-              }
-            : null,
-        };
-
-        setItems((prev) =>
-          prev.map((it) => (it._id === editingCita._id ? updated : it))
-        );
-
-        const stored = loadStoredCitas();
-        let found = false;
-        const storedUpdated = stored.map((it) => {
-          const key = it._id || it.id;
-          if (key === editingCita._id) {
-            found = true;
-            return { ...it, ...updated };
-          }
-          return it;
-        });
-
-        if (!found) {
-          storedUpdated.push(updated);
-        }
-
-        saveStoredCitas(storedUpdated);
-
-        setOkMsg(
-          "✅ Cita actualizada en respaldo local. Si deseas editar también en servidor, habría que agregar endpoint PATCH/PUT."
-        );
-        setErrorMsg("");
-        resetFormState();
-        setSubmitting(false);
-        return;
-      }
-
-      // ========== CREAR NUEVA CITA ==========
-      const nuevaCita = {
-        _id: `local-${Date.now()}`,
-        nombre: form.visitante.trim(),
-        documento: form.documento.trim(),
-        tipoCita: tipo,
-        empresa: form.empresa.trim(),
-        empleado: form.empleado.trim(),
-        motivo: form.motivo.trim(),
-        telefono: form.telefono.trim() || undefined,
-        correo: form.correo.trim() || undefined,
-        fecha,
-        hora,
-        citaAt: citaAtISO,
-        estado: "Programada",
-        tieneAcompanante: !!hasCompanion,
-        vehiculo: hasVehicle
-          ? {
-              marca: vehicleBrand.trim(),
-              modelo: finalModel,
-              placa: vehiclePlate.trim(),
-            }
-          : null,
-        qrDataUrl: "",
-        qrPayload: "",
-        qrToken: "",
-      };
-
-      const payload = {
-        nombre: nuevaCita.nombre,
-        documento: nuevaCita.documento,
-        empresa: nuevaCita.empresa || null,
-        empleado: nuevaCita.empleado,
-        motivo: nuevaCita.motivo,
-        telefono: nuevaCita.telefono || null,
-        correo: nuevaCita.correo || null,
-        citaAt: nuevaCita.citaAt,
-        llegoEnVehiculo: !!nuevaCita.vehiculo,
-        vehiculo: nuevaCita.vehiculo
-          ? {
-              marca: nuevaCita.vehiculo.marca,
-              modelo: nuevaCita.vehiculo.modelo,
-              placa: nuevaCita.vehiculo.placa,
-            }
-          : null,
-        tipoCita: tipo,
-        tieneAcompanante: !!hasCompanion,
-      };
-
-      let syncedWithServer = false;
-      let serverError = "";
-      let createdFromServer = null;
-      let qrDataUrl = "";
-      let qrPayload = "";
-      let qrToken = "";
-
-      try {
-        const res = await fetch(CITAS_API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await res.json().catch(() => null);
-
-        if (res.ok && data?.ok) {
-          createdFromServer = data?.item || null;
-          qrDataUrl = data?.qrDataUrl || "";
-          qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
-          qrToken = data?.qrToken || data?.item?.qrToken || "";
-
-          if (createdFromServer) {
-            syncedWithServer = true;
-            nuevaCita._id = createdFromServer._id || nuevaCita._id;
-            nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
-            nuevaCita.estado =
-              normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
-            nuevaCita.qrDataUrl = qrDataUrl;
-            nuevaCita.qrPayload = qrPayload;
-            nuevaCita.qrToken = qrToken;
-            nuevaCita.nombre =
-              createdFromServer.nombre || nuevaCita.nombre;
-            nuevaCita.documento =
-              createdFromServer.documento || nuevaCita.documento;
-            nuevaCita.empresa =
-              createdFromServer.empresa || nuevaCita.empresa;
-            nuevaCita.empleado =
-              createdFromServer.empleado || nuevaCita.empleado;
-            nuevaCita.motivo =
-              createdFromServer.motivo || nuevaCita.motivo;
-            nuevaCita.telefono =
-              createdFromServer.telefono || nuevaCita.telefono;
-            nuevaCita.correo =
-              createdFromServer.correo || nuevaCita.correo;
-            nuevaCita.vehiculo =
-              createdFromServer.vehiculo || nuevaCita.vehiculo;
-          }
-        } else {
-          console.warn("[citas] fallo al crear en backend:", data);
-          if (data && typeof data.error === "string") {
-            serverError = data.error;
-          } else if (data && typeof data.message === "string") {
-            serverError = data.message;
-          } else {
-            serverError = "No se pudo crear la cita en el servidor.";
-          }
-        }
-      } catch (err) {
-        console.warn("[citas] error de red al crear en backend:", err);
-      }
-
-      if (serverError) {
-        setErrorMsg(serverError);
-        setOkMsg("");
-        setSubmitting(false);
-        return;
-      }
-
-      const current = loadStoredCitas();
-      const next = [...current, nuevaCita];
-      saveStoredCitas(next);
-
-      setItems((prev) => [...prev, nuevaCita]);
-
-      if (syncedWithServer) {
-        setOkMsg("✅ Cita agendada correctamente.");
-        setErrorMsg("");
-
-        if (qrDataUrl || qrPayload || qrToken) {
-          openQrModal({
-            cita: nuevaCita,
-            qrDataUrl,
-            qrPayload,
-            qrToken,
-          });
-        }
-      } else {
-        setOkMsg(
-          "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
-        );
-        setErrorMsg("");
-      }
-
-      resetFormState();
-
-      if (tab === "citas") {
-        fetchCitas();
-      }
-    } catch (err) {
-      console.error("[citas] Error agendando:", err);
-      setErrorMsg("No se pudo agendar la cita (error inesperado).");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  /* ===================== LISTADO: CITAS ===================== */
-  function fmtDate(d) {
-    const dt = new Date(d);
-    if (Number.isNaN(dt.getTime())) return "";
-    return dt.toLocaleDateString("es-HN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  }
-
-  function fmtTime(d) {
-    const dt = new Date(d);
-    if (Number.isNaN(dt.getTime())) return "";
-    return dt.toLocaleTimeString("es-HN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const thisMonth = useMemo(() => todayISO.slice(0, 7), [todayISO]);
-
-  const [mode, setMode] = useState("day");
-  const [month, setMonth] = useState(thisMonth);
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const [dateFilter, setDateFilter] = useState("");
-  const [showMyCitas, setShowMyCitas] = useState(!!(isVisitante && currentDocumento));
-  const [myDocumento, setMyDocumento] = useState(currentDocumento || "");
-
-  const [citasSearch, setCitasSearch] = useState("");
-  const [citasEstado, setCitasEstado] = useState("todos");
 
   async function fetchCitas() {
     setLoading(true);
@@ -1068,7 +978,9 @@ export default function AgendaPage() {
 
         if (mode === "month") {
           if (month) {
-            list = list.filter((it) => String(it.citaAt || "").slice(0, 7) === month);
+            list = list.filter(
+              (it) => String(it.citaAt || "").slice(0, 7) === month
+            );
           }
         } else if (dateFilter) {
           list = list.filter(
@@ -1087,16 +999,331 @@ export default function AgendaPage() {
     }
   }
 
-  function handleModeDay() {
-    setMode("day");
+   async function handleSubmit(e) {
+  e.preventDefault();
+  if (!validate()) return;
+
+  setSubmitting(true);
+  setOkMsg("");
+  setErrorMsg("");
+
+  const fecha = form.fecha;
+  const hora = form.hora;
+  const citaAtISO = buildISOFromDateAndTime(fecha, hora);
+
+  if (!citaAtISO) {
+    setErrorMsg("La fecha u hora de la cita no es válida.");
+    setSubmitting(false);
+    return;
   }
 
-  function handleModeMonth() {
-    const now = new Date();
-    const ym = now.toISOString().slice(0, 7);
-    setMode("month");
-    setMonth(ym);
-    setDateFilter("");
+  const finalModel =
+    vehicleModel === "__custom"
+      ? vehicleModelCustom.trim()
+      : vehicleBrand === "Otra"
+      ? vehicleModelCustom.trim()
+      : vehicleModel.trim();
+
+  const tipo = form.tipoCita || "personal";
+
+  const companionsPayload = hasCompanion
+    ? companions
+        .map((comp) => ({
+          nombre: String(comp?.nombre || "").trim(),
+          documento: String(comp?.documento || "").trim(),
+        }))
+        .filter((comp) => comp.nombre && comp.documento)
+    : [];
+
+  try {
+    // ========== MODO EDICIÓN ==========
+    if (editingCita) {
+      const updated = {
+        ...editingCita,
+        nombre: form.visitante.trim(),
+        documento: form.documento.trim(),
+        tipoCita: tipo,
+        empresa: form.empresa.trim(),
+        empleado: form.empleado.trim(),
+        motivo: form.motivo.trim(),
+        telefono: form.telefono.trim() || null,
+        correo: form.correo.trim() || null,
+        fecha,
+        hora,
+        citaAt: citaAtISO,
+        acompanado: !!hasCompanion,
+        acompanantes: companionsPayload,
+        llegoEnVehiculo: !!hasVehicle,
+        vehiculo: hasVehicle
+          ? {
+              marca: vehicleBrand.trim(),
+              modelo: finalModel,
+              placa: vehiclePlate.trim(),
+            }
+          : null,
+      };
+
+      const payload = {
+        nombre: updated.nombre,
+        documento: updated.documento,
+        empresa: updated.empresa || null,
+        empleado: updated.empleado || null,
+        motivo: updated.motivo,
+        telefono: updated.telefono || null,
+        correo: updated.correo || null,
+        citaAt: updated.citaAt,
+        llegoEnVehiculo: updated.llegoEnVehiculo,
+        vehiculo: updated.vehiculo,
+        acompanado: updated.acompanado,
+        acompanantes: updated.acompanantes,
+      };
+
+      let serverError = "";
+      let itemFromServer = null;
+
+      try {
+        const res = await fetch(`${CITAS_API_URL}/${editingCita._id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (res.ok && data?.ok) {
+          itemFromServer = data?.item || null;
+        } else {
+          if (data && typeof data.error === "string") {
+            serverError = data.error;
+          } else if (data && typeof data.message === "string") {
+            serverError = data.message;
+          } else {
+            serverError = "No se pudo actualizar la cita en el servidor.";
+          }
+        }
+      } catch (err) {
+        console.warn("[citas] error de red al actualizar en backend:", err);
+        serverError = "No se pudo conectar con el servidor para actualizar la cita.";
+      }
+
+      if (serverError) {
+        setErrorMsg(serverError);
+        setOkMsg("");
+        setSubmitting(false);
+        return;
+      }
+
+      const finalItem = itemFromServer
+        ? {
+            ...updated,
+            ...itemFromServer,
+            acompanado:
+              typeof itemFromServer.acompanado === "boolean"
+                ? itemFromServer.acompanado
+                : updated.acompanado,
+            acompanantes: normalizeCompanionArray(
+              itemFromServer.acompanantes?.length
+                ? itemFromServer.acompanantes
+                : updated.acompanantes
+            ),
+          }
+        : updated;
+
+      setItems((prev) =>
+        prev.map((it) => (it._id === editingCita._id ? finalItem : it))
+      );
+
+      const stored = loadStoredCitas();
+      let found = false;
+
+      const storedUpdated = stored.map((it) => {
+        const key = it._id || it.id;
+        if (key === editingCita._id) {
+          found = true;
+          return { ...it, ...finalItem };
+        }
+        return it;
+      });
+
+      if (!found) {
+        storedUpdated.push(finalItem);
+      }
+
+      saveStoredCitas(storedUpdated);
+
+      setOkMsg("✅ Cita actualizada correctamente.");
+      setErrorMsg("");
+      resetFormState();
+
+      if (tab === "citas") {
+        fetchCitas();
+      }
+      return;
+    }
+
+    // ========== CREAR NUEVA CITA ==========
+    const nuevaCita = {
+      _id: `local-${Date.now()}`,
+      nombre: form.visitante.trim(),
+      documento: form.documento.trim(),
+      tipoCita: tipo,
+      empresa: form.empresa.trim(),
+      empleado: form.empleado.trim(),
+      motivo: form.motivo.trim(),
+      telefono: form.telefono.trim() || undefined,
+      correo: form.correo.trim() || undefined,
+      fecha,
+      hora,
+      citaAt: citaAtISO,
+      estado: "Programada",
+      acompanado: !!hasCompanion,
+      acompanantes: companionsPayload,
+      llegoEnVehiculo: !!hasVehicle,
+      vehiculo: hasVehicle
+        ? {
+            marca: vehicleBrand.trim(),
+            modelo: finalModel,
+            placa: vehiclePlate.trim(),
+          }
+        : null,
+      qrDataUrl: "",
+      qrPayload: "",
+      qrToken: "",
+    };
+
+    const payload = {
+      nombre: nuevaCita.nombre,
+      documento: nuevaCita.documento,
+      empresa: nuevaCita.empresa || null,
+      empleado: nuevaCita.empleado,
+      motivo: nuevaCita.motivo,
+      telefono: nuevaCita.telefono || null,
+      correo: nuevaCita.correo || null,
+      citaAt: nuevaCita.citaAt,
+      llegoEnVehiculo: !!nuevaCita.vehiculo,
+      vehiculo: nuevaCita.vehiculo
+        ? {
+            marca: nuevaCita.vehiculo.marca,
+            modelo: nuevaCita.vehiculo.modelo,
+            placa: nuevaCita.vehiculo.placa,
+          }
+        : null,
+      tipoCita: tipo,
+      acompanado: !!hasCompanion,
+      acompanantes: companionsPayload,
+    };
+
+    let syncedWithServer = false;
+    let serverError = "";
+    let createdFromServer = null;
+    let qrDataUrl = "";
+    let qrPayload = "";
+    let qrToken = "";
+
+    try {
+      const res = await fetch(CITAS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.ok) {
+        createdFromServer = data?.item || null;
+        qrDataUrl = data?.qrDataUrl || "";
+        qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
+        qrToken = data?.qrToken || data?.item?.qrToken || "";
+
+        if (createdFromServer) {
+          syncedWithServer = true;
+          nuevaCita._id = createdFromServer._id || nuevaCita._id;
+          nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
+          nuevaCita.estado =
+            normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
+          nuevaCita.qrDataUrl = qrDataUrl;
+          nuevaCita.qrPayload = qrPayload;
+          nuevaCita.qrToken = qrToken;
+          nuevaCita.nombre = createdFromServer.nombre || nuevaCita.nombre;
+          nuevaCita.documento =
+            createdFromServer.documento || nuevaCita.documento;
+          nuevaCita.empresa = createdFromServer.empresa || nuevaCita.empresa;
+          nuevaCita.empleado = createdFromServer.empleado || nuevaCita.empleado;
+          nuevaCita.motivo = createdFromServer.motivo || nuevaCita.motivo;
+          nuevaCita.telefono = createdFromServer.telefono || nuevaCita.telefono;
+          nuevaCita.correo = createdFromServer.correo || nuevaCita.correo;
+          nuevaCita.vehiculo = createdFromServer.vehiculo || nuevaCita.vehiculo;
+          nuevaCita.llegoEnVehiculo =
+            typeof createdFromServer.llegoEnVehiculo === "boolean"
+              ? createdFromServer.llegoEnVehiculo
+              : nuevaCita.llegoEnVehiculo;
+          nuevaCita.acompanado =
+            typeof createdFromServer.acompanado === "boolean"
+              ? createdFromServer.acompanado
+              : nuevaCita.acompanado;
+          nuevaCita.acompanantes = normalizeCompanionArray(
+            createdFromServer.acompanantes?.length
+              ? createdFromServer.acompanantes
+              : nuevaCita.acompanantes
+          );
+        }
+      } else {
+        console.warn("[citas] fallo al crear en backend:", data);
+        if (data && typeof data.error === "string") {
+          serverError = data.error;
+        } else if (data && typeof data.message === "string") {
+          serverError = data.message;
+        } else {
+          serverError = "No se pudo crear la cita en el servidor.";
+        }
+      }
+    } catch (err) {
+      console.warn("[citas] error de red al crear en backend:", err);
+    }
+
+    if (serverError) {
+      setErrorMsg(serverError);
+      setOkMsg("");
+      setSubmitting(false);
+      return;
+    }
+
+    const current = loadStoredCitas();
+    const next = [...current, nuevaCita];
+    saveStoredCitas(next);
+
+    setItems((prev) => [...prev, nuevaCita]);
+
+    if (syncedWithServer) {
+      setOkMsg("✅ Cita agendada correctamente.");
+      setErrorMsg("");
+
+      if (qrDataUrl || qrPayload || qrToken) {
+        openQrModal({
+          cita: nuevaCita,
+          qrDataUrl,
+          qrPayload,
+          qrToken,
+        });
+      }
+    } else {
+      setOkMsg(
+        "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
+      );
+      setErrorMsg("");
+    }
+
+    resetFormState();
+
+    if (tab === "citas") {
+      fetchCitas();
+    }
+  } catch (err) {
+    console.error("[citas] Error agendando:", err);
+    setErrorMsg("No se pudo agendar la cita (error inesperado).");
+  } finally {
+    setSubmitting(false);
+  }
   }
 
   function handleEditCita(it) {
@@ -1107,6 +1334,7 @@ export default function AgendaPage() {
       (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
 
     const tipo = it.tipoCita || (it.empresa ? "profesional" : "personal");
+    const companionsFromItem = normalizeCompanionArray(it.acompanantes);
 
     setForm({
       visitante: it.nombre || it.visitante || "",
@@ -1121,9 +1349,15 @@ export default function AgendaPage() {
       correo: it.correo || "",
     });
 
-    setHasCompanion(
-      !!it.tieneAcompanante || !!it.conAcompanante || !!it.acompanante
-    );
+    const hasComp =
+      typeof it.acompanado === "boolean"
+        ? it.acompanado
+        : !!it.tieneAcompanante ||
+          !!it.conAcompanante ||
+          companionsFromItem.length > 0;
+
+    setHasCompanion(hasComp);
+    setCompanions(hasComp ? companionsFromItem : []);
 
     const hasVeh = !!it.vehiculo;
     setHasVehicle(hasVeh);
@@ -1169,9 +1403,18 @@ export default function AgendaPage() {
       let ok = true;
 
       if (hasSearch) {
-        const full = `${toDisplayName(it)} ${it.documento || ""}`
+        const companionText = Array.isArray(it?.acompanantes)
+          ? it.acompanantes
+              .map((a) => `${a?.nombre || ""} ${a?.documento || ""}`)
+              .join(" ")
+          : "";
+
+        const full = `${toDisplayName(it)} ${it.documento || ""} ${
+          it.empresa || ""
+        } ${it.empleado || ""} ${it.motivo || ""} ${companionText}`
           .toString()
           .toLowerCase();
+
         ok = full.includes(search);
       }
 
@@ -1188,7 +1431,7 @@ export default function AgendaPage() {
     const map = new Map();
 
     for (const it of filteredItems) {
-      const key = String(it.citaAt || "").slice(0, 10) || todayISO;
+      const key = String(it.citaAt || "").slice(0, 10) || "";
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(it);
     }
@@ -1200,10 +1443,7 @@ export default function AgendaPage() {
     return Array.from(map.entries()).sort(
       (a, b) => new Date(a[0]) - new Date(b[0])
     );
-  }, [filteredItems, todayISO]);
-
-  const showCustomModelInput =
-    vehicleBrand === "Otra" || vehicleModel === "__custom";
+  }, [filteredItems]);
 
   return (
     <div className="layer-content relative z-[1] flex flex-col gap-6 pb-10">
@@ -1211,7 +1451,6 @@ export default function AgendaPage() {
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1
@@ -1238,7 +1477,6 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => {
@@ -1259,14 +1497,12 @@ export default function AgendaPage() {
         </button>
       </div>
 
-      {/* ===================== Sección: Agendar ===================== */}
       {tab === "agendar" && (
         <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <form
             onSubmit={handleSubmit}
             className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6"
           >
-            {/* Columna izquierda */}
             <div className="flex flex-col gap-4">
               <Field
                 label="Visitante *"
@@ -1276,6 +1512,7 @@ export default function AgendaPage() {
                 error={errors.visitante}
                 placeholder="Nombre y apellido"
               />
+
               <Field
                 label="Documento *"
                 name="documento"
@@ -1319,7 +1556,6 @@ export default function AgendaPage() {
               />
             </div>
 
-            {/* Columna derecha */}
             <div className="flex flex-col gap-4">
               <Field
                 label="Motivo *"
@@ -1329,6 +1565,7 @@ export default function AgendaPage() {
                 error={errors.motivo}
                 placeholder="Motivo de la visita"
               />
+
               <div className="grid grid-cols-2 gap-4">
                 <Field
                   type="date"
@@ -1347,6 +1584,7 @@ export default function AgendaPage() {
                   error={errors.hora}
                 />
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <Field
                   label="Teléfono"
@@ -1368,30 +1606,119 @@ export default function AgendaPage() {
               </div>
             </div>
 
-            {/* Acompañante */}
             <div
               className="md:col-span-2 pt-3 mt-1"
               style={{ borderTop: "1px solid var(--border)" }}
             >
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-3">
                 <input
                   id="has-companion-agenda"
                   type="checkbox"
                   className="h-4 w-4"
                   checked={hasCompanion}
-                  onChange={(e) => setHasCompanion(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setHasCompanion(checked);
+
+                    if (checked) {
+                      setCompanions((prev) =>
+                        prev.length ? prev : [createEmptyCompanion()]
+                      );
+                    } else {
+                      setCompanions([]);
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.companions;
+                        Object.keys(next).forEach((key) => {
+                          if (
+                            key.startsWith("companionNombre_") ||
+                            key.startsWith("companionDocumento_")
+                          ) {
+                            delete next[key];
+                          }
+                        });
+                        return next;
+                      });
+                    }
+                  }}
                 />
                 <label
                   htmlFor="has-companion-agenda"
                   className="text-xs cursor-pointer select-none"
                   style={{ color: "var(--text)" }}
                 >
-                  El visitante llegará con acompañante
+                  El visitante llegará acompañado
                 </label>
               </div>
+
+              {hasCompanion && (
+                <div className="flex flex-col gap-3">
+                  {errors.companions && (
+                    <p className="text-xs" style={{ color: "#f87171" }}>
+                      {errors.companions}
+                    </p>
+                  )}
+
+                  {companions.map((companion, index) => (
+                    <div
+                      key={`companion-${index}`}
+                      className="rounded-2xl p-4"
+                      style={sxCardSoft()}
+                    >
+                      <div className="flex flex-col md:flex-row md:items-end gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
+                          <Field
+                            label={`Acompañante ${index + 1} *`}
+                            name={`companionNombre_${index}`}
+                            value={companion.nombre}
+                            onChange={(e) =>
+                              updateCompanion(index, "nombre", e.target.value)
+                            }
+                            error={errors[`companionNombre_${index}`]}
+                            placeholder="Nombre y apellido"
+                          />
+
+                          <Field
+                            label="Documento *"
+                            name={`companionDocumento_${index}`}
+                            value={companion.documento}
+                            onChange={(e) =>
+                              updateCompanion(index, "documento", e.target.value)
+                            }
+                            error={errors[`companionDocumento_${index}`]}
+                            placeholder="DNI / Pasaporte"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => removeCompanion(index)}
+                            className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                            style={sxDangerBtn()}
+                            disabled={companions.length === 1}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div>
+                    <button
+                      type="button"
+                      onClick={addCompanion}
+                      className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                      style={sxSuccessBtn()}
+                    >
+                      + Agregar acompañante
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Vehículo */}
             <div
               className="md:col-span-2 pt-3 mt-1"
               style={{ borderTop: "1px solid var(--border)" }}
@@ -1430,15 +1757,7 @@ export default function AgendaPage() {
 
               {hasVehicle && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <Field
-                    label={
-                      <>
-                        Marca <span style={{ color: "#f87171" }}>*</span>
-                      </>
-                    }
-                    name="vehicleBrand"
-                    error={errors.vehicleBrand}
-                  >
+                  <Field label="Marca *" name="vehicleBrand" error={errors.vehicleBrand}>
                     <select
                       className="w-full rounded-lg px-3 py-2 focus:outline-none"
                       style={sxInput()}
@@ -1463,15 +1782,7 @@ export default function AgendaPage() {
                     </select>
                   </Field>
 
-                  <Field
-                    label={
-                      <>
-                        Modelo <span style={{ color: "#f87171" }}>*</span>
-                      </>
-                    }
-                    name="vehicleModel"
-                    error={errors.vehicleModel}
-                  >
+                  <Field label="Modelo *" name="vehicleModel" error={errors.vehicleModel}>
                     {vehicleBrand === "Otra" ? (
                       <input
                         className="w-full rounded-lg px-3 py-2 focus:outline-none"
@@ -1517,7 +1828,7 @@ export default function AgendaPage() {
                           <option value="__custom">Otro modelo (escribir)</option>
                         </select>
 
-                        {showCustomModelInput && (
+                        {(vehicleBrand === "Otra" || vehicleModel === "__custom") && (
                           <input
                             className="mt-2 w-full rounded-lg px-3 py-2 focus:outline-none"
                             style={sxInput()}
@@ -1536,15 +1847,7 @@ export default function AgendaPage() {
                     )}
                   </Field>
 
-                  <Field
-                    label={
-                      <>
-                        Placa <span style={{ color: "#f87171" }}>*</span>
-                      </>
-                    }
-                    name="vehiclePlate"
-                    error={errors.vehiclePlate}
-                  >
+                  <Field label="Placa *" name="vehiclePlate" error={errors.vehiclePlate}>
                     <input
                       className="w-full rounded-lg px-3 py-2 focus:outline-none"
                       style={sxInput()}
@@ -1564,7 +1867,6 @@ export default function AgendaPage() {
               )}
             </div>
 
-            {/* Acciones */}
             <div className="md:col-span-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
               <div className="text-xs" style={{ color: "var(--text-muted)" }}>
                 Los campos con * son obligatorios
@@ -1584,6 +1886,7 @@ export default function AgendaPage() {
                 >
                   {isVisitante ? "Limpiar" : "Cancelar"}
                 </button>
+
                 <button
                   type="submit"
                   disabled={submitting}
@@ -1619,24 +1922,24 @@ export default function AgendaPage() {
         </section>
       )}
 
-      {/* ===================== Sección: Citas ===================== */}
       {tab === "citas" && (
         <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <button
-                onClick={handleModeDay}
+                onClick={() => setMode("day")}
                 className="px-3 py-2 rounded-lg text-xs transition"
                 style={mode === "day" ? sxPrimaryBtn() : sxGhostBtn()}
-                title="Ver citas (todas las fechas o por día específico)"
               >
                 Por día
               </button>
               <button
-                onClick={handleModeMonth}
+                onClick={() => {
+                  setMode("month");
+                  setDateFilter("");
+                }}
                 className="px-3 py-2 rounded-lg text-xs transition"
                 style={mode === "month" ? sxPrimaryBtn() : sxGhostBtn()}
-                title="Ver todas las citas de un mes"
               >
                 Por mes
               </button>
@@ -1651,7 +1954,6 @@ export default function AgendaPage() {
                     onChange={(e) => setDateFilter(e.target.value)}
                     className="rounded-lg px-3 py-2 text-xs md:text-sm"
                     style={sxInput()}
-                    title="Filtrar por fecha (opcional)"
                   />
 
                   {!isVisitante && (
@@ -1674,7 +1976,7 @@ export default function AgendaPage() {
                   {(showMyCitas || isVisitante) && (
                     <input
                       type="text"
-                      placeholder="Documento (ej: 0801...)"
+                      placeholder="Documento"
                       value={myDocumento}
                       onChange={(e) => setMyDocumento(e.target.value)}
                       className="rounded-lg px-3 py-2 text-xs md:text-sm"
@@ -1692,13 +1994,12 @@ export default function AgendaPage() {
                   onChange={(e) => setMonth(e.target.value)}
                   className="rounded-lg px-3 py-2 text-xs md:text-sm"
                   style={sxInput()}
-                  title="Cambiar mes"
                 />
               )}
 
               <input
                 type="text"
-                placeholder="Buscar por nombre o DNI…"
+                placeholder="Buscar por nombre, DNI o acompañante…"
                 value={citasSearch}
                 onChange={(e) => setCitasSearch(e.target.value)}
                 className="rounded-lg px-3 py-2 text-xs md:text-sm min-w-[180px]"
@@ -1710,7 +2011,6 @@ export default function AgendaPage() {
                 onChange={(e) => setCitasEstado(e.target.value)}
                 className="rounded-lg px-3 py-2 text-xs md:text-sm"
                 style={sxInput()}
-                title="Filtrar por estado"
               >
                 <option value="todos">Todos los estados</option>
                 <option value="Programada">Programada</option>
@@ -1751,12 +2051,11 @@ export default function AgendaPage() {
                       borderBottom: "1px solid var(--border)",
                     }}
                   >
-                    <span className="font-semibold">{fmtDate(k)}</span> —{" "}
-                    {arr.length} cita(s)
+                    <span className="font-semibold">{k}</span> — {arr.length} cita(s)
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse min-w-[980px]">
+                    <table className="w-full text-left border-collapse min-w-[1120px]">
                       <thead
                         className="text-xs uppercase"
                         style={{ color: "var(--text-muted)" }}
@@ -1769,6 +2068,7 @@ export default function AgendaPage() {
                           <th>Empresa</th>
                           <th>Empleado</th>
                           <th>Motivo</th>
+                          <th>Acompañantes</th>
                           <th>Hora</th>
                           <th>Estado</th>
                           <th className="text-right">Acciones</th>
@@ -1789,10 +2089,20 @@ export default function AgendaPage() {
                               <td className="font-medium">{toDisplayName(it)}</td>
                               <td>{toDisplayCompany(it)}</td>
                               <td>{it.empleado}</td>
-                              <td style={{ color: "var(--text-muted)" }}>
-                                {it.motivo}
+                              <td style={{ color: "var(--text-muted)" }}>{it.motivo}</td>
+                              <td>
+                                {it.acompanado && Array.isArray(it.acompanantes)
+                                  ? `${it.acompanantes.length} acompañante(s)`
+                                  : "No"}
                               </td>
-                              <td>{fmtTime(it.citaAt)}</td>
+                              <td>
+                                {it.citaAt
+                                  ? new Date(it.citaAt).toLocaleTimeString("es-HN", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })
+                                  : ""}
+                              </td>
                               <td>
                                 <CitaEstadoPill estado={it.estado} />
                               </td>
@@ -1839,7 +2149,6 @@ export default function AgendaPage() {
         </section>
       )}
 
-      {/* ===================== Modal QR ===================== */}
       {qrModal.open && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
           <div
@@ -1906,77 +2215,36 @@ export default function AgendaPage() {
                 <strong>Motivo:</strong> {qrModal.cita?.motivo || ""}
               </div>
               <div style={{ color: "var(--text)" }}>
-                <strong>Fecha:</strong> {fmtDate(qrModal.cita?.citaAt)}
+                <strong>Fecha:</strong>{" "}
+                {qrModal.cita?.citaAt
+                  ? new Date(qrModal.cita.citaAt).toLocaleDateString("es-HN")
+                  : ""}
               </div>
               <div style={{ color: "var(--text)" }}>
-                <strong>Hora:</strong> {fmtTime(qrModal.cita?.citaAt)}
+                <strong>Hora:</strong>{" "}
+                {qrModal.cita?.citaAt
+                  ? new Date(qrModal.cita.citaAt).toLocaleTimeString("es-HN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : ""}
               </div>
 
-              {qrModal.qrPayload && (
-                <div
-                  className="mt-2 break-all text-xs"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  <strong>Payload QR:</strong> {qrModal.qrPayload}
+              {!!qrModal.cita?.acompanantes?.length && (
+                <div className="mt-2" style={{ color: "var(--text)" }}>
+                  <strong>Acompañantes:</strong>
+                  <ul className="mt-1 list-disc pl-5">
+                    {qrModal.cita.acompanantes.map((comp, idx) => (
+                      <li key={`qr-comp-${idx}`}>
+                        {comp.nombre} — {comp.documento}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
 
             <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-end">
-              {qrModal.qrDataUrl && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const w = window.open("", "_blank", "width=700,height=800");
-                      if (!w) return;
-
-                      w.document.write(`
-                        <html>
-                          <head>
-                            <title>QR de cita</title>
-                            <style>
-                              body {
-                                font-family: Arial, sans-serif;
-                                padding: 24px;
-                                text-align: center;
-                              }
-                              img {
-                                max-width: 320px;
-                                width: 100%;
-                                height: auto;
-                              }
-                            </style>
-                          </head>
-                          <body>
-                            <h2>QR de cita</h2>
-                            <p><strong>Visitante:</strong> ${qrModal.cita?.nombre || ""}</p>
-                            <p><strong>Documento:</strong> ${qrModal.cita?.documento || ""}</p>
-                            <p><strong>Empleado:</strong> ${qrModal.cita?.empleado || ""}</p>
-                            <p><strong>Motivo:</strong> ${qrModal.cita?.motivo || ""}</p>
-                            <img src="${qrModal.qrDataUrl}" alt="QR" />
-                          </body>
-                        </html>
-                      `);
-                      w.document.close();
-                    }}
-                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
-                    style={sxGhostBtn()}
-                  >
-                    Abrir QR
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="px-3 py-2 rounded-md text-xs font-semibold transition"
-                    style={sxGhostBtn()}
-                  >
-                    Imprimir
-                  </button>
-                </>
-              )}
-
               <button
                 type="button"
                 onClick={closeQrModal}

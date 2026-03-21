@@ -4,6 +4,7 @@ import {
   createVisita,
   closeVisita,
   createCita,
+  updateCita,
   listCitas,
   checkinCita,
   listVehiculosVisitasEnSitio,
@@ -11,87 +12,169 @@ import {
   scanQrCita,
 } from "./visitas.controller.js";
 
-// Corrige esta ruta según tu estructura real
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
+import { requirePermission } from "../../src/middleware/permissions.js";
 
 const router = Router();
 
-/**
- * Wrapper para manejar funciones async sin try/catch en cada handler
- */
+const VISITAS_PERMS = {
+  RECORDS_READ: "visitas.records.read",
+  RECORDS_WRITE: "visitas.records.write",
+  RECORDS_DELETE: "visitas.records.delete",
+  RECORDS_CLOSE: "visitas.records.close",
+  REPORTS_READ: "visitas.reports.read",
+  REPORTS_EXPORT: "visitas.reports.export",
+  QR_SCAN: "visitas.qr.scan",
+  VEHICULOS_READ: "visitas.vehiculos.read",
+
+  READ_LEGACY: "visitas.read",
+  WRITE_LEGACY: "visitas.write",
+  DELETE_LEGACY: "visitas.delete",
+  CLOSE_LEGACY: "visitas.close",
+
+  ALL: "*",
+};
+
 const asyncHandler =
   (fn) =>
   (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
 
-/**
- * Healthcheck del módulo
- */
 router.get("/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/visitas/ping" })
 );
 
-/* ─────────────── VISITAS (Ingresos reales) ───────────────
-   Compatibilidad de montaje:
-
-   - Si montas en: app.use("/api", router)
-       GET /api/visitas              → ruta "/visitas"
-       POST /api/visitas             → ruta "/visitas"
-       GET /api/                     → ruta "/"
-   - Si montas en: app.use("/api/visitas", router)
-       GET /api/visitas              → ruta "/"
-       GET /api/visitas/visitas      → ruta "/visitas"
-
-   - EXTRA compatibilidad:
-       GET /api/visitas/v1/visitas
-       POST /api/visitas/v1/visitas
-*/
-
 router.get(
   ["/visitas/v1/visitas", "/visitas", "/"],
+  requirePermission(
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.REPORTS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
   asyncHandler(getVisitas)
 );
 
-// Crear ingreso directo
 router.post(
   ["/visitas/v1/visitas", "/visitas", "/"],
+  requirePermission(
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
   asyncHandler(createVisita)
 );
 
-// Cerrar visita (marcar salida / finalizada)
 router.patch(
   ["/visitas/:id/cerrar", "/:id/cerrar"],
+  requirePermission(
+    VISITAS_PERMS.RECORDS_CLOSE,
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.CLOSE_LEGACY,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
   asyncHandler(closeVisita)
 );
 
-router.put("/visitas/:id/finalizar", asyncHandler(closeVisita)); // usado por VisitasControlPage.jsx
+router.put(
+  "/visitas/:id/finalizar",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_CLOSE,
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.CLOSE_LEGACY,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(closeVisita)
+);
 
-/* ─────────────── VEHÍCULOS DE VISITANTES EN SITIO ─────────────── */
 router.get(
   ["/visitas/vehiculos-en-sitio", "/vehiculos-en-sitio"],
+  requirePermission(
+    VISITAS_PERMS.VEHICULOS_READ,
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.REPORTS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
   asyncHandler(listVehiculosVisitasEnSitio)
 );
 
-/* ─────────────── CITAS (Agendadas) ───────────────
-   Endpoints esperados por frontend:
-   → POST /api/citas
-   → GET /api/citas
-*/
+router.post(
+  "/citas",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  enforceBusinessHours,
+  asyncHandler(createCita)
+);
 
-// Crear cita con validación de horario
-router.post("/citas", enforceBusinessHours, asyncHandler(createCita));
+router.get(
+  "/citas",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.REPORTS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(listCitas)
+);
 
-// Listar citas por día o mes
-router.get("/citas", asyncHandler(listCitas));
+router.patch(
+  "/citas/:id",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(updateCita)
+);
 
-// Check-in de cita → visitante llegó
-router.patch("/citas/:id/checkin", asyncHandler(checkinCita));
+router.patch(
+  "/citas/:id/checkin",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.RECORDS_CLOSE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(checkinCita)
+);
 
-// Actualizar estado de la cita (usado por VisitsPage)
-router.patch("/citas/:id/estado", asyncHandler(updateCitaEstado));
+router.patch(
+  "/citas/:id/estado",
+  requirePermission(
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.RECORDS_CLOSE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(updateCitaEstado)
+);
 
-// Escaneo QR por guardia
-router.post("/citas/scan-qr", asyncHandler(scanQrCita));
-router.post("/citas/scan", asyncHandler(scanQrCita)); // alias por compatibilidad
+router.post(
+  "/citas/scan-qr",
+  requirePermission(
+    VISITAS_PERMS.QR_SCAN,
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(scanQrCita)
+);
+
+router.post(
+  "/citas/scan",
+  requirePermission(
+    VISITAS_PERMS.QR_SCAN,
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(scanQrCita)
+);
 
 export default router;
