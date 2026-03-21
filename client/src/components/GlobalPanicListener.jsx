@@ -93,8 +93,10 @@ function isVisitorUser(user) {
 }
 
 function normalizeRemotePayload(payload = {}) {
-  const item = payload?.item && typeof payload.item === "object" ? payload.item : null;
-  const meta = payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
+  const item =
+    payload?.item && typeof payload.item === "object" ? payload.item : null;
+  const meta =
+    payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
 
   return {
     title:
@@ -126,7 +128,6 @@ export default function GlobalPanicListener() {
 
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
-  const [audioReady, setAudioReady] = useState(false);
   const [audioError, setAudioError] = useState("");
 
   const showRondasUI = pathname.startsWith("/rondasqr");
@@ -143,37 +144,6 @@ export default function GlobalPanicListener() {
       el.pause();
       el.currentTime = 0;
     } catch {}
-  }, []);
-
-  const unlockAudio = useCallback(async () => {
-    try {
-      const el = audioRef.current;
-      if (!el) {
-        setAudioError("No se encontró el elemento de audio.");
-        return false;
-      }
-
-      el.volume = 1;
-      el.loop = false;
-      el.muted = false;
-      el.currentTime = 0;
-
-      const p = el.play();
-      if (p && typeof p.then === "function") await p;
-
-      el.pause();
-      el.currentTime = 0;
-
-      setAudioReady(true);
-      setAudioError("");
-      console.log("[GlobalPanicListener] audio ready:", el.currentSrc || el.src);
-      return true;
-    } catch (e) {
-      const msg = e?.message || "No se pudo habilitar el audio.";
-      setAudioError(msg);
-      console.warn("[GlobalPanicListener] audio unlock failed:", msg);
-      return false;
-    }
   }, []);
 
   const playAlarm = useCallback(async () => {
@@ -220,7 +190,9 @@ export default function GlobalPanicListener() {
 
       const ok = await playAlarm();
       if (!ok) {
-        console.warn("[GlobalPanicListener] alerta remota recibida, pero sin audio");
+        console.warn(
+          "[GlobalPanicListener] alerta remota recibida, pero sin audio"
+        );
       }
     },
     [playAlarm, showVisualAlert]
@@ -228,7 +200,7 @@ export default function GlobalPanicListener() {
 
   const triggerLocalAlert = useCallback(
     async (payload = {}, source = "local-bus") => {
-      // ✅ Emisor: solo visual, sin sonido
+      // Emisor: solo visual, sin sonido
       showVisualAlert(payload, source);
 
       // Evita que el eco remoto vuelva a sonar en esta misma máquina
@@ -243,24 +215,6 @@ export default function GlobalPanicListener() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const autoUnlock = () => {
-      unlockAudio().catch(() => {});
-    };
-
-    window.addEventListener("pointerdown", autoUnlock, { once: true });
-    window.addEventListener("keydown", autoUnlock, { once: true });
-    window.addEventListener("touchstart", autoUnlock, { once: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", autoUnlock);
-      window.removeEventListener("keydown", autoUnlock);
-      window.removeEventListener("touchstart", autoUnlock);
-    };
-  }, [isAuthenticated, unlockAudio]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
     const joinPayload = {
       userId: principal?._id || principal?.id || principal?.sub || "",
       email: principal?.email || "",
@@ -271,7 +225,10 @@ export default function GlobalPanicListener() {
       try {
         socket.emit("presence:join", joinPayload);
       } catch (e) {
-        console.warn("[GlobalPanicListener] presence:join error:", e?.message || e);
+        console.warn(
+          "[GlobalPanicListener] presence:join error:",
+          e?.message || e
+        );
       }
     };
 
@@ -292,7 +249,7 @@ export default function GlobalPanicListener() {
     principal?.rol,
   ]);
 
-  // ✅ Evento local del emisor: solo visual
+  // Evento local del emisor: solo visual
   useEffect(() => {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
@@ -305,7 +262,7 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, visitor, triggerLocalAlert]);
 
-  // ✅ Evento remoto: visual + sonido
+  // Evento remoto: visual + sonido
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -351,39 +308,11 @@ export default function GlobalPanicListener() {
         }}
       />
 
-      {!visitor && showRondasUI && !audioReady && (
-        <div className="fixed bottom-24 right-4 z-[9999] flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={unlockAudio}
-            className="rounded-xl bg-amber-500 text-black font-semibold px-4 py-3 shadow-lg"
-            title="Haz clic una vez para habilitar el sonido de alertas"
-          >
-            Activar sonido
-          </button>
-
-          <button
-            type="button"
-            onClick={async () => {
-              const ok = await unlockAudio();
-              if (ok) {
-                await playAlarm();
-                setTimeout(() => stopAlarm(), 1500);
-              }
-            }}
-            className="rounded-xl bg-sky-500 text-white font-semibold px-4 py-3 shadow-lg"
-            title="Probar alarma"
-          >
-            Probar sonido
-          </button>
-
-          {audioError ? (
-            <div className="max-w-[280px] rounded-xl bg-red-600 text-white text-xs px-3 py-2 shadow-lg">
-              {audioError}
-            </div>
-          ) : null}
+      {!visitor && showRondasUI && audioError ? (
+        <div className="fixed bottom-24 right-4 z-[9999] max-w-[280px] rounded-xl bg-red-600 text-white text-xs px-3 py-2 shadow-lg">
+          {audioError}
         </div>
-      )}
+      ) : null}
 
       {!visitor && hasAlert && (
         <button
