@@ -101,6 +101,7 @@ function getIdentitySet(u) {
   for (const value of values) {
     const s = String(value || "").trim();
     if (s) set.add(s);
+
     const e = String(value || "").trim().toLowerCase();
     if (e && e.includes("@")) set.add(e);
   }
@@ -357,12 +358,7 @@ export default function ChatDock() {
     setContactsError("");
 
     (async () => {
-      const attempts = [
-        "/api/iam/v1/users",
-        "/iam/v1/users",
-        "/api/iam/users",
-        "/iam/users",
-      ];
+      const attempts = ["/iam/v1/users", "/iam/users", "/v1/users", "/users"];
 
       for (const url of attempts) {
         try {
@@ -523,19 +519,25 @@ export default function ChatDock() {
       setMessages((prev) =>
         prev.map((m) => {
           if (String(m._id) !== String(payload._id)) return m;
+
           const seenBy = Array.isArray(m.seenBy) ? [...m.seenBy] : [];
           const exists = seenBy.some(
             (x) =>
               String(x?.userId || "").trim() ===
               String(payload.userId || "").trim()
           );
+
           if (!exists && payload.userId) {
             seenBy.push({
               userId: payload.userId,
               seenAt: new Date().toISOString(),
             });
           }
-          if (Array.isArray(payload.seenBy)) return { ...m, seenBy: payload.seenBy };
+
+          if (Array.isArray(payload.seenBy)) {
+            return { ...m, seenBy: payload.seenBy };
+          }
+
           return { ...m, seenBy };
         })
       );
@@ -616,10 +618,12 @@ export default function ChatDock() {
         userId: myId,
       });
 
-      api.post(`/chat/messages/${m._id}/seen`, {
-        userId: myId,
-        userSub: myId,
-      }).catch(() => {});
+      api
+        .post(`/chat/messages/${m._id}/seen`, {
+          userId: myId,
+          userSub: myId,
+        })
+        .catch(() => {});
     });
   }, [open, messages, currentRoom, myId]);
 
@@ -668,6 +672,7 @@ export default function ChatDock() {
       const tempId = globalThis.crypto?.randomUUID?.() || String(Date.now());
       const displayName = user?.name || user?.nickname || user?.email || "Usuario";
       const isImage = String(file.type || "").startsWith("image/");
+
       const optimistic = createBaseMessage({
         tempId,
         currentRoom,
@@ -701,7 +706,10 @@ export default function ChatDock() {
 
         replaceOptimistic(tempId, data);
       } catch (err) {
-        console.error("[chat] POST /chat/upload", err?.response?.data || err?.message || err);
+        console.error(
+          "[chat] POST /chat/upload",
+          err?.response?.data || err?.message || err
+        );
         markMessageError(tempId);
       }
     },
@@ -751,7 +759,10 @@ export default function ChatDock() {
 
         replaceOptimistic(tempId, data);
       } catch (err) {
-        console.error("[chat] POST /chat/upload (audio)", err?.response?.data || err?.message || err);
+        console.error(
+          "[chat] POST /chat/upload (audio)",
+          err?.response?.data || err?.message || err
+        );
         markMessageError(tempId);
       }
     },
@@ -800,7 +811,10 @@ export default function ChatDock() {
           }
         });
       } catch (err) {
-        console.error("[chat] private send", err?.response?.data || err?.message || err);
+        console.error(
+          "[chat] private send",
+          err?.response?.data || err?.message || err
+        );
         markMessageError(tempId);
       }
       return;
@@ -820,7 +834,10 @@ export default function ChatDock() {
 
       replaceOptimistic(tempId, data);
     } catch (err) {
-      console.error("[chat] POST /chat/messages", err?.response?.data || err?.message || err);
+      console.error(
+        "[chat] POST /chat/messages",
+        err?.response?.data || err?.message || err
+      );
       markMessageError(tempId);
     }
   };
@@ -849,7 +866,10 @@ export default function ChatDock() {
         message: data,
       });
     } catch (err) {
-      console.error("[chat] PUT /chat/messages/:id", err?.response?.data || err?.message || err);
+      console.error(
+        "[chat] PUT /chat/messages/:id",
+        err?.response?.data || err?.message || err
+      );
       window.alert("No se pudo editar el mensaje.");
     }
   };
@@ -881,7 +901,10 @@ export default function ChatDock() {
         });
       }
     } catch (err) {
-      console.error("[chat] DELETE /chat/messages/:id", err?.response?.data || err?.message || err);
+      console.error(
+        "[chat] DELETE /chat/messages/:id",
+        err?.response?.data || err?.message || err
+      );
       window.alert("No se pudo eliminar el mensaje.");
     }
   };
@@ -942,6 +965,7 @@ export default function ChatDock() {
     top: panelTop,
     width: panelW,
     height: panelH,
+    maxHeight: panelH,
     zIndex: 9999,
     pointerEvents: "auto",
     display: "grid",
@@ -974,9 +998,12 @@ export default function ChatDock() {
           <div
             style={{
               minWidth: 0,
+              minHeight: 0,
+              height: "100%",
               display: "flex",
               flexDirection: "column",
               position: "relative",
+              overflow: "hidden",
             }}
           >
             <ChatHeader
@@ -990,6 +1017,7 @@ export default function ChatDock() {
 
             <div
               style={{
+                flex: "0 0 auto",
                 minHeight: 20,
                 padding: typingName ? "4px 12px 0" : "0 12px",
                 fontSize: 12,
@@ -999,49 +1027,77 @@ export default function ChatDock() {
               {typingName ? `${typingName} está escribiendo...` : ""}
             </div>
 
-            <ChatMessagesList
-              listRef={listRef}
-              messages={messages}
-              myId={myId}
-              handleEditMessage={handleEditMessage}
-              handleDeleteMessage={handleDeleteMessage}
-            />
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
+              <ChatMessagesList
+                listRef={listRef}
+                messages={messages}
+                myId={myId}
+                handleEditMessage={handleEditMessage}
+                handleDeleteMessage={handleDeleteMessage}
+              />
+            </div>
 
             {emojiOpen && (
-              <EmojiPickerLite
-                emojis={QUICK_EMOJIS}
-                onSelect={(emoji) => {
-                  setText((prev) => `${prev}${emoji}`);
-                  inputRef.current?.focus();
+              <div
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  right: 12,
+                  bottom: 72,
+                  zIndex: 3,
                 }}
-              />
+              >
+                <EmojiPickerLite
+                  emojis={QUICK_EMOJIS}
+                  onSelect={(emoji) => {
+                    setText((prev) => `${prev}${emoji}`);
+                    inputRef.current?.focus();
+                  }}
+                />
+              </div>
             )}
 
-            <ChatInputBar
-              inputRef={inputRef}
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                emitTyping();
+            <div
+              style={{
+                flex: "0 0 auto",
+                position: "relative",
+                zIndex: 2,
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
+            >
+              <ChatInputBar
+                inputRef={inputRef}
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  emitTyping();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                onSend={send}
+                onToggleEmoji={() => setEmojiOpen((v) => !v)}
+                emojiOpen={emojiOpen}
+                placeholder={
+                  isPrivateMode
+                    ? `Mensaje para ${getUserName(selectedUser)}…`
+                    : "Escribe un mensaje…"
                 }
-              }}
-              onSend={send}
-              onToggleEmoji={() => setEmojiOpen((v) => !v)}
-              emojiOpen={emojiOpen}
-              placeholder={
-                isPrivateMode
-                  ? `Mensaje para ${getUserName(selectedUser)}…`
-                  : "Escribe un mensaje…"
-              }
-              disabled={!text.trim()}
-              onFileSelected={uploadFile}
-              onAudioRecorded={uploadAudio}
-            />
+                disabled={!text.trim()}
+                onFileSelected={uploadFile}
+                onAudioRecorded={uploadAudio}
+              />
+            </div>
           </div>
         </div>
       )}

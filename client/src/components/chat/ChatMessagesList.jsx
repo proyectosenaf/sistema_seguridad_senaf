@@ -9,28 +9,43 @@ export default function ChatMessagesList({
   handleDeleteMessage,
 }) {
   return (
-    <div ref={listRef} className="chat-body">
+    <div
+      ref={listRef}
+      className="chat-body"
+      style={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
+        overflowX: "hidden",
+        padding: "14px 14px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        height: "100%",
+      }}
+    >
       {messages.length === 0 ? (
-        <div className="chat-empty">No hay mensajes todavía.</div>
+        <div
+          className="chat-empty"
+          style={{
+            margin: "auto 0",
+            textAlign: "center",
+            opacity: 0.75,
+            padding: "18px 12px",
+          }}
+        >
+          No hay mensajes todavía.
+        </div>
       ) : (
-        messages.map((m) => {
-          const mUserId =
-            m.user?.id || m.user?._id || m.user?.sub || m.user?.email || null;
-
-          const mine =
-            (mUserId && myId && String(mUserId) === String(myId)) ||
-            m.optimistic === true;
-
-          return (
-            <ChatMessageBubble
-              key={m._id || m.id || m.clientId}
-              message={m}
-              mine={mine}
-              onEdit={handleEditMessage}
-              onDelete={handleDeleteMessage}
-            />
-          );
-        })
+        messages.map((m) => (
+          <ChatMessageBubble
+            key={m._id || m.id || m.clientId}
+            message={m}
+            myId={myId}
+            onEdit={handleEditMessage}
+            onDelete={handleDeleteMessage}
+          />
+        ))
       )}
     </div>
   );

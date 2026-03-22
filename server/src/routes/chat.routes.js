@@ -43,8 +43,10 @@ function resolveUser(req, body = {}) {
 
   const sub =
     u.sub || u.id || u._id || p.sub || body.userSub || body.userId || null;
+
   const id =
     u.id || u._id || u.sub || body.userId || body.userSub || p.sub || null;
+
   const email = u.email || p.email || body.userEmail || null;
 
   const name =
@@ -64,21 +66,34 @@ function resolveUser(req, body = {}) {
   };
 }
 
+function getSafeBody(req) {
+  if (req && req.body && typeof req.body === "object") return req.body;
+  return {};
+}
+
 function getActorUserId(req, body = {}) {
   const u = req.user || {};
   const p = req.auth?.payload || {};
+  const b = body && typeof body === "object" ? body : {};
 
   return String(
     u.id ||
       u._id ||
       u.sub ||
       p.sub ||
-      body.userId ||
-      body.userSub ||
-      body.actorUserId ||
-      body.email ||
+      b.userId ||
+      b.userSub ||
+      b.actorUserId ||
+      b.email ||
       ""
   ).trim();
+}
+
+function getActorEmail(req, body = {}) {
+  const b = body && typeof body === "object" ? body : {};
+  return String(req.user?.email || req.auth?.payload?.email || b.userEmail || "")
+    .trim()
+    .toLowerCase();
 }
 
 function canManageMessage(msg, actorUserId, actorEmail) {
@@ -115,6 +130,30 @@ function detectKindFromMime(mime) {
   return "file";
 }
 
+function buildStoredFileUrl(filename) {
+  return `/uploads/chat/${filename}`;
+}
+
+function emitChatNew(req, room, msg) {
+  if (!req.io || !room || !msg) return;
+  req.io.to(`chat:${room}`).emit("chat:new", msg);
+}
+
+function emitChatUpdate(req, room, msg) {
+  if (!req.io || !room || !msg) return;
+  req.io.to(`chat:${room}`).emit("chat:update", msg);
+}
+
+function emitChatDelete(req, room, msg) {
+  if (!req.io || !room || !msg) return;
+  req.io.to(`chat:${room}`).emit("chat:delete", msg);
+}
+
+function emitChatSeen(req, room, payload) {
+  if (!req.io || !room || !payload) return;
+  req.io.to(`chat:${room}`).emit("chat:seen", payload);
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, CHAT_UPLOADS_DIR);
@@ -137,28 +176,82 @@ const upload = multer({
 
 /**
  * POST /chat/upload
- * form-data: file
+ * form-data:
+ * - file
+ * - room
+ * - clientId
+ * - userId | userSub | userName | userEmail
+ * - type (opcional)
+ *
+ * Devuelve un MENSAJE COMPLETO de chat, no solo metadata.
  */
 router.post("/upload", upload.single("file"), async (req, res, next) => {
   try {
+    const body = getSafeBody(req);
+
     if (!req.file) {
       return res.status(400).json({ ok: false, error: "file requerido" });
     }
 
-    const kind = detectKindFromMime(req.file.mimetype);
-    const url = `/uploads/chat/${req.file.filename}`;
+    const room = cleanRoom(body.room);
+    const clientId = cleanClientId(body.clientId);
+    const explicitType = cleanType(body.type);
+    const detectedKind = detectKindFromMime(req.file.mimetype);
 
-    return res.json({
-      ok: true,
-      url,
-      name: req.file.originalname,
-      fileName: req.file.originalname,
-      storedName: req.file.filename,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      kind,
-    });
+    let type = explicitType;
+    if (!body.type || explicitType === "text") {
+      type = detectedKind;
+    }
+
+    const fileUrl = buildStoredFileUrl(req.file.filename);
+    const fileName = cleanOptionalString(req.file.originalname) || req.file.filename;
+    const user = resolveUser(req, body);
+
+    const payload = {
+      room,
+      clientId,
+      text: type === "file" ? fileName : "",
+      user,
+      type,
+      fileUrl: type === "file" || type === "image" ? fileUrl : null,
+      fileName: type === "file" || type === "image" ? fileName : null,
+      audioUrl: type === "audio" ? fileUrl : null,
+    };
+
+    let doc;
+
+    if (clientId) {
+      doc = await ChatMessage.findOneAndUpdate(
+        { room, clientId },
+        { $setOnInsert: payload },
+        { new: true, upsert: true }
+      );
+    } else {
+      doc = await ChatMessage.create({
+        ...payload,
+        clientId: null,
+      });
+    }
+
+    const msg = doc.toObject ? doc.toObject() : doc;
+
+    emitChatNew(req, room, msg);
+
+    return res.json(msg);
   } catch (e) {
+    if (e?.code === 11000) {
+      try {
+        const body = getSafeBody(req);
+        const room = cleanRoom(body.room);
+        const clientId = cleanClientId(body.clientId);
+
+        if (clientId) {
+          const existing = await ChatMessage.findOne({ room, clientId }).lean();
+          if (existing) return res.json(existing);
+        }
+      } catch {}
+    }
+
     return next(e);
   }
 });
@@ -190,13 +283,15 @@ router.get("/messages", async (req, res, next) => {
  */
 router.post("/messages", async (req, res, next) => {
   try {
-    const room = cleanRoom(req.body.room);
-    const text = cleanText(req.body.text);
-    const clientId = cleanClientId(req.body.clientId);
-    const type = cleanType(req.body.type);
-    const fileUrl = cleanOptionalString(req.body.fileUrl);
-    const fileName = cleanOptionalString(req.body.fileName);
-    const audioUrl = cleanOptionalString(req.body.audioUrl);
+    const body = getSafeBody(req);
+
+    const room = cleanRoom(body.room);
+    const text = cleanText(body.text);
+    const clientId = cleanClientId(body.clientId);
+    const type = cleanType(body.type);
+    const fileUrl = cleanOptionalString(body.fileUrl);
+    const fileName = cleanOptionalString(body.fileName);
+    const audioUrl = cleanOptionalString(body.audioUrl);
 
     const requiresText = type === "text" || type === "system";
     if (requiresText && !text) {
@@ -211,9 +306,7 @@ router.post("/messages", async (req, res, next) => {
       return res.status(400).json({ ok: false, error: "fileUrl requerido" });
     }
 
-    const user = resolveUser(req, req.body);
-
-    let doc;
+    const user = resolveUser(req, body);
 
     const payload = {
       room,
@@ -225,6 +318,8 @@ router.post("/messages", async (req, res, next) => {
       fileName,
       audioUrl,
     };
+
+    let doc;
 
     if (clientId) {
       doc = await ChatMessage.findOneAndUpdate(
@@ -241,16 +336,15 @@ router.post("/messages", async (req, res, next) => {
 
     const msg = doc.toObject ? doc.toObject() : doc;
 
-    if (req.io) {
-      req.io.to(`chat:${room}`).emit("chat:new", msg);
-    }
+    emitChatNew(req, room, msg);
 
     return res.json(msg);
   } catch (e) {
     if (e?.code === 11000) {
       try {
-        const room = cleanRoom(req.body.room);
-        const clientId = cleanClientId(req.body.clientId);
+        const body = getSafeBody(req);
+        const room = cleanRoom(body.room);
+        const clientId = cleanClientId(body.clientId);
 
         if (clientId) {
           const existing = await ChatMessage.findOne({ room, clientId }).lean();
@@ -268,8 +362,10 @@ router.post("/messages", async (req, res, next) => {
  */
 router.put("/messages/:id", async (req, res, next) => {
   try {
+    const body = getSafeBody(req);
+
     const id = String(req.params.id || "").trim();
-    const text = cleanText(req.body.text);
+    const text = cleanText(body.text);
 
     if (!text) {
       return res.status(400).json({ ok: false, error: "text requerido" });
@@ -286,12 +382,8 @@ router.put("/messages/:id", async (req, res, next) => {
         .json({ ok: false, error: "No se puede editar un mensaje eliminado" });
     }
 
-    const actorUserId = getActorUserId(req, req.body);
-    const actorEmail = String(
-      req.user?.email || req.auth?.payload?.email || req.body.userEmail || ""
-    )
-      .trim()
-      .toLowerCase();
+    const actorUserId = getActorUserId(req, body);
+    const actorEmail = getActorEmail(req, body);
 
     if (!canManageMessage(msg, actorUserId, actorEmail)) {
       return res.status(403).json({ ok: false, error: "No autorizado" });
@@ -303,9 +395,7 @@ router.put("/messages/:id", async (req, res, next) => {
 
     const out = msg.toObject ? msg.toObject() : msg;
 
-    if (req.io) {
-      req.io.to(`chat:${msg.room}`).emit("chat:update", out);
-    }
+    emitChatUpdate(req, msg.room, out);
 
     return res.json(out);
   } catch (e) {
@@ -318,6 +408,7 @@ router.put("/messages/:id", async (req, res, next) => {
  */
 router.delete("/messages/:id", async (req, res, next) => {
   try {
+    const body = getSafeBody(req);
     const id = String(req.params.id || "").trim();
 
     const msg = await ChatMessage.findById(id);
@@ -325,12 +416,8 @@ router.delete("/messages/:id", async (req, res, next) => {
       return res.status(404).json({ ok: false, error: "Mensaje no encontrado" });
     }
 
-    const actorUserId = getActorUserId(req, req.body);
-    const actorEmail = String(
-      req.user?.email || req.auth?.payload?.email || req.body.userEmail || ""
-    )
-      .trim()
-      .toLowerCase();
+    const actorUserId = getActorUserId(req, body);
+    const actorEmail = getActorEmail(req, body);
 
     if (!canManageMessage(msg, actorUserId, actorEmail)) {
       return res.status(403).json({ ok: false, error: "No autorizado" });
@@ -347,9 +434,7 @@ router.delete("/messages/:id", async (req, res, next) => {
 
     const out = msg.toObject ? msg.toObject() : msg;
 
-    if (req.io) {
-      req.io.to(`chat:${msg.room}`).emit("chat:delete", out);
-    }
+    emitChatDelete(req, msg.room, out);
 
     return res.json({ ok: true, message: out });
   } catch (e) {
@@ -362,8 +447,9 @@ router.delete("/messages/:id", async (req, res, next) => {
  */
 router.post("/messages/:id/seen", async (req, res, next) => {
   try {
+    const body = getSafeBody(req);
     const id = String(req.params.id || "").trim();
-    const actorUserId = getActorUserId(req, req.body);
+    const actorUserId = getActorUserId(req, body);
 
     if (!actorUserId) {
       return res.status(400).json({ ok: false, error: "userId requerido" });
@@ -374,11 +460,13 @@ router.post("/messages/:id/seen", async (req, res, next) => {
       return res.status(404).json({ ok: false, error: "Mensaje no encontrado" });
     }
 
-    const alreadySeen = Array.isArray(msg.seenBy)
-      ? msg.seenBy.some(
-          (x) => String(x?.userId || "").trim() === String(actorUserId).trim()
-        )
-      : false;
+    if (!Array.isArray(msg.seenBy)) {
+      msg.seenBy = [];
+    }
+
+    const alreadySeen = msg.seenBy.some(
+      (x) => String(x?.userId || "").trim() === String(actorUserId).trim()
+    );
 
     if (!alreadySeen) {
       msg.seenBy.push({
@@ -390,14 +478,12 @@ router.post("/messages/:id/seen", async (req, res, next) => {
 
     const out = msg.toObject ? msg.toObject() : msg;
 
-    if (req.io) {
-      req.io.to(`chat:${msg.room}`).emit("chat:seen", {
-        _id: out._id,
-        room: out.room,
-        seenBy: out.seenBy || [],
-        userId: actorUserId,
-      });
-    }
+    emitChatSeen(req, msg.room, {
+      _id: out._id,
+      room: out.room,
+      seenBy: out.seenBy || [],
+      userId: actorUserId,
+    });
 
     return res.json({ ok: true, seenBy: out.seenBy || [] });
   } catch (e) {

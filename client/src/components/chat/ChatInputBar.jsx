@@ -39,7 +39,7 @@ export default function ChatInputBar({
       <button
         type="button"
         onClick={onToggleEmoji}
-        className="chat-header__close"
+        className="chat-input__action"
         aria-label="Emojis"
         title={emojiOpen ? "Ocultar emojis" : "Emojis"}
       >
@@ -55,9 +55,15 @@ export default function ChatInputBar({
         onChange={onChange}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
+        disabled={false}
       />
 
-      <button onClick={onSend} className="chat-send" disabled={disabled}>
+      <button
+        type="button"
+        onClick={onSend}
+        className="chat-send"
+        disabled={disabled}
+      >
         Enviar
       </button>
     </div>
