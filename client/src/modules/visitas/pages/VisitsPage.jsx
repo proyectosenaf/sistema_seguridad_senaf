@@ -7,6 +7,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { QRCodeSVG } from "qrcode.react";
+import QRCode from "qrcode";
 
 // 🔹 BASE DEL BACKEND
 const ROOT = (
@@ -511,6 +512,141 @@ function getRenderableQrValue(cita) {
   const value = buildQrValueForCita(cita);
   return typeof value === "string" ? value.trim() : "";
 }
+
+async function resolveQrImageDataUrl(cita) {
+  if (cita?.qrDataUrl && String(cita.qrDataUrl).trim()) {
+    return String(cita.qrDataUrl).trim();
+  }
+
+  const value = getRenderableQrValue(cita);
+  if (!value) return "";
+
+  try {
+    return await QRCode.toDataURL(value, {
+      width: 320,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    });
+  } catch (err) {
+    console.warn("[visitas] no se pudo generar imagen QR:", err);
+    return "";
+  }
+}
+
+function buildQrDownloadFilename(cita) {
+  const nombre = String(cita?.nombre || cita?.visitante || "cita")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-_]/g, "");
+
+  const documento = String(cita?.documento || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^a-zA-Z0-9-_]/g, "");
+
+  const fecha =
+    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
+      ? cita.citaAt.toISOString().slice(0, 10)
+      : String(cita?.fecha || "").replace(/\//g, "-");
+
+  return `senaf-cita-${nombre || "qr"}${documento ? `-${documento}` : ""}${
+    fecha ? `-${fecha}` : ""
+  }.png`;
+}
+
+async function downloadQrCita(cita) {
+  const dataUrl = await resolveQrImageDataUrl(cita);
+  if (!dataUrl) return;
+
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = buildQrDownloadFilename(cita);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+async function printQrCita(cita) {
+  const dataUrl = await resolveQrImageDataUrl(cita);
+  if (!dataUrl) return;
+
+  const win = window.open("", "_blank", "width=900,height=720");
+  if (!win) return;
+
+  const fecha =
+    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
+      ? cita.citaAt.toLocaleDateString("es-HN")
+      : cita?.fecha || "—";
+
+  const hora =
+    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
+      ? cita.citaAt.toLocaleTimeString("es-HN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : cita?.hora || "—";
+
+  const acompanantes =
+    Array.isArray(cita?.acompanantes) && cita.acompanantes.length
+      ? `
+        <div class="row"><span class="label">Acompañantes:</span></div>
+        <ul class="companions">
+          ${cita.acompanantes
+            .map(
+              (comp) =>
+                `<li>${String(comp?.nombre || "").trim()}${
+                  comp?.documento ? ` — ${String(comp.documento).trim()}` : ""
+                }</li>`
+            )
+            .join("")}
+        </ul>
+      `
+      : "";
+
+  win.document.open();
+  win.document.write(`
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>QR de cita SENAF</title>
+        <style>
+          body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; padding: 24px; }
+          .card { max-width: 760px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 20px; padding: 24px; }
+          .title { font-size: 30px; font-weight: 700; margin-bottom: 8px; }
+          .subtitle { font-size: 16px; color: #475569; margin-bottom: 18px; line-height: 1.5; }
+          .qr { text-align: center; margin: 18px 0 24px; }
+          .qr img { width: 300px; height: 300px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 18px; padding: 12px; background: #fff; }
+          .details { border: 1px solid #cbd5e1; border-radius: 16px; padding: 18px; background: #f8fafc; }
+          .row { margin: 8px 0; font-size: 18px; line-height: 1.5; }
+          .label { font-weight: 700; }
+          .companions { margin: 8px 0 0 20px; padding: 0; font-size: 17px; line-height: 1.5; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="title">Cita agendada</div>
+          <div class="subtitle">Presente este código QR al guardia para validar su ingreso.</div>
+          <div class="qr"><img src="${dataUrl}" alt="QR de cita" /></div>
+          <div class="details">
+            <div class="row"><span class="label">Visitante:</span> ${String(cita?.nombre || cita?.visitante || "").trim()}</div>
+            <div class="row"><span class="label">Documento:</span> ${String(cita?.documento || "").trim()}</div>
+            <div class="row"><span class="label">Empleado:</span> ${String(cita?.empleado || "").trim()}</div>
+            <div class="row"><span class="label">Motivo:</span> ${String(cita?.motivo || "").trim()}</div>
+            <div class="row"><span class="label">Fecha:</span> ${fecha}</div>
+            <div class="row"><span class="label">Hora:</span> ${hora}</div>
+            ${acompanantes}
+          </div>
+        </div>
+      </body>
+    </html>
+  `);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
 
 function saveToStorage(next) {
   try {
@@ -1991,7 +2127,7 @@ export default function VisitsPage() {
           }}
         >
           <div
-            className="p-4 md:p-6 w-[95%] max-w-[420px] rounded-[24px]"
+            className="p-4 md:p-6 w-[95%] max-w-[520px] rounded-[24px]"
             style={sxCard()}
             onMouseDown={(e) => e.stopPropagation()}
           >
@@ -2001,10 +2137,12 @@ export default function VisitsPage() {
                   className="text-lg font-semibold"
                   style={{ color: "var(--text)" }}
                 >
-                  Invitación / QR de cita
+                  {isVisitor ? "Tu QR de cita" : "Validación de cita"}
                 </h3>
                 <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Muestre este código en la entrada para su validación.
+                  {isVisitor
+                    ? "Muéstralo o descárgalo para presentarlo al guardia."
+                    : "Verifica la información antes de registrar el ingreso."}
                 </p>
               </div>
               <button
@@ -2016,22 +2154,22 @@ export default function VisitsPage() {
               </button>
             </div>
 
-            <div className="flex flex-col items-center gap-3">
+            <div className="flex flex-col items-center gap-4">
               <div
                 className="rounded-[18px] p-4"
                 style={sxCardSoft({ background: "#ffffff" })}
               >
-                {qrModalValue ? (
-                  <QRCodeSVG value={qrModalValue} size={200} includeMargin />
-                ) : qrCita.qrDataUrl ? (
+                {qrCita.qrDataUrl ? (
                   <img
                     src={qrCita.qrDataUrl}
                     alt="QR de cita"
-                    className="w-[200px] h-[200px] object-contain"
+                    className="w-[220px] h-[220px] object-contain"
                   />
+                ) : qrModalValue ? (
+                  <QRCodeSVG value={qrModalValue} size={220} includeMargin />
                 ) : (
                   <div
-                    className="w-[200px] h-[200px] flex items-center justify-center text-center text-xs rounded-[12px]"
+                    className="w-[220px] h-[220px] flex items-center justify-center text-center text-xs rounded-[12px]"
                     style={{
                       color: "#334155",
                       background: "#f8fafc",
@@ -2044,35 +2182,141 @@ export default function VisitsPage() {
               </div>
 
               <div
-                className="text-xs text-center"
-                style={{ color: "var(--text)" }}
+                className="w-full rounded-[18px] p-4 text-sm"
+                style={sxCardSoft({ background: "var(--input-bg)" })}
               >
-                <div className="font-semibold">
-                  {qrCita.nombre || qrCita.visitante}
+                <div style={{ color: "var(--text)" }}>
+                  <strong>Visitante:</strong> {qrCita.nombre || qrCita.visitante || "—"}
                 </div>
-                <div>{qrCita.documento || "Documento no especificado"}</div>
-                <div>
+                {!isVisitor && (
+                  <div style={{ color: "var(--text)" }}>
+                    <strong>Documento:</strong> {qrCita.documento || "—"}
+                  </div>
+                )}
+                <div style={{ color: "var(--text)" }}>
+                  <strong>Empleado:</strong> {qrCita.empleado || "—"}
+                </div>
+                {!isVisitor && (
+                  <div style={{ color: "var(--text)" }}>
+                    <strong>Motivo:</strong> {qrCita.motivo || "—"}
+                  </div>
+                )}
+                <div style={{ color: "var(--text)" }}>
+                  <strong>Fecha:</strong>{" "}
                   {qrCita.citaAt instanceof Date &&
                   !Number.isNaN(qrCita.citaAt.getTime())
-                    ? qrCita.citaAt.toLocaleDateString("es-ES", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })
-                    : qrCita.fecha || "—"}{" "}
-                  {" · "}
+                    ? qrCita.citaAt.toLocaleDateString("es-HN")
+                    : qrCita.fecha || "—"}
+                </div>
+                <div style={{ color: "var(--text)" }}>
+                  <strong>Hora:</strong>{" "}
                   {qrCita.citaAt instanceof Date &&
                   !Number.isNaN(qrCita.citaAt.getTime())
-                    ? qrCita.citaAt.toLocaleTimeString("es-ES", {
+                    ? qrCita.citaAt.toLocaleTimeString("es-HN", {
                         hour: "2-digit",
                         minute: "2-digit",
                       })
                     : qrCita.hora || "—"}
                 </div>
-                <div className="mt-1">
-                  Estado: <CitaEstadoPill estado={qrCita.estado} />
-                </div>
+                {!isVisitor && (
+                  <>
+                    <div className="mt-1" style={{ color: "var(--text)" }}>
+                      <strong>Estado:</strong> <CitaEstadoPill estado={qrCita.estado} />
+                    </div>
+
+                    {!!qrCita.empresa && (
+                      <div style={{ color: "var(--text)" }}>
+                        <strong>Empresa:</strong> {qrCita.empresa}
+                      </div>
+                    )}
+
+                    {!!qrCita.telefono && (
+                      <div style={{ color: "var(--text)" }}>
+                        <strong>Teléfono:</strong> {qrCita.telefono}
+                      </div>
+                    )}
+
+                    {!!qrCita.correo && (
+                      <div style={{ color: "var(--text)" }}>
+                        <strong>Correo:</strong> {qrCita.correo}
+                      </div>
+                    )}
+
+                    {!!qrCita.vehiculo && (
+                      <div className="mt-2" style={{ color: "var(--text)" }}>
+                        <strong>Vehículo:</strong>{" "}
+                        {[
+                          qrCita.vehiculo?.marca,
+                          qrCita.vehiculo?.modelo,
+                          qrCita.vehiculo?.placa ? `(${qrCita.vehiculo.placa})` : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || "—"}
+                      </div>
+                    )}
+
+                    {!!qrCita?.acompanantes?.length && (
+                      <div className="mt-2" style={{ color: "var(--text)" }}>
+                        <strong>Acompañantes:</strong>
+                        <ul className="mt-1 list-disc pl-5">
+                          {qrCita.acompanantes.map((comp, idx) => (
+                            <li key={`qr-comp-${idx}`}>
+                              {comp?.nombre || ""}{" "}
+                              {comp?.documento ? `— ${comp.documento}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => downloadQrCita(qrCita)}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                style={sxGhostBtn()}
+              >
+                Descargar QR
+              </button>
+
+              <button
+                type="button"
+                onClick={() => printQrCita(qrCita)}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                style={sxGhostBtn()}
+              >
+                Imprimir
+              </button>
+
+              {!isVisitor &&
+                ["Programada", "En revisión", "Autorizada"].includes(
+                  normalizeCitaEstado(qrCita?.estado)
+                ) && (
+                  <button
+                    type="button"
+                    onClick={() => handleRegistrarIngreso(qrCita)}
+                    disabled={savingCitaAction === `${qrCita._id}:checkin`}
+                    className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-60"
+                    style={sxSuccessBtn()}
+                  >
+                    {savingCitaAction === `${qrCita._id}:checkin`
+                      ? "Registrando..."
+                      : "Registrar ingreso"}
+                  </button>
+                )}
+
+              <button
+                type="button"
+                onClick={() => setQrCita(null)}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition"
+                style={sxPrimaryBtn()}
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>
