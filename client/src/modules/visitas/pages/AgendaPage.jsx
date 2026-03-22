@@ -490,7 +490,7 @@ export default function AgendaPage() {
     );
   }, [currentUser]);
 
-  const isVisitante = currentRole === "visitante";
+  const isVisitante = ["visita", "visitante"].includes(currentRole);
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
   const initialFormState = {
