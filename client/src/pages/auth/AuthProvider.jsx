@@ -1,4 +1,3 @@
-// client/src/pages/auth/AuthProvider.jsx
 import React, {
   createContext,
   useCallback,
@@ -117,6 +116,9 @@ function deriveAuthFromToken(token) {
       email: "",
       name: "",
       isSuperAdmin: false,
+      id: "",
+      _id: "",
+      sub: "",
     };
   }
 
@@ -148,6 +150,40 @@ function deriveAuthFromToken(token) {
     decoded.name || decoded.n || decoded.user?.name || ""
   ).trim();
 
+  const sub = String(
+    decoded.sub ||
+      decoded.user?.sub ||
+      decoded.userId ||
+      decoded.uid ||
+      decoded.id ||
+      decoded._id ||
+      decoded.user?.id ||
+      decoded.user?._id ||
+      ""
+  ).trim();
+
+  const id = String(
+    decoded.id ||
+      decoded.user?.id ||
+      decoded._id ||
+      decoded.user?._id ||
+      decoded.userId ||
+      decoded.uid ||
+      sub ||
+      ""
+  ).trim();
+
+  const _id = String(
+    decoded._id ||
+      decoded.user?._id ||
+      decoded.id ||
+      decoded.user?.id ||
+      decoded.userId ||
+      decoded.uid ||
+      sub ||
+      ""
+  ).trim();
+
   const isSuperAdmin = normalizeBool(
     decoded.isSuperAdmin ??
       decoded.superadmin ??
@@ -156,7 +192,7 @@ function deriveAuthFromToken(token) {
     false
   );
 
-  return { decoded, roles, perms, can, email, name, isSuperAdmin };
+  return { decoded, roles, perms, can, email, name, isSuperAdmin, id, _id, sub };
 }
 
 function normalizeUserLike(u) {
@@ -166,10 +202,25 @@ function normalizeUserLike(u) {
   const perms = uniqLower(u.perms || u.permissions);
   const can = normalizeCan(u.can);
 
+  const sub = String(
+    u.sub || u.userSub || u.uid || u.userId || u.id || u._id || ""
+  ).trim();
+
+  const id = String(
+    u.id || u.userId || u._id || u.uid || sub || ""
+  ).trim();
+
+  const _id = String(
+    u._id || u.id || u.userId || u.uid || sub || ""
+  ).trim();
+
   return {
     ...u,
+    id: id || null,
+    _id: _id || null,
+    sub: sub || null,
     email: String(u.email || "").trim(),
-    name: String(u.name || u.nombreCompleto || "").trim(),
+    name: String(u.name || u.nombreCompleto || u.nombre || "").trim(),
     roles,
     perms,
     permissions: perms,
@@ -185,6 +236,10 @@ function mergeUser(storedUser, tokenInfo) {
 
   if (tokenInfo?.email) merged.email = tokenInfo.email;
   if (tokenInfo?.name) merged.name = tokenInfo.name;
+
+  if (!merged.id && tokenInfo?.id) merged.id = tokenInfo.id;
+  if (!merged._id && tokenInfo?._id) merged._id = tokenInfo._id;
+  if (!merged.sub && tokenInfo?.sub) merged.sub = tokenInfo.sub;
 
   const storedRoles = uniqLower(u?.roles);
   const storedPerms = uniqLower(u?.perms || u?.permissions);
@@ -300,6 +355,32 @@ export function AuthProvider({ children }) {
           ? {
               ...payload,
               ...payload.user,
+              id:
+                payload?.id ||
+                payload?.user?.id ||
+                payload?.userId ||
+                payload?.uid ||
+                payload?.user?._id ||
+                payload?._id ||
+                null,
+              _id:
+                payload?._id ||
+                payload?.user?._id ||
+                payload?.id ||
+                payload?.user?.id ||
+                payload?.userId ||
+                payload?.uid ||
+                null,
+              sub:
+                payload?.sub ||
+                payload?.user?.sub ||
+                payload?.userId ||
+                payload?.uid ||
+                payload?.id ||
+                payload?._id ||
+                payload?.user?.id ||
+                payload?.user?._id ||
+                null,
               permissions:
                 payload?.permissions ||
                 payload?.perms ||
@@ -515,9 +596,13 @@ export function AuthProvider({ children }) {
     );
 
     const isAuthenticated =
-      !isLoading && (!!String(token || "").trim() || !!String(user?.email || "").trim());
+      !isLoading &&
+      (!!String(token || "").trim() || !!String(user?.email || "").trim());
 
-    const isVisitor = roles.includes("visita") || roles.includes("visitor");
+    const isVisitor =
+      roles.includes("visita") ||
+      roles.includes("visitor") ||
+      roles.includes("visitante");
 
     const displayName =
       String(user?.name || "").trim() ||

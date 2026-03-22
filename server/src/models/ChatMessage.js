@@ -1,25 +1,44 @@
-// server/src/models/ChatMessage.js
 import mongoose from "mongoose";
 
 const ChatMessageSchema = new mongoose.Schema(
   {
-    room: { type: String, default: "global", index: true },
+    room: { type: String, index: true },
 
-    // ✅ NUEVO: clientId para dedupe (optimistic -> server)
     clientId: { type: String, index: true },
 
     user: {
-      sub: { type: String, default: null },
-      name: { type: String, default: "Usuario" },
-      email: { type: String, default: null },
+      id: { type: String },
+      sub: { type: String },
+      name: { type: String },
+      email: { type: String },
     },
 
-    text: { type: String, required: true, trim: true },
+    text: { type: String, default: "" },
+
+    // nuevos tipos
+    type: {
+      type: String,
+      enum: ["text", "audio", "file", "image", "system"],
+      default: "text",
+    },
+
+    fileUrl: { type: String, default: null },
+    fileName: { type: String, default: null },
+    audioUrl: { type: String, default: null },
+
+    edited: { type: Boolean, default: false },
+    deleted: { type: Boolean, default: false },
+
+    seenBy: [
+      {
+        userId: String,
+        seenAt: Date,
+      },
+    ],
   },
   { timestamps: true }
 );
 
-// (opcional) índice compuesto útil
 ChatMessageSchema.index({ room: 1, createdAt: 1 });
 
 export default mongoose.model("ChatMessage", ChatMessageSchema);

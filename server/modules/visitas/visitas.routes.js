@@ -32,9 +32,6 @@ const VISITAS_PERMS = {
   DELETE_LEGACY: "visitas.delete",
   CLOSE_LEGACY: "visitas.close",
 
-  // =========================
-  // NUEVOS PERMISOS DE CITAS
-  // =========================
   CITAS_READ: "visitas.citas.read",
   CITAS_WRITE: "visitas.citas.write",
   CITAS_CHECKIN: "visitas.citas.checkin",

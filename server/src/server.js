@@ -536,6 +536,25 @@ function isVisitorRole(role) {
   );
 }
 
+function cleanChatRoom(v) {
+  const raw = String(v || "global").trim();
+  const safe = raw.replace(/[^a-zA-Z0-9:_-]/g, "");
+  return safe || "global";
+}
+
+function cleanIdentityValue(v) {
+  const s = String(v || "").trim();
+  return s || "";
+}
+
+function buildPrivateChatRoom(a, b) {
+  const left = cleanIdentityValue(a);
+  const right = cleanIdentityValue(b);
+  if (!left || !right) return null;
+  const pair = [left, right].sort((x, y) => x.localeCompare(y));
+  return `chat:private:${pair[0]}__${pair[1]}`;
+}
+
 function joinRoomsByIdentity(socket, identity = {}) {
   const userId = identity?.userId ? String(identity.userId).trim() : "";
   const email = identity?.email
@@ -617,13 +636,135 @@ io.on("connection", (s) => {
   /* ───────────────── CHAT ───────────────── */
 
   s.on("chat:join", ({ room = "global" } = {}) => {
-    s.join(`chat:${room}`);
-    s.emit("chat:joined", { room });
+    const safeRoom = cleanChatRoom(room);
+    s.join(`chat:${safeRoom}`);
+    s.emit("chat:joined", { room: safeRoom });
   });
 
   s.on("chat:leave", ({ room = "global" } = {}) => {
-    s.leave(`chat:${room}`);
-    s.emit("chat:left", { room });
+    const safeRoom = cleanChatRoom(room);
+    s.leave(`chat:${safeRoom}`);
+    s.emit("chat:left", { room: safeRoom });
+  });
+
+  s.on("chat:private:join", ({ fromUserId, toUserId } = {}) => {
+    const room = buildPrivateChatRoom(fromUserId, toUserId);
+    if (!room) {
+      s.emit("chat:private:error", {
+        ok: false,
+        error: "fromUserId y toUserId son requeridos",
+      });
+      return;
+    }
+
+    s.join(room);
+    s.emit("chat:private:joined", {
+      ok: true,
+      room,
+      fromUserId: cleanIdentityValue(fromUserId),
+      toUserId: cleanIdentityValue(toUserId),
+    });
+
+    console.log("[io][chat-private] joined:", {
+      socketId: s.id,
+      room,
+      fromUserId,
+      toUserId,
+    });
+  });
+
+  s.on("chat:private:leave", ({ fromUserId, toUserId, room } = {}) => {
+    const finalRoom =
+      room || buildPrivateChatRoom(fromUserId, toUserId) || null;
+    if (!finalRoom) return;
+
+    s.leave(finalRoom);
+    s.emit("chat:private:left", {
+      ok: true,
+      room: finalRoom,
+    });
+  });
+
+  s.on("chat:private:send", (payload = {}, ack) => {
+    try {
+      const finalRoom =
+        payload.room ||
+        buildPrivateChatRoom(payload.fromUserId, payload.toUserId);
+
+      if (!finalRoom) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "room inválido" });
+        }
+        return;
+      }
+
+      const message = {
+        ...payload,
+        room: finalRoom,
+        ts: payload?.ts || Date.now(),
+      };
+
+      io.to(finalRoom).emit("chat:private:new", message);
+
+      if (typeof ack === "function") {
+        ack({ ok: true, room: finalRoom, ts: message.ts });
+      }
+    } catch (e) {
+      console.error("[io][chat-private] error:", e?.message || e);
+      if (typeof ack === "function") {
+        ack({ ok: false, error: e?.message || "Error enviando mensaje" });
+      }
+    }
+  });
+
+    /* ─────────────── PRESENCIA (ONLINE) ─────────────── */
+
+  s.on("presence:online", ({ userId }) => {
+    if (!userId) return;
+    s.broadcast.emit("presence:online", { userId });
+  });
+
+  s.on("presence:offline", ({ userId }) => {
+    if (!userId) return;
+    s.broadcast.emit("presence:offline", { userId });
+  });
+
+  /* ─────────────── TYPING ─────────────── */
+
+  s.on("chat:typing", ({ room, userId, name }) => {
+    if (!room) return;
+    s.to(`chat:${room}`).emit("chat:typing", { room, userId, name });
+  });
+
+  s.on("chat:stopTyping", ({ room, userId }) => {
+    if (!room) return;
+    s.to(`chat:${room}`).emit("chat:stopTyping", { room, userId });
+  });
+
+  /* ─────────────── SEEN (VISTO) ─────────────── */
+
+  s.on("chat:seen", ({ room, messageId, userId }) => {
+    if (!room || !messageId || !userId) return;
+
+    io.to(`chat:${room}`).emit("chat:seen", {
+      _id: messageId,
+      userId,
+      room,
+    });
+  });
+
+  /* ─────────────── EDIT ─────────────── */
+
+  s.on("chat:edit", ({ room, message }) => {
+    if (!room || !message) return;
+    io.to(`chat:${room}`).emit("chat:update", message);
+  });
+
+  /* ─────────────── DELETE ─────────────── */
+
+  s.on("chat:delete", ({ room, message }) => {
+    if (!room || !message) return;
+    io.to(`chat:${room}`).emit("chat:delete", message);
   });
 
   /* ───────────────── ALERTAS ───────────────── */

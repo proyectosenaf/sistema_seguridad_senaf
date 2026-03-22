@@ -49,7 +49,7 @@ const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
 // Visitas
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
-import CitasQrScannerPage from "./pages/CitasQrScannerPage.jsx";
+import CitasQrScannerPage from "./modules/visitas/pages/CitasQrScannerPage.jsx";
 
 /* ───────────────── ENV helpers ───────────────── */
 const VITE_ENV = String(import.meta.env.VITE_ENV || "").toLowerCase();

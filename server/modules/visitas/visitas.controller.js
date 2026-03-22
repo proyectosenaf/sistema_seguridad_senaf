@@ -4,6 +4,7 @@ import Visita from "./visitas.model.js";
 import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
 const QR_PREFIX = "SENAF_CITA_QR::";
+const DEFAULT_TIMEZONE = "America/Tegucigalpa";
 
 /* ───────────────────────── Helpers ───────────────────────── */
 
@@ -386,6 +387,111 @@ function buildOwnCitasMatch(req) {
   }
 
   return or.length ? { $or: or } : null;
+}
+
+/* ───────────────────────── Helpers QR / fecha ───────────────────────── */
+
+function normalizeQrRaw(raw) {
+  return String(raw || "").trim();
+}
+
+function getClientTimeZone(req) {
+  const value =
+    req?.body?.clientTimeZone ||
+    req?.headers?.["x-client-timezone"] ||
+    DEFAULT_TIMEZONE;
+
+  return String(value || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
+}
+
+function formatYmdInTimeZone(dateInput, timeZone = DEFAULT_TIMEZONE) {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return "";
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+
+    const year = parts.find((p) => p.type === "year")?.value || "";
+    const month = parts.find((p) => p.type === "month")?.value || "";
+    const day = parts.find((p) => p.type === "day")?.value || "";
+
+    if (!year || !month || !day) return "";
+    return `${year}-${month}-${day}`;
+  } catch {
+    const y = date.getFullYear();
+    const m = `${date.getMonth() + 1}`.padStart(2, "0");
+    const d = `${date.getDate()}`.padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+}
+
+function getTodayYmdFromRequest(req, timeZone = DEFAULT_TIMEZONE) {
+  const clientDate = String(req?.body?.clientDate || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clientDate)) return clientDate;
+
+  const clientNowIso = String(req?.body?.clientNowIso || "").trim();
+  if (clientNowIso) {
+    const dt = new Date(clientNowIso);
+    if (!Number.isNaN(dt.getTime())) {
+      const ymd = formatYmdInTimeZone(dt, timeZone);
+      if (ymd) return ymd;
+    }
+  }
+
+  return formatYmdInTimeZone(new Date(), timeZone);
+}
+
+function isCitaForToday(citaAt, todayYmd, timeZone = DEFAULT_TIMEZONE) {
+  if (!citaAt || !todayYmd) return false;
+  const citaYmd = formatYmdInTimeZone(citaAt, timeZone);
+  return !!citaYmd && citaYmd === todayYmd;
+}
+
+function setCheckinFields(visita, req, now = new Date(), method = "manual") {
+  const actorId = getActorId(req);
+  const actorName = getActorName(req);
+
+  visita.estado = "Dentro";
+
+  if (!visita.fechaEntrada) {
+    visita.fechaEntrada = now;
+  }
+
+  if (!visita.validatedAt) {
+    visita.validatedAt = now;
+  }
+
+  if (!visita.ingresadaAt) {
+    visita.ingresadaAt = now;
+  }
+
+  if (actorId && !visita.validatedBy) {
+    visita.validatedBy = actorId;
+  }
+
+  if (actorId && !visita.ingresadaBy) {
+    visita.ingresadaBy = actorId;
+  }
+
+  visita.checkedInMethod = method;
+  visita.checkedInByName = actorName;
+}
+
+function buildScanQrResponseItem(visita, extra = {}) {
+  const item = toPlain(visita) || {};
+  return {
+    ...item,
+    ...extra,
+    checkinOk: item.estado === "Dentro",
+    ingresoRegistrado: item.estado === "Dentro",
+    checkedInMethod: item.checkedInMethod || extra.checkedInMethod || "qr",
+    checkedInByName: item.checkedInByName || extra.checkedInByName || "",
+  };
 }
 
 /**
@@ -830,7 +936,10 @@ export async function checkinCita(req, res) {
     if (estadoActual === "Dentro") {
       return res.json({
         ok: true,
-        item: visita,
+        item: buildScanQrResponseItem(visita, {
+          checkedInMethod: visita.checkedInMethod || "manual",
+          checkedInByName: visita.checkedInByName || getActorName(req),
+        }),
         message: "La cita ya estaba registrada como dentro",
       });
     }
@@ -856,31 +965,32 @@ export async function checkinCita(req, res) {
       });
     }
 
+    if (!visita.citaAt || Number.isNaN(new Date(visita.citaAt).getTime())) {
+      return res.status(409).json({
+        ok: false,
+        error: "La cita no tiene una fecha válida",
+      });
+    }
+
+    const timeZone = getClientTimeZone(req);
+    const todayYmd = getTodayYmdFromRequest(req, timeZone);
+
+    if (!isCitaForToday(visita.citaAt, todayYmd, timeZone)) {
+      return res.status(409).json({
+        ok: false,
+        error: "El QR o la cita no corresponden al día actual",
+        item: buildScanQrResponseItem(visita, {
+          validForToday: false,
+          citaDateLocal: formatYmdInTimeZone(visita.citaAt, timeZone),
+          todayLocal: todayYmd,
+        }),
+      });
+    }
+
     const before = toPlain(visita);
-    const actorId = getActorId(req);
     const now = new Date();
 
-    visita.estado = "Dentro";
-
-    if (!visita.fechaEntrada) {
-      visita.fechaEntrada = now;
-    }
-
-    if (!visita.validatedAt) {
-      visita.validatedAt = now;
-    }
-
-    if (!visita.ingresadaAt) {
-      visita.ingresadaAt = now;
-    }
-
-    if (actorId && !visita.validatedBy) {
-      visita.validatedBy = actorId;
-    }
-
-    if (actorId && !visita.ingresadaBy) {
-      visita.ingresadaBy = actorId;
-    }
+    setCheckinFields(visita, req, now, "manual");
 
     await visita.save();
 
@@ -899,6 +1009,8 @@ export async function checkinCita(req, res) {
       meta: {
         documento: visita.documento || "",
         fechaEntrada: visita.fechaEntrada || null,
+        checkedInMethod: visita.checkedInMethod || "manual",
+        checkedInByName: visita.checkedInByName || getActorName(req),
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -906,7 +1018,15 @@ export async function checkinCita(req, res) {
       },
     });
 
-    return res.json({ ok: true, item: visita });
+    return res.json({
+      ok: true,
+      item: buildScanQrResponseItem(visita, {
+        validForToday: true,
+        todayLocal: todayYmd,
+        citaDateLocal: formatYmdInTimeZone(visita.citaAt, timeZone),
+      }),
+      message: "Ingreso registrado correctamente",
+    });
   } catch (err) {
     console.error("[visitas] checkinCita", err);
     return res.status(500).json({ ok: false, error: err.message });
@@ -985,8 +1105,8 @@ export async function updateCitaEstado(req, res) {
  */
 export async function scanQrCita(req, res) {
   try {
-    const { qrText, qrPayload } = req.body || {};
-    const raw = qrText || qrPayload;
+    const { qrText, qrPayload, source } = req.body || {};
+    const raw = normalizeQrRaw(qrText || qrPayload);
 
     if (!raw || typeof raw !== "string") {
       return res.status(400).json({
@@ -1022,7 +1142,33 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: "El QR pertenece a un registro que no es una cita agendada",
-        item: visita,
+        item: buildScanQrResponseItem(visita),
+      });
+    }
+
+    if (!visita.citaAt || Number.isNaN(new Date(visita.citaAt).getTime())) {
+      return res.status(409).json({
+        ok: false,
+        error: "La cita asociada al QR no tiene una fecha válida",
+        item: buildScanQrResponseItem(visita),
+      });
+    }
+
+    const timeZone = getClientTimeZone(req);
+    const todayYmd = getTodayYmdFromRequest(req, timeZone);
+    const citaDateLocal = formatYmdInTimeZone(visita.citaAt, timeZone);
+
+    if (!isCitaForToday(visita.citaAt, todayYmd, timeZone)) {
+      return res.status(409).json({
+        ok: false,
+        error: "Este QR solo tiene validez para el día de la cita",
+        item: buildScanQrResponseItem(visita, {
+          validForToday: false,
+          todayLocal: todayYmd,
+          citaDateLocal,
+          checkedInMethod: visita.checkedInMethod || "qr",
+          checkedInByName: visita.checkedInByName || "",
+        }),
       });
     }
 
@@ -1032,7 +1178,11 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: "La visita ya fue finalizada",
-        item: visita,
+        item: buildScanQrResponseItem(visita, {
+          validForToday: true,
+          todayLocal: todayYmd,
+          citaDateLocal,
+        }),
       });
     }
 
@@ -1040,7 +1190,11 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: `La cita no puede ingresar porque está en estado "${estadoActual}"`,
-        item: visita,
+        item: buildScanQrResponseItem(visita, {
+          validForToday: true,
+          todayLocal: todayYmd,
+          citaDateLocal,
+        }),
       });
     }
 
@@ -1048,7 +1202,13 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: "La cita ya fue registrada previamente como dentro",
-        item: visita,
+        item: buildScanQrResponseItem(visita, {
+          validForToday: true,
+          todayLocal: todayYmd,
+          citaDateLocal,
+          checkedInMethod: visita.checkedInMethod || "qr",
+          checkedInByName: visita.checkedInByName || "",
+        }),
       });
     }
 
@@ -1056,32 +1216,18 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: `La cita no puede ingresar desde el estado "${estadoActual}"`,
-        item: visita,
+        item: buildScanQrResponseItem(visita, {
+          validForToday: true,
+          todayLocal: todayYmd,
+          citaDateLocal,
+        }),
       });
     }
 
     const before = toPlain(visita);
-    const actorId = getActorId(req);
     const now = new Date();
 
-    visita.estado = "Dentro";
-    visita.validatedAt = now;
-
-    if (actorId) {
-      visita.validatedBy = actorId;
-    }
-
-    if (!visita.fechaEntrada) {
-      visita.fechaEntrada = now;
-    }
-
-    if (!visita.ingresadaAt) {
-      visita.ingresadaAt = now;
-    }
-
-    if (actorId) {
-      visita.ingresadaBy = actorId;
-    }
+    setCheckinFields(visita, req, now, source === "manual" ? "manual" : "qr");
 
     await visita.save();
 
@@ -1101,6 +1247,11 @@ export async function scanQrCita(req, res) {
         qrToken,
         documento: visita.documento || "",
         fechaEntrada: visita.fechaEntrada || null,
+        validForToday: true,
+        todayLocal: todayYmd,
+        citaDateLocal,
+        checkedInMethod: visita.checkedInMethod || "qr",
+        checkedInByName: visita.checkedInByName || getActorName(req),
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -1110,7 +1261,13 @@ export async function scanQrCita(req, res) {
 
     return res.json({
       ok: true,
-      item: visita,
+      item: buildScanQrResponseItem(visita, {
+        validForToday: true,
+        todayLocal: todayYmd,
+        citaDateLocal,
+        checkedInMethod: visita.checkedInMethod || "qr",
+        checkedInByName: visita.checkedInByName || getActorName(req),
+      }),
       message: "Ingreso registrado correctamente",
     });
   } catch (err) {
