@@ -2,7 +2,7 @@ import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
-import ChatDock from "./ChatDock.jsx";
+import ChatDock from "./chat/ChatDock.jsx";
 import Footer from "./Footer.jsx";
 import { useLayoutUI } from "./layout-ui.jsx";
 import GlobalPanicListener from "./GlobalPanicListener.jsx";
