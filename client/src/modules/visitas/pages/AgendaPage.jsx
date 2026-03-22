@@ -64,24 +64,86 @@ const VEHICLE_MODELS_API_URL =
   import.meta.env.VITE_VEHICLE_MODELS_API_URL ||
   `${API_BASE}/catalogos/vehiculos/modelos`;
 
+/* ================== Helpers de rol ================== */
+
+function normalizeRoleName(role) {
+  if (!role) return "";
+
+  if (typeof role === "string") {
+    return role.trim().toLowerCase();
+  }
+
+  if (typeof role === "object") {
+    return String(
+      role.key ||
+        role.code ||
+        role.slug ||
+        role.name ||
+        role.nombre ||
+        role.label ||
+        role.rol ||
+        role.role ||
+        role.tipo ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
+  }
+
+  return String(role).trim().toLowerCase();
+}
+
+function extractRoleNames(user) {
+  if (!user || typeof user !== "object") return [];
+
+  const candidates = [
+    user.role,
+    user.rol,
+    user.userRole,
+    user.tipo,
+    user.roles,
+    user.authorities,
+    user.perfiles,
+    user.profile,
+    user.perfil,
+  ];
+
+  const list = [];
+
+  for (const item of candidates) {
+    if (Array.isArray(item)) {
+      item.forEach((x) => {
+        const r = normalizeRoleName(x);
+        if (r) list.push(r);
+      });
+      continue;
+    }
+
+    const r = normalizeRoleName(item);
+    if (r) list.push(r);
+  }
+
+  return Array.from(new Set(list));
+}
+
+function isVisitorUser(user) {
+  const roles = extractRoleNames(user);
+  return roles.some((r) =>
+    ["visita", "visitante", "visitor", "visitors"].includes(r)
+  );
+}
+
 /* ================== Página ================== */
-
-
 
 export default function AgendaPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState("agendar");
 
   const currentUser = useMemo(() => readCurrentUser(), []);
-  const currentRole = String(
-    currentUser?.role ||
-      currentUser?.rol ||
-      currentUser?.userRole ||
-      currentUser?.tipo ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
+
+  const currentRoles = useMemo(() => extractRoleNames(currentUser), [currentUser]);
+
+  const currentRole = useMemo(() => currentRoles[0] || "", [currentRoles]);
 
   const currentDocumento = useMemo(() => {
     return normalizeDocumento(
@@ -92,7 +154,7 @@ export default function AgendaPage() {
     );
   }, [currentUser]);
 
-  const isVisitante = ["visita", "visitante"].includes(currentRole);
+  const isVisitante = useMemo(() => isVisitorUser(currentUser), [currentUser]);
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
   const initialFormState = {
@@ -601,58 +663,184 @@ export default function AgendaPage() {
     }
   }
 
-   async function handleSubmit(e) {
-  e.preventDefault();
-  if (!validate()) return;
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!validate()) return;
 
-  setSubmitting(true);
-  setOkMsg("");
-  setErrorMsg("");
+    setSubmitting(true);
+    setOkMsg("");
+    setErrorMsg("");
 
-  const fecha = form.fecha;
-  const hora = form.hora;
-  const citaAtISO = buildISOFromDateAndTime(fecha, hora);
+    const fecha = form.fecha;
+    const hora = form.hora;
+    const citaAtISO = buildISOFromDateAndTime(fecha, hora);
 
-  if (!citaAtISO) {
-    setErrorMsg("La fecha u hora de la cita no es válida.");
-    setSubmitting(false);
-    return;
-  }
+    if (!citaAtISO) {
+      setErrorMsg("La fecha u hora de la cita no es válida.");
+      setSubmitting(false);
+      return;
+    }
 
-  const finalModel =
-    vehicleModel === "__custom"
-      ? vehicleModelCustom.trim()
-      : vehicleBrand === "Otra"
-      ? vehicleModelCustom.trim()
-      : vehicleModel.trim();
+    const finalModel =
+      vehicleModel === "__custom"
+        ? vehicleModelCustom.trim()
+        : vehicleBrand === "Otra"
+        ? vehicleModelCustom.trim()
+        : vehicleModel.trim();
 
-  const tipo = form.tipoCita || "personal";
+    const tipo = form.tipoCita || "personal";
 
-  const companionsPayload = hasCompanion
-    ? companions
-        .map((comp) => ({
-          nombre: String(comp?.nombre || "").trim(),
-          documento: String(comp?.documento || "").trim(),
-        }))
-        .filter((comp) => comp.nombre && comp.documento)
-    : [];
+    const companionsPayload = hasCompanion
+      ? companions
+          .map((comp) => ({
+            nombre: String(comp?.nombre || "").trim(),
+            documento: String(comp?.documento || "").trim(),
+          }))
+          .filter((comp) => comp.nombre && comp.documento)
+      : [];
 
-  try {
-    // ========== MODO EDICIÓN ==========
-    if (editingCita) {
-      const updated = {
-        ...editingCita,
+    try {
+      // ========== MODO EDICIÓN ==========
+      if (editingCita) {
+        const updated = {
+          ...editingCita,
+          nombre: form.visitante.trim(),
+          documento: form.documento.trim(),
+          tipoCita: tipo,
+          empresa: form.empresa.trim(),
+          empleado: form.empleado.trim(),
+          motivo: form.motivo.trim(),
+          telefono: form.telefono.trim() || null,
+          correo: form.correo.trim() || null,
+          fecha,
+          hora,
+          citaAt: citaAtISO,
+          acompanado: !!hasCompanion,
+          acompanantes: companionsPayload,
+          llegoEnVehiculo: !!hasVehicle,
+          vehiculo: hasVehicle
+            ? {
+                marca: vehicleBrand.trim(),
+                modelo: finalModel,
+                placa: vehiclePlate.trim(),
+              }
+            : null,
+        };
+
+        const payload = {
+          nombre: updated.nombre,
+          documento: updated.documento,
+          empresa: updated.empresa || null,
+          empleado: updated.empleado || null,
+          motivo: updated.motivo,
+          telefono: updated.telefono || null,
+          correo: updated.correo || null,
+          citaAt: updated.citaAt,
+          llegoEnVehiculo: updated.llegoEnVehiculo,
+          vehiculo: updated.vehiculo,
+          acompanado: updated.acompanado,
+          acompanantes: updated.acompanantes,
+        };
+
+        let serverError = "";
+        let itemFromServer = null;
+
+        try {
+          const res = await fetch(`${CITAS_API_URL}/${editingCita._id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await res.json().catch(() => null);
+
+          if (res.ok && data?.ok) {
+            itemFromServer = data?.item || null;
+          } else {
+            if (data && typeof data.error === "string") {
+              serverError = data.error;
+            } else if (data && typeof data.message === "string") {
+              serverError = data.message;
+            } else {
+              serverError = "No se pudo actualizar la cita en el servidor.";
+            }
+          }
+        } catch (err) {
+          console.warn("[citas] error de red al actualizar en backend:", err);
+          serverError =
+            "No se pudo conectar con el servidor para actualizar la cita.";
+        }
+
+        if (serverError) {
+          setErrorMsg(serverError);
+          setOkMsg("");
+          setSubmitting(false);
+          return;
+        }
+
+        const finalItem = itemFromServer
+          ? {
+              ...updated,
+              ...itemFromServer,
+              acompanado:
+                typeof itemFromServer.acompanado === "boolean"
+                  ? itemFromServer.acompanado
+                  : updated.acompanado,
+              acompanantes: normalizeCompanionArray(
+                itemFromServer.acompanantes?.length
+                  ? itemFromServer.acompanantes
+                  : updated.acompanantes
+              ),
+            }
+          : updated;
+
+        setItems((prev) =>
+          prev.map((it) => (it._id === editingCita._id ? finalItem : it))
+        );
+
+        const stored = loadStoredCitas();
+        let found = false;
+
+        const storedUpdated = stored.map((it) => {
+          const key = it._id || it.id;
+          if (key === editingCita._id) {
+            found = true;
+            return { ...it, ...finalItem };
+          }
+          return it;
+        });
+
+        if (!found) {
+          storedUpdated.push(finalItem);
+        }
+
+        saveStoredCitas(storedUpdated);
+
+        setOkMsg("✅ Cita actualizada correctamente.");
+        setErrorMsg("");
+        resetFormState();
+
+        if (tab === "citas") {
+          fetchCitas();
+        }
+        return;
+      }
+
+      // ========== CREAR NUEVA CITA ==========
+      const nuevaCita = {
+        _id: `local-${Date.now()}`,
         nombre: form.visitante.trim(),
         documento: form.documento.trim(),
         tipoCita: tipo,
         empresa: form.empresa.trim(),
         empleado: form.empleado.trim(),
         motivo: form.motivo.trim(),
-        telefono: form.telefono.trim() || null,
-        correo: form.correo.trim() || null,
+        telefono: form.telefono.trim() || undefined,
+        correo: form.correo.trim() || undefined,
         fecha,
         hora,
         citaAt: citaAtISO,
+        estado: "Programada",
         acompanado: !!hasCompanion,
         acompanantes: companionsPayload,
         llegoEnVehiculo: !!hasVehicle,
@@ -663,29 +851,43 @@ export default function AgendaPage() {
               placa: vehiclePlate.trim(),
             }
           : null,
+        qrDataUrl: "",
+        qrPayload: "",
+        qrToken: "",
       };
 
       const payload = {
-        nombre: updated.nombre,
-        documento: updated.documento,
-        empresa: updated.empresa || null,
-        empleado: updated.empleado || null,
-        motivo: updated.motivo,
-        telefono: updated.telefono || null,
-        correo: updated.correo || null,
-        citaAt: updated.citaAt,
-        llegoEnVehiculo: updated.llegoEnVehiculo,
-        vehiculo: updated.vehiculo,
-        acompanado: updated.acompanado,
-        acompanantes: updated.acompanantes,
+        nombre: nuevaCita.nombre,
+        documento: nuevaCita.documento,
+        empresa: nuevaCita.empresa || null,
+        empleado: nuevaCita.empleado,
+        motivo: nuevaCita.motivo,
+        telefono: nuevaCita.telefono || null,
+        correo: nuevaCita.correo || null,
+        citaAt: nuevaCita.citaAt,
+        llegoEnVehiculo: !!nuevaCita.vehiculo,
+        vehiculo: nuevaCita.vehiculo
+          ? {
+              marca: nuevaCita.vehiculo.marca,
+              modelo: nuevaCita.vehiculo.modelo,
+              placa: nuevaCita.vehiculo.placa,
+            }
+          : null,
+        tipoCita: tipo,
+        acompanado: !!hasCompanion,
+        acompanantes: companionsPayload,
       };
 
+      let syncedWithServer = false;
       let serverError = "";
-      let itemFromServer = null;
+      let createdFromServer = null;
+      let qrDataUrl = "";
+      let qrPayload = "";
+      let qrToken = "";
 
       try {
-        const res = await fetch(`${CITAS_API_URL}/${editingCita._id}`, {
-          method: "PATCH",
+        const res = await fetch(CITAS_API_URL, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
@@ -693,19 +895,58 @@ export default function AgendaPage() {
         const data = await res.json().catch(() => null);
 
         if (res.ok && data?.ok) {
-          itemFromServer = data?.item || null;
+          createdFromServer = data?.item || null;
+          qrDataUrl = data?.qrDataUrl || "";
+          qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
+          qrToken = data?.qrToken || data?.item?.qrToken || "";
+
+          if (createdFromServer) {
+            syncedWithServer = true;
+            nuevaCita._id = createdFromServer._id || nuevaCita._id;
+            nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
+            nuevaCita.estado =
+              normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
+            nuevaCita.qrDataUrl = qrDataUrl;
+            nuevaCita.qrPayload = qrPayload;
+            nuevaCita.qrToken = qrToken;
+            nuevaCita.nombre = createdFromServer.nombre || nuevaCita.nombre;
+            nuevaCita.documento =
+              createdFromServer.documento || nuevaCita.documento;
+            nuevaCita.empresa = createdFromServer.empresa || nuevaCita.empresa;
+            nuevaCita.empleado =
+              createdFromServer.empleado || nuevaCita.empleado;
+            nuevaCita.motivo = createdFromServer.motivo || nuevaCita.motivo;
+            nuevaCita.telefono =
+              createdFromServer.telefono || nuevaCita.telefono;
+            nuevaCita.correo = createdFromServer.correo || nuevaCita.correo;
+            nuevaCita.vehiculo =
+              createdFromServer.vehiculo || nuevaCita.vehiculo;
+            nuevaCita.llegoEnVehiculo =
+              typeof createdFromServer.llegoEnVehiculo === "boolean"
+                ? createdFromServer.llegoEnVehiculo
+                : nuevaCita.llegoEnVehiculo;
+            nuevaCita.acompanado =
+              typeof createdFromServer.acompanado === "boolean"
+                ? createdFromServer.acompanado
+                : nuevaCita.acompanado;
+            nuevaCita.acompanantes = normalizeCompanionArray(
+              createdFromServer.acompanantes?.length
+                ? createdFromServer.acompanantes
+                : nuevaCita.acompanantes
+            );
+          }
         } else {
+          console.warn("[citas] fallo al crear en backend:", data);
           if (data && typeof data.error === "string") {
             serverError = data.error;
           } else if (data && typeof data.message === "string") {
             serverError = data.message;
           } else {
-            serverError = "No se pudo actualizar la cita en el servidor.";
+            serverError = "No se pudo crear la cita en el servidor.";
           }
         }
       } catch (err) {
-        console.warn("[citas] error de red al actualizar en backend:", err);
-        serverError = "No se pudo conectar con el servidor para actualizar la cita.";
+        console.warn("[citas] error de red al crear en backend:", err);
       }
 
       if (serverError) {
@@ -715,217 +956,42 @@ export default function AgendaPage() {
         return;
       }
 
-      const finalItem = itemFromServer
-        ? {
-            ...updated,
-            ...itemFromServer,
-            acompanado:
-              typeof itemFromServer.acompanado === "boolean"
-                ? itemFromServer.acompanado
-                : updated.acompanado,
-            acompanantes: normalizeCompanionArray(
-              itemFromServer.acompanantes?.length
-                ? itemFromServer.acompanantes
-                : updated.acompanantes
-            ),
-          }
-        : updated;
+      const current = loadStoredCitas();
+      const next = [...current, nuevaCita];
+      saveStoredCitas(next);
 
-      setItems((prev) =>
-        prev.map((it) => (it._id === editingCita._id ? finalItem : it))
-      );
+      setItems((prev) => [...prev, nuevaCita]);
 
-      const stored = loadStoredCitas();
-      let found = false;
+      if (syncedWithServer) {
+        setOkMsg("✅ Cita agendada correctamente.");
+        setErrorMsg("");
 
-      const storedUpdated = stored.map((it) => {
-        const key = it._id || it.id;
-        if (key === editingCita._id) {
-          found = true;
-          return { ...it, ...finalItem };
+        if (qrDataUrl || qrPayload || qrToken) {
+          openQrModal({
+            cita: nuevaCita,
+            qrDataUrl,
+            qrPayload,
+            qrToken,
+          });
         }
-        return it;
-      });
-
-      if (!found) {
-        storedUpdated.push(finalItem);
+      } else {
+        setOkMsg(
+          "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
+        );
+        setErrorMsg("");
       }
 
-      saveStoredCitas(storedUpdated);
-
-      setOkMsg("✅ Cita actualizada correctamente.");
-      setErrorMsg("");
       resetFormState();
 
       if (tab === "citas") {
         fetchCitas();
       }
-      return;
-    }
-
-    // ========== CREAR NUEVA CITA ==========
-    const nuevaCita = {
-      _id: `local-${Date.now()}`,
-      nombre: form.visitante.trim(),
-      documento: form.documento.trim(),
-      tipoCita: tipo,
-      empresa: form.empresa.trim(),
-      empleado: form.empleado.trim(),
-      motivo: form.motivo.trim(),
-      telefono: form.telefono.trim() || undefined,
-      correo: form.correo.trim() || undefined,
-      fecha,
-      hora,
-      citaAt: citaAtISO,
-      estado: "Programada",
-      acompanado: !!hasCompanion,
-      acompanantes: companionsPayload,
-      llegoEnVehiculo: !!hasVehicle,
-      vehiculo: hasVehicle
-        ? {
-            marca: vehicleBrand.trim(),
-            modelo: finalModel,
-            placa: vehiclePlate.trim(),
-          }
-        : null,
-      qrDataUrl: "",
-      qrPayload: "",
-      qrToken: "",
-    };
-
-    const payload = {
-      nombre: nuevaCita.nombre,
-      documento: nuevaCita.documento,
-      empresa: nuevaCita.empresa || null,
-      empleado: nuevaCita.empleado,
-      motivo: nuevaCita.motivo,
-      telefono: nuevaCita.telefono || null,
-      correo: nuevaCita.correo || null,
-      citaAt: nuevaCita.citaAt,
-      llegoEnVehiculo: !!nuevaCita.vehiculo,
-      vehiculo: nuevaCita.vehiculo
-        ? {
-            marca: nuevaCita.vehiculo.marca,
-            modelo: nuevaCita.vehiculo.modelo,
-            placa: nuevaCita.vehiculo.placa,
-          }
-        : null,
-      tipoCita: tipo,
-      acompanado: !!hasCompanion,
-      acompanantes: companionsPayload,
-    };
-
-    let syncedWithServer = false;
-    let serverError = "";
-    let createdFromServer = null;
-    let qrDataUrl = "";
-    let qrPayload = "";
-    let qrToken = "";
-
-    try {
-      const res = await fetch(CITAS_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json().catch(() => null);
-
-      if (res.ok && data?.ok) {
-        createdFromServer = data?.item || null;
-        qrDataUrl = data?.qrDataUrl || "";
-        qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
-        qrToken = data?.qrToken || data?.item?.qrToken || "";
-
-        if (createdFromServer) {
-          syncedWithServer = true;
-          nuevaCita._id = createdFromServer._id || nuevaCita._id;
-          nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
-          nuevaCita.estado =
-            normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
-          nuevaCita.qrDataUrl = qrDataUrl;
-          nuevaCita.qrPayload = qrPayload;
-          nuevaCita.qrToken = qrToken;
-          nuevaCita.nombre = createdFromServer.nombre || nuevaCita.nombre;
-          nuevaCita.documento =
-            createdFromServer.documento || nuevaCita.documento;
-          nuevaCita.empresa = createdFromServer.empresa || nuevaCita.empresa;
-          nuevaCita.empleado = createdFromServer.empleado || nuevaCita.empleado;
-          nuevaCita.motivo = createdFromServer.motivo || nuevaCita.motivo;
-          nuevaCita.telefono = createdFromServer.telefono || nuevaCita.telefono;
-          nuevaCita.correo = createdFromServer.correo || nuevaCita.correo;
-          nuevaCita.vehiculo = createdFromServer.vehiculo || nuevaCita.vehiculo;
-          nuevaCita.llegoEnVehiculo =
-            typeof createdFromServer.llegoEnVehiculo === "boolean"
-              ? createdFromServer.llegoEnVehiculo
-              : nuevaCita.llegoEnVehiculo;
-          nuevaCita.acompanado =
-            typeof createdFromServer.acompanado === "boolean"
-              ? createdFromServer.acompanado
-              : nuevaCita.acompanado;
-          nuevaCita.acompanantes = normalizeCompanionArray(
-            createdFromServer.acompanantes?.length
-              ? createdFromServer.acompanantes
-              : nuevaCita.acompanantes
-          );
-        }
-      } else {
-        console.warn("[citas] fallo al crear en backend:", data);
-        if (data && typeof data.error === "string") {
-          serverError = data.error;
-        } else if (data && typeof data.message === "string") {
-          serverError = data.message;
-        } else {
-          serverError = "No se pudo crear la cita en el servidor.";
-        }
-      }
     } catch (err) {
-      console.warn("[citas] error de red al crear en backend:", err);
-    }
-
-    if (serverError) {
-      setErrorMsg(serverError);
-      setOkMsg("");
+      console.error("[citas] Error agendando:", err);
+      setErrorMsg("No se pudo agendar la cita (error inesperado).");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    const current = loadStoredCitas();
-    const next = [...current, nuevaCita];
-    saveStoredCitas(next);
-
-    setItems((prev) => [...prev, nuevaCita]);
-
-    if (syncedWithServer) {
-      setOkMsg("✅ Cita agendada correctamente.");
-      setErrorMsg("");
-
-      if (qrDataUrl || qrPayload || qrToken) {
-        openQrModal({
-          cita: nuevaCita,
-          qrDataUrl,
-          qrPayload,
-          qrToken,
-        });
-      }
-    } else {
-      setOkMsg(
-        "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
-      );
-      setErrorMsg("");
-    }
-
-    resetFormState();
-
-    if (tab === "citas") {
-      fetchCitas();
-    }
-  } catch (err) {
-    console.error("[citas] Error agendando:", err);
-    setErrorMsg("No se pudo agendar la cita (error inesperado).");
-  } finally {
-    setSubmitting(false);
-  }
   }
 
   function handleEditCita(it) {
@@ -1724,7 +1790,6 @@ export default function AgendaPage() {
         qrModal={qrModal}
         onClose={closeQrModal}
       />
-
     </div>
   );
 }

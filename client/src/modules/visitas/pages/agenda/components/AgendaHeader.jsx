@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function AgendaHeader({ isVisitante, onBack }) {
+export default function AgendaHeader({ isVisitante = false, onBack }) {
   return (
     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
       <div>
@@ -15,17 +15,18 @@ export default function AgendaHeader({ isVisitante, onBack }) {
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
-        {!isVisitante && (
+      {!isVisitante ? (
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={onBack}
             className="text-xs hover:underline"
             style={{ color: "#60a5fa" }}
           >
             ← Volver a Gestión de Visitantes
           </button>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
