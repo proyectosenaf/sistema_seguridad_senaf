@@ -165,11 +165,6 @@ api.interceptors.response.use(
       clearToken();
     }
 
-    // ✅ Importante:
-    // conservar el error original de Axios para no perder:
-    // - error.response.data
-    // - error.response.status
-    // - error.config
     return Promise.reject(error);
   }
 );

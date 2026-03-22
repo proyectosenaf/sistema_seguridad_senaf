@@ -83,7 +83,8 @@ async function req(
 
   const sendingForm = isFormData(body);
   const sendingBinary = isBlob(body) || isArrayBuffer(body);
-  const shouldJson = json && !sendingForm && !sendingBinary && body !== undefined && body !== null;
+  const shouldJson =
+    json && !sendingForm && !sendingBinary && body !== undefined && body !== null;
 
   if (shouldJson) headers["Content-Type"] = "application/json";
 
@@ -204,7 +205,11 @@ function to01(v, def = 0) {
 
 function normalizePermissionKeys(list = []) {
   const arr = Array.isArray(list) ? list : [list];
-  return [...new Set(arr.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean))];
+  return [
+    ...new Set(
+      arr.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean)
+    ),
+  ];
 }
 
 /* =========================
@@ -315,12 +320,15 @@ export const iamApi = {
   getCivilStatusCatalog(token) {
     return reqCatalogs("/catalogos/estado-civil", "/catalogs/civil-status", token);
   },
+
   getCountriesCatalog(token) {
     return reqCatalogs("/catalogos/paises", "/catalogs/countries", token);
   },
+
   getProfessionsCatalog(token) {
     return reqCatalogs("/catalogos/profesiones", "/catalogs/professions", token);
   },
+
   getAllCatalogs(token) {
     return reqCatalogs("/catalogos/todos", "/catalogs/all", token);
   },
@@ -330,7 +338,9 @@ export const iamApi = {
       const r = await this.getAllCatalogs(token);
 
       const src =
-        r?.items && typeof r.items === "object" && !Array.isArray(r.items) ? r.items : r;
+        r?.items && typeof r.items === "object" && !Array.isArray(r.items)
+          ? r.items
+          : r;
 
       const estadosCiviles = src?.estadosCiviles || src?.civilStatus || src?.civil || [];
       const countries = src?.countries || src?.paises || [];
@@ -344,7 +354,8 @@ export const iamApi = {
         raw: r,
       };
     } catch (e) {
-      const asArray = (x) => (Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : []);
+      const asArray = (x) =>
+        Array.isArray(x) ? x : Array.isArray(x?.items) ? x.items : [];
 
       const [civil, ctys, prof] = await Promise.allSettled([
         this.getCivilStatusCatalog(token),
@@ -365,12 +376,19 @@ export const iamApi = {
   listRoles(token) {
     return req("/roles", { token });
   },
+
   createRole(body, token) {
     return req("/roles", { method: "POST", body: body || {}, token });
   },
+
   updateRole(id, body, token) {
-    return req(`/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/roles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
+
   deleteRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
@@ -378,6 +396,7 @@ export const iamApi = {
   getRolePerms(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
+
   setRolePerms(id, permissionKeys, token) {
     const normalized = normalizePermissionKeys(permissionKeys);
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
@@ -402,6 +421,7 @@ export const iamApi = {
   listPermsForRole(id, token) {
     return req(`/roles/${encodeURIComponent(id)}/permissions`, { token });
   },
+
   setPermsForRole(id, permissionKeys, token) {
     const normalized = normalizePermissionKeys(permissionKeys);
     return req(`/roles/${encodeURIComponent(id)}/permissions`, {
@@ -414,9 +434,11 @@ export const iamApi = {
   listPerms(params = {}, token) {
     return req(`/permissions${buildQueryString(params)}`, { token });
   },
+
   createPerm(body, token) {
     return req("/permissions", { method: "POST", body: body || {}, token });
   },
+
   updatePerm(id, body, token) {
     return req(`/permissions/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -424,6 +446,7 @@ export const iamApi = {
       token,
     });
   },
+
   deletePerm(id, token) {
     return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
   },
@@ -478,15 +501,27 @@ export const iamApi = {
   },
 
   updateUser(id, body, token) {
-    return req(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: body || {}, token });
+    return req(`/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: body || {},
+      token,
+    });
   },
 
   enableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/enable`, { method: "POST", body: {}, token });
+    return req(`/users/${encodeURIComponent(id)}/enable`, {
+      method: "POST",
+      body: {},
+      token,
+    });
   },
 
   disableUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}/disable`, { method: "POST", body: {}, token });
+    return req(`/users/${encodeURIComponent(id)}/disable`, {
+      method: "POST",
+      body: {},
+      token,
+    });
   },
 
   deleteUser(id, token) {

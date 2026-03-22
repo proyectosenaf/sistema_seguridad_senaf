@@ -1,6 +1,7 @@
 // client/src/modules/visitas/pages/AgendaPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import api from "../../../lib/api.js";
 import {
   DNI_DIGITS,
   PHONE_MIN_DIGITS,
@@ -45,25 +46,6 @@ import AgendaHeader from "./agenda/components/AgendaHeader.jsx";
 import AgendaTabs from "./agenda/components/AgendaTabs.jsx";
 import AgendaQrModal from "./agenda/components/AgendaQrModal.jsx";
 
-/* ========= ROOT API para backend ========= */
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:8080/api"
-).replace(/\/$/, "");
-
-// ⬇️ Endpoint del backend para crear / listar CITA
-const CITAS_API_URL = `${API_BASE}/citas`;
-
-// ⬇️ Catálogos backend
-const VEHICLE_BRANDS_API_URL =
-  import.meta.env.VITE_VEHICLE_BRANDS_API_URL ||
-  `${API_BASE}/catalogos/vehiculos/marcas`;
-
-const VEHICLE_MODELS_API_URL =
-  import.meta.env.VITE_VEHICLE_MODELS_API_URL ||
-  `${API_BASE}/catalogos/vehiculos/modelos`;
-
 /* ================== Helpers de rol ================== */
 
 function normalizeRoleName(role) {
@@ -106,6 +88,11 @@ function extractRoleNames(user) {
     user.perfiles,
     user.profile,
     user.perfil,
+    user.user?.role,
+    user.user?.rol,
+    user.user?.userRole,
+    user.user?.tipo,
+    user.user?.roles,
   ];
 
   const list = [];
@@ -133,6 +120,32 @@ function isVisitorUser(user) {
   );
 }
 
+function readUserEmail(user) {
+  return String(
+    user?.email ||
+      user?.correo ||
+      user?.mail ||
+      user?.user?.email ||
+      user?.user?.correo ||
+      user?.user?.mail ||
+      ""
+  ).trim();
+}
+
+function readUserName(user) {
+  return String(
+    user?.nombre ||
+      user?.name ||
+      user?.fullName ||
+      user?.displayName ||
+      user?.user?.nombre ||
+      user?.user?.name ||
+      user?.user?.fullName ||
+      user?.user?.displayName ||
+      ""
+  ).trim();
+}
+
 /* ================== Página ================== */
 
 export default function AgendaPage() {
@@ -141,7 +154,10 @@ export default function AgendaPage() {
 
   const currentUser = useMemo(() => readCurrentUser(), []);
 
-  const currentRoles = useMemo(() => extractRoleNames(currentUser), [currentUser]);
+  const currentRoles = useMemo(
+    () => extractRoleNames(currentUser),
+    [currentUser]
+  );
 
   const currentRole = useMemo(() => currentRoles[0] || "", [currentRoles]);
 
@@ -150,25 +166,38 @@ export default function AgendaPage() {
       currentUser?.documento ||
         currentUser?.dni ||
         currentUser?.identityNumber ||
+        currentUser?.user?.documento ||
+        currentUser?.user?.dni ||
+        currentUser?.user?.identityNumber ||
         ""
     );
   }, [currentUser]);
 
+  const currentEmail = useMemo(() => readUserEmail(currentUser), [currentUser]);
+
+  const currentVisitorName = useMemo(
+    () => readUserName(currentUser),
+    [currentUser]
+  );
+
   const isVisitante = useMemo(() => isVisitorUser(currentUser), [currentUser]);
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
-  const initialFormState = {
-    visitante: "",
-    documento: currentDocumento || "",
-    tipoCita: "personal",
-    empresa: "",
-    empleado: "",
-    motivo: "",
-    fecha: "",
-    hora: "",
-    telefono: "+504 ",
-    correo: "",
-  };
+  const initialFormState = useMemo(
+    () => ({
+      visitante: isVisitante ? currentVisitorName || "" : "",
+      documento: currentDocumento || "",
+      tipoCita: "personal",
+      empresa: "",
+      empleado: "",
+      motivo: "",
+      fecha: "",
+      hora: "",
+      telefono: "+504 ",
+      correo: currentEmail || "",
+    }),
+    [currentDocumento, currentEmail, currentVisitorName, isVisitante]
+  );
 
   const [form, setForm] = useState(initialFormState);
   const [errors, setErrors] = useState({});
@@ -219,6 +248,10 @@ export default function AgendaPage() {
     cita: null,
   });
 
+  useEffect(() => {
+    setForm(initialFormState);
+  }, [initialFormState]);
+
   /* ===================== Catálogos ===================== */
 
   useEffect(() => {
@@ -227,14 +260,9 @@ export default function AgendaPage() {
     (async () => {
       setLoadingBrands(true);
       try {
-        const res = await fetch(VEHICLE_BRANDS_API_URL, {
+        const { data } = await api.get("/catalogos/vehiculos/marcas", {
           headers: { Accept: "application/json" },
         });
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data?.error || "No se pudieron cargar las marcas");
-        }
 
         const items = normalizeCatalogArray(data)
           .map(normalizeBrandItem)
@@ -268,18 +296,10 @@ export default function AgendaPage() {
     (async () => {
       setLoadingModels(true);
       try {
-        const url = `${VEHICLE_MODELS_API_URL}?marca=${encodeURIComponent(
-          vehicleBrand
-        )}`;
-
-        const res = await fetch(url, {
+        const { data } = await api.get("/catalogos/vehiculos/modelos", {
+          params: { marca: vehicleBrand },
           headers: { Accept: "application/json" },
         });
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data?.error || "No se pudieron cargar los modelos");
-        }
 
         const items = normalizeCatalogArray(data)
           .map(normalizeModelItem)
@@ -305,7 +325,9 @@ export default function AgendaPage() {
   function resetFormState() {
     setForm({
       ...initialFormState,
+      visitante: isVisitante ? currentVisitorName || "" : "",
       documento: currentDocumento || "",
+      correo: currentEmail || "",
     });
     setHasCompanion(false);
     setCompanions([]);
@@ -591,21 +613,16 @@ export default function AgendaPage() {
     setLoading(true);
 
     try {
-      const params = new URLSearchParams();
+      const params = {};
 
       if (mode === "month" && month) {
-        params.set("month", month);
+        params.month = month;
       } else if (mode === "day" && dateFilter) {
-        params.set("day", dateFilter);
+        params.day = dateFilter;
       }
 
-      const qs = params.toString();
-      const url = qs ? `${CITAS_API_URL}?${qs}` : CITAS_API_URL;
+      const { data } = await api.get("/citas", { params });
 
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const data = await res.json();
       let list = Array.isArray(data?.items) ? data.items : [];
 
       const stored = loadStoredCitas();
@@ -700,7 +717,6 @@ export default function AgendaPage() {
       : [];
 
     try {
-      // ========== MODO EDICIÓN ==========
       if (editingCita) {
         const updated = {
           ...editingCita,
@@ -740,34 +756,28 @@ export default function AgendaPage() {
           vehiculo: updated.vehiculo,
           acompanado: updated.acompanado,
           acompanantes: updated.acompanantes,
+          tipoCita: updated.tipoCita,
         };
 
         let serverError = "";
         let itemFromServer = null;
 
         try {
-          const res = await fetch(`${CITAS_API_URL}/${editingCita._id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          const data = await res.json().catch(() => null);
-
-          if (res.ok && data?.ok) {
+          const { data } = await api.patch(`/citas/${editingCita._id}`, payload);
+          if (data?.ok) {
             itemFromServer = data?.item || null;
           } else {
-            if (data && typeof data.error === "string") {
-              serverError = data.error;
-            } else if (data && typeof data.message === "string") {
-              serverError = data.message;
-            } else {
-              serverError = "No se pudo actualizar la cita en el servidor.";
-            }
+            serverError =
+              data?.error ||
+              data?.message ||
+              "No se pudo actualizar la cita en el servidor.";
           }
         } catch (err) {
           console.warn("[citas] error de red al actualizar en backend:", err);
           serverError =
+            err?.response?.data?.error ||
+            err?.response?.data?.message ||
+            err?.message ||
             "No se pudo conectar con el servidor para actualizar la cita.";
         }
 
@@ -826,7 +836,6 @@ export default function AgendaPage() {
         return;
       }
 
-      // ========== CREAR NUEVA CITA ==========
       const nuevaCita = {
         _id: `local-${Date.now()}`,
         nombre: form.visitante.trim(),
@@ -886,15 +895,9 @@ export default function AgendaPage() {
       let qrToken = "";
 
       try {
-        const res = await fetch(CITAS_API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+        const { data } = await api.post("/citas", payload);
 
-        const data = await res.json().catch(() => null);
-
-        if (res.ok && data?.ok) {
+        if (data?.ok) {
           createdFromServer = data?.item || null;
           qrDataUrl = data?.qrDataUrl || "";
           qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
@@ -936,17 +939,18 @@ export default function AgendaPage() {
             );
           }
         } else {
-          console.warn("[citas] fallo al crear en backend:", data);
-          if (data && typeof data.error === "string") {
-            serverError = data.error;
-          } else if (data && typeof data.message === "string") {
-            serverError = data.message;
-          } else {
-            serverError = "No se pudo crear la cita en el servidor.";
-          }
+          serverError =
+            data?.error ||
+            data?.message ||
+            "No se pudo crear la cita en el servidor.";
         }
       } catch (err) {
         console.warn("[citas] error de red al crear en backend:", err);
+        serverError =
+          err?.response?.data?.error ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "No se pudo crear la cita en el servidor.";
       }
 
       if (serverError) {
@@ -1235,9 +1239,10 @@ export default function AgendaPage() {
                   label="Correo"
                   name="correo"
                   value={form.correo}
-                  onChange={onChange}
+                  onChange={isVisitante ? undefined : onChange}
                   error={errors.correo}
                   placeholder="correo@dominio.com"
+                  readOnly={isVisitante}
                 />
               </div>
             </div>
