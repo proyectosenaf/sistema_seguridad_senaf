@@ -1,4 +1,3 @@
-// server/modules/iam/services/otp.service.js
 import AuthOtp from "../models/AuthOtp.model.js";
 import { getSecuritySettings } from "./settings.service.js";
 import { makeOtp, hashOtp, normEmail } from "../utils/otp.util.js";
@@ -14,8 +13,12 @@ function getOtpSettings() {
   const password = s.password || {};
 
   return {
-    ttlSeconds: Number.isFinite(Number(otp.ttlSeconds)) ? Number(otp.ttlSeconds) : 300,
-    maxAttempts: Number.isFinite(Number(otp.maxAttempts)) ? Number(otp.maxAttempts) : 5,
+    ttlSeconds: Number.isFinite(Number(otp.ttlSeconds))
+      ? Number(otp.ttlSeconds)
+      : 300,
+    maxAttempts: Number.isFinite(Number(otp.maxAttempts))
+      ? Number(otp.maxAttempts)
+      : 5,
     resendCooldownSeconds: Number.isFinite(Number(otp.resendCooldownSeconds))
       ? Number(otp.resendCooldownSeconds)
       : 30,
@@ -40,11 +43,13 @@ function canResendDoc(doc) {
 
 async function expireActiveOtps({ email, purpose }) {
   const e = normEmail(email);
+
   const q = {
     email: e,
     status: "active",
     consumedAt: null,
   };
+
   if (purpose) q.purpose = purpose;
 
   await AuthOtp.updateMany(q, { $set: { status: "expired" } }).exec();
@@ -78,15 +83,27 @@ export async function createOtp({ email, purpose, meta = {} }) {
   const settings = getOtpSettings();
 
   const e = normEmail(email);
-  if (!e) throw Object.assign(new Error("email_required"), { code: "email_required" });
-  if (!purpose) throw Object.assign(new Error("purpose_required"), { code: "purpose_required" });
-
-  // Flags
-  if (purpose === "employee-login" && !settings.features?.enableEmployeeOtp) {
-    throw Object.assign(new Error("employee_otp_disabled"), { code: "employee_otp_disabled" });
+  if (!e) {
+    throw Object.assign(new Error("email_required"), {
+      code: "email_required",
+    });
   }
+  if (!purpose) {
+    throw Object.assign(new Error("purpose_required"), {
+      code: "purpose_required",
+    });
+  }
+
+  if (purpose === "employee-login" && !settings.features?.enableEmployeeOtp) {
+    throw Object.assign(new Error("employee_otp_disabled"), {
+      code: "employee_otp_disabled",
+    });
+  }
+
   if (purpose === "visitor-login" && !settings.features?.enablePublicOtp) {
-    throw Object.assign(new Error("public_otp_disabled"), { code: "public_otp_disabled" });
+    throw Object.assign(new Error("public_otp_disabled"), {
+      code: "public_otp_disabled",
+    });
   }
 
   const code = makeOtp(6);
@@ -98,9 +115,10 @@ export async function createOtp({ email, purpose, meta = {} }) {
   expiresAt.setSeconds(expiresAt.getSeconds() + settings.ttlSeconds);
 
   const resendAfter = new Date(now);
-  resendAfter.setSeconds(resendAfter.getSeconds() + settings.resendCooldownSeconds);
+  resendAfter.setSeconds(
+    resendAfter.getSeconds() + settings.resendCooldownSeconds
+  );
 
-  // Solo 1 OTP activo por (email,purpose)
   await expireActiveOtps({ email: e, purpose });
 
   const doc = await AuthOtp.create({
@@ -134,14 +152,22 @@ export async function resendOtp({ email, purpose, meta = {} }) {
   const settings = getOtpSettings();
   const e = normEmail(email);
 
-  if (!e) throw Object.assign(new Error("email_required"), { code: "email_required" });
-
-  // flags (si viene purpose)
-  if (purpose === "employee-login" && !settings.features?.enableEmployeeOtp) {
-    throw Object.assign(new Error("employee_otp_disabled"), { code: "employee_otp_disabled" });
+  if (!e) {
+    throw Object.assign(new Error("email_required"), {
+      code: "email_required",
+    });
   }
+
+  if (purpose === "employee-login" && !settings.features?.enableEmployeeOtp) {
+    throw Object.assign(new Error("employee_otp_disabled"), {
+      code: "employee_otp_disabled",
+    });
+  }
+
   if (purpose === "visitor-login" && !settings.features?.enablePublicOtp) {
-    throw Object.assign(new Error("public_otp_disabled"), { code: "public_otp_disabled" });
+    throw Object.assign(new Error("public_otp_disabled"), {
+      code: "public_otp_disabled",
+    });
   }
 
   const active = await findActiveOtp({ email: e, purpose });
@@ -158,9 +184,8 @@ export async function resendOtp({ email, purpose, meta = {} }) {
 }
 
 /**
- * Verifica OTP sin requerir otpId (tu cliente manda solo email+otp).
- * - Busca OTP activo por email (y purpose si viene)
- * - Si no viene purpose, toma el OTP activo más reciente (cualquier purpose)
+ * Verifica OTP sin requerir otpId.
+ * Busca OTP activo por email y opcionalmente por purpose.
  */
 export async function verifyOtpByEmail({ email, code, purpose }) {
   const settings = getOtpSettings();
@@ -168,20 +193,25 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
   const otp = String(code || "").trim();
 
   if (!e || !otp) {
-    throw Object.assign(new Error("email_and_otp_required"), { code: "email_and_otp_required" });
+    throw Object.assign(new Error("email_and_otp_required"), {
+      code: "email_and_otp_required",
+    });
   }
 
-  // flags (si viene purpose)
   if (purpose === "employee-login" && !settings.features?.enableEmployeeOtp) {
-    throw Object.assign(new Error("employee_otp_disabled"), { code: "employee_otp_disabled" });
+    throw Object.assign(new Error("employee_otp_disabled"), {
+      code: "employee_otp_disabled",
+    });
   }
+
   if (purpose === "visitor-login" && !settings.features?.enablePublicOtp) {
-    throw Object.assign(new Error("public_otp_disabled"), { code: "public_otp_disabled" });
+    throw Object.assign(new Error("public_otp_disabled"), {
+      code: "public_otp_disabled",
+    });
   }
 
   let doc = await findActiveOtp({ email: e, purpose });
 
-  // Si no viene purpose o no encontró, intenta con cualquiera activo (más reciente)
   if (!doc && !purpose) {
     doc = await AuthOtp.findOne({
       email: e,
@@ -195,12 +225,16 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
 
   if (!doc) {
     await expireActiveOtps({ email: e, purpose });
-    throw Object.assign(new Error("otp_not_found"), { code: "otp_not_found" });
+    throw Object.assign(new Error("otp_not_found"), {
+      code: "otp_not_found",
+    });
   }
 
   if (isExpiredDoc(doc)) {
     await expireActiveOtps({ email: e, purpose });
-    throw Object.assign(new Error("otp_expired"), { code: "otp_expired" });
+    throw Object.assign(new Error("otp_expired"), {
+      code: "otp_expired",
+    });
   }
 
   const maxAttempts = Number.isFinite(Number(doc.maxAttempts))
@@ -211,17 +245,28 @@ export async function verifyOtpByEmail({ email, code, purpose }) {
     doc.status = "consumed";
     doc.consumedAt = new Date();
     await doc.save().catch(() => {});
-    throw Object.assign(new Error("otp_max_attempts"), { code: "otp_max_attempts" });
+    throw Object.assign(new Error("otp_max_attempts"), {
+      code: "otp_max_attempts",
+    });
   }
 
   const expected = hashOtp(e, otp);
+
   if (expected !== String(doc.codeHash || "")) {
     doc.attempts = Number(doc.attempts || 0) + 1;
+
+    if (doc.attempts >= maxAttempts) {
+      doc.status = "consumed";
+      doc.consumedAt = new Date();
+    }
+
     await doc.save();
-    throw Object.assign(new Error("otp_invalid"), { code: "otp_invalid" });
+
+    throw Object.assign(new Error("otp_invalid"), {
+      code: "otp_invalid",
+    });
   }
 
-  // OTP correcto => consumir + limpiar otros activos
   doc.consumedAt = new Date();
   doc.status = "consumed";
   await doc.save();

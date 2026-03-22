@@ -1,4 +1,3 @@
-// server/modules/iam/routes/auth.otp.routes.js
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
@@ -174,6 +173,40 @@ async function logIamEvent(req, payload = {}) {
   } catch (err) {
     console.error("[iam][bitacora] error:", err?.message || err);
   }
+}
+
+function escapeRegex(s) {
+  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Busca el usuario por email de forma robusta:
+ * 1) exact match normalizado
+ * 2) fallback case-insensitive y tolerando espacios accidentales
+ *
+ * Esto corrige el caso donde en Mongo el email quedó con mayúsculas
+ * o espacios por migraciones/datos viejos.
+ */
+async function findIamUserByEmail(email, select = "") {
+  const e = normEmail(email);
+  if (!e) return null;
+
+  let user = await IamUser.findOne({ email }).select(select).exec();
+  if (user) return user;
+
+  user = await IamUser.findOne({ email: e }).select(select).exec();
+  if (user) return user;
+
+  const safe = escapeRegex(e);
+  const spacedRegex = new RegExp(`^\\s*${safe}\\s*$`, "i");
+
+  user = await IamUser.findOne({
+    $or: [{ email: spacedRegex }],
+  })
+    .select(select)
+    .exec();
+
+  return user;
 }
 
 /* ---------------------- Reset token (pwreset) ---------------------- */
@@ -364,16 +397,18 @@ async function loginOtpHandler(req, res) {
       .json({ ok: false, error: "email_and_password_required" });
   }
 
-  const user = await IamUser.findOne({ email })
-    .select(
-      "+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email"
-    )
-    .exec();
+  const user = await findIamUserByEmail(
+    email,
+    "+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email"
+  );
 
   if (process.env.DEBUG_AUTH === "1") {
     console.log("[login-otp] mongo.db:", mongoose.connection?.name);
     console.log("[login-otp] iamUser.collection:", IamUser.collection?.name);
-    console.log("[login-otp] email:", email, "provider:", user?.provider);
+    console.log("[login-otp] email(normalized):", email);
+    console.log("[login-otp] user found:", !!user);
+    console.log("[login-otp] provider:", user?.provider);
+    console.log("[login-otp] user id:", user?._id ? String(user._id) : null);
   }
 
   if (!user) {
@@ -692,9 +727,10 @@ async function resendOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_required" });
   }
 
-  const user = await IamUser.findOne({ email })
-    .select("_id email roles +active +provider name")
-    .exec();
+  const user = await findIamUserByEmail(
+    email,
+    "_id email roles +active +provider name"
+  );
 
   if (!user) return res.json({ ok: true });
 
@@ -848,11 +884,10 @@ async function verifyOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
   }
 
-  const user = await IamUser.findOne({ email })
-    .select(
-      "email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
-    )
-    .exec();
+  const user = await findIamUserByEmail(
+    email,
+    "email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
+  );
 
   if (!user) {
     await logIamEvent(req, {
@@ -1149,11 +1184,10 @@ async function resetPasswordOtpHandler(req, res) {
       .json({ ok: false, error: "reset_token_email_mismatch" });
   }
 
-  const user = await IamUser.findOne({ email })
-    .select(
-      "+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
-    )
-    .exec();
+  const user = await findIamUserByEmail(
+    email,
+    "+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
+  );
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
   if (hasRole(user, "visita")) {
@@ -1256,9 +1290,10 @@ async function changePasswordHandler(req, res) {
       .json({ ok: false, error: "password_too_short", minLength });
   }
 
-  const user = await IamUser.findOne({ email })
-    .select("+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email")
-    .exec();
+  const user = await findIamUserByEmail(
+    email,
+    "+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
+  );
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
   if (hasRole(user, "visita")) {
