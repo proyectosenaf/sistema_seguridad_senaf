@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import QRCode from "qrcode";
 import { sxCard, sxCardSoft, sxGhostBtn, sxPrimaryBtn } from "../styles.js";
 
 function safeText(value) {
@@ -158,6 +159,15 @@ function printQrCard({ qrDataUrl, cita }) {
             font-size: 17px;
             line-height: 1.5;
           }
+          .payload {
+            margin-top: 16px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #eef2ff;
+            color: #334155;
+            font-size: 12px;
+            word-break: break-all;
+          }
           @media print {
             body {
               padding: 0;
@@ -202,10 +212,63 @@ function printQrCard({ qrDataUrl, cita }) {
 }
 
 export default function AgendaQrModal({ open, qrModal, onClose }) {
+  const cita = qrModal?.cita || null;
+  const qrPayload = qrModal?.qrPayload || "";
+  const serverQrDataUrl = qrModal?.qrDataUrl || "";
+
+  const [generatedQrDataUrl, setGeneratedQrDataUrl] = useState("");
+  const [generatingQr, setGeneratingQr] = useState(false);
+
+  const finalQrDataUrl = useMemo(() => {
+    return serverQrDataUrl || generatedQrDataUrl || "";
+  }, [serverQrDataUrl, generatedQrDataUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function generateFallbackQr() {
+      if (!open) return;
+      if (serverQrDataUrl) {
+        setGeneratedQrDataUrl("");
+        return;
+      }
+      if (!qrPayload) {
+        setGeneratedQrDataUrl("");
+        return;
+      }
+
+      try {
+        setGeneratingQr(true);
+        const dataUrl = await QRCode.toDataURL(qrPayload, {
+          width: 320,
+          margin: 1,
+          errorCorrectionLevel: "M",
+        });
+
+        if (!cancelled) {
+          setGeneratedQrDataUrl(dataUrl);
+        }
+      } catch (err) {
+        console.error("[AgendaQrModal] No se pudo generar QR en frontend:", err);
+        if (!cancelled) {
+          setGeneratedQrDataUrl("");
+        }
+      } finally {
+        if (!cancelled) {
+          setGeneratingQr(false);
+        }
+      }
+    }
+
+    generateFallbackQr();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, qrPayload, serverQrDataUrl]);
+
   if (!open) return null;
 
-  const cita = qrModal?.cita || null;
-  const qrDataUrl = qrModal?.qrDataUrl || "";
   const fecha = formatFecha(cita?.citaAt);
   const hora = formatHora(cita?.citaAt);
   const filename = buildQrFilename(cita);
@@ -245,18 +308,37 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
         </div>
 
         <div className="mt-5 flex justify-center">
-          {qrDataUrl ? (
+          {finalQrDataUrl ? (
             <img
-              src={qrDataUrl}
+              src={finalQrDataUrl}
               alt="QR de la cita"
               className="h-64 w-64 rounded-xl bg-white p-3 object-contain"
             />
-          ) : (
+          ) : generatingQr ? (
             <div
               className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
               style={sxCardSoft({ color: "var(--text-muted)" })}
             >
-              No se recibió imagen QR del servidor.
+              Generando imagen QR...
+            </div>
+          ) : (
+            <div
+              className="h-64 w-64 rounded-xl flex flex-col items-center justify-center text-center text-sm p-4 gap-3"
+              style={sxCardSoft({ color: "var(--text-muted)" })}
+            >
+              <div>No se recibió imagen QR del servidor.</div>
+              {!!qrPayload && (
+                <div
+                  className="w-full rounded-lg p-2 text-[11px]"
+                  style={{
+                    background: "rgba(255,255,255,.04)",
+                    color: "var(--text-muted)",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {qrPayload}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -301,8 +383,8 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
         <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-end">
           <button
             type="button"
-            onClick={() => downloadDataUrl(qrDataUrl, filename)}
-            disabled={!qrDataUrl}
+            onClick={() => downloadDataUrl(finalQrDataUrl, filename)}
+            disabled={!finalQrDataUrl}
             className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
             style={sxGhostBtn()}
             title="Descargar QR"
@@ -312,8 +394,8 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
 
           <button
             type="button"
-            onClick={() => printQrCard({ qrDataUrl, cita })}
-            disabled={!qrDataUrl}
+            onClick={() => printQrCard({ qrDataUrl: finalQrDataUrl, cita })}
+            disabled={!finalQrDataUrl}
             className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
             style={sxGhostBtn()}
             title="Imprimir QR"
