@@ -176,8 +176,8 @@ export default function Footer() {
               </li>
               <li className="flex items-center gap-2">
                 <Mail className="w-4 h-4 opacity-70" />
-                <a className="hover:underline" href="mailto:soporte@senaf.local">
-                  soporte@senaf.local
+                <a className="hover:underline" href="mailto:proyectosenaf@gmail.com">
+                  proyectosenaf@gmail.com
                 </a>
               </li>
               <li className="flex items-center gap-2">

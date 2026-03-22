@@ -60,6 +60,9 @@ import catalogsRoutes from "../modules/iam/routes/catalogs.routes.js";
 // ✅ Sync de permisos al arrancar
 import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync.service.js";
 
+// ✅ Search global
+import searchRoutes from "../modules/search/search.routes.js";
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -356,6 +359,11 @@ const notifier = makeNotifier({ io, mailer: null });
 app.set("notifier", notifier);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/notifications", notificationsRoutes);
+
+/* ─────────────────── Search global ──────────────────── */
+
+app.use("/api/search", searchRoutes);
+app.use("/search", searchRoutes);
 
 startDailyAssignmentCron(app);
 
@@ -688,8 +696,7 @@ io.on("connection", (s) => {
   s.on("chat:private:send", (payload = {}, ack) => {
     try {
       const finalRoom =
-        payload.room ||
-        buildPrivateChatRoom(payload.fromUserId, payload.toUserId);
+        payload.room || buildPrivateChatRoom(payload.fromUserId, payload.toUserId);
 
       if (!finalRoom) {
         if (typeof ack === "function") {
@@ -717,7 +724,7 @@ io.on("connection", (s) => {
     }
   });
 
-    /* ─────────────── PRESENCIA (ONLINE) ─────────────── */
+  /* ─────────────── PRESENCIA (ONLINE) ─────────────── */
 
   s.on("presence:online", ({ userId }) => {
     if (!userId) return;
