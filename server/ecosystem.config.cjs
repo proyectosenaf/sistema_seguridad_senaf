@@ -10,10 +10,11 @@ module.exports = {
         PORT: 4000,
 
         // Mongo
-        MONGODB_URI: "mongodb+srv://proyectosenaf_db_user:SENAFdb2025@senafcluster.vwwt8sy.mongodb.net/senafseg?retryWrites=true&w=majority",
+        MONGODB_URI:
+          "mongodb+srv://proyectosenaf_db_user:SENAFdb2025@senafcluster.vwwt8sy.mongodb.net/senafseg?retryWrites=true&w=majority",
 
-        // ✅ JWT HS256 (lo que tu middleware/IAM usan)
-        JWT_SECRET: "***", // 32+ chars
+        // ✅ JWT HS256
+        JWT_SECRET: "***",
 
         // OTP / seguridad
         OTP_TTL_MINUTES: "10",
@@ -26,6 +27,10 @@ module.exports = {
         SMTP_USER: "***",
         SMTP_PASS: "***",
         SMTP_FROM: "SENAF <proyectosenaf@gmail.com>",
+
+        // ✅ superadmin blindado
+        SUPERADMIN_EMAIL: "proyectosenaf@gmail.com",
+        ROOT_ADMINS: "proyectosenaf@gmail.com",
 
         IAM_DEV_ALLOW_ALL: "0",
       },

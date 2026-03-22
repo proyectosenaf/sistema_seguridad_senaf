@@ -1,4 +1,3 @@
-// server/modules/iam/routes/users.routes.js
 import { Router } from "express";
 import mongoose from "mongoose";
 import IamUser from "../models/IamUser.model.js";
@@ -79,6 +78,14 @@ function isProtectedAdminEmail(email) {
   if (!e) return false;
   if (SUPERADMIN_EMAIL && e === SUPERADMIN_EMAIL) return true;
   return ROOT_ADMINS.includes(e);
+}
+
+function getProtectedAdminRoles() {
+  return ["superadmin", "admin"];
+}
+
+function getProtectedAdminPerms() {
+  return ["*"];
 }
 
 function isValidObjectId(id) {
@@ -188,13 +195,6 @@ async function bitacoraSafe(req, payload, label) {
   }
 }
 
-/**
- * Soporta roles como:
- * - ["admin", "visita"]
- * - "admin,visita"
- * - [{code:"admin"}, {value:"visita"}]
- * - [{id:"admin"}]
- */
 function toStringArray(v) {
   const normOne = (x) => {
     if (x == null) return "";
@@ -245,17 +245,13 @@ function pickUser(u) {
     active: u.active !== false,
     roles: Array.isArray(u.roles) ? u.roles : [],
     perms: Array.isArray(u.perms) ? u.perms : [],
-
     mustChangePassword: !!u.mustChangePassword,
     passwordChangedAt: u.passwordChangedAt || null,
     passwordExpiresAt: u.passwordExpiresAt || null,
-
     lastLoginAt: u.lastLoginAt || null,
     lastLoginIp: u.lastLoginIp || "",
-
     createdAt: u.createdAt,
     updatedAt: u.updatedAt,
-
     nombreCompleto: u.name || "",
     correoPersona: u.email || "",
   };
@@ -266,6 +262,7 @@ function mapBodyToIamUser(body = {}) {
   const name = String(body.name || body.nombreCompleto || "").trim();
 
   const roles = toStringArray(body.roles);
+  const perms = toStringArray(body.perms);
   const active = body.active === false ? false : true;
 
   const mustChangePasswordRaw = body.mustChangePassword ?? body.forcePwChange;
@@ -280,7 +277,7 @@ function mapBodyToIamUser(body = {}) {
 
   const password = rawPwd != null ? String(rawPwd).trim() : "";
 
-  return { email, name, roles, active, mustChangePasswordRaw, password };
+  return { email, name, roles, perms, active, mustChangePasswordRaw, password };
 }
 
 function isDateOnlyString(s) {
@@ -434,6 +431,7 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       email,
       name,
       roles,
+      perms,
       active,
       mustChangePasswordRaw,
       password,
@@ -449,26 +447,28 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "name/nombreCompleto requerido" });
     }
-    if (!roles.length) {
+
+    let effectiveRoles = roles;
+    let effectivePerms = perms;
+
+    if (isProtectedAdminEmail(email)) {
+      effectiveRoles = getProtectedAdminRoles();
+      effectivePerms = getProtectedAdminPerms();
+    }
+
+    if (!effectiveRoles.length) {
       return res.status(400).json({
         ok: false,
         message: "roles requerido (al menos 1)",
       });
     }
 
-    const isVisitor = hasRole(roles, "visita");
+    const isVisitor = hasRole(effectiveRoles, "visita");
 
-    if (!isVisitor && !password) {
+    if (!isProtectedAdminEmail(email) && !isVisitor && !password) {
       return res.status(400).json({
         ok: false,
         message: "password requerido para usuarios internos (no visitantes).",
-      });
-    }
-
-    if (isProtectedAdminEmail(email) && !hasRole(roles, "admin")) {
-      return res.status(400).json({
-        ok: false,
-        message: "Usuario protegido: debe incluir el rol admin.",
       });
     }
 
@@ -480,27 +480,29 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       });
     }
 
-    const mustChangePassword = isVisitor
+    const mustChangePassword = isProtectedAdminEmail(email)
+      ? false
+      : isVisitor
       ? false
       : parseBool(mustChangePasswordRaw, true);
 
-    const passwordHash = password ? await hashPassword(password) : "";
+    const passwordHash =
+      !isProtectedAdminEmail(email) && password ? await hashPassword(password) : "";
 
     const doc = await IamUser.create({
       email,
       name,
-      roles,
-      active,
+      roles: effectiveRoles,
+      perms: effectivePerms,
+      active: isProtectedAdminEmail(email) ? true : active,
       provider: "local",
       mustChangePassword,
       passwordHash,
-      passwordChangedAt: password ? new Date() : null,
-
+      passwordChangedAt: passwordHash ? new Date() : null,
       tempPassHash: "",
       tempPassExpiresAt: null,
       tempPassUsedAt: null,
       tempPassAttempts: 0,
-
       otpVerifiedAt: null,
     });
 
@@ -508,6 +510,7 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
       email: doc.email,
       name: doc.name,
       roles: doc.roles || [],
+      perms: doc.perms || [],
       active: doc.active !== false,
       mustChangePassword: !!doc.mustChangePassword,
     };
@@ -540,6 +543,7 @@ r.post("/", MW_USERS_MANAGE, async (req, res, next) => {
         meta: {
           provider: doc.provider || "local",
           visitor: isVisitor,
+          protectedAdmin: isProtectedAdminEmail(doc.email),
         },
       },
       "create user"
@@ -596,6 +600,10 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
         update.roles = roles;
       }
 
+      if (body.perms != null) {
+        update.perms = toStringArray(body.perms);
+      }
+
       if (body.active != null) {
         update.active = body.active === false ? false : true;
       }
@@ -605,34 +613,31 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       if (isVisitor) update.mustChangePassword = false;
     }
 
-    if (protectedUser && body.roles != null) {
-      const roles = toStringArray(body.roles);
-      if (!hasRole(roles, "admin")) {
-        return res.status(400).json({
-          ok: false,
-          message: "Usuario protegido: no puedes quitar el rol admin.",
-        });
-      }
-      update.roles = roles;
+    if (protectedUser) {
+      update.email = before.email;
+      update.roles = getProtectedAdminRoles();
+      update.perms = getProtectedAdminPerms();
+      update.active = true;
+      update.provider = "local";
+      update.mustChangePassword = false;
     }
 
     if (body.name != null || body.nombreCompleto != null) {
       update.name = String(body.name || body.nombreCompleto || "").trim();
     }
 
-    if (body.mustChangePassword != null || body.forcePwChange != null) {
+    if (!protectedUser && (body.mustChangePassword != null || body.forcePwChange != null)) {
       update.mustChangePassword = parseBool(
         body.mustChangePassword ?? body.forcePwChange,
         false
       );
     }
 
-    if (body.password != null) {
+    if (!protectedUser && body.password != null) {
       const pwd = String(body.password).trim();
       if (pwd.length > 0) {
         update.passwordHash = await hashPassword(pwd);
         update.passwordChangedAt = new Date();
-
         update.tempPassHash = "";
         update.tempPassExpiresAt = null;
         update.tempPassUsedAt = null;
@@ -642,13 +647,6 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
           update.mustChangePassword = false;
         }
       }
-    }
-
-    if (protectedUser && update.email && !isProtectedAdminEmail(update.email)) {
-      return res.status(400).json({
-        ok: false,
-        message: "Usuario protegido: no puedes cambiar su correo protegido.",
-      });
     }
 
     const u = await IamUser.findByIdAndUpdate(
@@ -667,6 +665,7 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       email: before.email,
       name: before.name,
       roles: before.roles || [],
+      perms: before.perms || [],
       active: before.active !== false,
       mustChangePassword: !!before.mustChangePassword,
       passwordChangedAt: before.passwordChangedAt || null,
@@ -677,6 +676,7 @@ r.patch("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       email: u.email,
       name: u.name,
       roles: u.roles || [],
+      perms: u.perms || [],
       active: u.active !== false,
       mustChangePassword: !!u.mustChangePassword,
       passwordChangedAt: u.passwordChangedAt || null,
@@ -738,9 +738,19 @@ r.post("/:id/enable", MW_USERS_MANAGE, async (req, res, next) => {
         .json({ ok: false, message: "Usuario no encontrado" });
     }
 
+    const update = isProtectedAdminEmail(before.email)
+      ? {
+          active: true,
+          roles: getProtectedAdminRoles(),
+          perms: getProtectedAdminPerms(),
+          provider: "local",
+          mustChangePassword: false,
+        }
+      : { active: true };
+
     const u = await IamUser.findByIdAndUpdate(
       id,
-      { $set: { active: true } },
+      { $set: update },
       { new: true }
     ).lean();
 
@@ -880,6 +890,7 @@ r.delete("/:id", MW_USERS_MANAGE, async (req, res, next) => {
       email: before.email,
       name: before.name,
       roles: before.roles || [],
+      perms: before.perms || [],
       active: before.active !== false,
       mustChangePassword: !!before.mustChangePassword,
     };

@@ -179,13 +179,68 @@ function escapeRegex(s) {
   return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function getSuperadminEmails() {
+  return [
+    process.env.SUPERADMIN_EMAIL,
+    process.env.VITE_SUPERADMIN_EMAIL,
+    process.env.ROOT_ADMINS,
+    "proyectosenaf@gmail.com",
+  ]
+    .flatMap((v) =>
+      String(v || "")
+        .split(",")
+        .map((x) => normEmail(x))
+    )
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+}
+
+function isSuperadminEmail(email) {
+  const e = normEmail(email);
+  if (!e) return false;
+  return getSuperadminEmails().includes(e);
+}
+
+async function ensureProtectedSuperadminUser(user, email) {
+  const cleanEmail = normEmail(email);
+  const forcedRoles = ["superadmin", "admin"];
+  const forcedPerms = ["*"];
+
+  if (!user) return null;
+
+  const roles = Array.isArray(user.roles) ? user.roles.map((r) => String(r).toLowerCase()) : [];
+  const perms = Array.isArray(user.perms) ? user.perms.map((p) => String(p).toLowerCase()) : [];
+
+  const needsRepair =
+    !roles.includes("superadmin") ||
+    !roles.includes("admin") ||
+    !perms.includes("*") ||
+    user.active === false ||
+    normProvider(user.provider) !== "local";
+
+  if (!needsRepair) return user;
+
+  await IamUser.updateOne(
+    { _id: user._id },
+    {
+      $set: {
+        email: cleanEmail,
+        roles: forcedRoles,
+        perms: forcedPerms,
+        active: true,
+        provider: "local",
+        mustChangePassword: false,
+      },
+    }
+  );
+
+  return await IamUser.findById(user._id).select(
+    "+passwordHash roles perms +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email"
+  );
+}
+
 /**
- * Busca el usuario por email de forma robusta:
- * 1) exact match normalizado
- * 2) fallback case-insensitive y tolerando espacios accidentales
- *
- * Esto corrige el caso donde en Mongo el email quedó con mayúsculas
- * o espacios por migraciones/datos viejos.
+ * Busca el usuario por email de forma robusta
  */
 async function findIamUserByEmail(email, select = "") {
   const e = normEmail(email);
@@ -273,10 +328,6 @@ function canResendDoc(doc) {
   return new Date() >= ra;
 }
 
-/**
- * Para LOGIN:
- * - si ya existe OTP activo y NO expiró, no generamos otro
- */
 async function getOrCreateActiveOtpForLogin({
   email,
   purpose,
@@ -306,10 +357,6 @@ async function getOrCreateActiveOtpForLogin({
   });
 }
 
-/**
- * Para RESEND:
- * - sí puede reemplazar el OTP cuando el cooldown lo permita
- */
 async function createOrReplaceActiveOtpDocAtomic({
   email,
   purpose,
@@ -397,10 +444,15 @@ async function loginOtpHandler(req, res) {
       .json({ ok: false, error: "email_and_password_required" });
   }
 
-  const user = await findIamUserByEmail(
+  let user = await findIamUserByEmail(
     email,
-    "+passwordHash roles +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email"
+    "+passwordHash roles perms +active +provider mustChangePassword otpVerifiedAt passwordExpiresAt name email"
   );
+
+  const forcedSuperadmin = isSuperadminEmail(email);
+  if (user && forcedSuperadmin) {
+    user = await ensureProtectedSuperadminUser(user, email);
+  }
 
   if (process.env.DEBUG_AUTH === "1") {
     console.log("[login-otp] mongo.db:", mongoose.connection?.name);
@@ -463,7 +515,7 @@ async function loginOtpHandler(req, res) {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  if (!user.passwordHash) {
+  if (!user.passwordHash && !forcedSuperadmin) {
     await logIamEvent(req, {
       accion: "LOGIN_OTP_INTENTO",
       entidad: "IamUser",
@@ -480,7 +532,7 @@ async function loginOtpHandler(req, res) {
     return res.status(403).json({ ok: false, error: "password_not_set" });
   }
 
-  const okPwd = await verifyPassword(password, user.passwordHash);
+  const okPwd = await verifyPassword(password, user.passwordHash || "");
   if (!okPwd) {
     await logIamEvent(req, {
       accion: "LOGIN_OTP_INTENTO",
@@ -498,11 +550,13 @@ async function loginOtpHandler(req, res) {
     return res.status(401).json({ ok: false, error: "invalid_credentials" });
   }
 
-  const isVisitor = hasRole(user, "visita");
+  const isVisitor = forcedSuperadmin ? false : hasRole(user, "visita");
   const otpEnabled = !!settings?.features?.enableEmployeeOtp;
 
   const firstTimeOtp = !user.otpVerifiedAt;
-  const mustChange = isVisitor
+  const mustChange = forcedSuperadmin
+    ? false
+    : isVisitor
     ? false
     : !!user.mustChangePassword || isPasswordExpired(user);
 
@@ -540,7 +594,11 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  const otpRequired = isVisitor ? firstTimeOtp : firstTimeOtp || mustChange;
+  const otpRequired = forcedSuperadmin
+    ? firstTimeOtp
+    : isVisitor
+    ? firstTimeOtp
+    : firstTimeOtp || mustChange;
 
   if (!otpRequired) {
     const token = signLocalJwt({
@@ -576,7 +634,11 @@ async function loginOtpHandler(req, res) {
     });
   }
 
-  const purpose = isVisitor ? "visitor-login" : "employee-login";
+  const purpose = forcedSuperadmin
+    ? "employee-login"
+    : isVisitor
+    ? "visitor-login"
+    : "employee-login";
 
   const issued = await getOrCreateActiveOtpForLogin({
     email,
@@ -727,10 +789,15 @@ async function resendOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_required" });
   }
 
-  const user = await findIamUserByEmail(
+  let user = await findIamUserByEmail(
     email,
-    "_id email roles +active +provider name"
+    "_id email roles perms +active +provider name"
   );
+
+  const forcedSuperadmin = isSuperadminEmail(email);
+  if (user && forcedSuperadmin) {
+    user = await ensureProtectedSuperadminUser(user, email);
+  }
 
   if (!user) return res.json({ ok: true });
 
@@ -770,8 +837,12 @@ async function resendOtpHandler(req, res) {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  const isVisitor = hasRole(user, "visita");
-  const purpose = isVisitor ? "visitor-login" : "employee-login";
+  const isVisitor = forcedSuperadmin ? false : hasRole(user, "visita");
+  const purpose = forcedSuperadmin
+    ? "employee-login"
+    : isVisitor
+    ? "visitor-login"
+    : "employee-login";
 
   const issued = await createOrReplaceActiveOtpDocAtomic({
     email,
@@ -884,10 +955,15 @@ async function verifyOtpHandler(req, res) {
     return res.status(400).json({ ok: false, error: "email_and_otp_required" });
   }
 
-  const user = await findIamUserByEmail(
+  let user = await findIamUserByEmail(
     email,
-    "email name roles +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
+    "email name roles perms +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
   );
+
+  const forcedSuperadmin = isSuperadminEmail(email);
+  if (user && forcedSuperadmin) {
+    user = await ensureProtectedSuperadminUser(user, email);
+  }
 
   if (!user) {
     await logIamEvent(req, {
@@ -941,8 +1017,12 @@ async function verifyOtpHandler(req, res) {
     return res.status(403).json({ ok: false, error: "not_local_user" });
   }
 
-  const isVisitor = hasRole(user, "visita");
-  const purpose = isVisitor ? "visitor-login" : "employee-login";
+  const isVisitor = forcedSuperadmin ? false : hasRole(user, "visita");
+  const purpose = forcedSuperadmin
+    ? "employee-login"
+    : isVisitor
+    ? "visitor-login"
+    : "employee-login";
 
   const doc = await getActiveOtp(email, purpose);
   if (!doc) {
@@ -1074,7 +1154,9 @@ async function verifyOtpHandler(req, res) {
     meta: { purpose },
   });
 
-  const mustChange = isVisitor
+  const mustChange = forcedSuperadmin
+    ? false
+    : isVisitor
     ? false
     : !!user.mustChangePassword || isPasswordExpired(user);
 
@@ -1296,7 +1378,7 @@ async function changePasswordHandler(req, res) {
   );
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
-  if (hasRole(user, "visita")) {
+  if (hasRole(user, "visita") && !isSuperadminEmail(email)) {
     return res
       .status(403)
       .json({ ok: false, error: "visitor_change_not_allowed" });

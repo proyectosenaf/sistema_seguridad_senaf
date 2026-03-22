@@ -59,6 +59,10 @@ function normalizeRoleValue(r) {
   return "";
 }
 
+function normalizeEmail(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
 /* =========================
    JWT
 ========================= */
@@ -81,8 +85,8 @@ function getJwtPayload(req) {
 
 function getEmailFromPayload(payload) {
   if (!payload) return null;
-  if (payload.email) return String(payload.email).toLowerCase().trim();
-  if (payload.correo) return String(payload.correo).toLowerCase().trim();
+  if (payload.email) return normalizeEmail(payload.email);
+  if (payload.correo) return normalizeEmail(payload.correo);
   return null;
 }
 
@@ -116,7 +120,7 @@ function canUseDevHeaders() {
 }
 
 /* =========================
-   Superadmin (ÚNICO bypass real)
+   Superadmin / protegidos
 ========================= */
 function getSuperadminEmails() {
   return [
@@ -128,16 +132,111 @@ function getSuperadminEmails() {
     .flatMap((v) =>
       String(v || "")
         .split(",")
-        .map((x) => x.trim().toLowerCase())
+        .map((x) => normalizeEmail(x))
     )
     .filter(Boolean)
     .filter((v, i, arr) => arr.indexOf(v) === i);
 }
 
 function isSuperadminEmail(email) {
-  const e = String(email || "").trim().toLowerCase();
+  const e = normalizeEmail(email);
   if (!e) return false;
   return getSuperadminEmails().includes(e);
+}
+
+function getForcedSuperadminProfile(email, fallbackName = "") {
+  const cleanEmail = normalizeEmail(email);
+  const cleanName =
+    String(fallbackName || "").trim() || cleanEmail.split("@")[0] || "Superadmin";
+
+  return {
+    email: cleanEmail,
+    name: cleanName,
+    active: true,
+    provider: "local",
+    roles: ["superadmin", "admin"],
+    perms: ["*"],
+    mustChangePassword: false,
+    tempPassHash: "",
+    tempPassExpiresAt: null,
+    tempPassUsedAt: null,
+    tempPassAttempts: 0,
+  };
+}
+
+async function repairProtectedSuperadminUser(user, email, payloadName = "") {
+  const forced = getForcedSuperadminProfile(email, payloadName);
+
+  const currentRoles = Array.isArray(user?.roles) ? user.roles.map(normRole) : [];
+  const hasNeededRoles =
+    currentRoles.includes("superadmin") && currentRoles.includes("admin");
+
+  const currentPerms = Array.isArray(user?.perms) ? user.perms.map(normPerm) : [];
+  const hasWildcard = currentPerms.includes("*");
+
+  const providerOk = String(user?.provider || "").trim().toLowerCase() === "local";
+  const activeOk = user?.active !== false;
+
+  const needsRepair =
+    !hasNeededRoles ||
+    !hasWildcard ||
+    !providerOk ||
+    !activeOk ||
+    normalizeEmail(user?.email) !== forced.email;
+
+  if (!needsRepair) return user;
+
+  try {
+    await withTimeout(
+      IamUser.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            email: forced.email,
+            name: forced.name,
+            active: true,
+            provider: "local",
+            roles: forced.roles,
+            perms: forced.perms,
+            mustChangePassword: false,
+          },
+        }
+      ),
+      4000,
+      "IamUser.updateOne(repair-superadmin)"
+    );
+
+    const repaired = await withTimeout(
+      IamUser.findById(user._id).lean(),
+      4000,
+      "IamUser.findById(reload-superadmin)"
+    );
+
+    return repaired || {
+      ...user,
+      email: forced.email,
+      name: forced.name,
+      active: true,
+      provider: "local",
+      roles: forced.roles,
+      perms: forced.perms,
+      mustChangePassword: false,
+    };
+  } catch (e) {
+    if (!IS_PROD && IAM_DEBUG) {
+      console.warn("[iam] superadmin repair failed:", e?.message || e);
+    }
+    return {
+      ...user,
+      email: forced.email,
+      name: forced.name,
+      active: true,
+      provider: "local",
+      roles: forced.roles,
+      perms: forced.perms,
+      mustChangePassword: false,
+    };
+  }
 }
 
 /* =========================
@@ -165,7 +264,7 @@ export async function buildContextFrom(req) {
   const payloadName = getNameFromPayload(payload);
   const payloadSub = getSubjectFromPayload(payload);
 
-  const email = String(jwtEmail || headerEmail || "").toLowerCase().trim() || null;
+  const email = normalizeEmail(jwtEmail || headerEmail || "") || null;
   const hasIdentity = !!email;
 
   let user = null;
@@ -189,25 +288,10 @@ export async function buildContextFrom(req) {
 
   /* =========================
      AUTO-PROVISION
-     - SUPERADMIN: bootstrap con admin + *
-     - RESTO: visitante por defecto
   ========================= */
   if (!user && hasIdentity && email) {
     const doc = forcedSuperadmin
-      ? {
-          email,
-          name: payloadName || email.split("@")[0],
-          active: true,
-          provider: "local",
-          roles: ["admin"],
-          perms: ["*"],
-
-          mustChangePassword: false,
-          tempPassHash: "",
-          tempPassExpiresAt: null,
-          tempPassUsedAt: null,
-          tempPassAttempts: 0,
-        }
+      ? getForcedSuperadminProfile(email, payloadName)
       : {
           email,
           name: payloadName || email.split("@")[0],
@@ -215,7 +299,6 @@ export async function buildContextFrom(req) {
           provider: "local",
           roles: [getDefaultVisitorRole()],
           perms: [],
-
           mustChangePassword: false,
           tempPassHash: "",
           tempPassExpiresAt: null,
@@ -247,6 +330,13 @@ export async function buildContextFrom(req) {
         console.warn("[iam] auto-provision failed:", e?.message || e);
       }
     }
+  }
+
+  /* =========================
+     REPARAR SUPERADMIN SI EXISTE MAL
+  ========================= */
+  if (user && forcedSuperadmin) {
+    user = await repairProtectedSuperadminUser(user, email, payloadName);
   }
 
   /* =========================
@@ -306,8 +396,6 @@ export async function buildContextFrom(req) {
 
   /* =========================
      SUPERADMIN
-     - SOLO por correo raíz configurado
-     - admin normal NO recibe bypass aquí
   ========================= */
   const isSuperAdmin = forcedSuperadmin;
 
@@ -315,14 +403,12 @@ export async function buildContextFrom(req) {
     permSet.add("*");
     roleNames.add("admin");
     roleNames.add("superadmin");
+    roleNames.delete(getDefaultVisitorRole());
   }
 
   const permissionsFinal = [...permSet];
   const permSetLower = new Set(permissionsFinal.map((p) => p.toLowerCase()));
 
-  /* =========================
-     FUNCIÓN REAL DE PERMISOS
-  ========================= */
   function has(perm) {
     if (isSuperAdmin) return true;
     if (!perm) return true;
@@ -342,9 +428,6 @@ export async function buildContextFrom(req) {
     );
   }
 
-  /* =========================
-     VISITOR
-  ========================= */
   const defaultVisitorRole = getDefaultVisitorRole();
   const isVisitor = !isSuperAdmin && roleNames.has(defaultVisitorRole);
 
