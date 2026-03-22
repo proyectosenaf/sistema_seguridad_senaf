@@ -6,6 +6,24 @@ function safeText(value) {
   return String(value || "").trim();
 }
 
+function normalizeEstadoValue(value) {
+  const raw = String(value || "").trim();
+
+  const map = {
+    solicitada: "Programada",
+    programada: "Programada",
+    "en revisión": "En revisión",
+    en_revision: "En revisión",
+    autorizada: "Autorizada",
+    denegada: "Denegada",
+    cancelada: "Cancelada",
+    dentro: "Dentro",
+    finalizada: "Finalizada",
+  };
+
+  return map[raw.toLowerCase()] || raw || "Programada";
+}
+
 function formatFecha(citaAt) {
   if (!citaAt) return "";
   const d = new Date(citaAt);
@@ -33,13 +51,31 @@ function buildQrFilename(cita) {
     .replace(/\s+/g, "")
     .replace(/[^a-zA-Z0-9-_]/g, "");
 
-  const fecha = cita?.citaAt
-    ? formatFecha(cita.citaAt).replace(/\//g, "-")
-    : "";
+  const fecha = cita?.citaAt ? formatFecha(cita.citaAt).replace(/\//g, "-") : "";
 
   return `senaf-qr-${nombre || "cita"}${
     documento ? `-${documento}` : ""
   }${fecha ? `-${fecha}` : ""}.png`;
+}
+
+async function resolveQrDataUrl(qrDataUrl, qrPayload) {
+  if (qrDataUrl && String(qrDataUrl).trim()) {
+    return String(qrDataUrl).trim();
+  }
+
+  const payload = String(qrPayload || "").trim();
+  if (!payload) return "";
+
+  try {
+    return await QRCode.toDataURL(payload, {
+      width: 320,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    });
+  } catch (err) {
+    console.error("[AgendaQrModal] No se pudo generar QR:", err);
+    return "";
+  }
 }
 
 function downloadDataUrl(dataUrl, filename = "senaf-qr-cita.png") {
@@ -53,25 +89,6 @@ function downloadDataUrl(dataUrl, filename = "senaf-qr-cita.png") {
   document.body.removeChild(a);
 }
 
-function buildCompanionsHtml(acompanantes = []) {
-  if (!Array.isArray(acompanantes) || !acompanantes.length) return "";
-
-  const items = acompanantes
-    .map((comp) => {
-      const nombre = safeText(comp?.nombre);
-      const documento = safeText(comp?.documento);
-      return `<li>${nombre}${documento ? ` — ${documento}` : ""}</li>`;
-    })
-    .join("");
-
-  return `
-    <div class="section">
-      <div class="row"><span class="label">Acompañantes:</span></div>
-      <ul class="companions">${items}</ul>
-    </div>
-  `;
-}
-
 function printQrCard({ qrDataUrl, cita }) {
   if (!qrDataUrl) return;
 
@@ -79,12 +96,9 @@ function printQrCard({ qrDataUrl, cita }) {
   if (!win) return;
 
   const nombre = safeText(cita?.nombre || "Visitante");
-  const documento = safeText(cita?.documento || "N/D");
   const empleado = safeText(cita?.empleado || "N/D");
-  const motivo = safeText(cita?.motivo || "N/D");
   const fecha = formatFecha(cita?.citaAt) || "N/D";
   const hora = formatHora(cita?.citaAt) || "N/D";
-  const companionsHtml = buildCompanionsHtml(cita?.acompanantes || []);
 
   win.document.open();
   win.document.write(`
@@ -94,110 +108,30 @@ function printQrCard({ qrDataUrl, cita }) {
         <meta charset="utf-8" />
         <title>QR Cita SENAF</title>
         <style>
-          * {
-            box-sizing: border-box;
-          }
-          body {
-            margin: 0;
-            padding: 24px;
-            font-family: Arial, Helvetica, sans-serif;
-            color: #0f172a;
-            background: #ffffff;
-          }
-          .card {
-            max-width: 760px;
-            margin: 0 auto;
-            border: 1px solid #cbd5e1;
-            border-radius: 20px;
-            padding: 24px;
-          }
-          .title {
-            font-size: 30px;
-            font-weight: 700;
-            margin-bottom: 8px;
-          }
-          .subtitle {
-            font-size: 16px;
-            color: #475569;
-            margin-bottom: 20px;
-            line-height: 1.5;
-          }
-          .qr-wrap {
-            display: flex;
-            justify-content: center;
-            margin: 18px 0 24px;
-          }
-          .qr-wrap img {
-            width: 300px;
-            height: 300px;
-            object-fit: contain;
-            border: 1px solid #e2e8f0;
-            border-radius: 18px;
-            padding: 12px;
-            background: #ffffff;
-          }
-          .details {
-            border: 1px solid #cbd5e1;
-            border-radius: 16px;
-            padding: 18px;
-            background: #f8fafc;
-          }
-          .row {
-            margin: 8px 0;
-            font-size: 18px;
-            line-height: 1.5;
-          }
-          .label {
-            font-weight: 700;
-          }
-          .section {
-            margin-top: 16px;
-          }
-          .companions {
-            margin: 8px 0 0 20px;
-            padding: 0;
-            font-size: 17px;
-            line-height: 1.5;
-          }
-          .payload {
-            margin-top: 16px;
-            padding: 10px 12px;
-            border-radius: 10px;
-            background: #eef2ff;
-            color: #334155;
-            font-size: 12px;
-            word-break: break-all;
-          }
-          @media print {
-            body {
-              padding: 0;
-            }
-            .card {
-              border: none;
-              border-radius: 0;
-            }
-          }
+          * { box-sizing: border-box; }
+          body { margin: 0; padding: 24px; font-family: Arial, Helvetica, sans-serif; color: #0f172a; background: #ffffff; }
+          .card { max-width: 760px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 20px; padding: 24px; }
+          .title { font-size: 30px; font-weight: 700; margin-bottom: 8px; }
+          .subtitle { font-size: 16px; color: #475569; margin-bottom: 20px; line-height: 1.5; }
+          .qr-wrap { display: flex; justify-content: center; margin: 18px 0 24px; }
+          .qr-wrap img { width: 300px; height: 300px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 18px; padding: 12px; background: #ffffff; }
+          .details { border: 1px solid #cbd5e1; border-radius: 16px; padding: 18px; background: #f8fafc; }
+          .row { margin: 8px 0; font-size: 18px; line-height: 1.5; }
+          .label { font-weight: 700; }
         </style>
       </head>
       <body>
         <div class="card">
-          <div class="title">Cita agendada</div>
-          <div class="subtitle">
-            Presente este código QR al guardia para validar su ingreso.
-          </div>
-
+          <div class="title">Cita autorizada</div>
+          <div class="subtitle">Presente este código QR al guardia para validar su ingreso.</div>
           <div class="qr-wrap">
             <img src="${qrDataUrl}" alt="QR de cita SENAF" />
           </div>
-
           <div class="details">
             <div class="row"><span class="label">Visitante:</span> ${nombre}</div>
-            <div class="row"><span class="label">Documento:</span> ${documento}</div>
             <div class="row"><span class="label">Empleado:</span> ${empleado}</div>
-            <div class="row"><span class="label">Motivo:</span> ${motivo}</div>
             <div class="row"><span class="label">Fecha:</span> ${fecha}</div>
             <div class="row"><span class="label">Hora:</span> ${hora}</div>
-            ${companionsHtml}
           </div>
         </div>
       </body>
@@ -211,47 +145,60 @@ function printQrCard({ qrDataUrl, cita }) {
   }, 350);
 }
 
+function getStatusMessage(estado) {
+  const normalized = normalizeEstadoValue(estado);
+
+  switch (normalized) {
+    case "Autorizada":
+      return "Tu cita fue autorizada. Presenta este código QR al guardia.";
+    case "Denegada":
+      return "La cita fue denegada. No se generará código QR.";
+    case "Cancelada":
+      return "La cita fue cancelada. No se generará código QR.";
+    case "Dentro":
+      return "La visita ya fue registrada como ingresada.";
+    case "Finalizada":
+      return "La visita ya fue finalizada.";
+    case "En revisión":
+      return "Tu solicitud está en revisión. Una vez autorizada, se generará el código QR.";
+    case "Programada":
+    default:
+      return "Una vez autorizada esta agenda, se generará el código QR.";
+  }
+}
+
 export default function AgendaQrModal({ open, qrModal, onClose }) {
   const cita = qrModal?.cita || null;
   const qrPayload = qrModal?.qrPayload || "";
   const serverQrDataUrl = qrModal?.qrDataUrl || "";
+  const estado = normalizeEstadoValue(cita?.estado || "Programada");
+  const isAutorizada = estado === "Autorizada";
 
   const [generatedQrDataUrl, setGeneratedQrDataUrl] = useState("");
   const [generatingQr, setGeneratingQr] = useState(false);
 
   const finalQrDataUrl = useMemo(() => {
+    if (!isAutorizada) return "";
     return serverQrDataUrl || generatedQrDataUrl || "";
-  }, [serverQrDataUrl, generatedQrDataUrl]);
+  }, [serverQrDataUrl, generatedQrDataUrl, isAutorizada]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function generateFallbackQr() {
+    async function syncQrImage() {
       if (!open) return;
-      if (serverQrDataUrl) {
+
+      if (!isAutorizada) {
         setGeneratedQrDataUrl("");
-        return;
-      }
-      if (!qrPayload) {
-        setGeneratedQrDataUrl("");
+        setGeneratingQr(false);
         return;
       }
 
       try {
         setGeneratingQr(true);
-        const dataUrl = await QRCode.toDataURL(qrPayload, {
-          width: 320,
-          margin: 1,
-          errorCorrectionLevel: "M",
-        });
-
+        const dataUrl = await resolveQrDataUrl(serverQrDataUrl, qrPayload);
         if (!cancelled) {
           setGeneratedQrDataUrl(dataUrl);
-        }
-      } catch (err) {
-        console.error("[AgendaQrModal] No se pudo generar QR en frontend:", err);
-        if (!cancelled) {
-          setGeneratedQrDataUrl("");
         }
       } finally {
         if (!cancelled) {
@@ -260,18 +207,19 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
       }
     }
 
-    generateFallbackQr();
+    syncQrImage();
 
     return () => {
       cancelled = true;
     };
-  }, [open, qrPayload, serverQrDataUrl]);
+  }, [open, qrPayload, serverQrDataUrl, isAutorizada]);
 
   if (!open) return null;
 
   const fecha = formatFecha(cita?.citaAt);
   const hora = formatHora(cita?.citaAt);
   const filename = buildQrFilename(cita);
+  const statusMessage = getStatusMessage(estado);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
@@ -288,10 +236,10 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
               className="text-lg md:text-xl font-bold"
               style={{ color: "var(--text)" }}
             >
-              Cita agendada
+              {isAutorizada ? "Tu QR de cita" : "Estado de la cita"}
             </h3>
             <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-              Presente este código QR al guardia para validar su ingreso.
+              {statusMessage}
             </p>
           </div>
 
@@ -308,37 +256,34 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
         </div>
 
         <div className="mt-5 flex justify-center">
-          {finalQrDataUrl ? (
-            <img
-              src={finalQrDataUrl}
-              alt="QR de la cita"
-              className="h-64 w-64 rounded-xl bg-white p-3 object-contain"
-            />
-          ) : generatingQr ? (
-            <div
-              className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
-              style={sxCardSoft({ color: "var(--text-muted)" })}
-            >
-              Generando imagen QR...
-            </div>
+          {isAutorizada ? (
+            finalQrDataUrl ? (
+              <img
+                src={finalQrDataUrl}
+                alt="QR de la cita"
+                className="h-64 w-64 rounded-xl bg-white p-3 object-contain"
+              />
+            ) : generatingQr ? (
+              <div
+                className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
+                style={sxCardSoft({ color: "var(--text-muted)" })}
+              >
+                Generando imagen QR...
+              </div>
+            ) : (
+              <div
+                className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
+                style={sxCardSoft({ color: "var(--text-muted)" })}
+              >
+                No se pudo generar el código QR.
+              </div>
+            )
           ) : (
             <div
-              className="h-64 w-64 rounded-xl flex flex-col items-center justify-center text-center text-sm p-4 gap-3"
+              className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-6"
               style={sxCardSoft({ color: "var(--text-muted)" })}
             >
-              <div>No se recibió imagen QR del servidor.</div>
-              {!!qrPayload && (
-                <div
-                  className="w-full rounded-lg p-2 text-[11px]"
-                  style={{
-                    background: "rgba(255,255,255,.04)",
-                    color: "var(--text-muted)",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  {qrPayload}
-                </div>
-              )}
+              {statusMessage}
             </div>
           )}
         </div>
@@ -351,13 +296,7 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
             <strong>Visitante:</strong> {cita?.nombre || ""}
           </div>
           <div style={{ color: "var(--text)" }}>
-            <strong>Documento:</strong> {cita?.documento || ""}
-          </div>
-          <div style={{ color: "var(--text)" }}>
             <strong>Empleado:</strong> {cita?.empleado || ""}
-          </div>
-          <div style={{ color: "var(--text)" }}>
-            <strong>Motivo:</strong> {cita?.motivo || ""}
           </div>
           <div style={{ color: "var(--text)" }}>
             <strong>Fecha:</strong> {fecha}
@@ -365,43 +304,37 @@ export default function AgendaQrModal({ open, qrModal, onClose }) {
           <div style={{ color: "var(--text)" }}>
             <strong>Hora:</strong> {hora}
           </div>
-
-          {!!cita?.acompanantes?.length && (
-            <div className="mt-2" style={{ color: "var(--text)" }}>
-              <strong>Acompañantes:</strong>
-              <ul className="mt-1 list-disc pl-5">
-                {cita.acompanantes.map((comp, idx) => (
-                  <li key={`qr-comp-${idx}`}>
-                    {comp?.nombre || ""} {comp?.documento ? `— ${comp.documento}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <div style={{ color: "var(--text)" }}>
+            <strong>Estado:</strong> {estado}
+          </div>
         </div>
 
         <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-end">
-          <button
-            type="button"
-            onClick={() => downloadDataUrl(finalQrDataUrl, filename)}
-            disabled={!finalQrDataUrl}
-            className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
-            style={sxGhostBtn()}
-            title="Descargar QR"
-          >
-            Descargar QR
-          </button>
+          {isAutorizada && (
+            <>
+              <button
+                type="button"
+                onClick={() => downloadDataUrl(finalQrDataUrl, filename)}
+                disabled={!finalQrDataUrl}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
+                style={sxGhostBtn()}
+                title="Descargar QR"
+              >
+                Descargar QR
+              </button>
 
-          <button
-            type="button"
-            onClick={() => printQrCard({ qrDataUrl: finalQrDataUrl, cita })}
-            disabled={!finalQrDataUrl}
-            className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
-            style={sxGhostBtn()}
-            title="Imprimir QR"
-          >
-            Imprimir
-          </button>
+              <button
+                type="button"
+                onClick={() => printQrCard({ qrDataUrl: finalQrDataUrl, cita })}
+                disabled={!finalQrDataUrl}
+                className="px-3 py-2 rounded-md text-xs font-semibold transition disabled:opacity-50"
+                style={sxGhostBtn()}
+                title="Imprimir QR"
+              >
+                Imprimir
+              </button>
+            </>
+          )}
 
           <button
             type="button"

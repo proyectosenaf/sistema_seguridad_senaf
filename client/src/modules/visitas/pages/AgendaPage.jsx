@@ -146,6 +146,40 @@ function readUserName(user) {
   ).trim();
 }
 
+function canShowQrForCita(cita) {
+  const estado = normalizeEstadoValue(cita?.estado || "Programada");
+  return (
+    estado === "Autorizada" &&
+    (!!cita?.qrDataUrl || !!cita?.qrPayload || !!cita?.qrToken)
+  );
+}
+
+function getQrPendingMessage(cita) {
+  const estado = normalizeEstadoValue(cita?.estado || "Programada");
+
+  if (estado === "Autorizada") {
+    return "La cita está autorizada, pero aún no se encontró el código QR.";
+  }
+
+  if (estado === "Denegada") {
+    return "La cita fue denegada. No se generará código QR.";
+  }
+
+  if (estado === "Cancelada") {
+    return "La cita fue cancelada. No se generará código QR.";
+  }
+
+  if (estado === "Finalizada") {
+    return "La cita ya finalizó.";
+  }
+
+  if (estado === "Dentro") {
+    return "La visita ya fue registrada como ingresada.";
+  }
+
+  return "Una vez autorizada esta agenda, se generará el código QR.";
+}
+
 /* ================== Página ================== */
 
 export default function AgendaPage() {
@@ -761,11 +795,13 @@ export default function AgendaPage() {
 
         let serverError = "";
         let itemFromServer = null;
+        let serverMessage = "";
 
         try {
           const { data } = await api.patch(`/citas/${editingCita._id}`, payload);
           if (data?.ok) {
             itemFromServer = data?.item || null;
+            serverMessage = data?.message || "";
           } else {
             serverError =
               data?.error ||
@@ -792,6 +828,18 @@ export default function AgendaPage() {
           ? {
               ...updated,
               ...itemFromServer,
+              qrDataUrl:
+                itemFromServer.estado === "Autorizada"
+                  ? itemFromServer.qrDataUrl || updated.qrDataUrl || ""
+                  : "",
+              qrPayload:
+                itemFromServer.estado === "Autorizada"
+                  ? itemFromServer.qrPayload || updated.qrPayload || ""
+                  : "",
+              qrToken:
+                itemFromServer.estado === "Autorizada"
+                  ? itemFromServer.qrToken || updated.qrToken || ""
+                  : "",
               acompanado:
                 typeof itemFromServer.acompanado === "boolean"
                   ? itemFromServer.acompanado
@@ -826,7 +874,10 @@ export default function AgendaPage() {
 
         saveStoredCitas(storedUpdated);
 
-        setOkMsg("✅ Cita actualizada correctamente.");
+        setOkMsg(
+          serverMessage ||
+            "✅ Cita actualizada correctamente. Si debe aprobarse nuevamente, el código QR se generará al autorizar."
+        );
         setErrorMsg("");
         resetFormState();
 
@@ -890,18 +941,14 @@ export default function AgendaPage() {
       let syncedWithServer = false;
       let serverError = "";
       let createdFromServer = null;
-      let qrDataUrl = "";
-      let qrPayload = "";
-      let qrToken = "";
+      let serverMessage = "";
 
       try {
         const { data } = await api.post("/citas", payload);
 
         if (data?.ok) {
           createdFromServer = data?.item || null;
-          qrDataUrl = data?.qrDataUrl || "";
-          qrPayload = data?.qrPayload || data?.item?.qrPayload || "";
-          qrToken = data?.qrToken || data?.item?.qrToken || "";
+          serverMessage = data?.message || "";
 
           if (createdFromServer) {
             syncedWithServer = true;
@@ -909,9 +956,9 @@ export default function AgendaPage() {
             nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
             nuevaCita.estado =
               normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
-            nuevaCita.qrDataUrl = qrDataUrl;
-            nuevaCita.qrPayload = qrPayload;
-            nuevaCita.qrToken = qrToken;
+            nuevaCita.qrDataUrl = "";
+            nuevaCita.qrPayload = "";
+            nuevaCita.qrToken = "";
             nuevaCita.nombre = createdFromServer.nombre || nuevaCita.nombre;
             nuevaCita.documento =
               createdFromServer.documento || nuevaCita.documento;
@@ -967,17 +1014,11 @@ export default function AgendaPage() {
       setItems((prev) => [...prev, nuevaCita]);
 
       if (syncedWithServer) {
-        setOkMsg("✅ Cita agendada correctamente.");
+        setOkMsg(
+          serverMessage ||
+            "✅ Cita agendada correctamente. Una vez autorizada esta agenda, se generará el código QR."
+        );
         setErrorMsg("");
-
-        if (qrDataUrl || qrPayload || qrToken) {
-          openQrModal({
-            cita: nuevaCita,
-            qrDataUrl,
-            qrPayload,
-            qrToken,
-          });
-        }
       } else {
         setOkMsg(
           "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
@@ -1718,8 +1759,8 @@ export default function AgendaPage() {
 
                       <tbody style={{ color: "var(--text)" }}>
                         {arr.map((it) => {
-                          const canShowQr =
-                            !!it.qrDataUrl || !!it.qrPayload || !!it.qrToken;
+                          const showQr = canShowQrForCita(it);
+                          const qrMessage = getQrPendingMessage(it);
 
                           return (
                             <tr
@@ -1748,33 +1789,44 @@ export default function AgendaPage() {
                                 <CitaEstadoPill estado={it.estado} />
                               </td>
                               <td className="text-right">
-                                <div className="flex items-center justify-end gap-2">
-                                  {canShowQr && (
+                                <div className="flex flex-col items-end gap-2">
+                                  <div className="flex items-center justify-end gap-2">
+                                    {showQr && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openQrModal({
+                                            cita: it,
+                                            qrDataUrl: it.qrDataUrl,
+                                            qrPayload: it.qrPayload,
+                                            qrToken: it.qrToken,
+                                          })
+                                        }
+                                        className="px-2 py-1 rounded-md text-xs font-semibold transition"
+                                        style={sxSuccessBtn()}
+                                      >
+                                        Ver QR
+                                      </button>
+                                    )}
+
                                     <button
                                       type="button"
-                                      onClick={() =>
-                                        openQrModal({
-                                          cita: it,
-                                          qrDataUrl: it.qrDataUrl,
-                                          qrPayload: it.qrPayload,
-                                          qrToken: it.qrToken,
-                                        })
-                                      }
+                                      onClick={() => handleEditCita(it)}
                                       className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                                      style={sxSuccessBtn()}
+                                      style={sxPrimaryBtn()}
                                     >
-                                      Ver QR
+                                      Editar
                                     </button>
-                                  )}
+                                  </div>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditCita(it)}
-                                    className="px-2 py-1 rounded-md text-xs font-semibold transition"
-                                    style={sxPrimaryBtn()}
-                                  >
-                                    Editar
-                                  </button>
+                                  {!showQr && (
+                                    <span
+                                      className="text-[11px] leading-4 text-right max-w-[240px]"
+                                      style={{ color: "var(--text-muted)" }}
+                                    >
+                                      {qrMessage}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                             </tr>

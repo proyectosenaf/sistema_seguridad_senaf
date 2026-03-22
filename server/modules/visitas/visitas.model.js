@@ -157,7 +157,10 @@ const VisitaSchema = new mongoose.Schema(
       default: null,
     },
 
-    /* QR de cita */
+    /* QR de cita
+       Regla de negocio:
+       - Solo debe existir cuando la cita esté Autorizada
+       - Si la cita vuelve a otro estado, el QR se invalida */
     qrToken: {
       type: String,
       default: null,
@@ -171,6 +174,17 @@ const VisitaSchema = new mongoose.Schema(
       type: String,
       default: null,
       trim: true,
+    },
+
+    qrGeneratedAt: {
+      type: Date,
+      default: null,
+    },
+
+    autorizadaAt: {
+      type: Date,
+      default: null,
+      index: true,
     },
 
     /* Auditoría de escaneo / validación */
@@ -229,6 +243,7 @@ VisitaSchema.index({ estado: 1, llegoEnVehiculo: 1 });
 VisitaSchema.index({ qrToken: 1 });
 VisitaSchema.index({ documento: 1, tipo: 1, createdAt: -1 });
 VisitaSchema.index({ acompanado: 1, createdAt: -1 });
+VisitaSchema.index({ autorizadaAt: -1 });
 
 /* Hook: normalización previa */
 VisitaSchema.pre("validate", function (next) {
@@ -360,6 +375,20 @@ VisitaSchema.pre("save", function (next) {
 
   if (this.qrPayload !== null) {
     this.qrPayload = String(this.qrPayload || "").trim() || null;
+  }
+
+  /* Regla central:
+     si no está autorizada, no debe conservar QR */
+  if (this.estado !== "Autorizada") {
+    this.qrToken = null;
+    this.qrPayload = null;
+    this.qrGeneratedAt = null;
+    this.validatedAt = null;
+    this.validatedBy = null;
+  }
+
+  if (this.estado === "Autorizada" && !this.autorizadaAt) {
+    this.autorizadaAt = new Date();
   }
 
   next();

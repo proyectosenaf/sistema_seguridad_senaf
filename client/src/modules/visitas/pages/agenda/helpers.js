@@ -17,8 +17,6 @@ export function normalizeModelItem(item) {
   return item?.name || item?.label || item?.modelo || item?.value || "";
 }
 
-
-
 export function normalizeEstadoValue(value) {
   const raw = String(value || "").trim();
 
@@ -43,13 +41,30 @@ export function buildISOFromDateAndTime(fecha, hora) {
   return temp.toISOString();
 }
 
+function shouldKeepQrFields(item) {
+  const estado = normalizeEstadoValue(item?.estado || "Programada");
+  return estado === "Autorizada";
+}
+
+function sanitizeQrFieldsByEstado(item = {}) {
+  const keepQr = shouldKeepQrFields(item);
+
+  return {
+    ...item,
+    qrDataUrl: keepQr ? item?.qrDataUrl || "" : "",
+    qrPayload: keepQr ? item?.qrPayload || "" : "",
+    qrToken: keepQr ? item?.qrToken || "" : "",
+  };
+}
+
 export function mergeServerAndLocal(serverList, localList) {
   const map = new Map();
 
   for (const it of serverList || []) {
     const key = it?._id || it?.id;
     if (!key) continue;
-    map.set(key, {
+
+    const normalizedServerItem = sanitizeQrFieldsByEstado({
       ...it,
       acompanado:
         typeof it?.acompanado === "boolean"
@@ -59,6 +74,8 @@ export function mergeServerAndLocal(serverList, localList) {
             !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
       acompanantes: normalizeCompanionArray(it?.acompanantes),
     });
+
+    map.set(key, normalizedServerItem);
   }
 
   for (const local of localList || []) {
@@ -66,33 +83,36 @@ export function mergeServerAndLocal(serverList, localList) {
     if (!key) continue;
 
     if (map.has(key)) {
-      map.set(key, {
+      const serverItem = map.get(key);
+
+      const merged = {
         ...local,
-        ...map.get(key),
+        ...serverItem,
         acompanado:
-          typeof map.get(key)?.acompanado === "boolean"
-            ? map.get(key)?.acompanado
+          typeof serverItem?.acompanado === "boolean"
+            ? serverItem.acompanado
             : typeof local?.acompanado === "boolean"
             ? local.acompanado
-            : !!(map.get(key)?.acompanantes?.length || local?.acompanantes?.length),
+            : !!(serverItem?.acompanantes?.length || local?.acompanantes?.length),
         acompanantes: normalizeCompanionArray(
-          map.get(key)?.acompanantes?.length
-            ? map.get(key)?.acompanantes
+          serverItem?.acompanantes?.length
+            ? serverItem.acompanantes
             : local?.acompanantes
         ),
-        qrDataUrl: map.get(key)?.qrDataUrl || local?.qrDataUrl || "",
-        qrPayload: map.get(key)?.qrPayload || local?.qrPayload || "",
-        qrToken: map.get(key)?.qrToken || local?.qrToken || "",
-      });
+      };
+
+      map.set(key, sanitizeQrFieldsByEstado(merged));
     } else {
-      map.set(key, {
+      const normalizedLocalItem = {
         ...local,
         acompanado:
           typeof local?.acompanado === "boolean"
             ? local.acompanado
             : !!local?.acompanantes?.length,
         acompanantes: normalizeCompanionArray(local?.acompanantes),
-      });
+      };
+
+      map.set(key, sanitizeQrFieldsByEstado(normalizedLocalItem));
     }
   }
 

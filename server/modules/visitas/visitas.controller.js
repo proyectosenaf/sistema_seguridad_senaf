@@ -494,6 +494,39 @@ function buildScanQrResponseItem(visita, extra = {}) {
   };
 }
 
+async function buildQrDataUrl(qrPayload) {
+  if (!qrPayload) return null;
+
+  return QRCode.toDataURL(qrPayload, {
+    width: 320,
+    margin: 1,
+    errorCorrectionLevel: "M",
+  });
+}
+
+function clearQrFields(visita) {
+  visita.qrToken = null;
+  visita.qrPayload = null;
+  visita.qrGeneratedAt = null;
+  visita.autorizadaAt = null;
+}
+
+function shouldInvalidateQrOnUpdate(visita, payload = {}, nextCitaAt) {
+  if (!visita?.qrToken) return false;
+
+  const currentCitaAtIso = visita?.citaAt
+    ? new Date(visita.citaAt).toISOString()
+    : null;
+  const nextCitaAtIso = nextCitaAt ? new Date(nextCitaAt).toISOString() : null;
+
+  if (currentCitaAtIso !== nextCitaAtIso) return true;
+  if (cleanText(visita?.empleado || "") !== cleanText(payload?.empleado || "")) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * GET /api/visitas
  */
@@ -655,16 +688,15 @@ export async function createCita(req, res) {
       }
     }
 
-    const qrToken = crypto.randomUUID();
-    const qrPayload = `${QR_PREFIX}${qrToken}`;
-
     const visita = new Visita({
       ...payload,
       tipo: "Agendada",
       estado: "Programada",
       citaAt: citaDate,
-      qrToken,
-      qrPayload,
+      qrToken: null,
+      qrPayload: null,
+      qrGeneratedAt: null,
+      autorizadaAt: null,
     });
 
     await visita.save();
@@ -688,7 +720,7 @@ export async function createCita(req, res) {
         documento: visita.documento || "",
         motivo: visita.motivo || "",
         citaAt: visita.citaAt || null,
-        qrToken,
+        qrToken: null,
         creadaPorVisitante: visitante,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
@@ -700,23 +732,21 @@ export async function createCita(req, res) {
       },
     });
 
-    const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-      width: 320,
-      margin: 1,
-      errorCorrectionLevel: "M",
-    });
-
     const item = visita.toObject ? visita.toObject() : visita;
-    item.qrDataUrl = qrDataUrl;
-    item.qrPayload = qrPayload;
-    item.qrToken = qrToken;
+    item.qrDataUrl = null;
+    item.qrPayload = null;
+    item.qrToken = null;
+    item.qrMessage =
+      "Una vez autorizada esta agenda, se generará el código QR.";
 
     return res.status(201).json({
       ok: true,
       item,
-      qrDataUrl,
-      qrPayload,
-      qrToken,
+      qrDataUrl: null,
+      qrPayload: null,
+      qrToken: null,
+      message:
+        "Una vez autorizada esta agenda, se generará el código QR.",
     });
   } catch (err) {
     console.error("[visitas] createCita", err);
@@ -772,6 +802,24 @@ export async function updateCita(req, res) {
       }
     }
 
+    let nextCitaDate = visita.citaAt ? new Date(visita.citaAt) : null;
+
+    if (typeof citaAt !== "undefined") {
+      nextCitaDate = citaAt ? new Date(citaAt) : null;
+      if (!nextCitaDate || Number.isNaN(nextCitaDate.getTime())) {
+        return res.status(400).json({
+          ok: false,
+          error: "Debe indicar una fecha/hora de cita válida",
+        });
+      }
+    }
+
+    const invalidateQr = shouldInvalidateQrOnUpdate(
+      visita,
+      payload,
+      nextCitaDate
+    );
+
     visita.nombre = payload.nombre;
     visita.documento = payload.documento;
     visita.empresa = payload.empresa;
@@ -785,21 +833,29 @@ export async function updateCita(req, res) {
     visita.acompanantes = payload.acompanantes;
 
     if (typeof citaAt !== "undefined") {
-      const citaDate = citaAt ? new Date(citaAt) : null;
-      if (!citaDate || Number.isNaN(citaDate.getTime())) {
-        return res.status(400).json({
-          ok: false,
-          error: "Debe indicar una fecha/hora de cita válida",
-        });
-      }
-      visita.citaAt = citaDate;
+      visita.citaAt = nextCitaDate;
     }
 
-    if (!visitante && typeof estado !== "undefined" && estado !== "") {
+    if (invalidateQr) {
+      clearQrFields(visita);
+      visita.estado = "Programada";
+    } else if (!visitante && typeof estado !== "undefined" && estado !== "") {
       visita.estado = normalizeEstadoInput(estado);
     }
 
     await visita.save();
+
+    const item = visita.toObject ? visita.toObject() : visita;
+    let qrDataUrl = null;
+
+    if (item.estado === "Autorizada" && item.qrPayload) {
+      qrDataUrl = await buildQrDataUrl(item.qrPayload);
+      item.qrDataUrl = qrDataUrl;
+    } else {
+      item.qrDataUrl = null;
+      item.qrMessage =
+        "Una vez autorizada esta agenda, se generará el código QR.";
+    }
 
     await auditVisita(req, {
       accion: "ACTUALIZAR",
@@ -819,6 +875,7 @@ export async function updateCita(req, res) {
         motivo: visita.motivo || "",
         citaAt: visita.citaAt || null,
         editadaPorVisitante: visitante,
+        qrInvalidado: invalidateQr,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -829,7 +886,17 @@ export async function updateCita(req, res) {
       },
     });
 
-    return res.json({ ok: true, item: visita });
+    return res.json({
+      ok: true,
+      item,
+      qrDataUrl,
+      qrPayload: item.qrPayload || null,
+      qrToken: item.qrToken || null,
+      message:
+        item.estado === "Autorizada" && item.qrPayload
+          ? "Cita actualizada correctamente"
+          : "Una vez autorizada esta agenda, se generará el código QR.",
+    });
   } catch (err) {
     console.error("[visitas] updateCita", err);
     return res.status(400).json({ ok: false, error: err.message });
@@ -1061,6 +1128,23 @@ export async function updateCitaEstado(req, res) {
 
     visita.estado = nextEstado;
 
+    if (nextEstado === "Autorizada") {
+      if (!visita.qrToken) {
+        const qrToken = crypto.randomUUID();
+        const qrPayload = `${QR_PREFIX}${qrToken}`;
+
+        visita.qrToken = qrToken;
+        visita.qrPayload = qrPayload;
+        visita.qrGeneratedAt = new Date();
+      }
+
+      if (!visita.autorizadaAt) {
+        visita.autorizadaAt = new Date();
+      }
+    } else {
+      clearQrFields(visita);
+    }
+
     if (nextEstado === "Dentro" && !visita.fechaEntrada) {
       visita.fechaEntrada = new Date();
     }
@@ -1070,6 +1154,18 @@ export async function updateCitaEstado(req, res) {
     }
 
     await visita.save();
+
+    const item = visita.toObject ? visita.toObject() : visita;
+    let qrDataUrl = null;
+
+    if (item.estado === "Autorizada" && item.qrPayload) {
+      qrDataUrl = await buildQrDataUrl(item.qrPayload);
+      item.qrDataUrl = qrDataUrl;
+    } else {
+      item.qrDataUrl = null;
+      item.qrMessage =
+        "Una vez autorizada esta agenda, se generará el código QR.";
+    }
 
     await auditVisita(req, {
       accion: "ACTUALIZAR",
@@ -1086,6 +1182,8 @@ export async function updateCitaEstado(req, res) {
       meta: {
         documento: visita.documento || "",
         estado: nextEstado,
+        qrToken: visita.qrToken || null,
+        qrGeneratedAt: visita.qrGeneratedAt || null,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -1093,7 +1191,17 @@ export async function updateCitaEstado(req, res) {
       },
     });
 
-    return res.json({ ok: true, item: visita });
+    return res.json({
+      ok: true,
+      item,
+      qrDataUrl,
+      qrPayload: item.qrPayload || null,
+      qrToken: item.qrToken || null,
+      message:
+        item.estado === "Autorizada" && item.qrPayload
+          ? "Cita autorizada y código QR generado correctamente"
+          : "Una vez autorizada esta agenda, se generará el código QR.",
+    });
   } catch (err) {
     console.error("[visitas] updateCitaEstado", err);
     return res.status(500).json({ ok: false, error: err.message });
@@ -1142,6 +1250,14 @@ export async function scanQrCita(req, res) {
       return res.status(409).json({
         ok: false,
         error: "El QR pertenece a un registro que no es una cita agendada",
+        item: buildScanQrResponseItem(visita),
+      });
+    }
+
+    if (normalizeEstadoInput(visita.estado) !== "Autorizada") {
+      return res.status(409).json({
+        ok: false,
+        error: "La cita no está autorizada para usar QR",
         item: buildScanQrResponseItem(visita),
       });
     }

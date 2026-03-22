@@ -99,10 +99,45 @@ export function normalizeCompanionArray(list) {
     .filter(Boolean);
 }
 
+function normalizeEstadoValue(value) {
+  const raw = String(value || "").trim();
+
+  const map = {
+    solicitada: "Programada",
+    programada: "Programada",
+    "en revisión": "En revisión",
+    en_revision: "En revisión",
+    autorizada: "Autorizada",
+    denegada: "Denegada",
+    cancelada: "Cancelada",
+    dentro: "Dentro",
+    finalizada: "Finalizada",
+  };
+
+  return map[raw.toLowerCase()] || raw || "Programada";
+}
+
+function shouldKeepQrFields(item) {
+  const estado = normalizeEstadoValue(item?.estado || "Programada");
+  return estado === "Autorizada";
+}
+
+function sanitizeQrFieldsByEstado(item = {}) {
+  const keepQr = shouldKeepQrFields(item);
+
+  return {
+    ...item,
+    qrDataUrl: keepQr ? item?.qrDataUrl || "" : "",
+    qrPayload: keepQr ? item?.qrPayload || "" : "",
+    qrToken: keepQr ? item?.qrToken || "" : "",
+  };
+}
+
 export function loadStoredCitas() {
   try {
     const raw = localStorage.getItem(CITA_STORAGE_KEY);
     if (!raw) return [];
+
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
 
@@ -117,7 +152,7 @@ export function loadStoredCitas() {
         }
       }
 
-      return {
+      const normalizedItem = {
         ...it,
         _id,
         citaAt,
@@ -129,6 +164,8 @@ export function loadStoredCitas() {
               !!(Array.isArray(it.acompanantes) && it.acompanantes.length),
         acompanantes: normalizeCompanionArray(it.acompanantes),
       };
+
+      return sanitizeQrFieldsByEstado(normalizedItem);
     });
   } catch (e) {
     console.warn("[citas] No se pudo leer de localStorage:", e);
@@ -138,7 +175,11 @@ export function loadStoredCitas() {
 
 export function saveStoredCitas(list) {
   try {
-    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(list));
+    const safeList = Array.isArray(list)
+      ? list.map((item) => sanitizeQrFieldsByEstado(item))
+      : [];
+
+    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(safeList));
   } catch (e) {
     console.warn("[citas] No se pudo guardar en localStorage:", e);
   }

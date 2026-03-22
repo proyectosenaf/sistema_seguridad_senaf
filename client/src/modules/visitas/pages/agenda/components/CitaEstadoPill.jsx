@@ -59,6 +59,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
       };
       break;
+
     case "En revisión":
       style = {
         background: "color-mix(in srgb, #3b82f6 12%, transparent)",
@@ -66,6 +67,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
       };
       break;
+
     case "Autorizada":
       style = {
         background: "color-mix(in srgb, #22c55e 12%, transparent)",
@@ -73,6 +75,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
       };
       break;
+
     case "Dentro":
       style = {
         background: "color-mix(in srgb, #16a34a 14%, transparent)",
@@ -80,6 +83,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #16a34a 36%, transparent)",
       };
       break;
+
     case "Finalizada":
       style = {
         background: "color-mix(in srgb, #64748b 18%, transparent)",
@@ -87,6 +91,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
       };
       break;
+
     case "Denegada":
       style = {
         background: "color-mix(in srgb, #ef4444 12%, transparent)",
@@ -94,6 +99,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
       };
       break;
+
     case "Cancelada":
       style = {
         background: "color-mix(in srgb, #64748b 18%, transparent)",
@@ -101,6 +107,7 @@ export default function CitaEstadoPill({ estado }) {
         border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
       };
       break;
+
     default:
       break;
   }
