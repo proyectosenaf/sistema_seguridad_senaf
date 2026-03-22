@@ -1,6 +1,49 @@
-// client/src/pages/AgendaPage.jsx
+// client/src/modules/visitas/pages/AgendaPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  DNI_DIGITS,
+  PHONE_MIN_DIGITS,
+  NAME_MAX,
+  COMPANY_MAX,
+  EMP_MAX,
+  REASON_MAX,
+  EMAIL_MAX,
+  COMPANION_NAME_MAX,
+} from "./agenda/constants.js";
+import {
+  readCurrentUser,
+  normalizeDocumento,
+  formatDocumentoInput,
+  createEmptyCompanion,
+  normalizeCompanionArray,
+  loadStoredCitas,
+  saveStoredCitas,
+} from "./agenda/storage.js";
+import {
+  normalizeCatalogArray,
+  normalizeBrandItem,
+  normalizeModelItem,
+  normalizeEstadoValue,
+  buildISOFromDateAndTime,
+  mergeServerAndLocal,
+  toDisplayName,
+  toDisplayCompany,
+} from "./agenda/helpers.js";
+import {
+  sxCard,
+  sxCardSoft,
+  sxInput,
+  sxGhostBtn,
+  sxPrimaryBtn,
+  sxSuccessBtn,
+  sxDangerBtn,
+} from "./agenda/styles.js";
+import Field from "./agenda/components/Field.jsx";
+import CitaEstadoPill from "./agenda/components/CitaEstadoPill.jsx";
+import AgendaHeader from "./agenda/components/AgendaHeader.jsx";
+import AgendaTabs from "./agenda/components/AgendaTabs.jsx";
+import AgendaQrModal from "./agenda/components/AgendaQrModal.jsx";
 
 /* ========= ROOT API para backend ========= */
 const API_BASE = (
@@ -21,450 +64,9 @@ const VEHICLE_MODELS_API_URL =
   import.meta.env.VITE_VEHICLE_MODELS_API_URL ||
   `${API_BASE}/catalogos/vehiculos/modelos`;
 
-/* ====== Límites y reglas de validación ====== */
-const DNI_DIGITS = 13;
-const PHONE_MIN_DIGITS = 8;
-const NAME_MAX = 40;
-const COMPANY_MAX = 20;
-const EMP_MAX = 20;
-const REASON_MAX = 20;
-const EMAIL_MAX = 60;
-const COMPANION_NAME_MAX = 40;
-
-/* ================== Storage local para citas ================== */
-const CITA_STORAGE_KEY = "citas_demo";
-
-/* ====== Storage opcional para datos del usuario actual ======
-   No rompe si no existe.
-   Se usa para:
-   - ocultar "Volver a Gestión de Visitantes" cuando el rol es visitante
-   - forzar "Mis citas" si podemos inferir documento del usuario
-*/
-const POSSIBLE_USER_KEYS = [
-  "auth_user",
-  "user",
-  "currentUser",
-  "senaf_user",
-  "auth",
-  "session",
-];
-
-function safeJsonParse(value) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function readCurrentUser() {
-  try {
-    for (const key of POSSIBLE_USER_KEYS) {
-      const fromLocal = localStorage.getItem(key);
-      if (fromLocal) {
-        const parsed = safeJsonParse(fromLocal);
-        if (parsed) {
-          if (parsed.user && typeof parsed.user === "object") return parsed.user;
-          return parsed;
-        }
-      }
-
-      const fromSession = sessionStorage.getItem(key);
-      if (fromSession) {
-        const parsed = safeJsonParse(fromSession);
-        if (parsed) {
-          if (parsed.user && typeof parsed.user === "object") return parsed.user;
-          return parsed;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[AgendaPage] No se pudo leer usuario actual:", err);
-  }
-  return null;
-}
-
-function normalizeDocumento(raw) {
-  return String(raw || "").replace(/\D/g, "");
-}
-
-function formatDocumentoInput(value) {
-  const digits = String(value || "")
-    .replace(/\D/g, "")
-    .slice(0, DNI_DIGITS);
-
-  if (digits.length <= 4) return digits;
-  if (digits.length <= 8) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8)}`;
-}
-
-function createEmptyCompanion() {
-  return {
-    nombre: "",
-    documento: "",
-  };
-}
-
-function normalizeCompanionArray(list) {
-  if (!Array.isArray(list)) return [];
-
-  return list
-    .map((item) => {
-      if (!item) return null;
-
-      if (typeof item === "string") {
-        const nombre = item.trim();
-        if (!nombre) return null;
-        return {
-          nombre,
-          documento: "",
-        };
-      }
-
-      const nombre = String(
-        item.nombre ||
-          item.name ||
-          item.fullName ||
-          item.acompanante ||
-          item.visitante ||
-          ""
-      ).trim();
-
-      const documento = formatDocumentoInput(
-        item.documento || item.dni || item.identidad || item.idNumber || ""
-      );
-
-      if (!nombre && !documento) return null;
-
-      return {
-        nombre,
-        documento,
-      };
-    })
-    .filter(Boolean);
-}
-
-function loadStoredCitas() {
-  try {
-    const raw = localStorage.getItem(CITA_STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-
-    return arr.map((it) => {
-      const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
-      let citaAt = it.citaAt;
-
-      if (!citaAt && it.fecha && it.hora) {
-        const temp = new Date(`${it.fecha}T${it.hora}:00`);
-        if (!Number.isNaN(temp.getTime())) {
-          citaAt = temp.toISOString();
-        }
-      }
-
-      return {
-        ...it,
-        _id,
-        citaAt,
-        acompanado:
-          typeof it.acompanado === "boolean"
-            ? it.acompanado
-            : !!it.tieneAcompanante ||
-              !!it.conAcompanante ||
-              !!(Array.isArray(it.acompanantes) && it.acompanantes.length),
-        acompanantes: normalizeCompanionArray(it.acompanantes),
-      };
-    });
-  } catch (e) {
-    console.warn("[citas] No se pudo leer de localStorage:", e);
-    return [];
-  }
-}
-
-function saveStoredCitas(list) {
-  try {
-    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(list));
-  } catch (e) {
-    console.warn("[citas] No se pudo guardar en localStorage:", e);
-  }
-}
-
-/* ================== Helpers UI ================== */
-function sxCard(extra = {}) {
-  return {
-    background: "color-mix(in srgb, var(--card) 90%, transparent)",
-    border: "1px solid var(--border)",
-    boxShadow: "var(--shadow-md)",
-    backdropFilter: "blur(12px) saturate(130%)",
-    WebkitBackdropFilter: "blur(12px) saturate(130%)",
-    ...extra,
-  };
-}
-
-function sxCardSoft(extra = {}) {
-  return {
-    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
-    border: "1px solid var(--border)",
-    boxShadow: "var(--shadow-sm)",
-    ...extra,
-  };
-}
-
-function sxInput(extra = {}) {
-  return {
-    background: "var(--input-bg)",
-    color: "var(--text)",
-    border: "1px solid var(--input-border)",
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,.04)",
-    ...extra,
-  };
-}
-
-function sxGhostBtn(extra = {}) {
-  return {
-    background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
-    color: "var(--text)",
-    border: "1px solid var(--border)",
-    boxShadow: "var(--shadow-sm)",
-    ...extra,
-  };
-}
-
-function sxPrimaryBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #2563eb, #06b6d4)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
-    ...extra,
-  };
-}
-
-function sxSuccessBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #16a34a, #22c55e)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
-    ...extra,
-  };
-}
-
-function sxDangerBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #dc2626, #ef4444)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
-    ...extra,
-  };
-}
-
-function normalizeCatalogArray(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.data)) return data.data;
-  return [];
-}
-
-function normalizeBrandItem(item) {
-  if (typeof item === "string") return item;
-  return item?.name || item?.label || item?.marca || item?.value || "";
-}
-
-function normalizeModelItem(item) {
-  if (typeof item === "string") return item;
-  return item?.name || item?.label || item?.modelo || item?.value || "";
-}
-
-/* ========= Helpers visuales de estado ========= */
-
-function normalizeEstadoValue(value) {
-  const raw = String(value || "").trim();
-
-  const map = {
-    solicitada: "Programada",
-    programada: "Programada",
-    "en revisión": "En revisión",
-    en_revision: "En revisión",
-    autorizada: "Autorizada",
-    denegada: "Denegada",
-    cancelada: "Cancelada",
-    dentro: "Dentro",
-    finalizada: "Finalizada",
-  };
-
-  return map[raw.toLowerCase()] || raw || "Programada";
-}
-
-function prettyCitaEstado(value) {
-  const estado = normalizeEstadoValue(value);
-
-  switch (estado) {
-    case "Programada":
-      return "programada";
-    case "En revisión":
-      return "en revisión";
-    case "Autorizada":
-      return "autorizada";
-    case "Denegada":
-      return "denegada";
-    case "Cancelada":
-      return "cancelada";
-    case "Dentro":
-      return "ingresada";
-    case "Finalizada":
-      return "finalizada";
-    default:
-      return estado.toLowerCase();
-  }
-}
-
-function CitaEstadoPill({ estado }) {
-  const normalized = normalizeEstadoValue(estado);
-  const val = prettyCitaEstado(normalized);
-
-  let style = {
-    background: "color-mix(in srgb, #f59e0b 12%, transparent)",
-    color: "#fde68a",
-    border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
-  };
-
-  switch (normalized) {
-    case "Programada":
-      style = {
-        background: "color-mix(in srgb, #f59e0b 12%, transparent)",
-        color: "#fde68a",
-        border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
-      };
-      break;
-    case "En revisión":
-      style = {
-        background: "color-mix(in srgb, #3b82f6 12%, transparent)",
-        color: "#93c5fd",
-        border: "1px solid color-mix(in srgb, #3b82f6 36%, transparent)",
-      };
-      break;
-    case "Autorizada":
-      style = {
-        background: "color-mix(in srgb, #22c55e 12%, transparent)",
-        color: "#86efac",
-        border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
-      };
-      break;
-    case "Dentro":
-      style = {
-        background: "color-mix(in srgb, #16a34a 14%, transparent)",
-        color: "#86efac",
-        border: "1px solid color-mix(in srgb, #16a34a 36%, transparent)",
-      };
-      break;
-    case "Finalizada":
-      style = {
-        background: "color-mix(in srgb, #64748b 18%, transparent)",
-        color: "#cbd5e1",
-        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
-      };
-      break;
-    case "Denegada":
-      style = {
-        background: "color-mix(in srgb, #ef4444 12%, transparent)",
-        color: "#fca5a5",
-        border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
-      };
-      break;
-    case "Cancelada":
-      style = {
-        background: "color-mix(in srgb, #64748b 18%, transparent)",
-        color: "#cbd5e1",
-        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
-      };
-      break;
-    default:
-      break;
-  }
-
-  return (
-    <span
-      className="px-2 py-1 rounded-full text-xs font-semibold inline-flex items-center justify-center"
-      style={style}
-    >
-      {val}
-    </span>
-  );
-}
-
-function buildISOFromDateAndTime(fecha, hora) {
-  const temp = new Date(`${fecha}T${hora}:00`);
-  if (Number.isNaN(temp.getTime())) return null;
-  return temp.toISOString();
-}
-
-function mergeServerAndLocal(serverList, localList) {
-  const map = new Map();
-
-  for (const it of serverList || []) {
-    const key = it?._id || it?.id;
-    if (!key) continue;
-    map.set(key, {
-      ...it,
-      acompanado:
-        typeof it?.acompanado === "boolean"
-          ? it.acompanado
-          : !!it?.tieneAcompanante ||
-            !!it?.conAcompanante ||
-            !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
-      acompanantes: normalizeCompanionArray(it?.acompanantes),
-    });
-  }
-
-  for (const local of localList || []) {
-    const key = local?._id || local?.id;
-    if (!key) continue;
-
-    if (map.has(key)) {
-      map.set(key, {
-        ...local,
-        ...map.get(key),
-        acompanado:
-          typeof map.get(key)?.acompanado === "boolean"
-            ? map.get(key)?.acompanado
-            : typeof local?.acompanado === "boolean"
-            ? local.acompanado
-            : !!(map.get(key)?.acompanantes?.length || local?.acompanantes?.length),
-        acompanantes: normalizeCompanionArray(
-          map.get(key)?.acompanantes?.length
-            ? map.get(key)?.acompanantes
-            : local?.acompanantes
-        ),
-        qrDataUrl: map.get(key)?.qrDataUrl || local?.qrDataUrl || "",
-        qrPayload: map.get(key)?.qrPayload || local?.qrPayload || "",
-        qrToken: map.get(key)?.qrToken || local?.qrToken || "",
-      });
-    } else {
-      map.set(key, {
-        ...local,
-        acompanado:
-          typeof local?.acompanado === "boolean"
-            ? local.acompanado
-            : !!(local?.acompanantes?.length),
-        acompanantes: normalizeCompanionArray(local?.acompanantes),
-      });
-    }
-  }
-
-  return Array.from(map.values());
-}
-
-function toDisplayName(it) {
-  return it?.nombre || it?.visitante || "";
-}
-
-function toDisplayCompany(it) {
-  return it?.empresa || "";
-}
-
 /* ================== Página ================== */
+
+
 
 export default function AgendaPage() {
   const navigate = useNavigate();
@@ -1451,51 +1053,19 @@ export default function AgendaPage() {
       <div className="mesh mesh--br" />
       <div className="mesh mesh--lb" />
 
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <h1
-            className="text-xl md:text-2xl font-bold"
-            style={{ color: "var(--text)" }}
-          >
-            Agenda de Citas
-          </h1>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            Agendar y consultar citas programadas (pre-registro en línea)
-          </p>
-        </div>
+      <AgendaHeader
+        isVisitante={isVisitante}
+        onBack={() => navigate("/visitas/control")}
+      />
 
-        <div className="flex items-center gap-2">
-          {!isVisitante && (
-            <button
-              onClick={() => navigate("/visitas/control")}
-              className="text-xs hover:underline"
-              style={{ color: "#60a5fa" }}
-            >
-              ← Volver a Gestión de Visitantes
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => {
-            setTab("agendar");
-            setEditingCita(null);
-          }}
-          className="px-3 py-2 rounded-lg text-sm transition"
-          style={tab === "agendar" ? sxPrimaryBtn() : sxGhostBtn()}
-        >
-          Agendar
-        </button>
-        <button
-          onClick={() => setTab("citas")}
-          className="px-3 py-2 rounded-lg text-sm transition"
-          style={tab === "citas" ? sxPrimaryBtn() : sxGhostBtn()}
-        >
-          Citas
-        </button>
-      </div>
+      <AgendaTabs
+        tab={tab}
+        onAgendar={() => {
+          setTab("agendar");
+          setEditingCita(null);
+        }}
+        onCitas={() => setTab("citas")}
+      />
 
       {tab === "agendar" && (
         <section className="p-4 md:p-6 text-sm rounded-[24px]" style={sxCard()}>
@@ -2149,159 +1719,12 @@ export default function AgendaPage() {
         </section>
       )}
 
-      {qrModal.open && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
-          <div
-            className="w-full max-w-md rounded-[24px] p-5 md:p-6"
-            style={sxCard({
-              background:
-                "color-mix(in srgb, var(--card-solid) 96%, rgba(2,6,23,.88))",
-            })}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3
-                  className="text-lg md:text-xl font-bold"
-                  style={{ color: "var(--text)" }}
-                >
-                  Cita agendada
-                </h3>
-                <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-                  Presente este código QR al guardia para validar su ingreso.
-                </p>
-              </div>
+      <AgendaQrModal
+        open={qrModal.open}
+        qrModal={qrModal}
+        onClose={closeQrModal}
+      />
 
-              <button
-                type="button"
-                onClick={closeQrModal}
-                className="rounded-lg px-2 py-1 text-sm"
-                style={sxGhostBtn()}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-5 flex justify-center">
-              {qrModal.qrDataUrl ? (
-                <img
-                  src={qrModal.qrDataUrl}
-                  alt="QR de la cita"
-                  className="h-64 w-64 rounded-xl bg-white p-3 object-contain"
-                />
-              ) : (
-                <div
-                  className="h-64 w-64 rounded-xl flex items-center justify-center text-center text-sm p-4"
-                  style={sxCardSoft({ color: "var(--text-muted)" })}
-                >
-                  No se recibió imagen QR del servidor.
-                </div>
-              )}
-            </div>
-
-            <div
-              className="mt-4 rounded-xl p-4 text-sm"
-              style={sxCardSoft({ background: "var(--input-bg)" })}
-            >
-              <div style={{ color: "var(--text)" }}>
-                <strong>Visitante:</strong> {qrModal.cita?.nombre || ""}
-              </div>
-              <div style={{ color: "var(--text)" }}>
-                <strong>Documento:</strong> {qrModal.cita?.documento || ""}
-              </div>
-              <div style={{ color: "var(--text)" }}>
-                <strong>Empleado:</strong> {qrModal.cita?.empleado || ""}
-              </div>
-              <div style={{ color: "var(--text)" }}>
-                <strong>Motivo:</strong> {qrModal.cita?.motivo || ""}
-              </div>
-              <div style={{ color: "var(--text)" }}>
-                <strong>Fecha:</strong>{" "}
-                {qrModal.cita?.citaAt
-                  ? new Date(qrModal.cita.citaAt).toLocaleDateString("es-HN")
-                  : ""}
-              </div>
-              <div style={{ color: "var(--text)" }}>
-                <strong>Hora:</strong>{" "}
-                {qrModal.cita?.citaAt
-                  ? new Date(qrModal.cita.citaAt).toLocaleTimeString("es-HN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : ""}
-              </div>
-
-              {!!qrModal.cita?.acompanantes?.length && (
-                <div className="mt-2" style={{ color: "var(--text)" }}>
-                  <strong>Acompañantes:</strong>
-                  <ul className="mt-1 list-disc pl-5">
-                    {qrModal.cita.acompanantes.map((comp, idx) => (
-                      <li key={`qr-comp-${idx}`}>
-                        {comp.nombre} — {comp.documento}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-end">
-              <button
-                type="button"
-                onClick={closeQrModal}
-                className="px-3 py-2 rounded-md text-xs font-semibold transition"
-                style={sxPrimaryBtn()}
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============== Input reutilizable ============== */
-function Field({
-  label,
-  name,
-  value,
-  onChange,
-  error,
-  placeholder,
-  type = "text",
-  children,
-}) {
-  return (
-    <div>
-      {label && (
-        <label
-          className="block mb-1 text-xs md:text-sm"
-          style={{ color: "var(--text)" }}
-        >
-          {label}
-        </label>
-      )}
-
-      {children ? (
-        children
-      ) : (
-        <input
-          type={type}
-          name={name}
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          className="w-full rounded-lg px-3 py-2 focus:outline-none"
-          style={sxInput()}
-        />
-      )}
-
-      {error && (
-        <p className="text-xs mt-1" style={{ color: "#f87171" }}>
-          {error}
-        </p>
-      )}
     </div>
   );
 }

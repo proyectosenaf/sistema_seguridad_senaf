@@ -23,26 +23,41 @@ function getOtpTtlMinutes() {
   return Math.max(1, Math.ceil(ttlSeconds / 60));
 }
 
+function buildMailError(result, fallbackMessage) {
+  const err = new Error(
+    result?.message || fallbackMessage || "No se pudo enviar el correo OTP."
+  );
+  err.code = result?.error || "otp_mail_send_failed";
+  err.details = result || null;
+  return err;
+}
+
 export async function sendOtpEmail({ to, code, purpose }) {
   const appName = String(process.env.APP_NAME || "SENAF").trim() || "SENAF";
   const email = String(to || "").trim().toLowerCase();
-  const otpCode = String(code || "").trim();
+  const otpCode = String(code || "").trim().toUpperCase();
   const ttlMinutes = getOtpTtlMinutes();
 
   if (!email) {
-    return {
-      ok: false,
-      error: "mail_to_required",
-      message: "No se proporcionó destinatario para el OTP.",
-    };
+    throw buildMailError(
+      {
+        ok: false,
+        error: "mail_to_required",
+        message: "No se proporcionó destinatario para el OTP.",
+      },
+      "No se proporcionó destinatario para el OTP."
+    );
   }
 
   if (!otpCode) {
-    return {
-      ok: false,
-      error: "mail_code_required",
-      message: "No se proporcionó código OTP para enviar.",
-    };
+    throw buildMailError(
+      {
+        ok: false,
+        error: "mail_code_required",
+        message: "No se proporcionó código OTP para enviar.",
+      },
+      "No se proporcionó código OTP para enviar."
+    );
   }
 
   const isEmployee = purpose === "employee-login";
@@ -89,10 +104,47 @@ export async function sendOtpEmail({ to, code, purpose }) {
   `;
 
   const mailer = getMailer();
-  return mailer.sendMail({
-    to: email,
-    subject,
-    text,
-    html,
-  });
+
+  try {
+    console.log(
+      `[otp.mailer] Intentando enviar OTP a ${email} | purpose=${purpose || "default"} | ttl=${ttlMinutes}m`
+    );
+
+    const result = await mailer.sendMail({
+      to: email,
+      subject,
+      text,
+      html,
+    });
+
+    if (!result?.ok) {
+      console.error("[otp.mailer] El mailer devolvió fallo:", result);
+      throw buildMailError(
+        result,
+        `No se pudo enviar el OTP a ${email}.`
+      );
+    }
+
+    console.log("[otp.mailer] OTP enviado correctamente a:", email);
+
+    return {
+      ok: true,
+      email,
+      subject,
+      ttlMinutes,
+      ...(result && typeof result === "object" ? result : {}),
+    };
+  } catch (error) {
+    console.error(
+      "[otp.mailer] Error enviando OTP a",
+      email,
+      "|",
+      error?.details?.message ||
+        error?.response ||
+        error?.code ||
+        error?.message ||
+        error
+    );
+    throw error;
+  }
 }

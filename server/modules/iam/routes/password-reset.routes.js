@@ -278,11 +278,60 @@ r.post("/request-password-reset", async (req, res) => {
 
     await user.save();
 
-    await sendResetEmail({
-      email: user.email,
-      token,
-      expiresAt: expiresAt.toISOString(),
-    });
+    console.log("[IAM][PASSWORD_RESET] Intentando enviar correo a:", user.email);
+    console.log("[IAM][PASSWORD_RESET] Entorno producción:", isProd());
+
+    try {
+      await sendResetEmail({
+        email: user.email,
+        token,
+        expiresAt: expiresAt.toISOString(),
+      });
+
+      console.log("[IAM][PASSWORD_RESET] Correo enviado correctamente a:", user.email);
+    } catch (mailError) {
+      console.error(
+        "[IAM][PASSWORD_RESET] Error enviando correo:",
+        mailError?.message || mailError
+      );
+
+      await logIamResetEvent(req, {
+        accion: "PASSWORD_RESET_REQUEST",
+        entidad: "IamUser",
+        entidadId: String(user._id),
+        user,
+        titulo: "Error enviando correo de recuperación",
+        descripcion:
+          mailError?.message ||
+          `No se pudo enviar el correo de recuperación a ${user.email}.`,
+        estado: "Fallido",
+        prioridad: "Alta",
+        nombre: user.name || user.email,
+        meta: {
+          expiresAt: expiresAt.toISOString(),
+          mailError:
+            mailError?.response ||
+            mailError?.code ||
+            mailError?.message ||
+            String(mailError),
+        },
+      });
+
+      return res.status(500).json({
+        ok: false,
+        error: "email_send_failed",
+        message:
+          "Se generó el código de recuperación, pero no se pudo enviar el correo.",
+        ...(!isProd()
+          ? {
+              debug: {
+                token,
+                expiresAt: expiresAt.toISOString(),
+              },
+            }
+          : {}),
+      });
+    }
 
     await logIamResetEvent(req, {
       accion: "PASSWORD_RESET_REQUEST",
@@ -290,7 +339,7 @@ r.post("/request-password-reset", async (req, res) => {
       entidadId: String(user._id),
       user,
       titulo: "Solicitud de recuperación generada",
-      descripcion: `Se generó un token de recuperación para ${user.email}.`,
+      descripcion: `Se generó y envió un token de recuperación para ${user.email}.`,
       estado: "Exitoso",
       prioridad: "Media",
       nombre: user.name || user.email,
@@ -303,7 +352,8 @@ r.post("/request-password-reset", async (req, res) => {
     if (!isProd()) {
       return res.json({
         ok: true,
-        message: "DEV: token generado. En producción esto se envía por correo.",
+        message:
+          "DEV: correo intentado y token generado correctamente. Revisa también la bandeja y logs SMTP.",
         token,
         expiresAt: expiresAt.toISOString(),
       });
