@@ -26,7 +26,8 @@ export const permisosCanonicos = {
   "rondasqr.qr.export": "Rondas QR • Exportar/descargar códigos QR",
 
   "rondasqr.checkpoints.read": "Rondas QR • Puntos de control (ver)",
-  "rondasqr.checkpoints.write": "Rondas QR • Puntos de control (crear/editar/eliminar)",
+  "rondasqr.checkpoints.write":
+    "Rondas QR • Puntos de control (crear/editar/eliminar)",
 
   "rondasqr.points.read": "Rondas QR • Puntos (ver)",
   "rondasqr.points.write": "Rondas QR • Puntos (crear/editar/reordenar)",
@@ -103,6 +104,14 @@ export const permisosCanonicos = {
   "visitas.reports.export": "Control de Visitas • Exportar reportes",
   "visitas.qr.scan": "Control de Visitas • Escanear QR",
   "visitas.vehiculos.read": "Control de Visitas • Ver vehículos en sitio",
+
+  // ======================
+  // CITAS (NUEVO PARA UI)
+  // ======================
+  "visitas.citas.read": "Control de Visitas • Citas (ver)",
+  "visitas.citas.write": "Control de Visitas • Citas (crear/editar)",
+  "visitas.citas.checkin": "Control de Visitas • Citas (check-in)",
+  "visitas.citas.estado": "Control de Visitas • Citas (cambiar estado)",
 
   // ======================
   // BITÁCORA
@@ -210,7 +219,8 @@ export const permisosKeys = {
   "rondasqr.qr.export": "Rondas QR • Exportar/descargar códigos QR",
 
   "rondasqr.checkpoints.read": "Rondas QR • Puntos de control (ver)",
-  "rondasqr.checkpoints.write": "Rondas QR • Puntos de control (crear/editar/eliminar)",
+  "rondasqr.checkpoints.write":
+    "Rondas QR • Puntos de control (crear/editar/eliminar)",
 
   "rondasqr.points.read": "Rondas QR • Puntos (ver)",
   "rondasqr.points.write": "Rondas QR • Puntos (crear/editar/reordenar)",
@@ -270,6 +280,12 @@ export const permisosKeys = {
   "visitas.delete": "Control de Visitas • Eliminar",
   "visitas.close": "Control de Visitas • Aprobar/Cerrar",
   "visitas.export": "Control de Visitas • Exportar",
+
+  // Citas (nuevo visible en UI)
+  "visitas.citas.read": "Control de Visitas • Citas (ver)",
+  "visitas.citas.write": "Control de Visitas • Citas (crear/editar)",
+  "visitas.citas.checkin": "Control de Visitas • Citas (check-in)",
+  "visitas.citas.estado": "Control de Visitas • Citas (cambiar estado)",
 
   // Bitácora
   "bitacora.read": "Bitácora • Ver",
@@ -413,6 +429,10 @@ export const rolesKeys = {
     "visitas.delete",
     "visitas.close",
     "visitas.export",
+    "visitas.citas.read",
+    "visitas.citas.write",
+    "visitas.citas.checkin",
+    "visitas.citas.estado",
 
     "bitacora.read",
     "bitacora.write",
@@ -444,6 +464,10 @@ export const rolesKeys = {
 
     "visitas.write",
     "visitas.close",
+    "visitas.citas.read",
+    "visitas.citas.write",
+    "visitas.citas.checkin",
+    "visitas.citas.estado",
 
     "bitacora.read",
     "bitacora.write",
@@ -473,6 +497,7 @@ export const rolesKeys = {
 
     "visitas.read",
     "visitas.export",
+    "visitas.citas.read",
 
     "bitacora.read",
     "bitacora.write",
@@ -480,6 +505,11 @@ export const rolesKeys = {
 
     "reportes.read",
     "reportes.export",
+  ],
+
+  visita: [
+    "visitas.citas.read",
+    "visitas.citas.write",
   ],
 };
 
@@ -491,6 +521,7 @@ export const rolesKeysNormalized = {
   supervisor: normalizePermissionsList(rolesKeys.supervisor),
   guardia: normalizePermissionsList(rolesKeys.guardia),
   administrador_it: normalizePermissionsList(rolesKeys.administrador_it),
+  visita: normalizePermissionsList(rolesKeys.visita),
 };
 
 /* ==================================================

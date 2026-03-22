@@ -108,11 +108,27 @@ function getActorId(req) {
 }
 
 function getActorEmail(req) {
-  return req?.user?.email || "";
+  return (
+    req?.user?.email ||
+    req?.user?.correo ||
+    req?.user?.user?.email ||
+    req?.user?.user?.correo ||
+    ""
+  );
 }
 
 function getActorName(req) {
-  return req?.user?.name || req?.user?.email || "Sistema de Visitas";
+  return (
+    req?.user?.name ||
+    req?.user?.nombre ||
+    req?.user?.fullName ||
+    req?.user?.email ||
+    req?.user?.user?.name ||
+    req?.user?.user?.nombre ||
+    req?.user?.user?.fullName ||
+    req?.user?.user?.email ||
+    "Sistema de Visitas"
+  );
 }
 
 function toPlain(doc) {
@@ -164,8 +180,8 @@ async function auditVisita(req, payload = {}) {
     entidad: payload.entidad || "Visita",
     entidadId: payload.entidadId || "",
     agente: payload.agente || getActorName(req),
-    actorId: getActorId(req) || "",
-    actorEmail: getActorEmail(req),
+    actorId: payload.actorId || getActorId(req) || "",
+    actorEmail: payload.actorEmail || getActorEmail(req),
     titulo: payload.titulo || "",
     descripcion: payload.descripcion || "",
     prioridad: payload.prioridad || "Baja",
@@ -228,6 +244,148 @@ function buildCommonPayload(body = {}) {
     acompanado: finalAcompanado,
     acompanantes: finalAcompanado ? normalizedAcompanantes : [],
   };
+}
+
+/* ───────────────────────── Helpers ownership ───────────────────────── */
+
+function normalizeRoleName(role) {
+  if (!role) return "";
+
+  if (typeof role === "string") return role.trim().toLowerCase();
+
+  if (typeof role === "object") {
+    return String(
+      role.key ||
+        role.code ||
+        role.slug ||
+        role.name ||
+        role.nombre ||
+        role.label ||
+        role.rol ||
+        role.role ||
+        role.tipo ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
+  }
+
+  return String(role).trim().toLowerCase();
+}
+
+function extractRoleNames(user) {
+  if (!user || typeof user !== "object") return [];
+
+  const candidates = [
+    user.role,
+    user.rol,
+    user.userRole,
+    user.tipo,
+    user.roles,
+    user.authorities,
+    user.perfiles,
+    user.profile,
+    user.perfil,
+    user.user?.role,
+    user.user?.rol,
+    user.user?.userRole,
+    user.user?.tipo,
+    user.user?.roles,
+  ];
+
+  const list = [];
+
+  for (const item of candidates) {
+    if (Array.isArray(item)) {
+      item.forEach((x) => {
+        const r = normalizeRoleName(x);
+        if (r) list.push(r);
+      });
+      continue;
+    }
+
+    const r = normalizeRoleName(item);
+    if (r) list.push(r);
+  }
+
+  return Array.from(new Set(list));
+}
+
+function isVisitanteUser(user) {
+  const roles = extractRoleNames(user);
+  return roles.some((r) =>
+    ["visita", "visitante", "visitor", "visitors"].includes(r)
+  );
+}
+
+function getUserDocumento(user) {
+  return cleanDoc(
+    user?.documento ||
+      user?.dni ||
+      user?.identityNumber ||
+      user?.numeroDocumento ||
+      user?.doc ||
+      user?.user?.documento ||
+      user?.user?.dni ||
+      user?.user?.identityNumber ||
+      user?.user?.numeroDocumento ||
+      user?.user?.doc ||
+      ""
+  );
+}
+
+function getUserEmail(user) {
+  return String(
+    user?.email ||
+      user?.correo ||
+      user?.mail ||
+      user?.user?.email ||
+      user?.user?.correo ||
+      user?.user?.mail ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isOwnCita(user, visita) {
+  if (!user || !visita) return false;
+
+  const userDoc = getUserDocumento(user);
+  const visitaDoc = cleanDoc(visita?.documento || "");
+
+  if (userDoc && visitaDoc && userDoc === visitaDoc) {
+    return true;
+  }
+
+  const userEmail = getUserEmail(user);
+  const visitaEmail = String(visita?.correo || "")
+    .trim()
+    .toLowerCase();
+
+  if (userEmail && visitaEmail && userEmail === visitaEmail) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildOwnCitasMatch(req) {
+  const user = req?.user || null;
+  const documento = getUserDocumento(user);
+  const email = getUserEmail(user);
+
+  const or = [];
+
+  if (documento) {
+    or.push({ documento: new RegExp(`^${documento}$`, "i") });
+  }
+
+  if (email) {
+    or.push({ correo: new RegExp(`^${email}$`, "i") });
+  }
+
+  return or.length ? { $or: or } : null;
 }
 
 /**
@@ -361,6 +519,7 @@ export async function createCita(req, res) {
     const { citaAt } = req.body || {};
 
     const payload = buildCommonPayload(req.body || {});
+    const visitante = isVisitanteUser(req.user);
 
     const citaDate = citaAt ? new Date(citaAt) : null;
     if (!citaDate || Number.isNaN(citaDate.getTime())) {
@@ -368,6 +527,26 @@ export async function createCita(req, res) {
         ok: false,
         error: "Debe indicar una fecha/hora de cita válida",
       });
+    }
+
+    if (visitante) {
+      const userDoc = getUserDocumento(req.user);
+      const userEmail = getUserEmail(req.user);
+
+      if (userDoc) {
+        payload.documento = userDoc;
+      }
+
+      if (userEmail) {
+        payload.correo = userEmail;
+      }
+
+      if (!isOwnCita(req.user, payload)) {
+        return res.status(403).json({
+          ok: false,
+          error: "Solo puede crear citas con su propio documento o correo",
+        });
+      }
     }
 
     const qrToken = crypto.randomUUID();
@@ -404,6 +583,7 @@ export async function createCita(req, res) {
         motivo: visita.motivo || "",
         citaAt: visita.citaAt || null,
         qrToken,
+        creadaPorVisitante: visitante,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -446,6 +626,7 @@ export async function updateCita(req, res) {
   try {
     const { id } = req.params;
     const { citaAt, estado } = req.body || {};
+    const visitante = isVisitanteUser(req.user);
 
     const visita = await Visita.findById(id);
     if (!visita) {
@@ -462,8 +643,28 @@ export async function updateCita(req, res) {
       });
     }
 
+    if (visitante && !isOwnCita(req.user, visita)) {
+      return res.status(403).json({
+        ok: false,
+        error: "Solo puede editar sus propias citas",
+      });
+    }
+
     const before = toPlain(visita);
     const payload = buildCommonPayload(req.body || {});
+
+    if (visitante) {
+      const userDoc = getUserDocumento(req.user);
+      const userEmail = getUserEmail(req.user);
+
+      if (userDoc) {
+        payload.documento = userDoc;
+      }
+
+      if (userEmail) {
+        payload.correo = userEmail;
+      }
+    }
 
     visita.nombre = payload.nombre;
     visita.documento = payload.documento;
@@ -488,7 +689,7 @@ export async function updateCita(req, res) {
       visita.citaAt = citaDate;
     }
 
-    if (typeof estado !== "undefined" && estado !== "") {
+    if (!visitante && typeof estado !== "undefined" && estado !== "") {
       visita.estado = normalizeEstadoInput(estado);
     }
 
@@ -511,6 +712,7 @@ export async function updateCita(req, res) {
         empleado: visita.empleado || "",
         motivo: visita.motivo || "",
         citaAt: visita.citaAt || null,
+        editadaPorVisitante: visitante,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -534,6 +736,7 @@ export async function updateCita(req, res) {
 export async function listCitas(req, res) {
   try {
     const { day, month, estado, q } = req.query || {};
+    const visitante = isVisitanteUser(req.user);
 
     const match = { tipo: "Agendada" };
 
@@ -572,6 +775,21 @@ export async function listCitas(req, res) {
         { "acompanantes.nombre": rx },
         { "acompanantes.documento": rx },
       ];
+    }
+
+    if (visitante) {
+      const ownMatch = buildOwnCitasMatch(req);
+
+      if (!ownMatch) {
+        return res.json({ ok: true, items: [] });
+      }
+
+      if (match.$or) {
+        match.$and = [{ $or: match.$or }, ownMatch];
+        delete match.$or;
+      } else {
+        Object.assign(match, ownMatch);
+      }
     }
 
     const citas = await Visita.find(match)

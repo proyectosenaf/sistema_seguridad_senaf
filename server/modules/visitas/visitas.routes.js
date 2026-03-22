@@ -32,6 +32,14 @@ const VISITAS_PERMS = {
   DELETE_LEGACY: "visitas.delete",
   CLOSE_LEGACY: "visitas.close",
 
+  // =========================
+  // NUEVOS PERMISOS DE CITAS
+  // =========================
+  CITAS_READ: "visitas.citas.read",
+  CITAS_WRITE: "visitas.citas.write",
+  CITAS_CHECKIN: "visitas.citas.checkin",
+  CITAS_ESTADO: "visitas.citas.estado",
+
   ALL: "*",
 };
 
@@ -101,9 +109,17 @@ router.get(
   asyncHandler(listVehiculosVisitasEnSitio)
 );
 
+/* =========================================================
+   CITAS
+   Compatibilidad:
+   - NUEVO: visitas.citas.*
+   - LEGACY: visitas.records.* / visitas.*
+   ========================================================= */
+
 router.post(
   "/citas",
   requirePermission(
+    VISITAS_PERMS.CITAS_WRITE,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.WRITE_LEGACY,
     VISITAS_PERMS.ALL
@@ -115,6 +131,7 @@ router.post(
 router.get(
   "/citas",
   requirePermission(
+    VISITAS_PERMS.CITAS_READ,
     VISITAS_PERMS.RECORDS_READ,
     VISITAS_PERMS.REPORTS_READ,
     VISITAS_PERMS.READ_LEGACY,
@@ -126,6 +143,7 @@ router.get(
 router.patch(
   "/citas/:id",
   requirePermission(
+    VISITAS_PERMS.CITAS_WRITE,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.WRITE_LEGACY,
     VISITAS_PERMS.ALL
@@ -136,6 +154,7 @@ router.patch(
 router.patch(
   "/citas/:id/checkin",
   requirePermission(
+    VISITAS_PERMS.CITAS_CHECKIN,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.RECORDS_CLOSE,
     VISITAS_PERMS.WRITE_LEGACY,
@@ -147,6 +166,7 @@ router.patch(
 router.patch(
   "/citas/:id/estado",
   requirePermission(
+    VISITAS_PERMS.CITAS_ESTADO,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.RECORDS_CLOSE,
     VISITAS_PERMS.WRITE_LEGACY,
@@ -159,6 +179,7 @@ router.post(
   "/citas/scan-qr",
   requirePermission(
     VISITAS_PERMS.QR_SCAN,
+    VISITAS_PERMS.CITAS_CHECKIN,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.WRITE_LEGACY,
     VISITAS_PERMS.ALL
@@ -170,6 +191,7 @@ router.post(
   "/citas/scan",
   requirePermission(
     VISITAS_PERMS.QR_SCAN,
+    VISITAS_PERMS.CITAS_CHECKIN,
     VISITAS_PERMS.RECORDS_WRITE,
     VISITAS_PERMS.WRITE_LEGACY,
     VISITAS_PERMS.ALL

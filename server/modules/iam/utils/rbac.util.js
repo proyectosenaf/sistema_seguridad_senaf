@@ -26,7 +26,9 @@ function safeJsonParse(s) {
 
 function parseListSmart(v) {
   const j = safeJsonParse(v);
-  if (Array.isArray(j)) return j.map((x) => String(x || "").trim()).filter(Boolean);
+  if (Array.isArray(j)) {
+    return j.map((x) => String(x || "").trim()).filter(Boolean);
+  }
   return parseList(v);
 }
 
@@ -187,6 +189,8 @@ export async function buildContextFrom(req) {
 
   /* =========================
      AUTO-PROVISION
+     - SUPERADMIN: bootstrap con admin + *
+     - RESTO: visitante por defecto
   ========================= */
   if (!user && hasIdentity && email) {
     const doc = forcedSuperadmin
@@ -224,7 +228,7 @@ export async function buildContextFrom(req) {
         IamUser.create(doc),
         4000,
         forcedSuperadmin
-          ? "IamUser.create(bootstrap-admin)"
+          ? "IamUser.create(bootstrap-superadmin)"
           : "IamUser.create(visitor)"
       );
       user = created.toObject();
@@ -302,12 +306,15 @@ export async function buildContextFrom(req) {
 
   /* =========================
      SUPERADMIN
+     - SOLO por correo raíz configurado
+     - admin normal NO recibe bypass aquí
   ========================= */
   const isSuperAdmin = forcedSuperadmin;
 
   if (isSuperAdmin) {
     permSet.add("*");
     roleNames.add("admin");
+    roleNames.add("superadmin");
   }
 
   const permissionsFinal = [...permSet];
@@ -323,22 +330,25 @@ export async function buildContextFrom(req) {
     const raw = normPerm(perm);
     const low = raw.toLowerCase();
 
-    if (raw === "*") return permSet.has("*") || permSetLower.has("*");
+    if (raw === "*") {
+      return permSet.has("*") || permSetLower.has("*");
+    }
 
-    return permSet.has(raw) || permSetLower.has(low) || permSet.has("*") || permSetLower.has("*");
+    return (
+      permSet.has(raw) ||
+      permSetLower.has(low) ||
+      permSet.has("*") ||
+      permSetLower.has("*")
+    );
   }
 
   /* =========================
      VISITOR
   ========================= */
-  const isVisitor = !isSuperAdmin && roleNames.has(getDefaultVisitorRole());
+  const defaultVisitorRole = getDefaultVisitorRole();
+  const isVisitor = !isSuperAdmin && roleNames.has(defaultVisitorRole);
 
-  const finalId = String(
-    user?._id ||
-      user?.id ||
-      payloadSub ||
-      ""
-  ).trim();
+  const finalId = String(user?._id || user?.id || payloadSub || "").trim();
 
   const finalName = String(
     user?.name ||

@@ -26,9 +26,51 @@ function normalizePermissions(rawPermissions = []) {
     .filter(Boolean);
 }
 
+function normalizeRolesLower(rawRoles = []) {
+  return normalizeRoles(rawRoles).map((r) => String(r).trim().toLowerCase());
+}
+
+function hasAdminByRole(rawRoles = []) {
+  const roles = normalizeRolesLower(rawRoles);
+  return (
+    roles.includes("superadmin") ||
+    roles.includes("super_admin") ||
+    roles.includes("root") ||
+    roles.includes("admin") ||
+    roles.includes("administrador")
+  );
+}
+
+function hasWildcardPermission(rawPermissions = []) {
+  const perms = normalizePermissions(rawPermissions).map((p) =>
+    String(p).trim().toLowerCase()
+  );
+  return perms.includes("*");
+}
+
 function hydrateReqIdentity(req, ctx) {
   const roles = normalizeRoles(ctx?.roles || []);
   const permissions = normalizePermissions(ctx?.permissions || []);
+
+  const mergedRoles = uniq([
+    ...normalizeRoles(req?.user?.roles || []),
+    ...normalizeRoles(req?.auth?.roles || []),
+    ...roles,
+  ]);
+
+  const mergedPermissions = uniq([
+    ...normalizePermissions(req?.user?.permissions || []),
+    ...normalizePermissions(req?.auth?.permissions || []),
+    ...permissions,
+  ]);
+
+  const adminByRole = hasAdminByRole(mergedRoles);
+  const adminByPerm = hasWildcardPermission(mergedPermissions);
+  const isSuperAdmin = !!ctx?.isSuperAdmin || adminByRole || adminByPerm;
+  const isVisitor =
+    !!ctx?.isVisitor &&
+    !adminByRole &&
+    !adminByPerm;
 
   const mergedUser = {
     ...(req.user || {}),
@@ -74,22 +116,36 @@ function hydrateReqIdentity(req, ctx) {
       ctx?.nombreCompleto ||
       ctx?.name ||
       "",
-    roles: uniq([
-      ...normalizeRoles(req?.user?.roles || []),
-      ...normalizeRoles(req?.auth?.roles || []),
-      ...roles,
-    ]),
-    permissions: uniq([
-      ...normalizePermissions(req?.user?.permissions || []),
-      ...normalizePermissions(req?.auth?.permissions || []),
-      ...permissions,
-    ]),
-    isSuperAdmin: !!ctx?.isSuperAdmin,
-    isVisitor: !!ctx?.isVisitor,
+    roles: mergedRoles,
+    permissions: mergedPermissions,
+    isSuperAdmin,
+    isVisitor,
   };
 
   req.user = mergedUser;
   req.auth = mergedUser;
+
+  req.iam = {
+    ...(req.iam || {}),
+    ...(ctx || {}),
+    roles: mergedRoles,
+    permissions: mergedPermissions,
+    email: mergedUser.email || ctx?.email || "",
+    isSuperAdmin,
+    isVisitor,
+    has:
+      typeof ctx?.has === "function"
+        ? (perm) => {
+            if (isSuperAdmin) return true;
+            return ctx.has(perm);
+          }
+        : (perm) => {
+            if (isSuperAdmin) return true;
+            const wanted = String(perm || "").trim();
+            if (!wanted) return false;
+            return mergedPermissions.includes(wanted);
+          },
+  };
 }
 
 /* =========================
@@ -111,6 +167,18 @@ function isAuthed(ctx) {
   return !!ctx?.email;
 }
 
+function isSystemAdmin(req, ctx) {
+  return !!(
+    req?.user?.isSuperAdmin ||
+    req?.auth?.isSuperAdmin ||
+    ctx?.isSuperAdmin ||
+    hasAdminByRole(req?.user?.roles || []) ||
+    hasAdminByRole(ctx?.roles || []) ||
+    hasWildcardPermission(req?.user?.permissions || []) ||
+    hasWildcardPermission(ctx?.permissions || [])
+  );
+}
+
 /* =========================
    PERMISO ÚNICO
 ========================= */
@@ -121,6 +189,10 @@ export function requirePerm(perm) {
 
       if (!isAuthed(ctx)) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
+      }
+
+      if (isSystemAdmin(req, ctx)) {
+        return next();
       }
 
       const ok = typeof ctx.has === "function" ? ctx.has(perm) : false;
@@ -154,6 +226,10 @@ export function requireAnyPerm(...perms) {
 
       if (!isAuthed(ctx)) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
+      }
+
+      if (isSystemAdmin(req, ctx)) {
+        return next();
       }
 
       const ok =
@@ -199,6 +275,10 @@ export function requireRole(...rolesAllowed) {
         return res.status(401).json({ ok: false, message: "No autenticado" });
       }
 
+      if (isSystemAdmin(req, ctx)) {
+        return next();
+      }
+
       const roles = normalizeRoles(req.user?.roles || ctx.roles || []).map((r) =>
         String(r).toLowerCase()
       );
@@ -236,7 +316,7 @@ export async function requireAdmin(req, res, next) {
       return res.status(401).json({ ok: false, message: "No autenticado" });
     }
 
-    if (ctx.isSuperAdmin) {
+    if (isSystemAdmin(req, ctx)) {
       return next();
     }
 
