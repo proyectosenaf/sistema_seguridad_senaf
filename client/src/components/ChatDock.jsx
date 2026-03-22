@@ -3,10 +3,102 @@ import api from "../lib/api.js";
 import { socket } from "../lib/socket.js";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
-import ChatHeader from "./chat/ChatHeader.jsx";
-import ChatSidebar from "./chat/ChatSidebar.jsx";
-import ChatMessagesList from "./chat/ChatMessagesList.jsx";
-import ChatInputBar from "./chat/ChatInputBar.jsx";
+/* === Iconos (SVG) === */
+const ChatIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    width="24"
+    height="24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+  </svg>
+);
+
+const CloseIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    width="20"
+    height="20"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M18 6 6 18M6 6l12 12" />
+  </svg>
+);
+
+const BackIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M15 18l-6-6 6-6" />
+  </svg>
+);
+
+const UsersIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
+const EmojiIcon = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <circle cx="12" cy="12" r="10" />
+    <path d="M8 15s1.5 2 4 2 4-2 4-2" />
+    <line x1="9" y1="9" x2="9.01" y2="9" />
+    <line x1="15" y1="9" x2="15.01" y2="9" />
+  </svg>
+);
+
+const initials = (name) =>
+  (name || "")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase())
+    .join("") || "U";
+
+const QUICK_EMOJIS = ["😀", "😂", "👍", "🙏", "🔥", "✅", "👀", "📌", "🎉", "😎"];
 
 function safeParseJson(raw, fallback) {
   try {
@@ -130,6 +222,10 @@ function getUserName(u) {
   );
 }
 
+function getUserEmail(u) {
+  return u?.email || u?.correo || null;
+}
+
 function buildPrivateRoom(a, b) {
   const A = normString(a);
   const B = normString(b);
@@ -144,25 +240,51 @@ function isSeenByMe(message, myId) {
   );
 }
 
-const ChatIcon = (props) => (
-  <svg
-    viewBox="0 0 24 24"
-    width="24"
-    height="24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-  </svg>
-);
+function renderMessageContent(message) {
+  if (message?.deleted) return "Mensaje eliminado";
+
+  const type = String(message?.type || "text").trim().toLowerCase();
+
+  if (type === "audio" && message?.audioUrl) {
+    return (
+      <audio controls preload="none" style={{ maxWidth: "220px" }}>
+        <source src={message.audioUrl} />
+      </audio>
+    );
+  }
+
+  if (type === "image" && message?.fileUrl) {
+    return (
+      <a href={message.fileUrl} target="_blank" rel="noreferrer">
+        <img
+          src={message.fileUrl}
+          alt={message?.fileName || "imagen"}
+          style={{
+            maxWidth: "220px",
+            maxHeight: "220px",
+            borderRadius: 12,
+            display: "block",
+          }}
+        />
+      </a>
+    );
+  }
+
+  if (type === "file" && message?.fileUrl) {
+    return (
+      <a href={message.fileUrl} target="_blank" rel="noreferrer">
+        {message?.fileName || "Archivo adjunto"}
+      </a>
+    );
+  }
+
+  return message?.text || "";
+}
 
 export default function ChatDock() {
   const bubbleSize = 60;
   const margin = 10;
+
   const panelW = 380;
   const panelH = 520;
 
@@ -193,12 +315,14 @@ export default function ChatDock() {
 
   const [pos, setPos] = React.useState(() => {
     const saved = safeParseJson(localStorage.getItem("chatdock-pos"), null);
-    return saved && typeof saved.x === "number" && typeof saved.y === "number"
-      ? saved
-      : {
-          x: window.innerWidth - bubbleSize - 16,
-          y: window.innerHeight - bubbleSize - 24,
-        };
+    const init =
+      saved && typeof saved.x === "number" && typeof saved.y === "number"
+        ? saved
+        : {
+            x: window.innerWidth - bubbleSize - 16,
+            y: window.innerHeight - bubbleSize - 24,
+          };
+    return init;
   });
 
   React.useEffect(() => {
@@ -368,12 +492,16 @@ export default function ChatDock() {
 
   React.useEffect(() => {
     if (!selectedUser) return;
+
     const stillExists = contacts.some((u) => isSameUser(u, selectedUser));
-    if (!stillExists) setSelectedUser(null);
+    if (!stillExists) {
+      setSelectedUser(null);
+    }
   }, [contacts, selectedUser]);
 
   React.useEffect(() => {
-    if (!isAuthenticated || !currentRoom) return;
+    if (!isAuthenticated) return;
+    if (!currentRoom) return;
 
     let alive = true;
 
@@ -406,7 +534,9 @@ export default function ChatDock() {
 
     const onPresenceOnline = ({ userId }) => {
       if (!userId) return;
-      setOnlineIds((prev) => (prev.includes(userId) ? prev : [...prev, userId]));
+      setOnlineIds((prev) =>
+        prev.includes(userId) ? prev : [...prev, userId]
+      );
     };
 
     const onPresenceOffline = ({ userId }) => {
@@ -451,6 +581,93 @@ export default function ChatDock() {
       }
 
       return [...prev, msg];
+    };
+
+    if (isPrivateMode) {
+      socket.emit("chat:private:join", {
+        fromUserId: myId,
+        toUserId: selectedUserId,
+      });
+
+      const onPrivateNew = (msg) => {
+        if (!msg) return;
+        if (msg.room !== currentRoom) return;
+        setMessages((prev) => applyIncoming(prev, msg, true));
+      };
+
+      const onTyping = ({ room, userId, name }) => {
+        if (room !== currentRoom) return;
+        if (!userId || String(userId) === String(myId)) return;
+        setTypingName(name || "Escribiendo...");
+      };
+
+      const onStopTyping = ({ room, userId }) => {
+        if (room !== currentRoom) return;
+        if (!userId || String(userId) === String(myId)) return;
+        setTypingName("");
+      };
+
+      const onUpdate = (msg) => {
+        if (!msg || msg.room !== currentRoom) return;
+        setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m)));
+      };
+
+      const onDelete = (msg) => {
+        if (!msg || msg.room !== currentRoom) return;
+        setMessages((prev) => prev.map((m) => (m._id === msg._id ? msg : m)));
+      };
+
+      const onSeen = (payload) => {
+        if (!payload?._id) return;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (String(m._id) !== String(payload._id)) return m;
+            const seenBy = Array.isArray(m.seenBy) ? [...m.seenBy] : [];
+            const exists = seenBy.some(
+              (x) =>
+                String(x?.userId || "").trim() ===
+                String(payload.userId || "").trim()
+            );
+            if (!exists && payload.userId) {
+              seenBy.push({
+                userId: payload.userId,
+                seenAt: new Date().toISOString(),
+              });
+            }
+            if (Array.isArray(payload.seenBy)) {
+              return { ...m, seenBy: payload.seenBy };
+            }
+            return { ...m, seenBy };
+          })
+        );
+      };
+
+      socket.on("chat:private:new", onPrivateNew);
+      socket.on("chat:typing", onTyping);
+      socket.on("chat:stopTyping", onStopTyping);
+      socket.on("chat:update", onUpdate);
+      socket.on("chat:delete", onDelete);
+      socket.on("chat:seen", onSeen);
+
+      return () => {
+        socket.off("chat:private:new", onPrivateNew);
+        socket.off("chat:typing", onTyping);
+        socket.off("chat:stopTyping", onStopTyping);
+        socket.off("chat:update", onUpdate);
+        socket.off("chat:delete", onDelete);
+        socket.off("chat:seen", onSeen);
+        socket.emit("chat:private:leave", {
+          fromUserId: myId,
+          toUserId: selectedUserId,
+          room: currentRoom,
+        });
+      };
+    }
+
+    socket.emit("chat:join", { room: currentRoom });
+
+    const onNew = (msg) => {
+      setMessages((prev) => applyIncoming(prev, msg, false));
     };
 
     const onTyping = ({ room, userId, name }) => {
@@ -500,45 +717,6 @@ export default function ChatDock() {
       );
     };
 
-    if (isPrivateMode) {
-      socket.emit("chat:private:join", {
-        fromUserId: myId,
-        toUserId: selectedUserId,
-      });
-
-      const onPrivateNew = (msg) => {
-        if (!msg || msg.room !== currentRoom) return;
-        setMessages((prev) => applyIncoming(prev, msg, true));
-      };
-
-      socket.on("chat:private:new", onPrivateNew);
-      socket.on("chat:typing", onTyping);
-      socket.on("chat:stopTyping", onStopTyping);
-      socket.on("chat:update", onUpdate);
-      socket.on("chat:delete", onDelete);
-      socket.on("chat:seen", onSeen);
-
-      return () => {
-        socket.off("chat:private:new", onPrivateNew);
-        socket.off("chat:typing", onTyping);
-        socket.off("chat:stopTyping", onStopTyping);
-        socket.off("chat:update", onUpdate);
-        socket.off("chat:delete", onDelete);
-        socket.off("chat:seen", onSeen);
-        socket.emit("chat:private:leave", {
-          fromUserId: myId,
-          toUserId: selectedUserId,
-          room: currentRoom,
-        });
-      };
-    }
-
-    socket.emit("chat:join", { room: currentRoom });
-
-    const onNew = (msg) => {
-      setMessages((prev) => applyIncoming(prev, msg, false));
-    };
-
     socket.on("chat:new", onNew);
     socket.on("chat:typing", onTyping);
     socket.on("chat:stopTyping", onStopTyping);
@@ -564,7 +742,8 @@ export default function ChatDock() {
       const ownerId =
         m?.user?.id || m?.user?._id || m?.user?.sub || m?.user?.email || null;
       const mine = ownerId && myId && String(ownerId) === String(myId);
-      if (mine || !m?._id) return false;
+      if (mine) return false;
+      if (!m?._id) return false;
       return !isSeenByMe(m, myId);
     });
 
@@ -593,7 +772,9 @@ export default function ChatDock() {
       name: user?.name || user?.email || "Usuario",
     });
 
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
 
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit("chat:stopTyping", {
@@ -636,10 +817,12 @@ export default function ChatDock() {
     setText("");
     setEmojiOpen(false);
 
-    socket?.emit("chat:stopTyping", {
-      room: currentRoom,
-      userId: myId,
-    });
+    if (socket) {
+      socket.emit("chat:stopTyping", {
+        room: currentRoom,
+        userId: myId,
+      });
+    }
 
     if (isPrivateMode) {
       try {
@@ -660,7 +843,12 @@ export default function ChatDock() {
           if (ack?.ok) {
             setMessages((prev) =>
               prev.map((msg) =>
-                msg.clientId === tempId ? { ...msg, optimistic: false } : msg
+                msg.clientId === tempId
+                  ? {
+                      ...msg,
+                      optimistic: false,
+                    }
+                  : msg
               )
             );
           } else {
@@ -747,7 +935,8 @@ export default function ChatDock() {
 
   const handleDeleteMessage = async (message) => {
     if (!message?._id || message?.deleted) return;
-    if (!window.confirm("¿Eliminar mensaje?")) return;
+    const ok = window.confirm("¿Eliminar mensaje?");
+    if (!ok) return;
 
     try {
       const { data } = await api.delete(`/chat/messages/${message._id}`, {
@@ -810,6 +999,12 @@ export default function ChatDock() {
     }
   }, [messages, open, myId]);
 
+  const fmtDate = (v) => {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString();
+  };
+
   const vw = Math.max(
     document.documentElement.clientWidth,
     window.innerWidth || 0
@@ -860,19 +1055,126 @@ export default function ChatDock() {
       {open && (
         <div className="chat-panel" style={panelStyle}>
           {showContacts && (
-            <ChatSidebar
-              contacts={contacts}
-              contactsLoading={contactsLoading}
-              contactsError={contactsError}
-              selectedUser={selectedUser}
-              setSelectedUser={setSelectedUser}
-              setShowContacts={setShowContacts}
-              onlineIds={onlineIds}
-              getUserId={getUserId}
-              getUserName={getUserName}
-              getUserEmail={getUserEmail}
-              isSameUser={isSameUser}
-            />
+            <div
+              className="chat-sidebar"
+              style={{
+                borderRight: "1px solid var(--border, rgba(255,255,255,.08))",
+                display: "flex",
+                flexDirection: "column",
+                minWidth: 0,
+                background: "var(--card, rgba(17,24,39,.9))",
+              }}
+            >
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderBottom:
+                    "1px solid var(--border, rgba(255,255,255,.08))",
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                Usuarios
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedUser(null);
+                  setShowContacts(false);
+                }}
+                style={{
+                  textAlign: "left",
+                  border: "none",
+                  background: selectedUser
+                    ? "transparent"
+                    : "rgba(59,130,246,.14)",
+                  color: "inherit",
+                  padding: "10px 12px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                Chat global
+              </button>
+
+              <div
+                style={{
+                  overflowY: "auto",
+                  flex: 1,
+                }}
+              >
+                {contactsLoading ? (
+                  <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
+                    Cargando...
+                  </div>
+                ) : contactsError ? (
+                  <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
+                    {contactsError}
+                  </div>
+                ) : contacts.length === 0 ? (
+                  <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
+                    Sin usuarios disponibles
+                  </div>
+                ) : (
+                  contacts.map((u) => {
+                    const uid = getUserId(u);
+                    const uname = getUserName(u);
+                    const active = selectedUser && isSameUser(u, selectedUser);
+                    const online = onlineIds.includes(uid);
+
+                    return (
+                      <button
+                        key={uid}
+                        type="button"
+                        onClick={() => {
+                          setSelectedUser(u);
+                          setShowContacts(false);
+                        }}
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          border: "none",
+                          background: active
+                            ? "rgba(59,130,246,.14)"
+                            : "transparent",
+                          color: "inherit",
+                          padding: "10px 12px",
+                          cursor: "pointer",
+                          borderBottom:
+                            "1px solid var(--border, rgba(255,255,255,.05))",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <span>{uname}</span>
+                          <span
+                            title={online ? "En línea" : "Sin conexión"}
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: "999px",
+                              display: "inline-block",
+                              background: online ? "#22c55e" : "#64748b",
+                            }}
+                          />
+                        </div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>
+                          {getUserEmail(u) || uid}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           )}
 
           <div
@@ -883,14 +1185,58 @@ export default function ChatDock() {
               position: "relative",
             }}
           >
-            <ChatHeader
-              isPrivateMode={isPrivateMode}
-              selectedUser={selectedUser}
-              showContacts={showContacts}
-              setShowContacts={setShowContacts}
-              setOpen={setOpen}
-              getUserName={getUserName}
-            />
+            <div className="chat-header">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  minWidth: 0,
+                }}
+              >
+                {showContacts ? (
+                  <button
+                    onClick={() => setShowContacts(false)}
+                    className="chat-header__close"
+                    aria-label="Ocultar usuarios"
+                    title="Ocultar usuarios"
+                  >
+                    <BackIcon />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowContacts((v) => !v)}
+                    className="chat-header__close"
+                    aria-label="Mostrar usuarios"
+                    title="Mostrar usuarios"
+                  >
+                    <UsersIcon />
+                  </button>
+                )}
+
+                <div
+                  className="chat-header__title"
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {isPrivateMode
+                    ? `Chat con ${getUserName(selectedUser)}`
+                    : "Chat interno"}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setOpen(false)}
+                className="chat-header__close"
+                aria-label="Cerrar chat"
+                title="Cerrar"
+              >
+                <CloseIcon />
+              </button>
+            </div>
 
             <div
               style={{
@@ -903,26 +1249,166 @@ export default function ChatDock() {
               {typingName ? `${typingName} está escribiendo...` : ""}
             </div>
 
-            <ChatMessagesList
-              listRef={listRef}
-              messages={messages}
-              myId={myId}
-              handleEditMessage={handleEditMessage}
-              handleDeleteMessage={handleDeleteMessage}
-            />
+            <div ref={listRef} className="chat-body">
+              {messages.length === 0 ? (
+                <div className="chat-empty">
+                  {isPrivateMode
+                    ? "No hay mensajes con este usuario todavía."
+                    : "No hay mensajes todavía."}
+                </div>
+              ) : (
+                messages.map((m) => {
+                  const mUserId =
+                    m.user?.id ||
+                    m.user?._id ||
+                    m.user?.sub ||
+                    m.user?.email ||
+                    null;
 
-            <ChatInputBar
-              text={text}
-              setText={setText}
-              send={send}
-              emojiOpen={emojiOpen}
-              setEmojiOpen={setEmojiOpen}
-              inputRef={inputRef}
-              emitTyping={emitTyping}
-              isPrivateMode={isPrivateMode}
-              selectedUser={selectedUser}
-              getUserName={getUserName}
-            />
+                  const mine =
+                    (mUserId && myId && String(mUserId) === String(myId)) ||
+                    m.optimistic === true;
+
+                  const displayName = mine
+                    ? "Tú"
+                    : m.user?.name || m.user?.email || "Desconocido";
+
+                  const seenCount = Array.isArray(m.seenBy) ? m.seenBy.length : 0;
+
+                  return (
+                    <div
+                      key={m._id || m.id || m.clientId}
+                      className={`chat-row ${mine ? "me" : ""}`}
+                    >
+                      {!mine && (
+                        <div className="chat-avatar" title={displayName}>
+                          {initials(displayName)}
+                        </div>
+                      )}
+
+                      <div className="chat-bubble">
+                        <div className="chat-meta">{displayName}</div>
+
+                        <div className={`chat-pill ${mine ? "me" : ""}`}>
+                          {renderMessageContent(m)}
+                        </div>
+
+                        <div className="chat-time">
+                          {fmtDate(m.createdAt || m.at)}
+                          {m.edited ? " · editado" : ""}
+                          {m.error ? " · ERROR" : ""}
+                          {m.optimistic ? " · ENVIANDO..." : ""}
+                          {mine && !m.deleted ? ` · ${seenCount > 0 ? "✔✔" : "✔"}` : ""}
+                        </div>
+
+                        {mine && !m.deleted && (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              display: "flex",
+                              gap: 6,
+                              justifyContent: "flex-end",
+                            }}
+                          >
+                            {String(m.type || "text") === "text" && (
+                              <button
+                                type="button"
+                                style={{ fontSize: 11 }}
+                                onClick={() => handleEditMessage(m)}
+                              >
+                                ✏️ Editar
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              style={{ fontSize: 11 }}
+                              onClick={() => handleDeleteMessage(m)}
+                            >
+                              🗑️ Eliminar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {emojiOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  bottom: 68,
+                  background: "var(--card, rgba(17,24,39,.96))",
+                  border: "1px solid var(--border, rgba(255,255,255,.08))",
+                  borderRadius: 14,
+                  padding: 10,
+                  display: "grid",
+                  gridTemplateColumns: "repeat(5, 1fr)",
+                  gap: 8,
+                  zIndex: 10000,
+                }}
+              >
+                {QUICK_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => {
+                      setText((prev) => `${prev}${emoji}`);
+                      inputRef.current?.focus();
+                    }}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      fontSize: 20,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="chat-input">
+              <button
+                type="button"
+                onClick={() => setEmojiOpen((v) => !v)}
+                className="chat-header__close"
+                aria-label="Emojis"
+                title="Emojis"
+              >
+                <EmojiIcon />
+              </button>
+
+              <input
+                ref={inputRef}
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  emitTyping();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") send();
+                }}
+                placeholder={
+                  isPrivateMode
+                    ? `Mensaje para ${getUserName(selectedUser)}…`
+                    : "Escribe un mensaje…"
+                }
+              />
+
+              <button
+                onClick={send}
+                className="chat-send"
+                disabled={!text.trim()}
+              >
+                Enviar
+              </button>
+            </div>
           </div>
         </div>
       )}
