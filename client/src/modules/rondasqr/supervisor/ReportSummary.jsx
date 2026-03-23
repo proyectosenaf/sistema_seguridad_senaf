@@ -10,7 +10,6 @@ import React from "react";
  * }]
  */
 export default function ReportSummary({ stats = [] }) {
-  // Totales rápidos (para los chips de arriba)
   const totals = Array.isArray(stats)
     ? stats.reduce(
         (acc, s) => {
@@ -25,67 +24,67 @@ export default function ReportSummary({ stats = [] }) {
 
   const hasStats = Array.isArray(stats) && stats.length > 0;
 
+  if (!hasStats) {
+    return (
+      <div className="text-sm text-slate-500 dark:text-white/60">
+        Sin datos de resumen para los filtros seleccionados.
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg space-y-3">
-      <h3 className="font-semibold text-lg">Resumen de Vista rápida</h3>
+    <div className="space-y-4">
+      {/* Chips de totales */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Kpi label="Rondas en el rango" value={totals.count} />
+        <Kpi label="Puntos registrados" value={totals.puntos} />
+        <Kpi label="Pasos acumulados" value={totals.pasos} accent />
+      </div>
 
-      {!hasStats ? (
-        <div className="text-sm text-white/70">
-          Sin datos de resumen para los filtros seleccionados.
+      {/* Banda amarilla tipo lámina */}
+      {stats[0]?.banner && (
+        <div className="rounded-md bg-yellow-400 text-black font-medium px-4 py-2 border border-yellow-600/40">
+          {stats[0].banner}
         </div>
-      ) : (
-        <>
-          {/* Chips de totales (vista rápida) */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi label="Rondas en el rango" value={totals.count} />
-            <Kpi label="Puntos registrados" value={totals.puntos} />
-            <Kpi label="Pasos acumulados" value={totals.pasos} accent />
-          </div>
-
-          {/* Banda amarilla tipo lámina (si viene texto de backend) */}
-          {stats[0]?.banner && (
-            <div className="rounded-md bg-yellow-400 text-black font-medium px-4 py-2 shadow border border-yellow-600/40">
-              {stats[0].banner}
-            </div>
-          )}
-
-          {/* Tabla de estadísticas detalladas */}
-          <div className="overflow-auto">
-            <table className="min-w-[920px] text-sm">
-              <thead className="text-white/80">
-                <tr className="border-b border-white/10 bg-white/5">
-                  <Th>Fecha</Th>
-                  <Th>Sitio</Th>
-                  <Th>Ronda</Th>
-                  <Th>Oficial</Th>
-                  <Th>Puntos registrados</Th>
-                  <Th>Pasos</Th>
-                  <Th>Primera marca</Th>
-                  <Th>Última marca</Th>
-                  <Th>Duración</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.map((s, i) => (
-                  <tr key={i} className="border-b border-white/10">
-                    <Td>{s.day || "—"}</Td>
-                    <Td>{s.siteName || s.site || "—"}</Td>
-                    <Td>{s.roundName || s.round || "—"}</Td>
-                    <Td>{s.officer || "—"}</Td>
-                    <Td className="text-right">
-                      {s.puntosRegistrados ?? "—"}
-                    </Td>
-                    <Td className="text-right">{s.pasos ?? "—"}</Td>
-                    <Td>{fmtDateTime(s.primeraMarca)}</Td>
-                    <Td>{fmtDateTime(s.ultimaMarca)}</Td>
-                    <Td>{s.duracionText || "—"}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
       )}
+
+      {/* Tabla */}
+      <div className="overflow-auto">
+        <table className="min-w-[920px] text-sm">
+          <thead>
+            <tr className="border-b border-black/10 dark:border-white/10 text-slate-500 dark:text-white/80">
+              <Th>Fecha</Th>
+              <Th>Sitio</Th>
+              <Th>Ronda</Th>
+              <Th>Oficial</Th>
+              <Th>Puntos registrados</Th>
+              <Th>Pasos</Th>
+              <Th>Primera marca</Th>
+              <Th>Última marca</Th>
+              <Th>Duración</Th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {stats.map((s, i) => (
+              <tr
+                key={s._id || `${s.day || "day"}-${s.siteName || s.site || "site"}-${i}`}
+                className="border-b border-black/5 dark:border-white/5"
+              >
+                <Td>{s.day || "—"}</Td>
+                <Td>{s.siteName || s.site || "—"}</Td>
+                <Td>{s.roundName || s.round || "—"}</Td>
+                <Td>{s.officer || "—"}</Td>
+                <Td className="text-right">{s.puntosRegistrados ?? "—"}</Td>
+                <Td className="text-right">{s.pasos ?? "—"}</Td>
+                <Td>{fmtDateTime(s.primeraMarca)}</Td>
+                <Td>{fmtDateTime(s.ultimaMarca)}</Td>
+                <Td>{s.duracionText || "—"}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -102,7 +101,9 @@ function Th({ children }) {
 
 function Td({ children, className = "" }) {
   return (
-    <td className={`px-3 py-2 align-top whitespace-nowrap ${className}`}>
+    <td
+      className={`px-3 py-2 align-top whitespace-nowrap text-slate-700 dark:text-white/80 ${className}`}
+    >
       {children}
     </td>
   );
@@ -110,17 +111,20 @@ function Td({ children, className = "" }) {
 
 function Kpi({ label, value, accent = false }) {
   const base =
-    "rounded-xl px-3 py-3 border border-white/10 bg-black/30 flex flex-col gap-1";
+    "rounded-xl px-3 py-3 border flex flex-col gap-1 bg-slate-50 border-slate-200 " +
+    "dark:border-white/10 dark:bg-black/20";
   const accentCls = accent
-    ? " bg-emerald-500/10 border-emerald-400/40"
+    ? " border-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 dark:border-emerald-400/40"
     : "";
 
   return (
     <div className={base + accentCls}>
-      <span className="text-[11px] uppercase tracking-wide text-white/60">
+      <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-white/60">
         {label}
       </span>
-      <span className="text-xl font-semibold text-white">{value}</span>
+      <span className="text-xl font-semibold text-slate-900 dark:text-white">
+        {value}
+      </span>
     </div>
   );
 }

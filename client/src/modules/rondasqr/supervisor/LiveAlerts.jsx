@@ -10,18 +10,18 @@ function badgeClasses(type) {
   const t = String(type || "").toLowerCase();
   switch (t) {
     case "panic":
-      return "bg-red-600/20 text-red-200 border-red-500/40";
+      return "bg-red-100 text-red-800 border-red-200 dark:bg-red-600/20 dark:text-red-200 dark:border-red-500/40";
     case "fall":
-      return "bg-orange-600/20 text-orange-200 border-orange-500/40";
+      return "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-600/20 dark:text-orange-200 dark:border-orange-500/40";
     case "inactivity":
     case "immobility":
-      return "bg-yellow-600/20 text-yellow-100 border-yellow-500/40";
+      return "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-600/20 dark:text-yellow-100 dark:border-yellow-500/40";
     case "noncompliance":
-      return "bg-fuchsia-600/20 text-fuchsia-200 border-fuchsia-500/40";
+      return "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 dark:bg-fuchsia-600/20 dark:text-fuchsia-200 dark:border-fuchsia-500/40";
     case "incident":
     case "custom":
     default:
-      return "bg-slate-600/20 text-slate-200 border-slate-500/40";
+      return "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-600/20 dark:text-slate-200 dark:border-slate-500/40";
   }
 }
 
@@ -74,13 +74,9 @@ function normalizeIncomingAlert(evt = {}) {
       ? item.gps
       : {};
   const location =
-    evt?.location && typeof evt.location === "object"
-      ? evt.location
-      : {};
+    evt?.location && typeof evt.location === "object" ? evt.location : {};
   const links =
-    evt?.links && typeof evt.links === "object"
-      ? evt.links
-      : location;
+    evt?.links && typeof evt.links === "object" ? evt.links : location;
 
   const lat = numberOrNull(
     gps?.lat ?? gps?.latitude ?? location?.lat ?? evt?.lat ?? evt?.latitude
@@ -122,15 +118,9 @@ function normalizeIncomingAlert(evt = {}) {
     item?.officerEmail
   );
 
-  const siteName = pickFirstText(
-    evt?.siteName,
-    item?.siteName
-  );
+  const siteName = pickFirstText(evt?.siteName, item?.siteName);
 
-  const roundName = pickFirstText(
-    evt?.roundName,
-    item?.roundName
-  );
+  const roundName = pickFirstText(evt?.roundName, item?.roundName);
 
   const pointName = pickFirstText(
     evt?.pointName,
@@ -203,14 +193,8 @@ function normalizeIncomingAlert(evt = {}) {
       fallbackLinks.wazeUrl
     ),
     accuracy,
-    stepsAtAlert:
-      evt?.stepsAtAlert ??
-      item?.stepsAtAlert ??
-      null,
-    durationMin:
-      evt?.durationMin ??
-      item?.durationMin ??
-      null,
+    stepsAtAlert: evt?.stepsAtAlert ?? item?.stepsAtAlert ?? null,
+    durationMin: evt?.durationMin ?? item?.durationMin ?? null,
     at: when,
     __k: [
       evt?._id || item?._id || item?.id || "",
@@ -302,7 +286,7 @@ export default function LiveAlerts() {
     return (
       <li
         key={e.__k || i}
-        className="bg-black/30 rounded-lg px-3 py-2 border border-white/10"
+        className="rounded-lg px-3 py-2 border border-black/10 bg-slate-50 dark:bg-black/30 dark:border-white/10"
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -315,10 +299,10 @@ export default function LiveAlerts() {
             >
               {String(e?.type || "incident").toUpperCase()}
             </span>
-            <span className="text-xs text-white/70">{whenText}</span>
+            <span className="text-xs text-slate-500 dark:text-white/70">{whenText}</span>
           </div>
 
-          <div className="text-xs text-white/70 text-right">
+          <div className="text-xs text-slate-500 dark:text-white/70 text-right">
             {e?.siteName ? <span className="mr-2">🏢 {e.siteName}</span> : null}
             {e?.roundName ? <span className="mr-2">🔁 {e.roundName}</span> : null}
             {e?.who ? <span>👤 {e.who}</span> : null}
@@ -326,16 +310,18 @@ export default function LiveAlerts() {
         </div>
 
         {!!e?.title && (
-          <div className="mt-1 text-sm font-semibold">{e.title}</div>
+          <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
+            {e.title}
+          </div>
         )}
 
         {!!e?.text && (
-          <div className="mt-1 text-sm leading-snug whitespace-pre-wrap">
+          <div className="mt-1 text-sm leading-snug whitespace-pre-wrap text-slate-800 dark:text-white/90">
             {e.text}
           </div>
         )}
 
-        <div className="mt-1 text-xs flex flex-wrap gap-3 text-white/70">
+        <div className="mt-1 text-xs flex flex-wrap gap-3 text-slate-500 dark:text-white/70">
           {e?.gpsOk ? (
             <>
               <span>📍 {e.coordsText || `${e.lat}, ${e.lon}`}</span>
@@ -345,7 +331,7 @@ export default function LiveAlerts() {
                   href={e.googleMapsUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline hover:text-white"
+                  className="underline hover:text-slate-900 dark:hover:text-white"
                   title="Ver en Google Maps"
                 >
                   Google Maps
@@ -357,7 +343,7 @@ export default function LiveAlerts() {
                   href={e.wazeUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline hover:text-white"
+                  className="underline hover:text-slate-900 dark:hover:text-white"
                   title="Abrir en Waze"
                 >
                   Waze
@@ -384,49 +370,47 @@ export default function LiveAlerts() {
   };
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-lg">Alertas en vivo</h3>
-
-        <div className="flex items-center gap-3">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div
+          className={classNames(
+            "inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded border",
+            status === "connected"
+              ? "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-600/20 dark:text-emerald-200 dark:border-emerald-500/40"
+              : status === "connecting"
+              ? "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-600/20 dark:text-yellow-100 dark:border-yellow-500/40"
+              : "bg-red-100 text-red-700 border-red-200 dark:bg-red-600/20 dark:text-red-200 dark:border-red-500/40"
+          )}
+          title="Estado de conexión con el servidor en tiempo real"
+        >
           <span
             className={classNames(
-              "inline-flex items-center gap-2 text-xs px-2 py-0.5 rounded border",
+              "inline-block w-2 h-2 rounded-full",
               status === "connected"
-                ? "bg-emerald-600/20 text-emerald-200 border-emerald-500/40"
+                ? "bg-emerald-500 dark:bg-emerald-400"
                 : status === "connecting"
-                ? "bg-yellow-600/20 text-yellow-100 border-yellow-500/40"
-                : "bg-red-600/20 text-red-200 border-red-500/40"
+                ? "bg-yellow-500 dark:bg-yellow-400"
+                : "bg-red-500 dark:bg-red-400"
             )}
-            title="Estado de conexión con el servidor en tiempo real"
-          >
-            <span
-              className={classNames(
-                "inline-block w-2 h-2 rounded-full",
-                status === "connected"
-                  ? "bg-emerald-400"
-                  : status === "connecting"
-                  ? "bg-yellow-400"
-                  : "bg-red-400"
-              )}
-            />
-            {status}
-          </span>
-
-          <label className="text-xs flex items-center gap-2 select-none cursor-pointer">
-            <input
-              type="checkbox"
-              className="accent-blue-500"
-              checked={autoScroll}
-              onChange={(e) => setAutoScroll(e.target.checked)}
-            />
-            Auto-scroll
-          </label>
+          />
+          {status}
         </div>
+
+        <label className="text-xs flex items-center gap-2 select-none cursor-pointer text-slate-600 dark:text-white/70">
+          <input
+            type="checkbox"
+            className="accent-blue-500"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+          />
+          Auto-scroll
+        </label>
       </div>
 
       {!events.length ? (
-        <div className="text-sm text-white/70">Sin alertas por ahora.</div>
+        <div className="text-sm text-slate-500 dark:text-white/60">
+          Sin alertas por ahora.
+        </div>
       ) : (
         <div className="max-h-80 overflow-auto pr-1">
           <ul className="space-y-2">{events.map(renderItem)}</ul>

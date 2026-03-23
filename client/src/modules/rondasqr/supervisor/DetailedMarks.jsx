@@ -39,99 +39,100 @@ export default function DetailedMarks({ items = [] }) {
     return Array.from(map.entries()).map(([k, rows]) => ({ k, rows }));
   }, [items]);
 
+  if (!items.length) {
+    return (
+      <div className="text-sm text-slate-500 dark:text-white/60">
+        No hay marcas en el rango.
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg">
-      <h3 className="font-semibold text-lg mb-3">
-        Despliegue detallado – Marcación por marcación
-      </h3>
+    <div className="overflow-auto">
+      <table
+        className="min-w-[1100px] text-sm border-separate"
+        style={{ borderSpacing: 0 }}
+      >
+        <thead>
+          <tr className="border-b border-black/10 dark:border-white/10 text-slate-500 dark:text-white/80">
+            <Th>Hardware ID</Th>
+            <Th>QR No.</Th>
+            <Th>Nombre Sitio</Th>
+            <Th>Ronda</Th>
+            <Th>Nombre punto</Th>
+            <Th>Fecha / Hora</Th>
+            <Th>Vigilante</Th>
+            <Th>Latitud</Th>
+            <Th>Longitud</Th>
+            <Th>Mensaje</Th>
+            <Th className="text-right">Pasos</Th>
+          </tr>
+        </thead>
 
-      {!items.length ? (
-        <div className="text-sm text-white/70">No hay marcas en el rango.</div>
-      ) : (
-        <div className="overflow-auto">
-          <table
-            className="min-w-[1100px] text-sm border-separate"
-            style={{ borderSpacing: 0 }}
-          >
-            <thead>
-              <tr className="bg-white/10 text-white/90">
-                <Th>Hardware ID</Th>
-                <Th>QR No.</Th>
-                <Th>Nombre Sitio</Th>
-                <Th>Ronda</Th>
-                <Th>Nombre punto</Th>
-                <Th>Fecha / Hora</Th>
-                <Th>Vigilante</Th>
-                <Th>Latitud</Th>
-                <Th>Longitud</Th>
-                <Th>Mensaje</Th>
-                <Th className="text-right">Pasos</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map(({ rows }, gi) => {
-                const first = rows[0];
-                const last = rows[rows.length - 1];
-                const puntos = rows.length;
-                const pasos = rows.reduce((a, b) => a + (b.steps || 0), 0);
+        <tbody>
+          {groups.map(({ rows }, gi) => {
+            const first = rows[0];
+            const last = rows[rows.length - 1];
+            const puntos = rows.length;
+            const pasos = rows.reduce((a, b) => a + (b.steps || 0), 0);
 
-                const banner = [
-                  "Reporte:",
-                  first?.siteName || first?.site || "-",
-                  first?.roundName || first?.round
-                    ? ` / ${first.roundName || first.round}`
-                    : "",
-                  " : ",
-                  durationText(rows),
-                  " : (",
-                  fmtDateTime(first?.at),
-                  " - ",
-                  fmtDateTime(last?.at),
-                  ") : Puntos: ",
-                  puntos,
-                  " : Pasos: ",
-                  pasos,
-                  " : Omisiones: 0",
-                ].join("");
+            const banner = [
+              "Reporte:",
+              first?.siteName || first?.site || "-",
+              first?.roundName || first?.round
+                ? ` / ${first.roundName || first.round}`
+                : "",
+              " : ",
+              durationText(rows),
+              " : (",
+              fmtDateTime(first?.at),
+              " - ",
+              fmtDateTime(last?.at),
+              ") : Puntos: ",
+              puntos,
+              " : Pasos: ",
+              pasos,
+              " : Omisiones: 0",
+            ].join("");
 
-                return (
-                  <React.Fragment key={gi}>
-                    {rows.map((r, i) => (
-                      <tr key={i} className="border-b border-white/10">
-                        <Td>{r.hardwareId || ""}</Td>
-                        <Td>{r.qr || ""}</Td>
-                        <Td>{r.siteName || r.site || ""}</Td>
-                        <Td>{r.roundName || r.round || ""}</Td>
-                        <Td>{r.pointName || r.point || ""}</Td>
-                        <Td>{fmtDateTime(r.at)}</Td>
-                        <Td>{r.officer || ""}</Td>
-                        <Td>{isNum(r.lat) ? r.lat : ""}</Td>
-                        <Td>{isNum(r.lon) ? r.lon : ""}</Td>
-                        <Td
-                          className="max-w-[320px] truncate"
-                          title={r.message || ""}
-                        >
-                          {r.message || ""}
-                        </Td>
-                        <Td className="text-right">{r.steps ?? 0}</Td>
-                      </tr>
-                    ))}
+            return (
+              <React.Fragment key={gi}>
+                {rows.map((r, i) => (
+                  <tr
+                    key={r._id || r.id || `${gi}-${i}`}
+                    className="border-b border-black/5 dark:border-white/5"
+                  >
+                    <Td>{r.hardwareId || ""}</Td>
+                    <Td>{r.qr || ""}</Td>
+                    <Td>{r.siteName || r.site || ""}</Td>
+                    <Td>{r.roundName || r.round || ""}</Td>
+                    <Td>{r.pointName || r.point || ""}</Td>
+                    <Td>{fmtDateTime(r.at)}</Td>
+                    <Td>{r.officer || ""}</Td>
+                    <Td>{isNum(r.lat) ? r.lat : ""}</Td>
+                    <Td>{isNum(r.lon) ? r.lon : ""}</Td>
+                    <Td
+                      className="max-w-[320px] truncate"
+                      title={r.message || ""}
+                    >
+                      {r.message || ""}
+                    </Td>
+                    <Td className="text-right">{r.steps ?? 0}</Td>
+                  </tr>
+                ))}
 
-                    {/* Franja amarilla estilo lámina */}
-                    <tr>
-                      <td colSpan={11} className="px-0">
-                        <div className="bg-yellow-400 text-black font-semibold font-mono text-xs px-3 py-2">
-                          {banner}
-                        </div>
-                      </td>
-                    </tr>
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                <tr>
+                  <td colSpan={11} className="px-0 pt-2">
+                    <div className="bg-yellow-400 text-black font-semibold font-mono text-xs px-3 py-2 rounded-sm">
+                      {banner}
+                    </div>
+                  </td>
+                </tr>
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -143,8 +144,15 @@ function Th({ children, className = "" }) {
     </th>
   );
 }
+
 function Td({ children, className = "" }) {
-  return <td className={`px-3 py-2 align-top ${className}`}>{children}</td>;
+  return (
+    <td
+      className={`px-3 py-2 align-top text-slate-700 dark:text-white/80 ${className}`}
+    >
+      {children}
+    </td>
+  );
 }
 
 function fmtDateTime(d) {
@@ -157,9 +165,11 @@ function fmtDateTime(d) {
     return "-";
   }
 }
+
 function isNum(n) {
   return typeof n === "number" && isFinite(n);
 }
+
 function durationText(rows) {
   if (!rows.length) return "-";
   const first = new Date(rows[0].at);
