@@ -7,9 +7,47 @@ const GpsSchema = new Schema(
   {
     lat: { type: Number, default: undefined },
     lon: { type: Number, default: undefined },
+    accuracy: { type: Number, default: undefined },
+    altitude: { type: Number, default: undefined },
+    heading: { type: Number, default: undefined },
+    speed: { type: Number, default: undefined },
+    capturedAt: { type: Date, default: undefined },
+    source: { type: String, default: "" },
+    coordsText: { type: String, default: "" },
   },
   { _id: false }
 );
+
+const LinkSchema = new Schema(
+  {
+    googleMapsUrl: { type: String, default: "" },
+    wazeUrl: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const LocationMetaSchema = new Schema(
+  {
+    lat: { type: Number, default: undefined },
+    lon: { type: Number, default: undefined },
+    accuracy: { type: Number, default: undefined },
+    coordsText: { type: String, default: "" },
+    googleMapsUrl: { type: String, default: "" },
+    wazeUrl: { type: String, default: "" },
+    capturedAt: { type: Date, default: undefined },
+  },
+  { _id: false }
+);
+
+function isFiniteNumber(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function toDateOrUndefined(v) {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
 
 const RqIncidentSchema = new Schema(
   {
@@ -20,6 +58,11 @@ const RqIncidentSchema = new Schema(
     },
 
     text: { type: String, default: "" },
+
+    title: { type: String, default: "" },
+    message: { type: String, default: "" },
+    body: { type: String, default: "" },
+    source: { type: String, default: "" },
 
     siteId: { type: String, default: undefined },
     siteName: { type: String, default: "" },
@@ -32,6 +75,8 @@ const RqIncidentSchema = new Schema(
 
     guardId: { type: String, default: "" },
     guardName: { type: String, default: "" },
+    guardEmail: { type: String, default: undefined },
+
     officerName: { type: String, default: "" },
     officerEmail: { type: String, default: undefined },
     officerSub: { type: String, default: "" },
@@ -39,6 +84,8 @@ const RqIncidentSchema = new Schema(
     at: { type: Date, default: () => new Date() },
 
     gps: GpsSchema,
+    location: LocationMetaSchema,
+    links: LinkSchema,
 
     loc: {
       type: {
@@ -47,7 +94,7 @@ const RqIncidentSchema = new Schema(
         default: "Point",
       },
       coordinates: {
-        type: [Number], // [lon, lat]
+        type: [Number],
         default: undefined,
         validate: {
           validator(v) {
@@ -78,41 +125,128 @@ const RqIncidentSchema = new Schema(
   }
 );
 
-/* Índices */
 RqIncidentSchema.index({ type: 1, at: -1 });
 RqIncidentSchema.index({ at: -1 });
 RqIncidentSchema.index({ officerEmail: 1 }, { sparse: true });
 RqIncidentSchema.index({ guardId: 1 }, { sparse: true });
+RqIncidentSchema.index({ guardEmail: 1 }, { sparse: true });
 RqIncidentSchema.index({ siteId: 1 }, { sparse: true });
 RqIncidentSchema.index({ roundId: 1 }, { sparse: true });
 RqIncidentSchema.index({ loc: "2dsphere" }, { sparse: true });
 
-/* Sincronización gps <-> loc */
 RqIncidentSchema.pre("save", function syncGpsToLoc(next) {
   try {
     const hasGps =
       this?.gps &&
-      typeof this.gps.lat === "number" &&
-      Number.isFinite(this.gps.lat) &&
-      typeof this.gps.lon === "number" &&
-      Number.isFinite(this.gps.lon);
+      isFiniteNumber(this.gps.lat) &&
+      isFiniteNumber(this.gps.lon);
 
     if (hasGps) {
       this.loc = this.loc || {};
       this.loc.type = "Point";
       this.loc.coordinates = [this.gps.lon, this.gps.lat];
+
+      this.location = this.location || {};
+      this.location.lat = this.gps.lat;
+      this.location.lon = this.gps.lon;
+
+      if (isFiniteNumber(this.gps.accuracy)) {
+        this.location.accuracy = this.gps.accuracy;
+      }
+
+      if (!this.location.coordsText) {
+        this.location.coordsText = `${this.gps.lat}, ${this.gps.lon}`;
+      }
+
+      if (!this.location.capturedAt && this.gps.capturedAt) {
+        this.location.capturedAt = toDateOrUndefined(this.gps.capturedAt);
+      }
+
+      this.links = this.links || {};
+      if (!this.links.googleMapsUrl && this.location.coordsText) {
+        this.links.googleMapsUrl = `https://www.google.com/maps?q=${encodeURIComponent(
+          this.location.coordsText
+        )}`;
+      }
+      if (!this.links.wazeUrl && this.location.coordsText) {
+        this.links.wazeUrl = `https://waze.com/ul?ll=${encodeURIComponent(
+          this.location.coordsText
+        )}&navigate=yes`;
+      }
+
+      if (!this.location.googleMapsUrl && this.links.googleMapsUrl) {
+        this.location.googleMapsUrl = this.links.googleMapsUrl;
+      }
+      if (!this.location.wazeUrl && this.links.wazeUrl) {
+        this.location.wazeUrl = this.links.wazeUrl;
+      }
     } else if (
       this?.loc?.coordinates &&
       Array.isArray(this.loc.coordinates) &&
       this.loc.coordinates.length >= 2 &&
-      typeof this.loc.coordinates[0] === "number" &&
-      typeof this.loc.coordinates[1] === "number"
+      isFiniteNumber(this.loc.coordinates[0]) &&
+      isFiniteNumber(this.loc.coordinates[1])
     ) {
       this.gps = this.gps || {};
       this.gps.lon = this.loc.coordinates[0];
       this.gps.lat = this.loc.coordinates[1];
+
+      this.location = this.location || {};
+      this.location.lon = this.loc.coordinates[0];
+      this.location.lat = this.loc.coordinates[1];
+
+      if (!this.location.coordsText) {
+        this.location.coordsText = `${this.gps.lat}, ${this.gps.lon}`;
+      }
+
+      this.links = this.links || {};
+      if (!this.links.googleMapsUrl && this.location.coordsText) {
+        this.links.googleMapsUrl = `https://www.google.com/maps?q=${encodeURIComponent(
+          this.location.coordsText
+        )}`;
+      }
+      if (!this.links.wazeUrl && this.location.coordsText) {
+        this.links.wazeUrl = `https://waze.com/ul?ll=${encodeURIComponent(
+          this.location.coordsText
+        )}&navigate=yes`;
+      }
+
+      if (!this.location.googleMapsUrl && this.links.googleMapsUrl) {
+        this.location.googleMapsUrl = this.links.googleMapsUrl;
+      }
+      if (!this.location.wazeUrl && this.links.wazeUrl) {
+        this.location.wazeUrl = this.links.wazeUrl;
+      }
     } else {
       this.loc = undefined;
+    }
+
+    if (this.gps?.capturedAt) {
+      this.gps.capturedAt = toDateOrUndefined(this.gps.capturedAt);
+    }
+
+    if (this.location?.capturedAt) {
+      this.location.capturedAt = toDateOrUndefined(this.location.capturedAt);
+    }
+
+    if (!this.guardEmail && this.officerEmail) {
+      this.guardEmail = this.officerEmail;
+    }
+
+    if (!this.guardName && this.officerName) {
+      this.guardName = this.officerName;
+    }
+
+    if (!this.message && this.text) {
+      this.message = this.text;
+    }
+
+    if (!this.body && this.message) {
+      this.body = this.message;
+    }
+
+    if (!this.text && this.message) {
+      this.text = this.message;
     }
   } catch (err) {
     console.warn("[RqIncident.preSave] Error sincronizando GPS:", err.message);
@@ -120,7 +254,6 @@ RqIncidentSchema.pre("save", function syncGpsToLoc(next) {
   next();
 });
 
-/* JSON limpio */
 RqIncidentSchema.set("toJSON", {
   virtuals: true,
   versionKey: false,

@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useLocation } from "react-router-dom";
 import { subscribeLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
-import { socket } from "../lib/socket.js";
+import { socket, joinSocketIdentity } from "../lib/socket.js";
 
 function toArray(v) {
   if (Array.isArray(v)) return v;
@@ -39,6 +39,7 @@ function resolvePrincipal(user) {
   if (user.user && typeof user.user === "object") {
     return {
       ...user.user,
+      ...user,
       can:
         user?.can && typeof user.can === "object"
           ? user.can
@@ -92,11 +93,126 @@ function isVisitorUser(user) {
   }
 }
 
+function asText(v) {
+  return String(v || "").trim();
+}
+
+function pickFirstText(...values) {
+  for (const v of values) {
+    const s = asText(v);
+    if (s) return s;
+  }
+  return "";
+}
+
+function numberOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildMapLinks(lat, lon) {
+  const nLat = numberOrNull(lat);
+  const nLon = numberOrNull(lon);
+
+  if (nLat == null || nLon == null) {
+    return { googleMapsUrl: "", wazeUrl: "", coordsText: "" };
+  }
+
+  const coordsText = `${nLat}, ${nLon}`;
+  return {
+    coordsText,
+    googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
+    wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+  };
+}
+
 function normalizeRemotePayload(payload = {}) {
   const item =
     payload?.item && typeof payload.item === "object" ? payload.item : null;
   const meta =
     payload?.meta && typeof payload.meta === "object" ? payload.meta : {};
+  const guard =
+    payload?.guard && typeof payload.guard === "object" ? payload.guard : {};
+  const gps =
+    payload?.gps && typeof payload.gps === "object"
+      ? payload.gps
+      : payload?.location && typeof payload.location === "object"
+      ? payload.location
+      : item?.gps && typeof item.gps === "object"
+      ? item.gps
+      : {};
+  const links =
+    payload?.links && typeof payload.links === "object"
+      ? payload.links
+      : payload?.location && typeof payload.location === "object"
+      ? payload.location
+      : {};
+
+  const guardName = pickFirstText(
+    payload?.guardName,
+    guard?.name,
+    payload?.user,
+    item?.guardName,
+    meta?.guardName
+  );
+
+  const guardEmail = pickFirstText(
+    payload?.guardEmail,
+    guard?.email,
+    item?.guardEmail,
+    meta?.guardEmail
+  );
+
+  const lat = numberOrNull(
+    gps?.lat ?? gps?.latitude ?? payload?.lat ?? payload?.latitude
+  );
+  const lon = numberOrNull(
+    gps?.lon ??
+      gps?.lng ??
+      gps?.longitude ??
+      payload?.lon ??
+      payload?.lng ??
+      payload?.longitude
+  );
+
+  const fallbackLinks = buildMapLinks(lat, lon);
+
+  const googleMapsUrl = pickFirstText(
+    links?.googleMapsUrl,
+    payload?.googleMapsUrl,
+    meta?.googleMapsUrl,
+    fallbackLinks.googleMapsUrl
+  );
+
+  const wazeUrl = pickFirstText(
+    links?.wazeUrl,
+    payload?.wazeUrl,
+    meta?.wazeUrl,
+    fallbackLinks.wazeUrl
+  );
+
+  const coordsText = pickFirstText(
+    links?.coordsText,
+    gps?.coordsText,
+    payload?.coordsText,
+    fallbackLinks.coordsText
+  );
+
+  const accuracyRaw =
+    gps?.accuracy ?? payload?.accuracy ?? payload?.location?.accuracy;
+  const accuracy =
+    accuracyRaw == null || accuracyRaw === "" || !Number.isFinite(Number(accuracyRaw))
+      ? ""
+      : `${Number(accuracyRaw).toFixed(0)} m`;
+
+  const body = pickFirstText(
+    payload?.body,
+    payload?.message,
+    payload?.incidentText,
+    item?.text,
+    meta?.body,
+    payload?.kind === "panic" ? "Se activó el botón de pánico" : ""
+  );
 
   return {
     title:
@@ -104,15 +220,18 @@ function normalizeRemotePayload(payload = {}) {
       (payload?.kind === "panic" ? "🚨 Alerta de pánico" : null) ||
       (item?.type === "panic" ? "🚨 Alerta de pánico" : null) ||
       "ALERTA",
-    body:
-      payload?.body ||
-      payload?.message ||
-      item?.text ||
-      meta?.body ||
-      (payload?.kind === "panic" ? "Se activó el botón de pánico" : "") ||
-      "",
+    body,
     source: payload?.source || payload?.kind || item?.type || "socket",
-    at: payload?.ts || item?.at || Date.now(),
+    at: payload?.ts || payload?.emittedAt || item?.at || Date.now(),
+    guardName,
+    guardEmail,
+    guardLabel: guardName || guardEmail || "Guardia no identificado",
+    lat,
+    lon,
+    accuracy,
+    coordsText,
+    googleMapsUrl,
+    wazeUrl,
   };
 }
 
@@ -134,7 +253,7 @@ export default function GlobalPanicListener() {
 
   const audioSrc = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
-    return `${base}audio/mixkit-alert-alarm-1005.wav`;
+    return `${base}audio/mixkit-alert-in-hall-1006.wav`;
   }, []);
 
   const stopAlarm = useCallback(() => {
@@ -181,6 +300,15 @@ export default function GlobalPanicListener() {
       body: normalized.body || "",
       at: new Date(normalized.at || Date.now()).toLocaleTimeString(),
       source,
+      guardName: normalized.guardName || "",
+      guardEmail: normalized.guardEmail || "",
+      guardLabel: normalized.guardLabel || "",
+      lat: normalized.lat,
+      lon: normalized.lon,
+      coordsText: normalized.coordsText || "",
+      accuracy: normalized.accuracy || "",
+      googleMapsUrl: normalized.googleMapsUrl || "",
+      wazeUrl: normalized.wazeUrl || "",
     });
   }, []);
 
@@ -200,13 +328,8 @@ export default function GlobalPanicListener() {
 
   const triggerLocalAlert = useCallback(
     async (payload = {}, source = "local-bus") => {
-      // Emisor: solo visual, sin sonido
       showVisualAlert(payload, source);
-
-      // Evita que el eco remoto vuelva a sonar en esta misma máquina
       suppressRemoteUntilRef.current = Date.now() + 4000;
-
-      // Por si estaba sonando algo anterior, lo detenemos
       stopAlarm();
     },
     [showVisualAlert, stopAlarm]
@@ -221,22 +344,22 @@ export default function GlobalPanicListener() {
       roles: principal?.roles || principal?.role || principal?.rol || [],
     };
 
-    const doPresenceJoin = () => {
+    const doIdentityJoin = () => {
       try {
-        socket.emit("presence:join", joinPayload);
+        joinSocketIdentity(joinPayload);
       } catch (e) {
         console.warn(
-          "[GlobalPanicListener] presence:join error:",
+          "[GlobalPanicListener] identity join error:",
           e?.message || e
         );
       }
     };
 
-    doPresenceJoin();
-    socket.on("connect", doPresenceJoin);
+    doIdentityJoin();
+    socket.on("connect", doIdentityJoin);
 
     return () => {
-      socket.off("connect", doPresenceJoin);
+      socket.off("connect", doIdentityJoin);
     };
   }, [
     isAuthenticated,
@@ -249,7 +372,6 @@ export default function GlobalPanicListener() {
     principal?.rol,
   ]);
 
-  // Evento local del emisor: solo visual
   useEffect(() => {
     const unsub = subscribeLocalPanic((payload) => {
       if (!isAuthenticated) return;
@@ -262,7 +384,6 @@ export default function GlobalPanicListener() {
     };
   }, [isAuthenticated, visitor, triggerLocalAlert]);
 
-  // Evento remoto: visual + sonido
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -270,21 +391,31 @@ export default function GlobalPanicListener() {
       if (visitor) return;
 
       const now = Date.now();
-      if (now < suppressRemoteUntilRef.current) {
-        return;
-      }
+      if (now < suppressRemoteUntilRef.current) return;
 
       triggerRemoteAlert(payload, "socket");
+    }
+
+    function onRemoteIncident(payload = {}) {
+      if (visitor) return;
+      if (payload?.kind !== "panic" && payload?.item?.type !== "panic") return;
+
+      const now = Date.now();
+      if (now < suppressRemoteUntilRef.current) return;
+
+      triggerRemoteAlert(payload, "socket-incident");
     }
 
     socket.on("panic:new", onRemotePanic);
     socket.on("alerta:nueva", onRemotePanic);
     socket.on("rondasqr:alert", onRemotePanic);
+    socket.on("rondasqr:incident", onRemoteIncident);
 
     return () => {
       socket.off("panic:new", onRemotePanic);
       socket.off("alerta:nueva", onRemotePanic);
       socket.off("rondasqr:alert", onRemotePanic);
+      socket.off("rondasqr:incident", onRemoteIncident);
     };
   }, [isAuthenticated, visitor, triggerRemoteAlert]);
 
@@ -315,24 +446,91 @@ export default function GlobalPanicListener() {
       ) : null}
 
       {!visitor && hasAlert && (
-        <button
-          type="button"
-          onClick={() => {
-            stopAlarm();
-            setHasAlert(false);
-          }}
-          className="fixed top-4 right-4 z-[9999] w-20 h-20 rounded-full bg-red-600 border-4 border-red-300 flex flex-col items-center justify-center text-white text-[10px] font-bold animate-pulse shadow-lg"
-          title={
-            alertMeta?.body
-              ? `${alertMeta?.title || "ALERTA"} • ${alertMeta.body}`
-              : "Alerta de pánico recibida"
-          }
-        >
-          <span className="leading-none">ALERTA</span>
-          <span className="leading-none mt-1 text-[9px]">
-            {alertMeta?.at || "NUEVA"}
-          </span>
-        </button>
+        <div className="fixed top-4 right-4 z-[9999] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border-2 border-red-300 bg-red-600 text-white shadow-2xl animate-pulse overflow-hidden">
+          <button
+            type="button"
+            onClick={() => {
+              stopAlarm();
+              setHasAlert(false);
+            }}
+            className="w-full text-left px-4 py-4"
+            title={
+              alertMeta?.body
+                ? `${alertMeta?.title || "ALERTA"} • ${alertMeta.body}`
+                : "Alerta de pánico recibida"
+            }
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-extrabold leading-none">
+                  {alertMeta?.title || "ALERTA"}
+                </div>
+                <div className="text-[11px] opacity-90 mt-1">
+                  {alertMeta?.at || "NUEVA"}
+                </div>
+              </div>
+
+              <div className="shrink-0 rounded-full bg-white/20 border border-white/30 px-2 py-1 text-[10px] font-bold">
+                CERRAR
+              </div>
+            </div>
+
+            {!!alertMeta?.guardLabel && (
+              <div className="mt-3 text-sm">
+                <span className="font-bold">Guardia: </span>
+                <span>{alertMeta.guardLabel}</span>
+              </div>
+            )}
+
+            {!!alertMeta?.body && (
+              <div className="mt-2 text-sm leading-5 whitespace-pre-wrap">
+                {alertMeta.body}
+              </div>
+            )}
+
+            {!!alertMeta?.coordsText && (
+              <div className="mt-3 text-xs leading-5 bg-black/15 rounded-xl px-3 py-2">
+                <div>
+                  <span className="font-bold">Ubicación: </span>
+                  <span>{alertMeta.coordsText}</span>
+                </div>
+
+                {!!alertMeta?.accuracy && (
+                  <div>
+                    <span className="font-bold">Precisión: </span>
+                    <span>{alertMeta.accuracy}</span>
+                  </div>
+                )}
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {!!alertMeta?.googleMapsUrl && (
+                    <a
+                      href={alertMeta.googleMapsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center rounded-lg bg-white text-red-700 px-3 py-1.5 text-xs font-bold hover:bg-red-50"
+                    >
+                      Google Maps
+                    </a>
+                  )}
+
+                  {!!alertMeta?.wazeUrl && (
+                    <a
+                      href={alertMeta.wazeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center rounded-lg bg-white text-red-700 px-3 py-1.5 text-xs font-bold hover:bg-red-50"
+                    >
+                      Waze
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+          </button>
+        </div>
       )}
     </>
   );

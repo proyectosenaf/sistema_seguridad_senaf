@@ -14,21 +14,17 @@ import RqIncident from "./models/RqIncident.model.js";
 import RqDevice from "./models/RqDevice.model.js";
 import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
-// ⬇️ Rutas de asignaciones (crear/listar/borrar)
 import assignmentsRoutes from "./routes/assignments.routes.js";
-// ⬇️ Rutas offline
 import offlineRoutes from "./routes/rondasqr.offline.routes.js";
 
 const router = express.Router();
 
-/* ─────────── Inyectar io y notifier al request ─────────── */
 router.use((req, _res, next) => {
   req.io = req.app.get("io");
   req.notifier = req.app.get("notifier");
   next();
 });
 
-/* ───────────────── Auth liviano ───────────────── */
 const DISABLE_AUTH = String(process.env.DISABLE_AUTH || "0") === "1";
 const IAM_ALLOW_DEV_HEADERS =
   String(process.env.IAM_ALLOW_DEV_HEADERS || "0") === "1";
@@ -57,7 +53,6 @@ function auth(req, _res, next) {
   return next();
 }
 
-/* ───────────────── Helpers ───────────────── */
 function getPointIdFields() {
   const fields = [];
   if (RqPoint.schema.path("qr")) fields.push("qr");
@@ -92,10 +87,15 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * ✅ Construye GPS + loc GeoJSON válidos
- * Mongo 2dsphere requiere coordinates = [lon, lat]
- */
+function asText(v) {
+  return String(v || "").trim();
+}
+
+function numberOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function buildGeoFromGps(input) {
   const lat = Number(input?.lat);
   const lon = Number(input?.lon);
@@ -143,6 +143,268 @@ function getActorName(req, fallback = "Guardia") {
   return req?.user?.name || req?.user?.email || fallback;
 }
 
+function buildCoordsText(lat, lon) {
+  const nLat = numberOrNull(lat);
+  const nLon = numberOrNull(lon);
+  if (nLat == null || nLon == null) return "";
+  return `${nLat}, ${nLon}`;
+}
+
+function buildMapLinks(lat, lon) {
+  const coordsText = buildCoordsText(lat, lon);
+
+  if (!coordsText) {
+    return {
+      coordsText: "",
+      googleMapsUrl: "",
+      wazeUrl: "",
+    };
+  }
+
+  return {
+    coordsText,
+    googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
+    wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+  };
+}
+
+function normalizeIncomingPanicPayload(body = {}) {
+  const guard =
+    body?.guard && typeof body.guard === "object" ? body.guard : {};
+
+  const gpsInput =
+    body?.gps && typeof body.gps === "object"
+      ? body.gps
+      : body?.location && typeof body.location === "object"
+      ? body.location
+      : {};
+
+  const lat = numberOrNull(
+    gpsInput?.lat ?? gpsInput?.latitude ?? body?.lat ?? body?.latitude
+  );
+  const lon = numberOrNull(
+    gpsInput?.lon ??
+      gpsInput?.lng ??
+      gpsInput?.longitude ??
+      body?.lon ??
+      body?.lng ??
+      body?.longitude
+  );
+
+  const accuracy = numberOrNull(
+    gpsInput?.accuracy ?? body?.accuracy ?? body?.location?.accuracy
+  );
+  const altitude = numberOrNull(gpsInput?.altitude);
+  const heading = numberOrNull(gpsInput?.heading);
+  const speed = numberOrNull(gpsInput?.speed);
+
+  const links = buildMapLinks(lat, lon);
+
+  return {
+    type: asText(body?.type) || "panic",
+    kind: asText(body?.kind) || "panic",
+    source: asText(body?.source) || "rondasqr.panic",
+    title: asText(body?.title) || "🚨 Alerta de pánico",
+    message:
+      asText(body?.message) ||
+      asText(body?.body) ||
+      asText(body?.incidentText) ||
+      "Botón de pánico",
+    body:
+      asText(body?.body) ||
+      asText(body?.message) ||
+      asText(body?.incidentText) ||
+      "Botón de pánico",
+    incidentText:
+      asText(body?.incidentText) ||
+      asText(body?.message) ||
+      asText(body?.body) ||
+      "Botón de pánico",
+    emittedAt: asText(body?.emittedAt) || new Date().toISOString(),
+    guard: {
+      id: asText(body?.guardId || guard?.id) || null,
+      name: asText(body?.guardName || guard?.name),
+      email: asText(body?.guardEmail || guard?.email),
+      role: asText(body?.guardRole || guard?.role),
+    },
+    guardId: asText(body?.guardId || guard?.id) || null,
+    guardName: asText(body?.guardName || guard?.name),
+    guardEmail: asText(body?.guardEmail || guard?.email),
+    gps:
+      lat != null && lon != null
+        ? {
+            lat,
+            lon,
+            accuracy,
+            altitude,
+            heading,
+            speed,
+            capturedAt:
+              asText(gpsInput?.capturedAt) ||
+              asText(body?.capturedAt) ||
+              new Date().toISOString(),
+            source: asText(gpsInput?.source) || "http-panic",
+            coordsText:
+              asText(gpsInput?.coordsText) || links.coordsText || "",
+          }
+        : null,
+    location:
+      lat != null && lon != null
+        ? {
+            lat,
+            lon,
+            accuracy,
+            coordsText:
+              asText(body?.location?.coordsText) ||
+              asText(gpsInput?.coordsText) ||
+              links.coordsText ||
+              "",
+            googleMapsUrl:
+              asText(body?.links?.googleMapsUrl) ||
+              asText(body?.location?.googleMapsUrl) ||
+              asText(body?.googleMapsUrl) ||
+              links.googleMapsUrl,
+            wazeUrl:
+              asText(body?.links?.wazeUrl) ||
+              asText(body?.location?.wazeUrl) ||
+              asText(body?.wazeUrl) ||
+              links.wazeUrl,
+            capturedAt:
+              asText(gpsInput?.capturedAt) ||
+              asText(body?.capturedAt) ||
+              new Date().toISOString(),
+          }
+        : null,
+    links: {
+      googleMapsUrl:
+        asText(body?.links?.googleMapsUrl) ||
+        asText(body?.location?.googleMapsUrl) ||
+        asText(body?.googleMapsUrl) ||
+        links.googleMapsUrl,
+      wazeUrl:
+        asText(body?.links?.wazeUrl) ||
+        asText(body?.location?.wazeUrl) ||
+        asText(body?.wazeUrl) ||
+        links.wazeUrl,
+    },
+  };
+}
+
+function buildSocketPanicEvent({ req, doc, payload }) {
+  const safePayload = payload || {};
+  const guardName =
+    asText(safePayload?.guardName) || doc?.guardName || getActorName(req, "Guardia");
+  const guardEmail =
+    asText(safePayload?.guardEmail) || doc?.officerEmail || getActorEmail(req);
+  const guardId =
+    asText(safePayload?.guardId) || doc?.guardId || getActorId(req) || null;
+
+  const lat = numberOrNull(
+    safePayload?.gps?.lat ?? doc?.gps?.lat ?? safePayload?.location?.lat
+  );
+  const lon = numberOrNull(
+    safePayload?.gps?.lon ?? doc?.gps?.lon ?? safePayload?.location?.lon
+  );
+  const links = buildMapLinks(lat, lon);
+
+  return {
+    ok: true,
+    kind: "panic",
+    type: "panic",
+    title: asText(safePayload?.title) || "🚨 Alerta de pánico",
+    message:
+      asText(safePayload?.message) ||
+      asText(safePayload?.body) ||
+      asText(safePayload?.incidentText) ||
+      doc?.text ||
+      "Botón de pánico",
+    body:
+      asText(safePayload?.body) ||
+      asText(safePayload?.message) ||
+      asText(safePayload?.incidentText) ||
+      doc?.text ||
+      "Botón de pánico",
+    incidentText:
+      asText(safePayload?.incidentText) ||
+      asText(safePayload?.message) ||
+      asText(safePayload?.body) ||
+      doc?.text ||
+      "Botón de pánico",
+    source: asText(safePayload?.source) || "rondasqr.panic",
+    ts: Date.now(),
+    emittedAt: asText(safePayload?.emittedAt) || new Date().toISOString(),
+    item: doc,
+    guard: {
+      id: guardId,
+      name: guardName,
+      email: guardEmail,
+      role: asText(safePayload?.guard?.role),
+    },
+    guardId,
+    guardName,
+    guardEmail,
+    user: guardName || guardEmail || "Guardia",
+    gps:
+      lat != null && lon != null
+        ? {
+            lat,
+            lon,
+            accuracy: numberOrNull(
+              safePayload?.gps?.accuracy ?? doc?.gps?.accuracy ?? safePayload?.location?.accuracy
+            ),
+            altitude: numberOrNull(safePayload?.gps?.altitude),
+            heading: numberOrNull(safePayload?.gps?.heading),
+            speed: numberOrNull(safePayload?.gps?.speed),
+            capturedAt:
+              asText(safePayload?.gps?.capturedAt) ||
+              asText(safePayload?.location?.capturedAt) ||
+              new Date().toISOString(),
+            source: asText(safePayload?.gps?.source) || "server-rondasqr",
+            coordsText:
+              asText(safePayload?.gps?.coordsText) ||
+              asText(safePayload?.location?.coordsText) ||
+              links.coordsText,
+          }
+        : null,
+    location:
+      lat != null && lon != null
+        ? {
+            lat,
+            lon,
+            accuracy: numberOrNull(
+              safePayload?.location?.accuracy ?? safePayload?.gps?.accuracy ?? doc?.gps?.accuracy
+            ),
+            coordsText:
+              asText(safePayload?.location?.coordsText) ||
+              asText(safePayload?.gps?.coordsText) ||
+              links.coordsText,
+            googleMapsUrl:
+              asText(safePayload?.location?.googleMapsUrl) ||
+              asText(safePayload?.links?.googleMapsUrl) ||
+              links.googleMapsUrl,
+            wazeUrl:
+              asText(safePayload?.location?.wazeUrl) ||
+              asText(safePayload?.links?.wazeUrl) ||
+              links.wazeUrl,
+            capturedAt:
+              asText(safePayload?.location?.capturedAt) ||
+              asText(safePayload?.gps?.capturedAt) ||
+              new Date().toISOString(),
+          }
+        : null,
+    links: {
+      googleMapsUrl:
+        asText(safePayload?.links?.googleMapsUrl) ||
+        asText(safePayload?.location?.googleMapsUrl) ||
+        links.googleMapsUrl,
+      wazeUrl:
+        asText(safePayload?.links?.wazeUrl) ||
+        asText(safePayload?.location?.wazeUrl) ||
+        links.wazeUrl,
+    },
+  };
+}
+
 async function auditRonda(req, payload = {}) {
   await logBitacoraEvent({
     modulo: payload.modulo || "Rondas de Vigilancia",
@@ -168,7 +430,6 @@ async function auditRonda(req, payload = {}) {
   });
 }
 
-/* ───────────────── PING/DEBUG ───────────────── */
 router.get("/ping", (_req, res) =>
   res.json({ ok: true, where: "/api/rondasqr/v1/ping" })
 );
@@ -198,10 +459,8 @@ router.get("/_debug/routes", (_req, res) => {
   }
 });
 
-/* ───────────────────── ADMIN (para tu UI) ─────────────────── */
 const admin = express.Router();
 
-/** SITES **********************************************************/
 admin.get("/sites", auth, async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -257,7 +516,6 @@ admin.delete("/sites/:id", auth, async (req, res, next) => {
   }
 });
 
-/** ROUNDS *********************************************************/
 admin.get("/rounds", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
@@ -359,7 +617,6 @@ admin.delete("/rounds/:id", auth, async (req, res, next) => {
   }
 });
 
-/** POINTS *********************************************************/
 admin.get("/points", auth, async (req, res, next) => {
   try {
     const roundId = String(req.query.roundId || "").trim();
@@ -548,7 +805,6 @@ admin.post("/points/:id/rotate-qr", auth, async (req, res, next) => {
   }
 });
 
-// ✅ eliminar solo el QR del punto, no el punto
 admin.delete("/points/:id/qr", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -594,7 +850,6 @@ admin.delete("/points/:id/qr", auth, async (req, res, next) => {
   }
 });
 
-/** QR PNG *********************************************************/
 admin.get("/points/:id/qr.png", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -622,7 +877,6 @@ admin.get("/points/:id/qr.png", auth, async (req, res, next) => {
   }
 });
 
-/** QR PDF *********************************************************/
 admin.get("/points/:id/qr.pdf", auth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -689,7 +943,6 @@ admin.get("/points/:id/qr.pdf", auth, async (req, res, next) => {
   }
 });
 
-// reorder
 admin.put("/points/reorder", auth, async (req, res, next) => {
   try {
     const { roundId, pointIds } = req.body || {};
@@ -722,11 +975,6 @@ admin.put("/points/reorder", auth, async (req, res, next) => {
   }
 });
 
-/** ✅ QR REPO ******************************************************
- * GET /admin/qr-repo?siteId=...&roundId=...&format=html
- * - JSON por defecto para frontend
- * - HTML si format=html para imprimir
- */
 admin.get("/qr-repo", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
@@ -827,7 +1075,6 @@ admin.get("/qr-repo", auth, async (req, res, next) => {
   }
 });
 
-/** PLANS *********************************************************/
 admin.get("/plans", auth, async (req, res, next) => {
   try {
     const siteId = String(req.query.siteId || "").trim();
@@ -961,15 +1208,11 @@ admin.delete("/plans", auth, async (req, res, next) => {
   }
 });
 
-/* ──────────────── MONTAJE DE RUTAS ──────────────── */
 router.use("/admin/assignments", assignmentsRoutes);
 router.use("/admin", admin);
 router.use("/admin/aviones", admin);
-
-// rutas OFFLINE
 router.use(offlineRoutes);
 
-/* ──────────────── SCAN (CHECK-IN) ──────────────── */
 router.post("/checkin/scan", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -1072,7 +1315,6 @@ router.post("/checkin/scan", auth, async (req, res, next) => {
   }
 });
 
-/* ──────────────── INCIDENTES (menú “mensaje”) ──────────────── */
 router.post("/checkin/incidents", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -1124,22 +1366,32 @@ router.post("/checkin/incidents", auth, async (req, res, next) => {
   }
 });
 
-/* ──────────────── PÁNICO (botón rojo) ──────────────── */
 router.post("/checkin/panic", auth, async (req, res, next) => {
   try {
-    const { gps: rawGps } = req.body || {};
-    const { gps, loc } = buildGeoFromGps(rawGps);
+    const incoming = normalizeIncomingPanicPayload(req.body || {});
+    const { gps, loc } = buildGeoFromGps(incoming.gps || {});
+
+    const guardName =
+      incoming.guardName || req?.user?.name || req?.user?.email || "Guardia";
+    const guardEmail = incoming.guardEmail || req?.user?.email || "";
+    const guardId = incoming.guardId || req?.user?.sub || "";
+
+    const text =
+      incoming.incidentText ||
+      incoming.message ||
+      incoming.body ||
+      "Botón de pánico";
 
     const doc = await RqIncident.create({
       type: "panic",
-      text: "Botón de pánico",
+      text,
       gps,
       loc,
-      at: new Date(),
-      officerEmail: req?.user?.email || "",
-      officerName: req?.user?.name || req?.user?.email || "",
-      guardId: req?.user?.sub || "",
-      guardName: req?.user?.name || req?.user?.email || "",
+      at: incoming.emittedAt ? new Date(incoming.emittedAt) : new Date(),
+      officerEmail: guardEmail,
+      officerName: guardName,
+      guardId,
+      guardName,
     });
 
     await auditRonda(req, {
@@ -1148,30 +1400,62 @@ router.post("/checkin/panic", auth, async (req, res, next) => {
       accion: "PANICO",
       entidad: "RqIncident",
       entidadId: doc._id?.toString(),
-      agente: doc.officerName || doc.officerEmail || "Guardia",
-      titulo: "Botón de pánico activado",
-      descripcion: "Se activó una alerta de pánico desde la app de rondas.",
+      agente: guardName || guardEmail || "Guardia",
+      titulo: incoming.title || "Botón de pánico activado",
+      descripcion:
+        incoming.message ||
+        incoming.body ||
+        "Se activó una alerta de pánico desde la app de rondas.",
       prioridad: "Alta",
       estado: "Abierto",
-      nombre: doc.officerName || doc.officerEmail || "",
+      nombre: guardName || guardEmail || "",
       empresa: "",
-      source: "rondas-panic",
+      source: incoming.source || "rondas-panic",
       after: toPlain(doc),
       meta: {
         incidentType: "panic",
+        guardId,
+        guardName,
+        guardEmail,
+        gps: incoming.gps || null,
+        location: incoming.location || null,
+        links: incoming.links || null,
       },
     });
 
-    req.io?.emit?.("rondasqr:alert", { kind: "panic", item: doc });
-    req.io?.emit?.("rondasqr:incident", { kind: "panic", item: doc });
+    const socketEvent = buildSocketPanicEvent({
+      req,
+      doc: toPlain(doc),
+      payload: incoming,
+    });
 
-    res.json({ ok: true, item: doc });
+    req.io?.emit?.("panic:new", socketEvent);
+    req.io?.emit?.("rondasqr:alert", socketEvent);
+    req.io?.emit?.("alerta:nueva", socketEvent);
+    req.io?.emit?.("rondasqr:incident", {
+      kind: "panic",
+      item: doc,
+      guard: socketEvent.guard,
+      guardName: socketEvent.guardName,
+      guardEmail: socketEvent.guardEmail,
+      gps: socketEvent.gps,
+      location: socketEvent.location,
+      links: socketEvent.links,
+      message: socketEvent.message,
+      title: socketEvent.title,
+      emittedAt: socketEvent.emittedAt,
+    });
+
+    res.json({
+      ok: true,
+      item: doc,
+      alert: socketEvent,
+    });
   } catch (e) {
     next(e);
   }
 });
 
-/* ──────────────── INACTIVIDAD ──────────────── */
 router.post("/checkin/inactivity", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -1231,7 +1515,6 @@ router.post("/checkin/inactivity", auth, async (req, res, next) => {
   }
 });
 
-/* ──────────────── HOMBRE CAÍDO ──────────────── */
 router.post("/checkin/fall", auth, async (req, res, next) => {
   try {
     const b = req.body || {};
@@ -1286,7 +1569,6 @@ router.post("/checkin/fall", auth, async (req, res, next) => {
   }
 });
 
-/* ──────────────── Seed DEV ─────────────── */
 router.post("/_dev/seed/:code", async (req, res, next) => {
   try {
     const code = String(req.params.code || "").trim();

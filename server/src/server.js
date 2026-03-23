@@ -564,23 +564,43 @@ function buildPrivateChatRoom(a, b) {
 }
 
 function joinRoomsByIdentity(socket, identity = {}) {
-  const userId = identity?.userId ? String(identity.userId).trim() : "";
+  const rawUserId =
+    identity?.userId ??
+    identity?.id ??
+    identity?._id ??
+    identity?.sub ??
+    "";
+
+  const userId = rawUserId ? String(rawUserId).trim() : "";
+
   const email = identity?.email
     ? String(identity.email).trim().toLowerCase()
     : "";
-  const roles = normalizeRoles(identity?.roles || identity?.role);
+
+  const roles = normalizeRoles(
+    identity?.roles || identity?.role || identity?.rol || []
+  );
+
+  const joinedRooms = new Set();
+
+  function joinSafe(room) {
+    const r = String(room || "").trim();
+    if (!r || joinedRooms.has(r)) return;
+    socket.join(r);
+    joinedRooms.add(r);
+  }
 
   if (userId) {
-    socket.join(`user-${userId}`);
-    socket.join(`guard-${userId}`);
+    joinSafe(`user-${userId}`);
+    joinSafe(`guard-${userId}`);
   }
 
   if (email) {
-    socket.join(`email:${email}`);
+    joinSafe(`email:${email}`);
   }
 
   for (const role of roles) {
-    socket.join(`role:${role}`);
+    joinSafe(`role:${role}`);
   }
 
   socket.data = socket.data || {};
@@ -596,6 +616,7 @@ function joinRoomsByIdentity(socket, identity = {}) {
     userId,
     email,
     roles,
+    rooms: Array.from(joinedRooms),
   });
 }
 
@@ -616,30 +637,316 @@ io.on("connection", (s) => {
     console.log(`[io] ${s.id} joined rooms user-${userId} & guard-${userId}`);
   };
 
+  const buildCoordsText = (lat, lon) => {
+    const nLat = Number(lat);
+    const nLon = Number(lon);
+    if (!Number.isFinite(nLat) || !Number.isFinite(nLon)) return "";
+    return `${nLat}, ${nLon}`;
+  };
+
+  const buildMapLinks = (lat, lon) => {
+    const coordsText = buildCoordsText(lat, lon);
+    if (!coordsText) {
+      return {
+        coordsText: "",
+        googleMapsUrl: "",
+        wazeUrl: "",
+      };
+    }
+
+    return {
+      coordsText,
+      googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
+      wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+    };
+  };
+
+  const normalizeGuard = (payload = {}, identity = {}) => {
+    const guard =
+      payload?.guard && typeof payload.guard === "object" ? payload.guard : {};
+
+    const id =
+      guard?.id ||
+      payload?.guardId ||
+      identity?.userId ||
+      payload?.userId ||
+      null;
+
+    const name =
+      guard?.name ||
+      payload?.guardName ||
+      payload?.user ||
+      payload?.fromName ||
+      "";
+
+    const email =
+      guard?.email ||
+      payload?.guardEmail ||
+      identity?.email ||
+      payload?.email ||
+      "";
+
+    const role =
+      guard?.role ||
+      payload?.guardRole ||
+      (Array.isArray(identity?.roles) ? identity.roles.join(", ") : "") ||
+      "";
+
+    return {
+      id: id ? String(id) : null,
+      name: String(name || "").trim(),
+      email: String(email || "").trim(),
+      role: String(role || "").trim(),
+    };
+  };
+
+  const normalizePanicEvent = (payload = {}) => {
+    const now = Date.now();
+    const identity = getSocketIdentity(s);
+    const roles = normalizeRoles(identity.roles);
+    const guard = normalizeGuard(payload, identity);
+
+    const rawGps =
+      payload?.gps && typeof payload.gps === "object"
+        ? payload.gps
+        : payload?.location && typeof payload.location === "object"
+        ? payload.location
+        : {};
+
+    const lat = Number(
+      rawGps?.lat ??
+        rawGps?.latitude ??
+        payload?.lat ??
+        payload?.latitude
+    );
+    const lon = Number(
+      rawGps?.lon ??
+        rawGps?.lng ??
+        rawGps?.longitude ??
+        payload?.lon ??
+        payload?.lng ??
+        payload?.longitude
+    );
+
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+    const linkData = hasCoords ? buildMapLinks(lat, lon) : buildMapLinks(null, null);
+
+    const accuracyRaw =
+      rawGps?.accuracy ??
+      payload?.accuracy ??
+      payload?.location?.accuracy ??
+      null;
+
+    const event = {
+      ok: true,
+      kind: "panic",
+      type: "panic",
+      ts: now,
+      emittedAt: payload?.emittedAt || new Date(now).toISOString(),
+      fromSocketId: s.id,
+      fromUserId: identity.userId || payload?.userId || guard.id || null,
+      fromEmail: identity.email || payload?.email || guard.email || null,
+      fromRoles: roles,
+      source:
+        payload?.source ||
+        payload?.module ||
+        "rondasqr.panic",
+      title: payload?.title || "🚨 Alerta de pánico",
+      message:
+        payload?.message ||
+        payload?.body ||
+        payload?.incidentText ||
+        "Se activó el botón de pánico",
+      body:
+        payload?.body ||
+        payload?.message ||
+        payload?.incidentText ||
+        "Se activó el botón de pánico",
+      incidentText:
+        payload?.incidentText ||
+        payload?.message ||
+        payload?.body ||
+        "Se activó el botón de pánico",
+      area: payload?.area || payload?.module || "Rondas de Vigilancia",
+      priority: payload?.priority || "critical",
+      playSound: payload?.playSound !== false,
+      guard,
+      guardId: guard.id,
+      guardName: guard.name,
+      guardEmail: guard.email,
+      gps: hasCoords
+        ? {
+            lat,
+            lon,
+            accuracy:
+              accuracyRaw == null || accuracyRaw === ""
+                ? null
+                : Number(accuracyRaw),
+            altitude:
+              rawGps?.altitude == null || rawGps?.altitude === ""
+                ? null
+                : Number(rawGps.altitude),
+            heading:
+              rawGps?.heading == null || rawGps?.heading === ""
+                ? null
+                : Number(rawGps.heading),
+            speed:
+              rawGps?.speed == null || rawGps?.speed === ""
+                ? null
+                : Number(rawGps.speed),
+            capturedAt:
+              rawGps?.capturedAt || payload?.emittedAt || new Date(now).toISOString(),
+            source: rawGps?.source || "socket-client",
+            coordsText:
+              rawGps?.coordsText || linkData.coordsText || "",
+          }
+        : null,
+      location: hasCoords
+        ? {
+            lat,
+            lon,
+            accuracy:
+              accuracyRaw == null || accuracyRaw === ""
+                ? null
+                : Number(accuracyRaw),
+            coordsText:
+              payload?.location?.coordsText ||
+              rawGps?.coordsText ||
+              linkData.coordsText ||
+              "",
+            googleMapsUrl:
+              payload?.location?.googleMapsUrl ||
+              payload?.googleMapsUrl ||
+              linkData.googleMapsUrl ||
+              "",
+            wazeUrl:
+              payload?.location?.wazeUrl ||
+              payload?.wazeUrl ||
+              linkData.wazeUrl ||
+              "",
+            capturedAt:
+              rawGps?.capturedAt || payload?.emittedAt || new Date(now).toISOString(),
+          }
+        : null,
+      links: {
+        googleMapsUrl:
+          payload?.links?.googleMapsUrl ||
+          payload?.location?.googleMapsUrl ||
+          payload?.googleMapsUrl ||
+          linkData.googleMapsUrl ||
+          "",
+        wazeUrl:
+          payload?.links?.wazeUrl ||
+          payload?.location?.wazeUrl ||
+          payload?.wazeUrl ||
+          linkData.wazeUrl ||
+          "",
+      },
+      ...payload,
+    };
+
+    return event;
+  };
+
   s.on("join-room", ({ userId }) => joinRoomsLegacy(userId));
 
-  s.on("join", ({ userId, roles, role, email } = {}) => {
-    joinRoomsLegacy(userId);
-    joinRoomsByIdentity(s, { userId, roles, role, email });
+ s.on("join", (payload = {}) => {
+  const userId =
+    payload?.userId ||
+    payload?.id ||
+    payload?._id ||
+    payload?.sub ||
+    "";
+
+  joinRoomsLegacy(userId);
+  joinRoomsByIdentity(s, {
+    userId,
+    email: payload?.email || "",
+    roles: payload?.roles || payload?.role || payload?.rol || [],
+    role: payload?.role || payload?.rol || [],
+  });
+});
+
+s.on("presence:join", (payload = {}) => {
+  const identity = {
+    userId:
+      payload?.userId ||
+      payload?.id ||
+      payload?._id ||
+      payload?.sub ||
+      "",
+    email: payload?.email || "",
+    roles: payload?.roles || payload?.role || payload?.rol || [],
+  };
+
+  joinRoomsLegacy(identity.userId);
+  joinRoomsByIdentity(s, identity);
+
+  s.emit("presence:joined", {
+    ok: true,
+    socketId: s.id,
+    identity: getSocketIdentity(s),
   });
 
-  s.on("presence:join", (payload = {}) => {
-    joinRoomsByIdentity(s, payload);
-    s.emit("presence:joined", {
-      ok: true,
-      socketId: s.id,
-      identity: getSocketIdentity(s),
-    });
+  console.log("[io][presence] joined:", {
+    socketId: s.id,
+    userId: identity.userId,
+    email: identity.email,
+    roles: identity.roles,
   });
+});
 
-  s.on("auth:join", (payload = {}) => {
-    joinRoomsByIdentity(s, payload);
-    s.emit("auth:joined", {
-      ok: true,
-      socketId: s.id,
-      identity: getSocketIdentity(s),
-    });
+ function resolveIdentityPayload(payload = {}) {
+  return {
+    userId:
+      payload?.userId ||
+      payload?.id ||
+      payload?._id ||
+      payload?.sub ||
+      "",
+    email: payload?.email || "",
+    roles: payload?.roles || payload?.role || payload?.rol || [],
+  };
+}
+
+/* JOIN NORMAL */
+s.on("join", (payload = {}) => {
+  const identity = resolveIdentityPayload(payload);
+  joinRoomsLegacy(identity.userId);
+  joinRoomsByIdentity(s, identity);
+
+  s.emit("join:ok", {
+    ok: true,
+    socketId: s.id,
+    identity: getSocketIdentity(s),
   });
+});
+
+/* PRESENCE */
+s.on("presence:join", (payload = {}) => {
+  const identity = resolveIdentityPayload(payload);
+  joinRoomsLegacy(identity.userId);
+  joinRoomsByIdentity(s, identity);
+
+  s.emit("presence:joined", {
+    ok: true,
+    socketId: s.id,
+    identity: getSocketIdentity(s),
+  });
+});
+
+/* AUTH */
+s.on("auth:join", (payload = {}) => {
+  const identity = resolveIdentityPayload(payload);
+  joinRoomsLegacy(identity.userId);
+  joinRoomsByIdentity(s, identity);
+
+  s.emit("auth:joined", {
+    ok: true,
+    socketId: s.id,
+    identity: getSocketIdentity(s),
+  });
+});
 
   /* ───────────────── CHAT ───────────────── */
 
@@ -830,9 +1137,80 @@ io.on("connection", (s) => {
     }
   };
 
+  const emitPanicAlert = (payload = {}, ack) => {
+    const event = normalizePanicEvent(payload);
+
+    s.emit("panic:confirmada", {
+      ok: true,
+      ts: event.ts,
+      fromSocketId: s.id,
+      deliveredMode: "broadcast-except-visitors",
+      kind: "panic",
+    });
+
+    s.broadcast
+      .except([
+        "role:visitante",
+        "role:visitantes",
+        "role:visita",
+        "role:visitor",
+        "role:visitors",
+      ])
+      .emit("panic:new", event);
+
+    s.broadcast
+      .except([
+        "role:visitante",
+        "role:visitantes",
+        "role:visita",
+        "role:visitor",
+        "role:visitors",
+      ])
+      .emit("rondasqr:alert", event);
+
+    s.broadcast
+      .except([
+        "role:visitante",
+        "role:visitantes",
+        "role:visita",
+        "role:visitor",
+        "role:visitors",
+      ])
+      .emit("alerta:nueva", event);
+
+    console.log("[io][panic] emitted:", {
+      bySocket: s.id,
+      byUserId: event.fromUserId || null,
+      byEmail: event.fromEmail || null,
+      byRoles: event.fromRoles || [],
+      title: event.title,
+      message: event.message,
+      guardName: event.guardName || "",
+      guardEmail: event.guardEmail || "",
+      coords:
+        event?.location?.coordsText ||
+        event?.gps?.coordsText ||
+        "",
+    });
+
+    if (typeof ack === "function") {
+      ack({
+        ok: true,
+        sent: true,
+        ts: event.ts,
+        kind: "panic",
+      });
+    }
+  };
+
   s.on("alerta:activar", emitEmergencyAlert);
   s.on("alerta:emitir", emitEmergencyAlert);
   s.on("emergency:alert", emitEmergencyAlert);
+
+  s.on("panic:new", emitPanicAlert);
+  s.on("rondasqr:alert", emitPanicAlert);
+  s.on("panic:emit", emitPanicAlert);
+  s.on("panic:trigger", emitPanicAlert);
 
   s.on("disconnect", (reason) => {
     console.log("[io] bye:", s.id, "reason:", reason);

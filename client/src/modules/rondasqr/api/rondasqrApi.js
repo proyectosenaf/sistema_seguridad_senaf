@@ -1,17 +1,9 @@
 import { API, getToken } from "../../../lib/api.js";
 
-// Convención: API YA incluye /api
-// ej. http://localhost:4000/api | https://tu-dominio.com/api
 const ROOT = String(API || "http://localhost:4000/api").replace(/\/$/, "");
-
-// Base de RondasQR: /api/rondasqr/v1
 const BASE = `${ROOT}/rondasqr/v1`;
+const DEFAULT_CREDENTIALS = "omit";
 
-// ✅ Si tu auth es JWT (lo tuyo), usa omit.
-// Si en algún entorno usas cookies/sesión, cambia a "include" aquí y listo.
-const DEFAULT_CREDENTIALS = "omit"; // "omit" | "include"
-
-/* ───────────── querystring ───────────── */
 function toQS(o = {}) {
   return Object.entries(o)
     .filter(([, v]) => v !== "" && v != null)
@@ -19,7 +11,6 @@ function toQS(o = {}) {
     .join("&");
 }
 
-/* ───────────── helpers ───────────── */
 function toId(v) {
   if (v == null) return null;
   if (typeof v === "string") return v.trim() || null;
@@ -64,11 +55,162 @@ function normalizePlanBody(body = {}) {
   return { siteId, roundId, points };
 }
 
-/**
- * ✅ Headers centralizados:
- * - JSON Content-Type cuando aplica
- * - Authorization Bearer <token> desde lib/api.js (senaf_token)
- */
+function asText(v) {
+  return String(v || "").trim();
+}
+
+function numberOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCoords(input = {}) {
+  const lat = numberOrNull(
+    input?.lat ?? input?.latitude ?? input?.gps?.lat ?? input?.gps?.latitude
+  );
+  const lon = numberOrNull(
+    input?.lon ??
+      input?.lng ??
+      input?.longitude ??
+      input?.gps?.lon ??
+      input?.gps?.lng ??
+      input?.gps?.longitude
+  );
+
+  if (lat == null || lon == null) return null;
+
+  return {
+    lat,
+    lon,
+    accuracy: numberOrNull(input?.accuracy ?? input?.gps?.accuracy),
+    altitude: numberOrNull(input?.altitude ?? input?.gps?.altitude),
+    heading: numberOrNull(input?.heading ?? input?.gps?.heading),
+    speed: numberOrNull(input?.speed ?? input?.gps?.speed),
+    capturedAt: asText(input?.capturedAt ?? input?.gps?.capturedAt) || null,
+    source: asText(input?.source ?? input?.gps?.source) || null,
+  };
+}
+
+function buildMapLinks(lat, lon) {
+  const nLat = numberOrNull(lat);
+  const nLon = numberOrNull(lon);
+
+  if (nLat == null || nLon == null) {
+    return {
+      coordsText: "",
+      googleMapsUrl: "",
+      wazeUrl: "",
+    };
+  }
+
+  const coordsText = `${nLat}, ${nLon}`;
+  return {
+    coordsText,
+    googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
+    wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+  };
+}
+
+function normalizePanicPayload(input) {
+  const raw =
+    input && typeof input === "object"
+      ? input
+      : input == null
+      ? {}
+      : { gps: input };
+
+  const guard =
+    raw?.guard && typeof raw.guard === "object" ? raw.guard : {};
+
+  const coords = normalizeCoords(raw?.gps || raw?.location || raw);
+  const links = coords ? buildMapLinks(coords.lat, coords.lon) : buildMapLinks(null, null);
+
+  const gps = coords
+    ? {
+        lat: coords.lat,
+        lon: coords.lon,
+        accuracy: coords.accuracy,
+        altitude: coords.altitude,
+        heading: coords.heading,
+        speed: coords.speed,
+        capturedAt: coords.capturedAt || new Date().toISOString(),
+        source: coords.source || "rondasqrApi.panic",
+      }
+    : null;
+
+  const location = coords
+    ? {
+        lat: coords.lat,
+        lon: coords.lon,
+        accuracy: coords.accuracy,
+        coordsText: asText(raw?.location?.coordsText) || links.coordsText,
+        googleMapsUrl:
+          asText(raw?.links?.googleMapsUrl) ||
+          asText(raw?.location?.googleMapsUrl) ||
+          asText(raw?.googleMapsUrl) ||
+          links.googleMapsUrl,
+        wazeUrl:
+          asText(raw?.links?.wazeUrl) ||
+          asText(raw?.location?.wazeUrl) ||
+          asText(raw?.wazeUrl) ||
+          links.wazeUrl,
+        capturedAt: coords.capturedAt || new Date().toISOString(),
+      }
+    : null;
+
+  const body = {
+    type: asText(raw?.type) || "panic",
+    kind: asText(raw?.kind) || "panic",
+    source: asText(raw?.source) || "rondasqr.scan",
+    title: asText(raw?.title) || "🚨 Alerta de pánico",
+    message:
+      asText(raw?.message) ||
+      asText(raw?.body) ||
+      asText(raw?.incidentText) ||
+      "Se activó el botón de pánico",
+    body:
+      asText(raw?.body) ||
+      asText(raw?.message) ||
+      asText(raw?.incidentText) ||
+      "Se activó el botón de pánico",
+    incidentText:
+      asText(raw?.incidentText) ||
+      asText(raw?.message) ||
+      asText(raw?.body) ||
+      "Se activó el botón de pánico",
+    emittedAt: asText(raw?.emittedAt) || new Date().toISOString(),
+    guard: {
+      id: asText(raw?.guardId || guard?.id) || null,
+      name: asText(raw?.guardName || guard?.name),
+      email: asText(raw?.guardEmail || guard?.email),
+      role: asText(raw?.guardRole || guard?.role),
+    },
+    guardId: asText(raw?.guardId || guard?.id) || null,
+    guardName: asText(raw?.guardName || guard?.name),
+    guardEmail: asText(raw?.guardEmail || guard?.email),
+    gps,
+    location,
+    links: {
+      googleMapsUrl:
+        asText(raw?.links?.googleMapsUrl) ||
+        asText(raw?.location?.googleMapsUrl) ||
+        asText(raw?.googleMapsUrl) ||
+        links.googleMapsUrl,
+      wazeUrl:
+        asText(raw?.links?.wazeUrl) ||
+        asText(raw?.location?.wazeUrl) ||
+        asText(raw?.wazeUrl) ||
+        links.wazeUrl,
+    },
+  };
+
+  if (gps?.lat != null && gps?.lon != null) {
+    body.loc = { type: "Point", coordinates: [gps.lon, gps.lat] };
+  }
+
+  return body;
+}
+
 async function buildHeaders({ json = true, token } = {}) {
   const h = {};
 
@@ -129,9 +271,7 @@ async function fetchJson(url, opts = {}) {
   return { ok: true, raw: text };
 }
 
-/* ───────────── API principal ───────────── */
 export const rondasqrApi = {
-  // -------- Reportes --------
   async getSummary(q) {
     return fetchJson(`${BASE}/reports/summary?${toQS(q)}`);
   },
@@ -189,7 +329,6 @@ export const rondasqrApi = {
     }
   },
 
-  // -------- Check-in / Guardia --------
   async postScan(payload) {
     return fetchJson(`${BASE}/checkin/scan`, {
       method: "POST",
@@ -213,26 +352,8 @@ export const rondasqrApi = {
     });
   },
 
-  async panic(gps) {
-    const input =
-      gps && typeof gps === "object"
-        ? "gps" in gps
-          ? gps
-          : { gps }
-        : { gps: null };
-
-    const lat = Number(input?.gps?.lat);
-    const lon = Number(input?.gps?.lon);
-
-    const body = { ...input };
-
-    if (Number.isFinite(lat) && Number.isFinite(lon)) {
-      body.gps = { lat, lon };
-      body.loc = { type: "Point", coordinates: [lon, lat] };
-    } else {
-      delete body.loc;
-      body.gps = input?.gps ?? null;
-    }
+  async panic(payload) {
+    const body = normalizePanicPayload(payload);
 
     const PANIC_URL =
       String(import.meta.env.VITE_RONDAS_PANIC_URL || "").trim() ||
@@ -260,7 +381,6 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- OFFLINE --------
   async offlineCheckin(item) {
     return fetchJson(`${BASE}/offline/checkin`, {
       method: "POST",
@@ -275,7 +395,6 @@ export const rondasqrApi = {
     });
   },
 
-  // -------- Admin CRUD --------
   async listSites() {
     return fetchJson(`${BASE}/admin/sites`);
   },
@@ -300,7 +419,6 @@ export const rondasqrApi = {
     });
   },
 
-  // Rondas
   async listRounds(siteId) {
     const q = siteId ? `?${toQS({ siteId })}` : "";
     return fetchJson(`${BASE}/admin/rounds${q}`);
@@ -326,7 +444,6 @@ export const rondasqrApi = {
     });
   },
 
-  // Puntos
   async listPoints({ siteId, roundId } = {}) {
     const q = toQS({ siteId, roundId });
     return fetchJson(`${BASE}/admin/points${q ? `?${q}` : ""}`);
@@ -359,9 +476,6 @@ export const rondasqrApi = {
     });
   },
 
-  /* =========================================================
-     QR helpers
-  ========================================================= */
   pointQrPngUrl(id) {
     if (!id) return "";
     return `${BASE}/admin/points/${encodeURIComponent(id)}/qr.png`;
@@ -401,7 +515,6 @@ export const rondasqrApi = {
     return `${BASE}/admin/qr-repo${qs ? `?${qs}` : ""}`;
   },
 
-  // -------- Plans --------
   async getPlan(q = {}) {
     const qs = toQS(q);
     return fetchJson(`${BASE}/admin/plans${qs ? `?${qs}` : ""}`);
@@ -468,7 +581,6 @@ export const rondasqrApi = {
     throw e;
   },
 
-  // -------- Asignaciones --------
   async listAssignments(date) {
     const qs = toQS(date ? { date } : {});
     return fetchJson(`${BASE}/admin/assignments${qs ? `?${qs}` : ""}`);
@@ -487,7 +599,6 @@ export const rondasqrApi = {
     });
   },
 
-  // alias para ScanPage
   async checkinScan(payload) {
     return this.postScan(payload);
   },

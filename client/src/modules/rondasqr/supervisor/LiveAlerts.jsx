@@ -1,7 +1,5 @@
 // src/modules/rondasqr/supervisor/LiveAlerts.jsx
 import React from "react";
-
-// ✅ Reusar el socket global (una sola conexión para toda la app)
 import { socket } from "../../../lib/socket.js";
 
 function classNames(...xs) {
@@ -9,7 +7,7 @@ function classNames(...xs) {
 }
 
 function badgeClasses(type) {
-  const t = (type || "").toLowerCase();
+  const t = String(type || "").toLowerCase();
   switch (t) {
     case "panic":
       return "bg-red-600/20 text-red-200 border-red-500/40";
@@ -27,13 +25,211 @@ function badgeClasses(type) {
   }
 }
 
+function asText(v) {
+  return String(v || "").trim();
+}
+
+function numberOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickFirstText(...values) {
+  for (const v of values) {
+    const s = asText(v);
+    if (s) return s;
+  }
+  return "";
+}
+
+function buildFallbackLinks(lat, lon) {
+  const nLat = numberOrNull(lat);
+  const nLon = numberOrNull(lon);
+
+  if (nLat == null || nLon == null) {
+    return {
+      coordsText: "",
+      googleMapsUrl: "",
+      wazeUrl: "",
+    };
+  }
+
+  const coordsText = `${nLat}, ${nLon}`;
+  return {
+    coordsText,
+    googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
+    wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+  };
+}
+
+function normalizeIncomingAlert(evt = {}) {
+  const item = evt?.item && typeof evt.item === "object" ? evt.item : null;
+  const guard = evt?.guard && typeof evt.guard === "object" ? evt.guard : {};
+  const gps =
+    evt?.gps && typeof evt.gps === "object"
+      ? evt.gps
+      : evt?.location && typeof evt.location === "object"
+      ? evt.location
+      : item?.gps && typeof item.gps === "object"
+      ? item.gps
+      : {};
+  const location =
+    evt?.location && typeof evt.location === "object"
+      ? evt.location
+      : {};
+  const links =
+    evt?.links && typeof evt.links === "object"
+      ? evt.links
+      : location;
+
+  const lat = numberOrNull(
+    gps?.lat ?? gps?.latitude ?? location?.lat ?? evt?.lat ?? evt?.latitude
+  );
+  const lon = numberOrNull(
+    gps?.lon ??
+      gps?.lng ??
+      gps?.longitude ??
+      location?.lon ??
+      location?.lng ??
+      evt?.lon ??
+      evt?.lng ??
+      evt?.longitude
+  );
+
+  const fallbackLinks = buildFallbackLinks(lat, lon);
+
+  const type = pickFirstText(
+    evt?.type,
+    evt?.kind,
+    item?.type,
+    "incident"
+  ).toLowerCase();
+
+  const guardName = pickFirstText(
+    evt?.guardName,
+    guard?.name,
+    evt?.officerName,
+    item?.guardName,
+    item?.officerName,
+    evt?.user
+  );
+
+  const guardEmail = pickFirstText(
+    evt?.guardEmail,
+    guard?.email,
+    evt?.officerEmail,
+    item?.guardEmail,
+    item?.officerEmail
+  );
+
+  const siteName = pickFirstText(
+    evt?.siteName,
+    item?.siteName
+  );
+
+  const roundName = pickFirstText(
+    evt?.roundName,
+    item?.roundName
+  );
+
+  const pointName = pickFirstText(
+    evt?.pointName,
+    item?.pointName,
+    item?.qr,
+    evt?.qr
+  );
+
+  const text = pickFirstText(
+    evt?.text,
+    evt?.message,
+    evt?.body,
+    evt?.incidentText,
+    item?.text,
+    item?.message,
+    item?.body,
+    item?.incidentText
+  );
+
+  const accuracyRaw =
+    gps?.accuracy ?? location?.accuracy ?? evt?.accuracy ?? item?.accuracy;
+  const accuracy =
+    accuracyRaw == null || accuracyRaw === "" || !Number.isFinite(Number(accuracyRaw))
+      ? ""
+      : `${Number(accuracyRaw).toFixed(0)} m`;
+
+  const when =
+    evt?.at ||
+    evt?.ts ||
+    evt?.emittedAt ||
+    item?.at ||
+    item?.createdAt ||
+    Date.now();
+
+  return {
+    raw: evt,
+    _id: evt?._id || item?._id || item?.id || "",
+    type,
+    title: pickFirstText(
+      evt?.title,
+      type === "panic" ? "🚨 Alerta de pánico" : "",
+      "ALERTA"
+    ),
+    text,
+    siteName,
+    roundName,
+    pointName,
+    guardName,
+    guardEmail,
+    who: guardName || guardEmail || "—",
+    lat,
+    lon,
+    gpsOk: lat != null && lon != null,
+    coordsText: pickFirstText(
+      location?.coordsText,
+      gps?.coordsText,
+      evt?.coordsText,
+      fallbackLinks.coordsText
+    ),
+    googleMapsUrl: pickFirstText(
+      links?.googleMapsUrl,
+      location?.googleMapsUrl,
+      evt?.googleMapsUrl,
+      fallbackLinks.googleMapsUrl
+    ),
+    wazeUrl: pickFirstText(
+      links?.wazeUrl,
+      location?.wazeUrl,
+      evt?.wazeUrl,
+      fallbackLinks.wazeUrl
+    ),
+    accuracy,
+    stepsAtAlert:
+      evt?.stepsAtAlert ??
+      item?.stepsAtAlert ??
+      null,
+    durationMin:
+      evt?.durationMin ??
+      item?.durationMin ??
+      null,
+    at: when,
+    __k: [
+      evt?._id || item?._id || item?.id || "",
+      when,
+      type,
+      text,
+      guardName,
+      lat,
+      lon,
+    ].join("::"),
+  };
+}
+
 export default function LiveAlerts() {
   const [events, setEvents] = React.useState([]);
-  const [status, setStatus] = React.useState("connecting"); // connecting | connected | disconnected
+  const [status, setStatus] = React.useState("connecting");
   const [autoScroll, setAutoScroll] = React.useState(true);
   const bottomRef = React.useRef(null);
 
-  // Auto-scroll al tope cuando llegan eventos (si está activo)
   React.useEffect(() => {
     if (autoScroll && bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -41,13 +237,11 @@ export default function LiveAlerts() {
   }, [events, autoScroll]);
 
   React.useEffect(() => {
-    // ✅ Si por alguna razón el socket global no existe, salimos sin romper
     if (!socket) {
       setStatus("disconnected");
       return;
     }
 
-    // Estado inicial según conexión real
     setStatus(socket.connected ? "connected" : "connecting");
 
     const onConnect = () => setStatus("connected");
@@ -55,33 +249,45 @@ export default function LiveAlerts() {
     const onConnectError = () => setStatus("disconnected");
     const onReconnecting = () => setStatus("connecting");
 
-    // Incidentes y alertas (panic, fall, immobility, etc.)
-    const onIncident = (evt) => {
-      setEvents((prev) => {
-        const key = `${evt?._id || ""}-${evt?.at || ""}-${evt?.type || ""}-${evt?.text || evt?.message || ""}`;
-        if (prev.length && prev[0]?.__k === key) return prev;
+    const pushEvent = (evt) => {
+      const normalized = normalizeIncomingAlert(evt);
 
-        const enriched = { ...evt, __k: key };
-        return [enriched, ...prev].slice(0, 200);
+      setEvents((prev) => {
+        if (prev.some((x) => x.__k === normalized.__k)) return prev;
+        return [normalized, ...prev].slice(0, 200);
       });
+    };
+
+    const onIncident = (evt = {}) => {
+      pushEvent(evt);
+    };
+
+    const onAlert = (evt = {}) => {
+      pushEvent(evt);
     };
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onConnectError);
 
-    // ✅ socket.io-client usa "reconnect_attempt" / "reconnect" dependiendo versión
     socket.io?.on?.("reconnect_attempt", onReconnecting);
     socket.io?.on?.("reconnect", onConnect);
 
     socket.on("rondasqr:incident", onIncident);
+    socket.on("panic:new", onAlert);
+    socket.on("alerta:nueva", onAlert);
+    socket.on("rondasqr:alert", onAlert);
 
     return () => {
       try {
         socket.off("connect", onConnect);
         socket.off("disconnect", onDisconnect);
         socket.off("connect_error", onConnectError);
+
         socket.off("rondasqr:incident", onIncident);
+        socket.off("panic:new", onAlert);
+        socket.off("alerta:nueva", onAlert);
+        socket.off("rondasqr:alert", onAlert);
 
         socket.io?.off?.("reconnect_attempt", onReconnecting);
         socket.io?.off?.("reconnect", onConnect);
@@ -91,17 +297,7 @@ export default function LiveAlerts() {
 
   const renderItem = (e, i) => {
     const when = e?.at ? new Date(e.at) : new Date();
-    const who =
-      e?.officerName || e?.officerEmail || e?.guardName || e?.guardId || "-";
-
-    const gpsOk =
-      typeof e?.gps?.lat === "number" && typeof e?.gps?.lon === "number";
-
-    const mapsUrl = gpsOk
-      ? `https://www.google.com/maps?q=${e.gps.lat},${e.gps.lon}`
-      : null;
-
-    const text = e?.text || e?.message || e?.description || "";
+    const whenText = Number.isNaN(when.getTime()) ? "—" : when.toLocaleString();
 
     return (
       <li
@@ -109,7 +305,7 @@ export default function LiveAlerts() {
         className="bg-black/30 rounded-lg px-3 py-2 border border-white/10"
       >
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span
               className={classNames(
                 "text-[11px] px-2 py-0.5 rounded border",
@@ -117,40 +313,63 @@ export default function LiveAlerts() {
               )}
               title="Tipo de alerta"
             >
-              {(e?.type || "incident").toUpperCase()}
+              {String(e?.type || "incident").toUpperCase()}
             </span>
-            <span className="text-xs text-white/70">
-              {when.toLocaleString()}
-            </span>
+            <span className="text-xs text-white/70">{whenText}</span>
           </div>
 
-          <div className="text-xs text-white/70">
+          <div className="text-xs text-white/70 text-right">
             {e?.siteName ? <span className="mr-2">🏢 {e.siteName}</span> : null}
             {e?.roundName ? <span className="mr-2">🔁 {e.roundName}</span> : null}
-            {who ? <span>👤 {who}</span> : null}
+            {e?.who ? <span>👤 {e.who}</span> : null}
           </div>
         </div>
 
-        {text ? (
+        {!!e?.title && (
+          <div className="mt-1 text-sm font-semibold">{e.title}</div>
+        )}
+
+        {!!e?.text && (
           <div className="mt-1 text-sm leading-snug whitespace-pre-wrap">
-            {text}
+            {e.text}
           </div>
-        ) : null}
+        )}
 
         <div className="mt-1 text-xs flex flex-wrap gap-3 text-white/70">
-          {gpsOk ? (
-            <a
-              href={mapsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="underline hover:text-white"
-              title="Ver en Google Maps"
-            >
-              📍 {e.gps.lat.toFixed(6)}, {e.gps.lon.toFixed(6)}
-            </a>
+          {e?.gpsOk ? (
+            <>
+              <span>📍 {e.coordsText || `${e.lat}, ${e.lon}`}</span>
+
+              {!!e?.googleMapsUrl && (
+                <a
+                  href={e.googleMapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-white"
+                  title="Ver en Google Maps"
+                >
+                  Google Maps
+                </a>
+              )}
+
+              {!!e?.wazeUrl && (
+                <a
+                  href={e.wazeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-white"
+                  title="Abrir en Waze"
+                >
+                  Waze
+                </a>
+              )}
+            </>
           ) : (
             <span>📍 sin GPS</span>
           )}
+
+          {!!e?.accuracy && <span>🎯 precisión: {e.accuracy}</span>}
+          {!!e?.pointName && <span>📌 punto: {e.pointName}</span>}
 
           {typeof e?.stepsAtAlert === "number" ? (
             <span>👟 pasos: {e.stepsAtAlert}</span>

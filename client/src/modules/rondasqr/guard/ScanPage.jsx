@@ -5,9 +5,13 @@ import QrScanner from "../guard/QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
 import { emitLocalPanic } from "../utils/panicBus.js";
-import { getOutbox, queueCheckin, transmitOutbox, countOutbox } from "../utils/outbox.js";
+import {
+  getOutbox,
+  queueCheckin,
+  transmitOutbox,
+  countOutbox,
+} from "../utils/outbox.js";
 
-// ✅ Central: identidad desde AuthProvider /me
 import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
 /* =========================
@@ -129,32 +133,150 @@ function hasPermLike(principal, key) {
   return perms.includes("*") || perms.includes(wanted);
 }
 
+function buildGuardIdentity(user) {
+  const id = user?._id || user?.id || user?.sub || null;
+  const name =
+    user?.fullName ||
+    user?.nombre ||
+    user?.name ||
+    user?.displayName ||
+    user?.username ||
+    "";
+  const email = user?.email || "";
+  const role =
+    user?.role?.name ||
+    user?.role?.label ||
+    user?.role ||
+    (Array.isArray(user?.roles) ? user.roles.join(", ") : user?.roles || "");
+
+  return {
+    id: id ? String(id) : null,
+    name: String(name || "").trim(),
+    email: String(email || "").trim(),
+    role: String(role || "").trim(),
+    label:
+      String(name || "").trim() ||
+      String(email || "").trim() ||
+      "Guardia desconocido",
+  };
+}
+
+function toFixedNumber(value, digits = 6) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Number(num.toFixed(digits));
+}
+
+function buildMapsUrls(lat, lon) {
+  const okLat = Number.isFinite(Number(lat));
+  const okLon = Number.isFinite(Number(lon));
+  if (!okLat || !okLon) return { googleMapsUrl: "", wazeUrl: "" };
+
+  const latLng = `${lat},${lon}`;
+  return {
+    googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(latLng)}`,
+    wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(
+      latLng
+    )}&navigate=yes`,
+  };
+}
+
+async function getCurrentGeo(extraOptions = {}) {
+  if (
+    typeof navigator === "undefined" ||
+    !("geolocation" in navigator) ||
+    !navigator.geolocation
+  ) {
+    return null;
+  }
+
+  const options = {
+    enableHighAccuracy: true,
+    timeout: 10000,
+    maximumAge: 0,
+    ...extraOptions,
+  };
+
+  return await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = pos?.coords || {};
+        const lat = toFixedNumber(coords.latitude, 6);
+        const lon = toFixedNumber(coords.longitude, 6);
+        const accuracy = toFixedNumber(coords.accuracy, 2);
+        const altitude = toFixedNumber(coords.altitude, 2);
+        const heading = toFixedNumber(coords.heading, 2);
+        const speed = toFixedNumber(coords.speed, 2);
+        const capturedAt = new Date(
+          pos?.timestamp || Date.now()
+        ).toISOString();
+        const { googleMapsUrl, wazeUrl } = buildMapsUrls(lat, lon);
+
+        resolve({
+          lat,
+          lon,
+          accuracy,
+          altitude,
+          heading,
+          speed,
+          capturedAt,
+          source: "browser-geolocation",
+          googleMapsUrl,
+          wazeUrl,
+          coordsText:
+            Number.isFinite(lat) && Number.isFinite(lon) ? `${lat}, ${lon}` : "",
+        });
+      },
+      () => resolve(null),
+      options
+    );
+  });
+}
+
+async function panicApiCompat(payload) {
+  if (!rondasqrApi || typeof rondasqrApi.panic !== "function") {
+    throw new Error("rondasqrApi no implementa panic");
+  }
+
+  try {
+    return await rondasqrApi.panic(payload);
+  } catch (err) {
+    const gpsOnly =
+      payload?.gps && typeof payload.gps === "object"
+        ? {
+            lat: payload.gps.lat ?? null,
+            lon: payload.gps.lon ?? null,
+          }
+        : null;
+
+    if (gpsOnly?.lat != null && gpsOnly?.lon != null) {
+      return await rondasqrApi.panic(gpsOnly);
+    }
+
+    return await rondasqrApi.panic(null);
+  }
+}
+
 export default function ScanPage() {
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
 
-  // ✅ SOLO desde AuthProvider
   const { user, isLoading, hasPerm, isSuperAdmin } = useAuth();
   const principal = resolvePrincipal(user) || {};
   const safeUser = principal;
 
-  /**
-   * ✅ REGLA:
-   * ScanPage NO asigna roles/perms.
-   * Solo consume señales resueltas por backend:
-   * - superadmin / isSuperAdmin
-   * - user.can["rondasqr.*"]
-   * - permissions directos si existen
-   */
-  const can = safeUser?.can && typeof safeUser.can === "object" ? safeUser.can : {};
-  const isSuperadmin = safeUser?.superadmin === true || safeUser?.isSuperAdmin === true || isSuperAdmin === true;
+  const can =
+    safeUser?.can && typeof safeUser.can === "object" ? safeUser.can : {};
+  const isSuperadmin =
+    safeUser?.superadmin === true ||
+    safeUser?.isSuperAdmin === true ||
+    isSuperAdmin === true;
 
   const authHasPerm =
     typeof hasPerm === "function"
       ? hasPerm
       : (key) => hasPermLike(safeUser, key);
 
-  // 🔒 Acceso general al módulo
   const allowModule =
     isSuperadmin ||
     can["nav.rondas"] === true ||
@@ -172,7 +294,6 @@ export default function ScanPage() {
     authHasPerm("rondasqr.offline.read") ||
     authHasPerm("rondasqr.offline.write");
 
-  // 🔒 Escaneo / operación principal
   const allowScan =
     isSuperadmin ||
     can["rondasqr.scan"] === true ||
@@ -181,29 +302,24 @@ export default function ScanPage() {
     authHasPerm("rondasqr.scan.manual") ||
     authHasPerm("rondasqr.checks.write");
 
-  // 🔒 Pánico
   const allowPanic =
     isSuperadmin ||
     authHasPerm("rondasqr.panic.write") ||
     authHasPerm("rondasqr.panic.read");
 
-  // 🔒 Dump / offline
   const allowOffline =
     isSuperadmin ||
     authHasPerm("rondasqr.offline.read") ||
     authHasPerm("rondasqr.offline.write");
 
-  // 🔒 Incidente rápido
   const allowIncidentMessage =
     isSuperadmin ||
     authHasPerm("incidentes.records.write") ||
     authHasPerm("incidentes.create") ||
     authHasPerm("incidentes.evidences.write");
 
-  // 🔒 Debug visible SOLO en desarrollo si tú lo activas
   const DEBUG_PERMS = import.meta.env.DEV && false;
 
-  /* ===== notificaciones ===== */
   useEffect(() => {
     if (!allowModule) return;
 
@@ -216,31 +332,29 @@ export default function ScanPage() {
     } catch {}
   }, [allowModule]);
 
-  /* ===== qué pestaña ===== */
   const tab = useMemo(() => {
     if (pathname.endsWith("/qr")) return "qr";
     if (pathname.endsWith("/msg")) return "msg";
     if (pathname.endsWith("/fotos")) return "fotos";
-    if (pathname.endsWith("/outbox") || pathname.endsWith("/sync")) return "outbox";
-    if (pathname.endsWith("/dump") || pathname.endsWith("/offline")) return "dump";
+    if (pathname.endsWith("/outbox") || pathname.endsWith("/sync"))
+      return "outbox";
+    if (pathname.endsWith("/dump") || pathname.endsWith("/offline"))
+      return "dump";
     return "home";
   }, [pathname]);
 
-  // redirección msg al módulo global de incidentes
   useEffect(() => {
     if (tab === "msg" && allowIncidentMessage) {
       nav("/incidentes/nuevo?from=ronda", { replace: true });
     }
   }, [tab, nav, allowIncidentMessage]);
 
-  /* ===== estados ===== */
   const [msg, setMsg] = useState("");
   const [photos, setPhotos] = useState([null, null, null, null, null]);
   const [sendingAlert, setSendingAlert] = useState(false);
   const [sendingMsg, setSendingMsg] = useState(false);
   const [sendingPhotos, setSendingPhotos] = useState(false);
 
-  /* ===== puntos de ronda ===== */
   const [points, setPoints] = useState([]);
   useEffect(() => {
     if (!allowScan) return;
@@ -268,13 +382,19 @@ export default function ScanPage() {
     };
   }, [allowScan]);
 
-  /* ===== progreso local ===== */
-  const [progress, setProgress] = useState({ lastPoint: null, nextPoint: null, pct: 0 });
+  const [progress, setProgress] = useState({
+    lastPoint: null,
+    nextPoint: null,
+    pct: 0,
+  });
 
   function loadLocalProgress() {
     const lastPoint = safeLSGet("rondasqr:lastPointName", null);
     const nextPoint = safeLSGet("rondasqr:nextPointName", null);
-    const pct = Math.max(0, Math.min(100, Number(safeLSGet("rondasqr:progressPct", 0) || 0)));
+    const pct = Math.max(
+      0,
+      Math.min(100, Number(safeLSGet("rondasqr:progressPct", 0) || 0))
+    );
     setProgress({ lastPoint, nextPoint, pct });
   }
 
@@ -283,7 +403,6 @@ export default function ScanPage() {
     loadLocalProgress();
   }, [allowModule]);
 
-  /* ===== RONDAS ASIGNADAS ===== */
   const [myAssignments, setMyAssignments] = useState([]);
   const [assignmentStates, setAssignmentStates] = useState({});
   const [currentAssignmentKey, setCurrentAssignmentKey] = useState(null);
@@ -352,7 +471,9 @@ export default function ScanPage() {
     }
 
     setActiveAssignment(a);
-    updateAssignmentStatus(a, "en_progreso", { startedAt: new Date().toISOString() });
+    updateAssignmentStatus(a, "en_progreso", {
+      startedAt: new Date().toISOString(),
+    });
     nav("/rondasqr/scan/qr");
   }
 
@@ -382,8 +503,12 @@ export default function ScanPage() {
 
     const mine = all.filter((a) => {
       const gId = String(a.guardId || a.guard?._id || a.guard?.id || "").trim();
-      const gEmail = String(a.guardEmail || a.guard?.email || "").toLowerCase().trim();
-      const gName = String(a.guardName || a.guard?.name || "").toLowerCase().trim();
+      const gEmail = String(a.guardEmail || a.guard?.email || "")
+        .toLowerCase()
+        .trim();
+      const gName = String(a.guardName || a.guard?.name || "")
+        .toLowerCase()
+        .trim();
 
       if (myId && gId) return gId === myId;
       if (myEmail && gEmail) return gEmail === myEmail;
@@ -406,7 +531,10 @@ export default function ScanPage() {
     function handleStorage(e) {
       if (!e) return;
       if (e.key === "rondasqr:assignments") loadAssignmentsForGuard();
-      if (e.key === "rondasqr:assignmentStates" || e.key === "rondasqr:currentAssignmentKey") {
+      if (
+        e.key === "rondasqr:assignmentStates" ||
+        e.key === "rondasqr:currentAssignmentKey"
+      ) {
         loadAssignmentStates();
       }
     }
@@ -415,7 +543,6 @@ export default function ScanPage() {
     return () => window.removeEventListener("storage", handleStorage);
   }, [safeUser?._id, safeUser?.email, safeUser?.name, allowModule]);
 
-  /* ===== enviar alerta de pánico ===== */
   const sendAlert = useCallback(async () => {
     if (!allowPanic) {
       alert("No tienes permiso para enviar alertas de pánico.");
@@ -426,28 +553,75 @@ export default function ScanPage() {
     setSendingAlert(true);
 
     try {
-      let gps;
-      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
-        await new Promise((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-              resolve();
-            },
-            () => resolve(),
-            { enableHighAccuracy: true, timeout: 5000 }
-          );
-        });
-      }
+      const guard = buildGuardIdentity(safeUser);
+      const geo = await getCurrentGeo({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      });
 
-      await rondasqrApi.panic(gps || null);
+      const payload = {
+        type: "panic",
+        source: "rondasqr.scan.home-button",
+        title: "🚨 Alerta de pánico",
+        message: "Alerta de pánico enviada desde ronda",
+        incidentText: "Alerta de pánico enviada desde ronda",
+        emittedAt: new Date().toISOString(),
+        guard,
+        guardId: guard.id,
+        guardName: guard.name,
+        guardEmail: guard.email,
+        gps: geo
+          ? {
+              lat: geo.lat,
+              lon: geo.lon,
+              accuracy: geo.accuracy,
+              altitude: geo.altitude,
+              heading: geo.heading,
+              speed: geo.speed,
+              capturedAt: geo.capturedAt,
+              source: geo.source,
+            }
+          : null,
+        location: geo
+          ? {
+              lat: geo.lat,
+              lon: geo.lon,
+              accuracy: geo.accuracy,
+              coordsText: geo.coordsText,
+              googleMapsUrl: geo.googleMapsUrl,
+              wazeUrl: geo.wazeUrl,
+              capturedAt: geo.capturedAt,
+            }
+          : null,
+        links: geo
+          ? {
+              googleMapsUrl: geo.googleMapsUrl,
+              wazeUrl: geo.wazeUrl,
+            }
+          : null,
+      };
+
+      await panicApiCompat(payload);
 
       emitLocalPanic({
-        source: "home-button",
-        title: "🚨 Alerta de pánico",
-        message: "Alerta de pánico enviada",
-        user: safeUser?.name || safeUser?.email || "",
+        ...payload,
+        user: guard.label,
       });
+
+      try {
+        if (
+          typeof window !== "undefined" &&
+          "Notification" in window &&
+          Notification.permission === "granted"
+        ) {
+          new Notification("🚨 Alerta de pánico", {
+            body: `${guard.label} reportó una alerta${
+              geo?.coordsText ? ` · ${geo.coordsText}` : ""
+            }`,
+          });
+        }
+      } catch {}
 
       alert("🚨 Alerta de pánico enviada.");
       return true;
@@ -458,9 +632,8 @@ export default function ScanPage() {
     } finally {
       setSendingAlert(false);
     }
-  }, [sendingAlert, safeUser?.name, safeUser?.email, allowPanic]);
+  }, [sendingAlert, safeUser, allowPanic]);
 
-  /* ===== alerta rápida por hash #alert ===== */
   useEffect(() => {
     if (hash === "#alert" && allowPanic) {
       (async () => {
@@ -470,7 +643,6 @@ export default function ScanPage() {
     }
   }, [hash, nav, sendAlert, allowPanic]);
 
-  /* ===== manejar QR ESCANEADO ===== */
   async function handleScan(result) {
     if (!allowScan) {
       alert("No tienes permiso para registrar puntos.");
@@ -489,17 +661,14 @@ export default function ScanPage() {
 
     try {
       let gps = null;
-      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
-        await new Promise((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              gps = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-              resolve();
-            },
-            () => resolve(),
-            { enableHighAccuracy: true, timeout: 3000 }
-          );
-        });
+      const geo = await getCurrentGeo({
+        enableHighAccuracy: true,
+        timeout: 3000,
+        maximumAge: 0,
+      });
+
+      if (geo) {
+        gps = { lat: geo.lat, lon: geo.lon };
       }
 
       if (typeof rondasqrApi.checkinScan === "function") {
@@ -518,14 +687,16 @@ export default function ScanPage() {
       window.dispatchEvent(new CustomEvent("qrscanner:stop"));
       nav("/rondasqr/scan", { replace: true });
     } catch (err) {
-      console.error("[ScanPage] error al registrar punto (se guarda en pendientes)", err);
+      console.error(
+        "[ScanPage] error al registrar punto (se guarda en pendientes)",
+        err
+      );
       queueCheckin({ qr, gps: null });
       alert("📦 No se pudo enviar. Guardado para transmitir más tarde.");
       nav("/rondasqr/scan/outbox", { replace: true });
     }
   }
 
-  /* ===== mensaje legacy ===== */
   async function sendMessage() {
     if (!allowIncidentMessage) {
       alert("No tienes permiso para enviar incidentes.");
@@ -551,7 +722,6 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== fotos ===== */
   async function sendPhotos() {
     if (!allowIncidentMessage) {
       alert("No tienes permiso para enviar fotos/incidentes.");
@@ -567,7 +737,10 @@ export default function ScanPage() {
 
     setSendingPhotos(true);
     try {
-      await rondasqrApi.postIncident({ text: "Fotos de ronda", photosBase64: base64s });
+      await rondasqrApi.postIncident({
+        text: "Fotos de ronda",
+        photosBase64: base64s,
+      });
       alert("📤 Fotos enviadas.");
       setPhotos([null, null, null, null, null]);
       nav("/rondasqr/scan");
@@ -578,7 +751,6 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== OUTBOX ===== */
   const [outbox, setOutbox] = useState(getOutbox());
   const [syncing, setSyncing] = useState(false);
   const refreshOutbox = () => setOutbox(getOutbox());
@@ -627,7 +799,6 @@ export default function ScanPage() {
     if (tab === "outbox" && allowModule) refreshOutbox();
   }, [tab, allowModule]);
 
-  /* ===== payload offline ===== */
   function buildOfflinePayload(currentUser) {
     const outboxData = getOutbox();
     const progressData = {
@@ -698,7 +869,6 @@ export default function ScanPage() {
     }
   }
 
-  /* ===== AUTO-SYNC ===== */
   useEffect(() => {
     if (!allowModule) return;
 
@@ -710,7 +880,8 @@ export default function ScanPage() {
         if (typeof navigator !== "undefined" && !navigator.onLine) return;
 
         const pendingOutbox = getOutbox();
-        const hasOutbox = Array.isArray(pendingOutbox) && pendingOutbox.length > 0;
+        const hasOutbox =
+          Array.isArray(pendingOutbox) && pendingOutbox.length > 0;
 
         if (hasOutbox && allowScan) {
           try {
@@ -722,8 +893,10 @@ export default function ScanPage() {
         }
 
         const payload = buildOfflinePayload(safeUser);
-        const hasDumpOutbox = Array.isArray(payload.outbox) && payload.outbox.length > 0;
-        const hasAssignments = Array.isArray(payload.assignments) && payload.assignments.length > 0;
+        const hasDumpOutbox =
+          Array.isArray(payload.outbox) && payload.outbox.length > 0;
+        const hasAssignments =
+          Array.isArray(payload.assignments) && payload.assignments.length > 0;
         const hasLogs = Array.isArray(payload.logs) && payload.logs.length > 0;
 
         if (!(hasDumpOutbox || hasAssignments || hasLogs)) return;
@@ -753,11 +926,11 @@ export default function ScanPage() {
         window.removeEventListener("online", handleOnline);
       };
     }
-  }, [safeUser?._id, allowModule, allowScan, allowOffline]); // intencional
+  }, [safeUser?._id, allowModule, allowScan, allowOffline]);
 
-  /* ===== estilos ===== */
   const pageClass = "space-y-6 layer-content";
-  const headerClass = "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
+  const headerClass =
+    "fx-card rounded-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4";
   const cardClass = "fx-card rounded-2xl p-4 sm:p-6";
   const headerFallback =
     "bg-white/70 border border-neutral-300/70 shadow-sm dark:bg-white/5 dark:border-white/15 dark:shadow-none dark:backdrop-blur";
@@ -813,7 +986,6 @@ export default function ScanPage() {
     );
   }
 
-  // 🔒 Bloqueo real del módulo
   if (!allowModule) {
     return (
       <div className={pageClass}>
@@ -849,7 +1021,8 @@ export default function ScanPage() {
         <div>
           <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
-            Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás tus rondas y alertas de hoy.
+            Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás
+            tus rondas y alertas de hoy.
           </p>
 
           {DEBUG_PERMS && (
@@ -861,7 +1034,9 @@ export default function ScanPage() {
 
         <div className="text-right text-xs sm:text-sm">
           <div className="opacity-70">Rondas pendientes por enviar</div>
-          <div className="font-semibold text-lg sm:text-xl">{allowScan ? countOutbox() : 0}</div>
+          <div className="font-semibold text-lg sm:text-xl">
+            {allowScan ? countOutbox() : 0}
+          </div>
         </div>
       </div>
 
@@ -879,20 +1054,28 @@ export default function ScanPage() {
                   "rounded-full font-extrabold text-white",
                   "bg-rose-600 hover:bg-rose-500 border-4 border-rose-400",
                   "w-28 h-28 text-lg sm:w-32 sm:h-32 sm:text-xl md:w-36 md:h-36 md:text-2xl",
-                  sendingAlert || !allowPanic ? "cursor-not-allowed opacity-80" : "",
+                  sendingAlert || !allowPanic
+                    ? "cursor-not-allowed opacity-80"
+                    : "",
                 ].join(" ")}
                 type="button"
               >
                 {sendingAlert ? "ENVIANDO..." : "ALERTA"}
               </button>
               <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
-                {allowPanic ? "Oprima en caso de emergencia" : "No autorizado para alertas"}
+                {allowPanic
+                  ? "Oprima en caso de emergencia"
+                  : "No autorizado para alertas"}
               </p>
             </div>
 
             <div className="mt-6 grid gap-3 max-w-md mx-auto w-full">
               {allowScan && (
-                <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="w-full btn-neon">
+                <button
+                  type="button"
+                  onClick={() => nav("/rondasqr/scan/qr")}
+                  className="w-full btn-neon"
+                >
                   Registrador Punto Control
                 </button>
               )}
@@ -908,7 +1091,9 @@ export default function ScanPage() {
               )}
 
               {!allowScan && !allowIncidentMessage && !allowPanic && (
-                <div className="text-sm opacity-70">No tienes acciones disponibles en este módulo.</div>
+                <div className="text-sm opacity-70">
+                  No tienes acciones disponibles en este módulo.
+                </div>
               )}
             </div>
           </section>
@@ -940,7 +1125,12 @@ export default function ScanPage() {
                 <div className="w-full h-3 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
-                    style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(100, progress.pct)
+                      )}%`,
+                    }}
                   />
                 </div>
 
@@ -949,23 +1139,34 @@ export default function ScanPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3">
-                  <button type="button" onClick={() => nav("/rondasqr/scan/qr")} className="btn-neon">
+                  <button
+                    type="button"
+                    onClick={() => nav("/rondasqr/scan/qr")}
+                    className="btn-neon"
+                  >
                     Continuar ronda
                   </button>
-                  <button type="button" onClick={finishActiveIfAny} className="btn-neon btn-neon-amber">
+                  <button
+                    type="button"
+                    onClick={finishActiveIfAny}
+                    className="btn-neon btn-neon-amber"
+                  >
                     Finalizar ronda
                   </button>
                 </div>
               </>
             ) : (
               <p className="text-sm text-slate-600 dark:text-white/80">
-                Para iniciar una ronda, abre el <strong>Registrador Punto Control</strong> y escanea el primer punto
-                asignado.
+                Para iniciar una ronda, abre el{" "}
+                <strong>Registrador Punto Control</strong> y escanea el primer
+                punto asignado.
               </p>
             )}
           </section>
 
-          <section className={[cardClass, cardFallback, "md:col-span-2"].join(" ")}>
+          <section
+            className={[cardClass, cardFallback, "md:col-span-2"].join(" ")}
+          >
             <div className="text-sm opacity-70">
               Asignaciones cargadas: <b>{allowScan ? myAssignments.length : 0}</b>
             </div>
@@ -983,9 +1184,12 @@ export default function ScanPage() {
                       className="rounded-xl border border-black/10 dark:border-white/10 p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
                     >
                       <div>
-                        <div className="font-semibold">{a.roundName || a.round?.name || "Ronda"}</div>
+                        <div className="font-semibold">
+                          {a.roundName || a.round?.name || "Ronda"}
+                        </div>
                         <div className="text-sm opacity-70">
-                          {a.siteName || a.site?.name || "Sitio"} · {a.date || a.day || "—"}
+                          {a.siteName || a.site?.name || "Sitio"} ·{" "}
+                          {a.date || a.day || "—"}
                         </div>
                         <div className="text-xs opacity-70 mt-1">
                           Estado: {st.status || "pendiente"}
@@ -993,10 +1197,18 @@ export default function ScanPage() {
                       </div>
 
                       <div className="flex gap-2">
-                        <button type="button" onClick={() => handleStartRound(a)} className="btn-neon btn-neon-green">
+                        <button
+                          type="button"
+                          onClick={() => handleStartRound(a)}
+                          className="btn-neon btn-neon-green"
+                        >
                           {isActive ? "Continuar" : "Iniciar"}
                         </button>
-                        <button type="button" onClick={() => handleFinishRound(a)} className="btn-neon btn-neon-amber">
+                        <button
+                          type="button"
+                          onClick={() => handleFinishRound(a)}
+                          className="btn-neon btn-neon-amber"
+                        >
                           Finalizar
                         </button>
                       </div>
@@ -1070,7 +1282,9 @@ export default function ScanPage() {
             </button>
           </div>
 
-          <div className="text-sm opacity-80">Pendientes: {allowScan ? outbox.length : 0}</div>
+          <div className="text-sm opacity-80">
+            Pendientes: {allowScan ? outbox.length : 0}
+          </div>
         </section>
       )}
 
@@ -1117,13 +1331,14 @@ export default function ScanPage() {
   );
 }
 
-/* ========== subcomponentes ========== */
 function PhotoPicker({ photos, setPhotos }) {
   return (
     <>
       {photos.map((f, i) => (
         <div key={i} className="flex items-center justify-between mb-2">
-          <span className="text-sm text-slate-700 dark:text-white/90">Toma foto {i + 1}</span>
+          <span className="text-sm text-slate-700 dark:text-white/90">
+            Toma foto {i + 1}
+          </span>
           <div className="flex gap-2">
             <input
               type="file"
@@ -1148,7 +1363,9 @@ function PhotoPicker({ photos, setPhotos }) {
               Seleccionar
             </label>
             <button
-              onClick={() => setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))}
+              onClick={() =>
+                setPhotos((p) => p.map((f2, idx) => (idx === i ? null : f2)))
+              }
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
               type="button"
             >

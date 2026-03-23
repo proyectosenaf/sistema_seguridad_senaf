@@ -1,4 +1,3 @@
-
 // client/src/App.jsx
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
@@ -8,6 +7,7 @@ import { useAuth } from "./pages/auth/AuthProvider.jsx";
 
 // Layout
 import Layout from "./components/Layout.jsx";
+import GlobalPanicListener from "./components/GlobalPanicListener.jsx";
 
 // ✅ Un solo cliente HTTP + token canónico
 import api, { getToken, clearToken } from "./lib/api.js";
@@ -88,7 +88,6 @@ function isPublicPath(pathname) {
   const login = normalizePath(APP_CONFIG?.routes?.login || "/login");
   if (startsWithPath(p, login)) return true;
 
-  // ✅ rutas públicas de recuperación
   if (startsWithPath(p, "/forgot-password")) return true;
   if (startsWithPath(p, "/reset-password")) return true;
 
@@ -235,7 +234,7 @@ function isVisitorMe(me) {
   return visitor || R.has("visita") || R.has("visitor");
 }
 
-/* ───────────────── Root Error Boundary (evita pantalla en blanco) ───────────────── */
+/* ───────────────── Root Error Boundary ───────────────── */
 class RootErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -270,7 +269,7 @@ class RootErrorBoundary extends React.Component {
   }
 }
 
-/* ───────────────── Session bootstrap: 1 sola llamada /me por token ───────────────── */
+/* ───────────────── Session bootstrap ───────────────── */
 function useMeSession(authToken) {
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -352,12 +351,7 @@ function useMeSession(authToken) {
   return { me, loading, error, refresh };
 }
 
-/**
- * ✅ AppShell:
- * - Visitante => Layout visitor
- * - Sin me => sin Layout
- * - Interno => Layout normal
- */
+/* ───────────────── AppShell ───────────────── */
 function AppShell({ me, meLoading, children, shellProps = {} }) {
   if (meLoading) return <>{children}</>;
   if (!me) return <>{children}</>;
@@ -390,9 +384,7 @@ function ProtectedRoute({ children }) {
   return <>{children}</>;
 }
 
-/**
- * ✅ SessionGate
- */
+/* ───────────────── SessionGate ───────────────── */
 function SessionGate({ me, meLoading, children }) {
   const location = useLocation();
   const path = location?.pathname || "/";
@@ -419,7 +411,7 @@ function SessionGate({ me, meLoading, children }) {
   return <>{children}</>;
 }
 
-/* ───────────────── Guard por ruta usando can (backend) ───────────────── */
+/* ───────────────── RouteAccess ───────────────── */
 function RouteAccess({ me, meLoading, routeKey, children }) {
   if (meLoading) return <div className="p-6">Cargando…</div>;
   if (!me) return <div className="p-6">Cargando sesión…</div>;
@@ -533,8 +525,7 @@ export default function App() {
       replace: true,
       state: { from: path + (location?.search || "") },
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location?.pathname, location?.search, navigate, loginRoute]);
 
   useEffect(() => {
     if (meLoading) return;
@@ -569,11 +560,12 @@ export default function App() {
   return (
     <RootErrorBoundary>
       <AuthTokenBridge>
+        <GlobalPanicListener />
+
         <Suspense fallback={<div className="p-6">Cargando…</div>}>
           <Routes>
             <Route path={loginRoute} element={<LoginLocal />} />
 
-            {/* ✅ nuevas rutas públicas de recuperación */}
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
@@ -743,7 +735,6 @@ export default function App() {
               }
             />
 
-            {/* Aliases legacy */}
             <Route path="/rondas" element={<Navigate to="/rondasqr" replace />} />
             <Route path="/rondas/admin" element={<Navigate to="/rondasqr/admin" replace />} />
             <Route path="/rondas/scan" element={<Navigate to="/rondasqr/scan" replace />} />
