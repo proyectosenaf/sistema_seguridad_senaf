@@ -748,15 +748,15 @@ export default function AuditPage() {
             </div>
           ) : null}
 
-          <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-x-auto overflow-y-auto relative">
             <table
               className="min-w-[1500px] w-full text-sm"
               style={{ color: "var(--text)" }}
             >
               <thead
-                className="sticky top-0 backdrop-blur z-10"
+                className="sticky top-0 z-10 backdrop-blur"
                 style={{
-                  background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                  background: "color-mix(in srgb, var(--card-solid) 96%, transparent)",
                 }}
               >
                 <tr
