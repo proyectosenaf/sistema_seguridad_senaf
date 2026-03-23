@@ -253,7 +253,7 @@ export default function GlobalPanicListener() {
 
   const audioSrc = useMemo(() => {
     const base = String(import.meta.env.BASE_URL || "/");
-    return `${base}audio/mixkit-alert-in-hall-1006.wav`;
+    return `${base}audio/mixkit-sound-alert-in-hall-1006.wav`;
   }, []);
 
   const stopAlarm = useCallback(() => {
