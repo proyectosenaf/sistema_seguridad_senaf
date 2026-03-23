@@ -10,6 +10,7 @@ export default function AuditPanel() {
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         setLoading(true);
@@ -37,7 +38,10 @@ export default function AuditPanel() {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [limit]);
 
   const filtered = useMemo(() => {
@@ -61,7 +65,9 @@ export default function AuditPanel() {
           className="px-3 py-2 rounded border bg-white/70 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100"
         >
           {[50, 100, 200, 500].map((n) => (
-            <option key={n} value={n}>Últimos {n}</option>
+            <option key={n} value={n}>
+              Últimos {n}
+            </option>
           ))}
         </select>
       </div>
@@ -92,12 +98,16 @@ export default function AuditPanel() {
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {new Date(ts).toLocaleString()} · {actor}
                 </div>
+
                 <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {it.action} — {it.entity} {it.entityId ? `(${it.entityId})` : ""}
                 </div>
-                <pre className="mt-2 text-xs overflow-auto bg-gray-50 dark:bg-gray-800 p-2 rounded">
-{JSON.stringify({ before: it.before, after: it.after }, null, 2)}
-                </pre>
+
+                <div className="mt-2 max-h-64 overflow-auto rounded bg-gray-50 dark:bg-gray-800 p-2">
+                  <pre className="text-xs whitespace-pre-wrap break-words">
+                    {JSON.stringify({ before: it.before, after: it.after }, null, 2)}
+                  </pre>
+                </div>
               </div>
             );
           })}

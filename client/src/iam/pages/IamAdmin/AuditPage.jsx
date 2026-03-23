@@ -320,6 +320,14 @@ function PrettyBox({ obj, compareWith, emphasizeChanges = false }) {
   );
 }
 
+function ScrollCell({ children }) {
+  return (
+    <div className="min-w-[320px] max-w-[420px]">
+      <div className="max-h-64 overflow-auto pr-2">{children}</div>
+    </div>
+  );
+}
+
 const toPlain = (v) =>
   typeof v === "boolean"
     ? v
@@ -339,12 +347,7 @@ const toPlain = (v) =>
     : v ?? "—";
 
 function normalizeAuditItem(x) {
-  const createdAt =
-    x?.createdAt ||
-    x?.ts ||
-    x?.timestamp ||
-    x?.date ||
-    null;
+  const createdAt = x?.createdAt || x?.ts || x?.timestamp || x?.date || null;
 
   return {
     _id: x?._id || "",
@@ -745,10 +748,13 @@ export default function AuditPage() {
             </div>
           ) : null}
 
-          <div className="overflow-auto">
-            <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
+          <div className="overflow-x-auto">
+            <table
+              className="min-w-[1500px] w-full text-sm"
+              style={{ color: "var(--text)" }}
+            >
               <thead
-                className="sticky top-0 backdrop-blur"
+                className="sticky top-0 backdrop-blur z-10"
                 style={{
                   background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
                 }}
@@ -757,12 +763,12 @@ export default function AuditPage() {
                   className="[&>th]:px-3 [&>th]:py-2 [&>th]:font-semibold"
                   style={{ borderBottom: "1px solid var(--border)" }}
                 >
-                  <th>Fecha</th>
-                  <th>Acción</th>
-                  <th>Entidad</th>
-                  <th>Actor</th>
-                  <th>Antes</th>
-                  <th>Después</th>
+                  <th className="min-w-[170px]">Fecha</th>
+                  <th className="min-w-[140px]">Acción</th>
+                  <th className="min-w-[140px]">Entidad</th>
+                  <th className="min-w-[240px]">Actor</th>
+                  <th className="min-w-[360px]">Antes</th>
+                  <th className="min-w-[360px]">Después</th>
                 </tr>
               </thead>
 
@@ -797,11 +803,14 @@ export default function AuditPage() {
                         borderBottom: "1px solid var(--border)",
                       }}
                     >
-                      <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
+                      <td
+                        className="px-3 py-3 align-top"
+                        style={{ color: "var(--text-muted)" }}
+                      >
                         {formatDateTime(a.createdAt)}
                       </td>
 
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-3 align-top">
                         <span
                           className="px-2 py-0.5 rounded-full text-xs font-medium"
                           style={sxGhostBtn()}
@@ -810,28 +819,37 @@ export default function AuditPage() {
                         </span>
                       </td>
 
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-3 align-top">
                         {a.entity ? humanizeToken(a.entity) : "—"}
                       </td>
 
-                      <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>
-                        {a.actorEmail || "—"}
+                      <td
+                        className="px-3 py-3 align-top"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        <div className="min-w-[220px] max-w-[280px] break-words">
+                          {a.actorEmail || "—"}
+                        </div>
                       </td>
 
-                      <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
-                        <PrettyBox
-                          obj={a.before}
-                          compareWith={a.after}
-                          emphasizeChanges={false}
-                        />
+                      <td className="px-3 py-3 text-xs align-top">
+                        <ScrollCell>
+                          <PrettyBox
+                            obj={a.before}
+                            compareWith={a.after}
+                            emphasizeChanges={false}
+                          />
+                        </ScrollCell>
                       </td>
 
-                      <td className="px-3 py-2 text-xs whitespace-pre-wrap align-top">
-                        <PrettyBox
-                          obj={a.after}
-                          compareWith={a.before}
-                          emphasizeChanges={true}
-                        />
+                      <td className="px-3 py-3 text-xs align-top">
+                        <ScrollCell>
+                          <PrettyBox
+                            obj={a.after}
+                            compareWith={a.before}
+                            emphasizeChanges={true}
+                          />
+                        </ScrollCell>
                       </td>
                     </tr>
                   ))
