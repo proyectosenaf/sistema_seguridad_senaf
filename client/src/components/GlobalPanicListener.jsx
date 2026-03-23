@@ -115,14 +115,26 @@ function buildMapLinks(lat, lon) {
   const nLon = numberOrNull(lon);
 
   if (nLat == null || nLon == null) {
-    return { googleMapsUrl: "", wazeUrl: "", coordsText: "" };
+    return {
+      googleMapsUrl: "",
+      wazeUrl: "",
+      coordsText: "",
+      osmEmbedUrl: "",
+    };
   }
 
   const coordsText = `${nLat}, ${nLon}`;
+  const delta = 0.0035;
+  const left = nLon - delta;
+  const right = nLon + delta;
+  const top = nLat + delta;
+  const bottom = nLat - delta;
+
   return {
     coordsText,
     googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
     wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+    osmEmbedUrl: `https://www.openstreetmap.org/export/embed.html?bbox=${left}%2C${bottom}%2C${right}%2C${top}&layer=mapnik&marker=${nLat}%2C${nLon}`,
   };
 }
 
@@ -232,6 +244,7 @@ function normalizeRemotePayload(payload = {}) {
     coordsText,
     googleMapsUrl,
     wazeUrl,
+    osmEmbedUrl: fallbackLinks.osmEmbedUrl,
   };
 }
 
@@ -244,6 +257,7 @@ export default function GlobalPanicListener() {
 
   const audioRef = useRef(null);
   const suppressRemoteUntilRef = useRef(0);
+  const lastAutoOpenedRef = useRef("");
 
   const [hasAlert, setHasAlert] = useState(false);
   const [alertMeta, setAlertMeta] = useState(null);
@@ -291,8 +305,28 @@ export default function GlobalPanicListener() {
     }
   }, []);
 
+  const openMapNow = useCallback((meta) => {
+    const url = meta?.googleMapsUrl || meta?.wazeUrl || "";
+    if (!url) return false;
+
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return true;
+    } catch (e) {
+      console.warn("[GlobalPanicListener] no se pudo abrir mapa:", e?.message || e);
+      return false;
+    }
+  }, []);
+
   const showVisualAlert = useCallback((payload = {}, source = "panic") => {
     const normalized = normalizeRemotePayload(payload);
+    const eventKey = [
+      normalized.title,
+      normalized.at,
+      normalized.guardLabel,
+      normalized.lat,
+      normalized.lon,
+    ].join("::");
 
     setHasAlert(true);
     setAlertMeta({
@@ -309,8 +343,21 @@ export default function GlobalPanicListener() {
       accuracy: normalized.accuracy || "",
       googleMapsUrl: normalized.googleMapsUrl || "",
       wazeUrl: normalized.wazeUrl || "",
+      osmEmbedUrl: normalized.osmEmbedUrl || "",
+      eventKey,
     });
-  }, []);
+
+    if (
+      normalized.googleMapsUrl &&
+      lastAutoOpenedRef.current !== eventKey
+    ) {
+      lastAutoOpenedRef.current = eventKey;
+      openMapNow({
+        googleMapsUrl: normalized.googleMapsUrl,
+        wazeUrl: normalized.wazeUrl,
+      });
+    }
+  }, [openMapNow]);
 
   const triggerRemoteAlert = useCallback(
     async (payload = {}, source = "socket") => {
@@ -446,20 +493,8 @@ export default function GlobalPanicListener() {
       ) : null}
 
       {!visitor && hasAlert && (
-        <div className="fixed top-4 right-4 z-[9999] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border-2 border-red-300 bg-red-600 text-white shadow-2xl animate-pulse overflow-hidden">
-          <button
-            type="button"
-            onClick={() => {
-              stopAlarm();
-              setHasAlert(false);
-            }}
-            className="w-full text-left px-4 py-4"
-            title={
-              alertMeta?.body
-                ? `${alertMeta?.title || "ALERTA"} • ${alertMeta.body}`
-                : "Alerta de pánico recibida"
-            }
-          >
+        <div className="fixed top-4 right-4 z-[9999] w-[420px] max-w-[calc(100vw-24px)] rounded-2xl border-2 border-red-300 bg-red-600 text-white shadow-2xl animate-pulse overflow-hidden">
+          <div className="w-full text-left px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-extrabold leading-none">
@@ -470,9 +505,16 @@ export default function GlobalPanicListener() {
                 </div>
               </div>
 
-              <div className="shrink-0 rounded-full bg-white/20 border border-white/30 px-2 py-1 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  stopAlarm();
+                  setHasAlert(false);
+                }}
+                className="shrink-0 rounded-full bg-white/20 border border-white/30 px-3 py-2 text-[10px] font-bold"
+              >
                 CERRAR
-              </div>
+              </button>
             </div>
 
             {!!alertMeta?.guardLabel && (
@@ -489,7 +531,7 @@ export default function GlobalPanicListener() {
             )}
 
             {!!alertMeta?.coordsText && (
-              <div className="mt-3 text-xs leading-5 bg-black/15 rounded-xl px-3 py-2">
+              <div className="mt-3 text-xs leading-5 bg-black/15 rounded-xl px-3 py-3">
                 <div>
                   <span className="font-bold">Ubicación: </span>
                   <span>{alertMeta.coordsText}</span>
@@ -502,7 +544,18 @@ export default function GlobalPanicListener() {
                   </div>
                 )}
 
-                <div className="mt-2 flex flex-wrap gap-2">
+                {!!alertMeta?.osmEmbedUrl && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-white/20">
+                    <iframe
+                      title="Mapa de alerta"
+                      src={alertMeta.osmEmbedUrl}
+                      className="w-full h-[220px] bg-white"
+                      loading="eager"
+                    />
+                  </div>
+                )}
+
+                <div className="mt-3 flex flex-wrap gap-2">
                   {!!alertMeta?.googleMapsUrl && (
                     <a
                       href={alertMeta.googleMapsUrl}
@@ -526,10 +579,18 @@ export default function GlobalPanicListener() {
                       Waze
                     </a>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => openMapNow(alertMeta)}
+                    className="inline-flex items-center rounded-lg bg-white text-red-700 px-3 py-1.5 text-xs font-bold hover:bg-red-50"
+                  >
+                    Abrir mapa ahora
+                  </button>
                 </div>
               </div>
             )}
-          </button>
+          </div>
         </div>
       )}
     </>

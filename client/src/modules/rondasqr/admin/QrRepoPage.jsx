@@ -1,3 +1,4 @@
+// client/src/modules/rondasqr/supervisor/QrRepoPage.jsx
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
@@ -58,6 +59,13 @@ function rowKeyOf(p) {
   );
 }
 
+function formatDateTime(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
+
 /**
  * QrRepoPage
  * Página de repositorio de códigos QR por sitio / ronda.
@@ -67,13 +75,18 @@ export default function QrRepoPage() {
 
   const [sites, setSites] = useState([]);
   const [rounds, setRounds] = useState([]);
+
   const [siteId, setSiteId] = useState("");
   const [roundId, setRoundId] = useState("");
+
   const [items, setItems] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [loadingSites, setLoadingSites] = useState(false);
   const [loadingRounds, setLoadingRounds] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState("");
+  const [lastSyncAt, setLastSyncAt] = useState(null);
 
   const canPrint = useMemo(() => items.length > 0, [items.length]);
 
@@ -89,6 +102,7 @@ export default function QrRepoPage() {
 
       const nextItems = Array.isArray(res?.items) ? res.items : [];
       setItems(nextItems);
+      setLastSyncAt(new Date().toISOString());
     } catch (e) {
       console.error("[QrRepoPage] listQrRepo error", e);
       setItems([]);
@@ -102,7 +116,6 @@ export default function QrRepoPage() {
     }
   }, [siteId, roundId]);
 
-  /* cargar sitios al montar */
   useEffect(() => {
     let mounted = true;
 
@@ -132,7 +145,6 @@ export default function QrRepoPage() {
     };
   }, []);
 
-  /* cargar rondas cuando cambia siteId */
   useEffect(() => {
     let mounted = true;
 
@@ -177,7 +189,6 @@ export default function QrRepoPage() {
     };
   }, [siteId, roundId]);
 
-  /* cargar repositorio cuando cambia sitio/ronda */
   useEffect(() => {
     loadRepo();
   }, [loadRepo]);
@@ -254,11 +265,8 @@ export default function QrRepoPage() {
     try {
       setErrorMsg("");
 
-      console.log("[QrRepoPage] deletePointQr -> pointId:", pointId, "qr:", qrValue, "row:", p);
-
       await api.deletePointQr(pointId);
 
-      // actualización optimista local para que la UI refleje el cambio aunque el backend tarde
       setItems((prev) =>
         prev.map((row) => {
           const samePoint =
@@ -277,7 +285,6 @@ export default function QrRepoPage() {
         })
       );
 
-      // recarga canónica desde servidor
       await loadRepo();
     } catch (e) {
       console.error("[QrRepoPage] deletePointQr error", e);
@@ -289,13 +296,17 @@ export default function QrRepoPage() {
     }
   }
 
+  function clearFilters() {
+    setSiteId("");
+    setRoundId("");
+  }
+
   function goBack() {
     navigate("/rondasqr/admin");
   }
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
-      {/* Encabezado */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="space-y-1">
           <button
@@ -309,7 +320,11 @@ export default function QrRepoPage() {
           <h1 className="text-2xl font-semibold">Repositorio de códigos QR</h1>
 
           <p className="text-sm text-slate-500 dark:text-white/60">
-            Consulta, visualiza e imprime los códigos QR de los puntos de ronda.
+            Consulta, visualiza, imprime, rota y elimina los códigos QR de los puntos de ronda.
+          </p>
+
+          <p className="text-xs text-slate-400 dark:text-white/40">
+            Última sincronización: {formatDateTime(lastSyncAt)}
           </p>
         </div>
 
@@ -334,9 +349,25 @@ export default function QrRepoPage() {
         </div>
       </div>
 
-      {/* Filtros y contenido */}
       <div className={card + " space-y-4"}>
-        {/* Filtros */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Filtros</h2>
+
+          <div className="flex gap-2 flex-wrap">
+            <button type="button" onClick={clearFilters} className={btnGhost}>
+              Limpiar
+            </button>
+            <button
+              type="button"
+              onClick={loadRepo}
+              className={btn}
+              disabled={loading}
+            >
+              {loading ? "Cargando..." : "Buscar"}
+            </button>
+          </div>
+        </div>
+
         <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
           <div>
             <label className="block text-xs font-medium mb-1">Sitio</label>
@@ -378,26 +409,19 @@ export default function QrRepoPage() {
             )}
           </div>
 
-          <div className="flex items-end gap-2">
-            <button
-              type="button"
-              onClick={loadRepo}
-              className={btn + " w-full md:w-auto"}
-              disabled={loading}
-            >
-              {loading ? "Cargando..." : "Actualizar listado"}
-            </button>
+          <div className="flex items-end">
+            <div className="text-xs text-slate-500 dark:text-white/60">
+              Mostrando <strong>{items.length}</strong> puntos.
+            </div>
           </div>
         </div>
 
-        {/* Mensaje de error */}
         {errorMsg && (
           <div className="text-sm text-rose-600 dark:text-rose-400">
             {errorMsg}
           </div>
         )}
 
-        {/* Tabla */}
         <div className="overflow-auto">
           <table className="min-w-[1200px] text-sm">
             <thead className="border-b border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80">
@@ -555,11 +579,6 @@ export default function QrRepoPage() {
               )}
             </tbody>
           </table>
-        </div>
-
-        {/* Pie */}
-        <div className="text-xs text-slate-500 dark:text-white/60">
-          Mostrando <strong>{items.length}</strong> puntos.
         </div>
       </div>
     </div>

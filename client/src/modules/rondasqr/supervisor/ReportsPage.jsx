@@ -229,6 +229,77 @@ async function fetchDetailed(payload) {
 }
 
 /* =========================
+   UI helpers
+========================= */
+function Kpi({ title, value }) {
+  return (
+    <div className="rounded-2xl p-4 bg-black/5 dark:bg-white/10">
+      <div className="text-xs opacity-70">{title}</div>
+      <div className="text-2xl font-extrabold mt-1">{String(value)}</div>
+    </div>
+  );
+}
+
+function ExportButtons({ onExport, disabled = false }) {
+  const btnClass =
+    "px-3 py-2 rounded-xl text-xs font-semibold bg-black/5 hover:bg-black/10 " +
+    "dark:bg-white/10 dark:hover:bg-white/15 disabled:opacity-60 disabled:cursor-not-allowed";
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => onExport("csv")}
+        className={btnClass}
+        disabled={disabled}
+      >
+        CSV
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onExport("xlsx")}
+        className={btnClass}
+        disabled={disabled}
+      >
+        Excel
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onExport("pdf")}
+        className={btnClass}
+        disabled={disabled}
+      >
+        PDF
+      </button>
+    </div>
+  );
+}
+
+function SectionShell({
+  title,
+  subtitle = "",
+  right = null,
+  children,
+  cardClass,
+  cardFallback,
+}) {
+  return (
+    <section className={[cardClass, cardFallback].join(" ")}>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 className="font-semibold text-lg">{title}</h3>
+          {subtitle ? <div className="text-xs opacity-70 mt-0.5">{subtitle}</div> : null}
+        </div>
+        {right}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/* =========================
    Component
 ========================= */
 export default function ReportsPage() {
@@ -251,6 +322,8 @@ export default function ReportsPage() {
   const [statusFilter, setStatusFilter] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   const [summary, setSummary] = useState(null);
   const [detailRows, setDetailRows] = useState([]);
@@ -418,7 +491,9 @@ export default function ReportsPage() {
       setDetailRows(filteredRows);
 
       const stats =
-        asItems(sumRes?.stats).length > 0 ? asItems(sumRes?.stats) : buildStatsFromRows(filteredRows);
+        asItems(sumRes?.stats).length > 0
+          ? asItems(sumRes?.stats)
+          : buildStatsFromRows(filteredRows);
 
       setStatsRows(stats);
 
@@ -442,6 +517,7 @@ export default function ReportsPage() {
           : asItems(detailRes?.omissions);
 
       setOmissionRows(omissions);
+      setLastSyncAt(new Date().toISOString());
     } catch (e) {
       console.error("[ReportsPage] error:", e?.message || e);
       setSummary(null);
@@ -458,6 +534,16 @@ export default function ReportsPage() {
   useEffect(() => {
     run();
   }, [run]);
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+
+    const timer = window.setInterval(() => {
+      run();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, run]);
 
   function applyQuickRange(mode) {
     const today = todayIso();
@@ -499,10 +585,12 @@ export default function ReportsPage() {
         window.open(rondasqrApi.csvUrl(q), "_blank", "noopener,noreferrer");
         return;
       }
+
       if (kind === "xlsx" && typeof rondasqrApi.xlsxUrl === "function") {
         window.open(rondasqrApi.xlsxUrl(q), "_blank", "noopener,noreferrer");
         return;
       }
+
       if (kind === "pdf" && typeof rondasqrApi.pdfUrl === "function") {
         window.open(rondasqrApi.pdfUrl(q), "_blank", "noopener,noreferrer");
         return;
@@ -512,6 +600,35 @@ export default function ReportsPage() {
     } catch (e) {
       console.error("[ReportsPage] export error:", e?.message || e);
       alert("No se pudo abrir la exportación.");
+    }
+  }
+
+  function openSectionExport(sectionKey, kind) {
+    try {
+      const q = {
+        ...apiPayload,
+        section: sectionKey,
+      };
+
+      if (kind === "csv" && typeof rondasqrApi.csvUrl === "function") {
+        window.open(rondasqrApi.csvUrl(q), "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      if (kind === "xlsx" && typeof rondasqrApi.xlsxUrl === "function") {
+        window.open(rondasqrApi.xlsxUrl(q), "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      if (kind === "pdf" && typeof rondasqrApi.pdfUrl === "function") {
+        window.open(rondasqrApi.pdfUrl(q), "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      alert(`Exportación ${kind.toUpperCase()} no disponible para ${sectionKey}.`);
+    } catch (e) {
+      console.error("[ReportsPage] section export error:", e?.message || e);
+      alert("No se pudo abrir la exportación de la sección.");
     }
   }
 
@@ -566,9 +683,25 @@ export default function ReportsPage() {
           <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
             Usuario: {user?.name || user?.email || "—"}
           </p>
+          <p className="text-[11px] text-slate-500 dark:text-white/60 mt-1">
+            Última sincronización: {lastSyncAt ? fmtDateTime(lastSyncAt) : "—"}
+          </p>
         </div>
 
-        <div className="flex flex-wrap gap-2 justify-end">
+        <div className="flex flex-wrap gap-2 justify-end items-center">
+          <label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-black/5 dark:bg-white/10">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Auto-refresh
+          </label>
+
+          <button type="button" onClick={run} className={btnClass} disabled={loading}>
+            {loading ? "Actualizando..." : "Actualizar"}
+          </button>
+
           <button type="button" onClick={() => openExport("csv")} className={btnClass}>
             CSV
           </button>
@@ -583,7 +716,7 @@ export default function ReportsPage() {
           </button>
           <button
             onClick={() => nav("/rondasqr")}
-            className="px-4 py-2 rounded-xl font-semibold bg-black/5 hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/15"
+            className={btnClass}
             type="button"
           >
             Volver a rondas
@@ -740,9 +873,12 @@ export default function ReportsPage() {
         )}
       </section>
 
-      <section className={[cardClass, cardFallback].join(" ")}>
-        <h3 className="font-semibold text-lg mb-3">Resumen ejecutivo</h3>
-
+      <SectionShell
+        title="Resumen ejecutivo"
+        right={<ExportButtons onExport={(kind) => openSectionExport("summary", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
         {!summary ? (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <Kpi title="Rondas" value="—" />
@@ -758,19 +894,26 @@ export default function ReportsPage() {
             <Kpi title="Incidentes" value={summary?.incidents ?? summary?.incidentes ?? "—"} />
           </div>
         )}
-      </section>
+      </SectionShell>
 
-      <ReportSummary stats={statsRows} />
+      <SectionShell
+        title="Resumen de vista rápida"
+        subtitle={statsRows?.length ? `${statsRows.length} agrupaciones` : "Sin datos de resumen"}
+        right={<ExportButtons onExport={(kind) => openSectionExport("report-summary", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
+        <ReportSummary stats={statsRows} />
+      </SectionShell>
 
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <section className={[cardClass, cardFallback].join(" ")}>
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="font-semibold text-lg">Detalle general</h3>
-            <div className="text-xs opacity-70">
-              {detailRows?.length ? `${detailRows.length} registros` : ""}
-            </div>
-          </div>
-
+        <SectionShell
+          title="Detalle general"
+          subtitle={detailRows?.length ? `${detailRows.length} registros` : "Sin registros"}
+          right={<ExportButtons onExport={(kind) => openSectionExport("general-detail", kind)} />}
+          cardClass={cardClass}
+          cardFallback={cardFallback}
+        >
           {!detailRows?.length ? (
             <div className="text-sm opacity-70">No hay datos para el filtro actual.</div>
           ) : (
@@ -806,33 +949,61 @@ export default function ReportsPage() {
               </table>
             </div>
           )}
-        </section>
+        </SectionShell>
 
-        <section className={[cardClass, cardFallback].join(" ")}>
-          <h3 className="font-semibold text-lg mb-3">Mapa / recorrido</h3>
+        <SectionShell
+          title="Mapa / recorrido"
+          subtitle={detailRows?.length ? "Seguimiento visual de la ronda" : "No hay ubicaciones para graficar"}
+          right={<ExportButtons onExport={(kind) => openSectionExport("map-playback", kind)} />}
+          cardClass={cardClass}
+          cardFallback={cardFallback}
+        >
           <MapView items={detailRows} />
           <div className="mt-4">
             <Playback items={detailRows} />
           </div>
-        </section>
+        </SectionShell>
       </section>
 
-      <DetailedMarks items={detailRows} />
+      <SectionShell
+        title="Despliegue detallado – Marcación por marcación"
+        subtitle={detailRows?.length ? `${detailRows.length} marcas` : "No hay marcas en el rango"}
+        right={<ExportButtons onExport={(kind) => openSectionExport("detailed-marks", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
+        <DetailedMarks items={detailRows} />
+      </SectionShell>
 
-      <MessagesTable items={messageRows} title="Alarmas / Mensajes / Incidentes" />
+      <SectionShell
+        title="Alarmas / Mensajes / Incidentes"
+        subtitle={messageRows?.length ? `${messageRows.length} eventos` : "No hay mensajes"}
+        right={<ExportButtons onExport={(kind) => openSectionExport("messages", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
+        <MessagesTable items={messageRows} title="Alarmas / Mensajes / Incidentes" />
+      </SectionShell>
 
-      <OmissionsTable items={omissionRows} />
+      <SectionShell
+        title="Omisiones"
+        subtitle={omissionRows?.length ? `${omissionRows.length} omisiones` : "No hay omisiones para los filtros actuales"}
+        right={<ExportButtons onExport={(kind) => openSectionExport("omissions", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
+        <OmissionsTable items={omissionRows} />
+      </SectionShell>
 
-      <LiveAlerts />
-    </div>
-  );
-}
-
-function Kpi({ title, value }) {
-  return (
-    <div className="rounded-2xl p-4 bg-black/5 dark:bg-white/10">
-      <div className="text-xs opacity-70">{title}</div>
-      <div className="text-2xl font-extrabold mt-1">{String(value)}</div>
+      <SectionShell
+        title="Alertas en vivo"
+        subtitle="Monitoreo en tiempo real"
+        right={<ExportButtons onExport={(kind) => openSectionExport("live-alerts", kind)} />}
+        cardClass={cardClass}
+        cardFallback={cardFallback}
+      >
+        <LiveAlerts />
+      </SectionShell>
     </div>
   );
 }
