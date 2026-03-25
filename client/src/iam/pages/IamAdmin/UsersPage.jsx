@@ -1238,8 +1238,8 @@ function UsersPageInner() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-[24px]" style={sxCard()}>
-          <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
+        <div className="w-full overflow-x-auto rounded-[24px]" style={sxCard()}>
+          <table className="w-full min-w-[1100px] table-fixed text-sm" style={{ color: "var(--text)" }}>
             <thead
               className="text-xs uppercase"
               style={{
@@ -1249,11 +1249,11 @@ function UsersPageInner() {
               }}
             >
               <tr>
-                <th className="px-4 py-3 text-left">Nombre</th>
-                <th className="px-4 py-3 text-left">Correo</th>
-                <th className="px-4 py-3 text-left">Roles</th>
-                <th className="px-4 py-3 text-center">Estado</th>
-                <th className="px-4 py-3 text-right">Acciones</th>
+                <th className="px-4 py-3 text-left w-[240px]">Nombre</th>
+                <th className="px-4 py-3 text-left w-[250px]">Correo</th>
+                <th className="px-4 py-3 text-left w-[260px]">Roles</th>
+                <th className="px-4 py-3 text-center w-[140px]">Estado</th>
+                <th className="px-4 py-3 text-right w-[260px]">Acciones</th>
               </tr>
             </thead>
 
@@ -1273,24 +1273,34 @@ function UsersPageInner() {
               ) : (
                 visibleList.map((u) => (
                   <tr key={u._id} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium" style={{ color: "var(--text)" }}>
-                        {u.nombreCompleto || u.name || "(Sin nombre)"}
-                      </div>
-                      <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                        Creado: {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
+                    <td className="px-4 py-4 align-top">
+                      <div className="min-w-0">
+                        <div
+                          className="font-medium truncate"
+                          style={{ color: "var(--text)" }}
+                          title={u.nombreCompleto || u.name || "(Sin nombre)"}
+                        >
+                          {u.nombreCompleto || u.name || "(Sin nombre)"}
+                        </div>
+                        <div className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                          Creado: {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
+                        </div>
                       </div>
                     </td>
 
-                    <td className="px-4 py-3" style={{ color: "var(--text)" }}>
+                    <td
+                      className="px-4 py-4 align-top truncate"
+                      style={{ color: "var(--text)" }}
+                      title={u.email || u.correoPersona || "—"}
+                    >
                       {u.email || u.correoPersona || "—"}
                     </td>
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4 align-top">
                       <RoleBadges roles={u.roles} roleLabelMap={roleLabelMap} />
                     </td>
 
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-4 text-center align-middle">
                       <span
                         className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
                         style={
@@ -1312,7 +1322,7 @@ function UsersPageInner() {
                       </span>
                     </td>
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-4 align-middle">
                       <div className="flex justify-end flex-wrap gap-2">
                         <button
                           type="button"
@@ -1411,8 +1421,8 @@ function UsersPageInner() {
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-[24px]" style={sxCard()}>
-          <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
+        <div className="w-full overflow-x-auto rounded-[24px]" style={sxCard()}>
+          <table className="w-full min-w-[1810px] table-fixed text-sm" style={{ color: "var(--text)" }}>
             <thead
               className="text-xs uppercase"
               style={{
@@ -1422,13 +1432,13 @@ function UsersPageInner() {
               }}
             >
               <tr>
-                <th className="px-4 py-3 text-left">Usuario</th>
-                <th className="px-4 py-3 text-left">Estado</th>
-                <th className="px-4 py-3 text-left">IP</th>
-                <th className="px-4 py-3 text-left">Dispositivo</th>
-                <th className="px-4 py-3 text-left">Conectado</th>
-                <th className="px-4 py-3 text-left">Última actividad</th>
-                <th className="px-4 py-3 text-right">Acciones</th>
+                <th className="px-4 py-3 text-left w-[260px]">Usuario</th>
+                <th className="px-4 py-3 text-left w-[160px]">Estado</th>
+                <th className="px-4 py-3 text-left w-[190px]">IP</th>
+                <th className="px-4 py-3 text-left w-[520px]">Dispositivo</th>
+                <th className="px-4 py-3 text-left w-[220px]">Conectado</th>
+                <th className="px-4 py-3 text-left w-[220px]">Última actividad</th>
+                <th className="px-4 py-3 text-right w-[240px]">Acciones</th>
               </tr>
             </thead>
 
@@ -1459,45 +1469,74 @@ function UsersPageInner() {
 
                   return (
                     <tr key={s._id || s.sessionId} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium flex items-center gap-2 flex-wrap" style={{ color: "var(--text)" }}>
-                          <span>{s.name || s.email || "—"}</span>
-                          {isCurrent ? <CurrentSessionPill /> : null}
-                          {!isCurrent && sameEmail ? (
-                            <span
-                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
-                              style={{
-                                background: "color-mix(in srgb, #64748b 12%, transparent)",
-                                color: "#475569",
-                                border: "1px solid color-mix(in srgb, #64748b 32%, transparent)",
-                              }}
-                            >
-                              Misma cuenta
+                      <td className="px-4 py-5 align-top">
+                        <div className="min-w-0">
+                          <div
+                            className="font-medium flex items-center gap-2 flex-wrap"
+                            style={{ color: "var(--text)" }}
+                          >
+                            <span className="truncate max-w-[180px]" title={s.name || s.email || "—"}>
+                              {s.name || s.email || "—"}
                             </span>
-                          ) : null}
-                        </div>
-                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                          {s.email || "—"}
+
+                            {isCurrent ? <CurrentSessionPill /> : null}
+
+                            {!isCurrent && sameEmail ? (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                style={{
+                                  background: "color-mix(in srgb, #64748b 12%, transparent)",
+                                  color: "#475569",
+                                  border: "1px solid color-mix(in srgb, #64748b 32%, transparent)",
+                                }}
+                              >
+                                Misma cuenta
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div
+                            className="text-[11px] mt-1 truncate"
+                            style={{ color: "var(--text-muted)" }}
+                            title={s.email || "—"}
+                          >
+                            {s.email || "—"}
+                          </div>
                         </div>
                       </td>
 
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-5 align-middle whitespace-nowrap">
                         <PresencePill presence={s.presence || s.status} />
                       </td>
 
-                      <td className="px-4 py-3">{s.ip || "—"}</td>
+                      <td
+                        className="px-4 py-5 align-middle whitespace-nowrap font-medium"
+                        title={s.ip || "—"}
+                        style={{ color: "var(--text)" }}
+                      >
+                        {s.ip || "—"}
+                      </td>
 
-                      <td className="px-4 py-3 max-w-[280px]">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <DeviceIcon className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+                      <td className="px-4 py-5 align-top">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <DeviceIcon
+                            className="w-4 h-4 shrink-0 mt-0.5"
+                            style={{ color: "var(--text-muted)" }}
+                          />
+
                           <div className="min-w-0">
-                            <div className="truncate" title={s.device || s.userAgent || ""}>
+                            <div
+                              className="truncate font-medium"
+                              title={deviceInfo.label}
+                              style={{ color: "var(--text)" }}
+                            >
                               {deviceInfo.label}
                             </div>
+
                             <div
-                              className="truncate text-[11px]"
+                              className="truncate text-[11px] mt-1"
                               style={{ color: "var(--text-muted)" }}
-                              title={s.device || s.userAgent || ""}
+                              title={s.device || s.userAgent || "—"}
                             >
                               {s.device || s.userAgent || "—"}
                             </div>
@@ -1505,11 +1544,21 @@ function UsersPageInner() {
                         </div>
                       </td>
 
-                      <td className="px-4 py-3">{fmtDateTime(s.connectedAt)}</td>
+                      <td
+                        className="px-4 py-5 align-top whitespace-normal break-words"
+                        style={{ color: "var(--text)" }}
+                      >
+                        {fmtDateTime(s.connectedAt)}
+                      </td>
 
-                      <td className="px-4 py-3">{fmtDateTime(s.lastActivityAt)}</td>
+                      <td
+                        className="px-4 py-5 align-top whitespace-normal break-words"
+                        style={{ color: "var(--text)" }}
+                      >
+                        {fmtDateTime(s.lastActivityAt)}
+                      </td>
 
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-5 align-middle">
                         <div className="flex justify-end">
                           <button
                             type="button"
@@ -1522,8 +1571,8 @@ function UsersPageInner() {
                             {kickingSessionId === s.sessionId
                               ? "Cerrando..."
                               : isCurrent
-                              ? "Cerrar mi sesión"
-                              : "Cerrar sesión"}
+                                ? "Cerrar mi sesión"
+                                : "Cerrar sesión"}
                           </button>
                         </div>
                       </td>
