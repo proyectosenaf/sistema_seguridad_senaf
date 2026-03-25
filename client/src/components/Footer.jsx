@@ -36,9 +36,10 @@ function resolvePrincipal(auth) {
       email,
       superadmin: true,
       isSuperAdmin: true,
-      roles: Array.isArray(raw.roles) && raw.roles.length
-        ? raw.roles
-        : ["superadmin", "admin"],
+      roles:
+        Array.isArray(raw.roles) && raw.roles.length
+          ? raw.roles
+          : ["superadmin", "admin"],
       can:
         raw.can && typeof raw.can === "object"
           ? raw.can
@@ -150,7 +151,6 @@ export default function Footer() {
     return visibleDocs.find((d) => d?.file?.publicUrl) || null;
   }, [visibleDocs]);
 
-  /* ───────────── Ping API ───────────── */
   React.useEffect(() => {
     let cancel = false;
 
@@ -181,7 +181,6 @@ export default function Footer() {
     };
   }, []);
 
-  /* ───────────── Obtener manuales ───────────── */
   React.useEffect(() => {
     let mounted = true;
 
@@ -217,7 +216,11 @@ export default function Footer() {
       e.preventDefault();
 
       if (firstAvailableDoc?.file?.publicUrl) {
-        window.open(firstAvailableDoc.file.publicUrl, "_blank", "noopener,noreferrer");
+        window.open(
+          firstAvailableDoc.file.publicUrl,
+          "_blank",
+          "noopener,noreferrer"
+        );
         return;
       }
 
@@ -239,17 +242,17 @@ export default function Footer() {
         aria-hidden
       />
 
-      <div className="relative overflow-hidden rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/70 backdrop-blur p-6 lg:p-8 mx-4 md:mx-6 mb-2">
-        <div className="pointer-events-none absolute -z-10 inset-0">
+      <div className="relative mx-4 mb-2 overflow-hidden rounded-2xl border border-neutral-200 bg-white/80 p-6 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/70 md:mx-6 lg:p-8">
+        <div className="pointer-events-none absolute inset-0 -z-10">
           <div
-            className="absolute w-[28rem] h-[28rem] left-[-10%] bottom-[-35%] rounded-full blur-3xl opacity-25"
+            className="absolute bottom-[-35%] left-[-10%] h-[28rem] w-[28rem] rounded-full blur-3xl opacity-25"
             style={{
               background:
                 "radial-gradient(closest-side, var(--fx1), transparent 70%)",
             }}
           />
           <div
-            className="absolute w-[24rem] h-[24rem] right-[-10%] top-[-30%] rounded-full blur-3xl opacity-20"
+            className="absolute right-[-10%] top-[-30%] h-[24rem] w-[24rem] rounded-full blur-3xl opacity-20"
             style={{
               background:
                 "radial-gradient(closest-side, var(--fx2), transparent 70%)",
@@ -258,22 +261,20 @@ export default function Footer() {
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {/* SENAF */}
           <div>
-            <div className="text-2xl font-bold fx-title">SENAF</div>
+            <div className="fx-title text-2xl font-bold">SENAF</div>
             <p className="mt-2 text-sm opacity-70">
               Plataforma integral de seguridad: accesos, rondas, incidentes,
               visitas y más.
             </p>
             <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
-              <ShieldCheck className="w-4 h-4" /> Datos protegidos · Roles ·
-              Auditoría
+              <ShieldCheck className="h-4 w-4" />
+              Datos protegidos · Roles · Auditoría
             </div>
           </div>
 
-          {/* SECCIONES */}
           <div>
-            <div className="font-semibold mb-2">Secciones</div>
+            <div className="mb-2 font-semibold">Secciones</div>
             <ul className="space-y-1 text-sm">
               {sections.length ? (
                 sections.map((s) => (
@@ -284,35 +285,32 @@ export default function Footer() {
                   </li>
                 ))
               ) : (
-                <li className="opacity-70">
-                  No hay secciones habilitadas.
-                </li>
+                <li className="opacity-70">No hay secciones habilitadas.</li>
               )}
             </ul>
           </div>
 
-          {/* SOPORTE */}
           <div>
-            <div className="font-semibold mb-2">Soporte</div>
+            <div className="mb-2 font-semibold">Soporte</div>
 
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 opacity-70" />
+                <MessageCircle className="h-4 w-4 opacity-70" />
                 <button
                   type="button"
                   onClick={() =>
                     window.dispatchEvent(new CustomEvent("chat:open"))
                   }
-                  className="hover:underline text-left"
+                  className="text-left hover:underline"
                 >
                   Abrir chat
                 </button>
               </li>
 
               <li className="flex items-center gap-2">
-                <Mail className="w-4 h-4 opacity-70" />
+                <Mail className="h-4 w-4 opacity-70" />
                 <a
-                  className="hover:underline break-all"
+                  className="break-all hover:underline"
                   href="mailto:proyectosenaf@gmail.com"
                 >
                   proyectosenaf@gmail.com
@@ -320,11 +318,11 @@ export default function Footer() {
               </li>
 
               <li className="flex items-center gap-2">
-                <FileText className="w-4 h-4 opacity-70" />
+                <FileText className="h-4 w-4 opacity-70" />
                 <button
                   type="button"
                   onClick={handleOpenDocumentation}
-                  className="hover:underline text-left"
+                  className="text-left hover:underline"
                 >
                   Centro de ayuda
                 </button>
@@ -345,7 +343,7 @@ export default function Footer() {
               ) : (
                 visibleDocs.map((doc) => (
                   <div key={doc.slug} className="flex items-start gap-2">
-                    <ExternalLink className="w-4 h-4 opacity-70 mt-[2px]" />
+                    <ExternalLink className="mt-[2px] h-4 w-4 opacity-70" />
                     {doc.file?.publicUrl ? (
                       <a
                         className="hover:underline"
@@ -366,31 +364,26 @@ export default function Footer() {
             </div>
           </div>
 
-          {/* ESTADO */}
           <div>
-            <div className="font-semibold mb-2">
-              Estado del sistema
-            </div>
-            <div className="text-sm space-y-1">
+            <div className="mb-2 font-semibold">Estado del sistema</div>
+            <div className="space-y-1 text-sm">
               <div className="flex items-center gap-2">
                 <span
-                  className={`inline-block w-2.5 h-2.5 rounded-full ${
+                  className={`inline-block h-2.5 w-2.5 rounded-full ${
                     apiUp === null
                       ? "bg-neutral-400"
                       : apiUp
-                      ? "bg-emerald-500"
-                      : "bg-rose-500"
+                        ? "bg-emerald-500"
+                        : "bg-rose-500"
                   }`}
                 />
                 <span className="opacity-80">API</span>
                 <span className="opacity-60">·</span>
-                <span className="opacity-70 break-all">
-                  {apiShown}
-                </span>
+                <span className="break-all opacity-70">{apiShown}</span>
               </div>
 
               <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 opacity-70" />
+                <Clock className="h-4 w-4 opacity-70" />
                 <span className="opacity-80">Ping</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-80">
@@ -399,7 +392,7 @@ export default function Footer() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Server className="w-4 h-4 opacity-70" />
+                <Server className="h-4 w-4 opacity-70" />
                 <span className="opacity-80">Versión</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-80">v{version}</span>
@@ -408,10 +401,9 @@ export default function Footer() {
           </div>
         </div>
 
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs opacity-70">
+        <div className="mt-6 flex flex-col items-center justify-between gap-3 border-t border-neutral-200 pt-6 text-xs opacity-70 dark:border-neutral-800 sm:flex-row">
           <div>
-            © {new Date().getFullYear()} SENAF · Todos los
-            derechos reservados
+            © {new Date().getFullYear()} SENAF · Todos los derechos reservados
           </div>
           <div className="flex items-center gap-4">
             <a
@@ -433,7 +425,8 @@ export default function Footer() {
               href="#"
               onClick={(e) => e.preventDefault()}
             >
-              <Github className="w-4 h-4" /> GitHub
+              <Github className="h-4 w-4" />
+              GitHub
             </a>
           </div>
         </div>

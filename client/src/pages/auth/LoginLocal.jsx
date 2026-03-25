@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Eye, EyeOff } from "lucide-react";
@@ -84,6 +84,9 @@ function humanLoginError(codeOrMsg) {
   }
   if (s.includes("network error")) {
     return "Error de conexión con el servidor.";
+  }
+  if (s.includes("session_invalidated")) {
+    return "Tu sesión fue cerrada porque iniciaste sesión en otro dispositivo.";
   }
 
   return codeOrMsg || "Login fallido.";
@@ -195,6 +198,16 @@ export default function LoginLocal() {
     () => String(vEmail || "").trim().toLowerCase(),
     [vEmail]
   );
+
+  const forcedLogoutMessage = String(auth?.forcedLogoutMessage || "").trim();
+
+  useEffect(() => {
+    if (forcedLogoutMessage) {
+      setError(forcedLogoutMessage);
+      setInfo("");
+      auth?.dismissForcedLogoutMessage?.();
+    }
+  }, [forcedLogoutMessage, auth]);
 
   function stashOtpContext({ email, flow, returnTo, mustChangePassword } = {}) {
     try {

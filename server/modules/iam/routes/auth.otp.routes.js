@@ -129,6 +129,49 @@ function hasRole(user, role) {
     .includes(String(role).toLowerCase());
 }
 
+function getSuperadminEmails() {
+  return [
+    process.env.SUPERADMIN_EMAIL,
+    process.env.VITE_SUPERADMIN_EMAIL,
+    process.env.ROOT_ADMINS,
+    "proyectosenaf@gmail.com",
+  ]
+    .flatMap((v) =>
+      String(v || "")
+        .split(",")
+        .map((x) => normEmail(x))
+    )
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+}
+
+function isSuperadminEmail(email) {
+  const e = normEmail(email);
+  if (!e) return false;
+  return getSuperadminEmails().includes(e);
+}
+
+function isAdminLikeUser(user) {
+  const email = normEmail(user?.email);
+  if (isSuperadminEmail(email)) return true;
+
+  const roles = Array.isArray(user?.roles) ? user.roles : [];
+  const roleSet = new Set(
+    roles
+      .map((r) => normalizeRoleValue(r).toLowerCase())
+      .filter(Boolean)
+  );
+
+  return (
+    roleSet.has("admin") ||
+    roleSet.has("administrador") ||
+    roleSet.has("administrador_it") ||
+    roleSet.has("ti") ||
+    roleSet.has("superadmin") ||
+    roleSet.has("root")
+  );
+}
+
 function isPasswordExpired(user) {
   if (!user?.passwordExpiresAt) return false;
   const d = new Date(user.passwordExpiresAt);
@@ -182,7 +225,11 @@ async function logIamEvent(req, payload = {}) {
       prioridad: payload.prioridad || "Media",
       estado: payload.estado || "Registrado",
       source: payload.source || "iam",
-      ...auditActor(req, payload.user || null, payload.fallbackName || "Sistema IAM"),
+      ...auditActor(
+        req,
+        payload.user || null,
+        payload.fallbackName || "Sistema IAM"
+      ),
       ...payload,
     });
   } catch (err) {
@@ -193,21 +240,26 @@ async function logIamEvent(req, payload = {}) {
 async function createUserSession({ user, req, sessionId, jwtId }) {
   const ip = clientIp(req);
   const userAgent = req.get("user-agent") || "";
+  const adminLike = isAdminLikeUser(user);
 
-  await IamSession.updateMany(
-    {
-      userId: user._id,
-      isActive: true,
-    },
-    {
-      $set: {
-        isActive: false,
-        status: "replaced",
-        disconnectedAt: new Date(),
-        reason: "Nueva sesión iniciada",
+  // Solo usuarios normales: una sesión activa.
+  // Admin/superadmin pueden mantener varias sesiones simultáneas.
+  if (!adminLike) {
+    await IamSession.updateMany(
+      {
+        userId: user._id,
+        isActive: true,
       },
-    }
-  );
+      {
+        $set: {
+          isActive: false,
+          status: "replaced",
+          disconnectedAt: new Date(),
+          reason: "Nueva sesión iniciada en otro dispositivo",
+        },
+      }
+    );
+  }
 
   await IamSession.create({
     userId: user._id,
@@ -234,34 +286,15 @@ async function createUserSession({ user, req, sessionId, jwtId }) {
       }
     );
   } catch (err) {
-    console.warn("[iam][session] no se pudo actualizar lastLogin:", err?.message || err);
+    console.warn(
+      "[iam][session] no se pudo actualizar lastLogin:",
+      err?.message || err
+    );
   }
 }
 
 function escapeRegex(s) {
   return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function getSuperadminEmails() {
-  return [
-    process.env.SUPERADMIN_EMAIL,
-    process.env.VITE_SUPERADMIN_EMAIL,
-    process.env.ROOT_ADMINS,
-    "proyectosenaf@gmail.com",
-  ]
-    .flatMap((v) =>
-      String(v || "")
-        .split(",")
-        .map((x) => normEmail(x))
-    )
-    .filter(Boolean)
-    .filter((v, i, arr) => arr.indexOf(v) === i);
-}
-
-function isSuperadminEmail(email) {
-  const e = normEmail(email);
-  if (!e) return false;
-  return getSuperadminEmails().includes(e);
 }
 
 async function ensureProtectedSuperadminUser(user, email) {
@@ -334,7 +367,11 @@ async function findIamUserByEmail(email, select = "") {
 /* ---------------------- Reset token (pwreset) ---------------------- */
 function signPwResetToken({ email, userId }) {
   const secret = jwtSecret();
-  const payload = { typ: "pwreset", email: normEmail(email), uid: String(userId) };
+  const payload = {
+    typ: "pwreset",
+    email: normEmail(email),
+    uid: String(userId),
+  };
   const expMinutes = envNum("PWRESET_TOKEN_TTL_MINUTES", 10);
 
   return jwt.sign(payload, secret, {
@@ -639,6 +676,7 @@ async function loginOtpHandler(req, res) {
         email: user.email,
         name: user.name || user.email,
         provider: "local",
+        roles: Array.isArray(user.roles) ? user.roles : [],
       },
       { sessionId }
     );
@@ -692,6 +730,7 @@ async function loginOtpHandler(req, res) {
         email: user.email,
         name: user.name || user.email,
         provider: "local",
+        roles: Array.isArray(user.roles) ? user.roles : [],
       },
       { sessionId }
     );
@@ -867,7 +906,8 @@ async function resendOtpHandler(req, res) {
       accion: "OTP_RESEND_INTENTO",
       entidad: "AuthOtp",
       titulo: "OTP deshabilitado",
-      descripcion: "Se intentó reenviar OTP cuando la función está deshabilitada.",
+      descripcion:
+        "Se intentó reenviar OTP cuando la función está deshabilitada.",
       estado: "Denegado",
       prioridad: "Media",
       source: "iam-otp",
@@ -1031,7 +1071,8 @@ async function verifyOtpHandler(req, res) {
       accion: "OTP_VERIFY_INTENTO",
       entidad: "AuthOtp",
       titulo: "Validación OTP deshabilitada",
-      descripcion: "Se intentó verificar OTP cuando la función está deshabilitada.",
+      descripcion:
+        "Se intentó verificar OTP cuando la función está deshabilitada.",
       estado: "Denegado",
       prioridad: "Media",
       source: "iam-otp",
@@ -1257,7 +1298,10 @@ async function verifyOtpHandler(req, res) {
     : !!user.mustChangePassword || isPasswordExpired(user);
 
   if (mustChange) {
-    const resetToken = signPwResetToken({ email: user.email, userId: user._id });
+    const resetToken = signPwResetToken({
+      email: user.email,
+      userId: user._id,
+    });
 
     await logIamEvent(req, {
       accion: "PASSWORD_RESET_REQUIRED",
@@ -1283,6 +1327,7 @@ async function verifyOtpHandler(req, res) {
       email: user.email,
       name: user.name || user.email,
       provider: "local",
+      roles: Array.isArray(user.roles) ? user.roles : [],
     },
     { sessionId }
   );
@@ -1439,6 +1484,7 @@ async function resetPasswordOtpHandler(req, res) {
       email: user.email,
       name: user.name || user.email,
       provider: "local",
+      roles: Array.isArray(user.roles) ? user.roles : [],
     },
     { sessionId }
   );

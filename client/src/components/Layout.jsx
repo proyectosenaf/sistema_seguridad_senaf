@@ -124,11 +124,8 @@ export default function Layout({
 
   const showSidebar = !hideSidebar;
 
-  const sidebarTopClass = hideTopbar ? "top-0" : "top-14";
-  const sidebarHeightClass = "bottom-0";
-  const contentMinHClass = hideTopbar
-    ? "min-h-[100svh]"
-    : "min-h-[calc(100svh-3.5rem)]";
+  const TOPBAR_H = 56;
+  const topbarOffset = hideTopbar ? 0 : TOPBAR_H;
 
   const doVisitorExit = React.useCallback(() => {
     clearVisitorSessionSafe();
@@ -173,9 +170,19 @@ export default function Layout({
     if (!showSidebar && mobileOpen) setMobileOpen(false);
   }, [showSidebar, mobileOpen]);
 
+  React.useEffect(() => {
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+    };
+  }, []);
+
   return (
     <div
-      className="relative min-h-[100svh] overflow-x-hidden"
+      className="relative h-[100svh] overflow-hidden"
       style={{ color: "var(--text)", background: "var(--bg)" }}
     >
       <GlobalPanicListener />
@@ -193,7 +200,7 @@ export default function Layout({
 
       {!hideTopbar && (
         <header
-          className="sticky top-0 z-40 h-14 backdrop-blur-xl"
+          className="fixed inset-x-0 top-0 z-40 h-14 backdrop-blur-xl"
           style={{
             background: "color-mix(in srgb, var(--card) 86%, transparent)",
             borderBottom: "1px solid var(--border)",
@@ -212,12 +219,9 @@ export default function Layout({
         <aside
           role="complementary"
           aria-label="Barra lateral fija"
-          className={[
-            "hidden md:block fixed left-0 w-64 z-40 overflow-hidden",
-            sidebarTopClass,
-            sidebarHeightClass,
-          ].join(" ")}
+          className="hidden md:block fixed left-0 bottom-0 w-64 z-30 overflow-hidden"
           style={{
+            top: `${topbarOffset}px`,
             background: "var(--sidebar-bg)",
             borderRight: "1px solid var(--sidebar-border)",
             boxShadow:
@@ -240,26 +244,46 @@ export default function Layout({
 
       <div
         className={[
-          "relative z-10 flex min-w-0 flex-col",
-          contentMinHClass,
+          "relative z-10 h-full min-w-0",
           showSidebar ? "md:pl-64" : "",
         ].join(" ")}
+        style={{
+          paddingTop: `${topbarOffset}px`,
+        }}
       >
         <main
           id="app-main"
-          className="flex-1 min-w-0 overflow-x-hidden"
+          className="h-full min-h-0 min-w-0 overflow-hidden"
         >
           <div
-            className={[
-              showSidebar ? "max-w-7xl" : "max-w-[1600px]",
-              "layer-content mx-auto w-full min-w-0 px-4 py-6 md:px-6 md:py-6 space-y-6",
-            ].join(" ")}
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-contain"
+            style={{
+              WebkitOverflowScrolling: "touch",
+            }}
           >
-            {children}
+            <div
+              className={[
+                showSidebar ? "max-w-7xl" : "max-w-[1600px]",
+                "layer-content mx-auto w-full min-w-0 px-4 py-6 md:px-6 md:py-6 space-y-6",
+              ].join(" ")}
+            >
+              {children}
+            </div>
+
+            {!hideFooter && (
+              <div className="px-4 pb-6 md:px-6">
+                <div
+                  className={[
+                    showSidebar ? "max-w-7xl" : "max-w-[1600px]",
+                    "mx-auto w-full min-w-0",
+                  ].join(" ")}
+                >
+                  <Footer />
+                </div>
+              </div>
+            )}
           </div>
         </main>
-
-        {!hideFooter && <Footer />}
       </div>
 
       {showSidebar && (
@@ -290,6 +314,7 @@ export default function Layout({
                 "0 20px 50px rgba(2,6,23,0.28), inset -1px 0 0 rgba(255,255,255,0.04)",
               backdropFilter: "blur(18px) saturate(140%)",
               WebkitBackdropFilter: "blur(18px) saturate(140%)",
+              top: `${topbarOffset}px`,
             }}
           >
             <div

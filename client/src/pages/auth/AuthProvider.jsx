@@ -12,6 +12,9 @@ import api, {
   getToken,
   setToken as setTokenStorage,
   clearToken,
+  clearAuthStorage,
+  readForcedLogoutMessage,
+  clearForcedLogoutMessage,
   TOKEN_UPDATED_EVENT,
 } from "../../lib/api.js";
 
@@ -191,7 +194,18 @@ function deriveAuthFromToken(token) {
     false
   );
 
-  return { decoded, roles, perms, can, email, name, isSuperAdmin, id, _id, sub };
+  return {
+    decoded,
+    roles,
+    perms,
+    can,
+    email,
+    name,
+    isSuperAdmin,
+    id,
+    _id,
+    sub,
+  };
 }
 
 function normalizeUserLike(u) {
@@ -266,6 +280,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setTokenState] = useState(() => getToken() || "");
   const [isLoading, setIsLoading] = useState(true);
+  const [forcedLogoutMessage, setForcedLogoutMessageState] = useState("");
 
   const meRequestRef = useRef(0);
   const lastSavedUserRef = useRef("");
@@ -290,10 +305,26 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const consumeForcedLogoutMessage = useCallback(() => {
+    try {
+      const msg = readForcedLogoutMessage();
+      if (msg) {
+        setForcedLogoutMessageState(msg);
+        clearForcedLogoutMessage();
+        return msg;
+      }
+    } catch {
+      // ignore
+    }
+    return "";
+  }, []);
+
   const syncFromStorage = useCallback(({ withLoading = false } = {}) => {
     if (withLoading) setIsLoading(true);
 
     try {
+      consumeForcedLogoutMessage();
+
       const t = getToken() || "";
 
       let stored = null;
@@ -322,13 +353,28 @@ export function AuthProvider({ children }) {
     } finally {
       if (withLoading) setIsLoading(false);
     }
-  }, []);
+  }, [consumeForcedLogoutMessage]);
+
+  const hardLocalLogout = useCallback(() => {
+    setUser(null);
+    setTokenState("");
+    persistUserIfChanged(null);
+
+    try {
+      sessionStorage.removeItem(RETURN_TO_KEY);
+    } catch {
+      // ignore
+    }
+
+    clearAuthStorage();
+  }, [persistUserIfChanged]);
 
   const refreshMe = useCallback(async () => {
     const currentToken = getToken() || "";
     if (!currentToken) {
       setUser(null);
       persistUserIfChanged(null);
+      consumeForcedLogoutMessage();
       return null;
     }
 
@@ -415,10 +461,20 @@ export function AuthProvider({ children }) {
       setUser(merged || null);
       persistUserIfChanged(merged || null);
       return merged || null;
-    } catch {
+    } catch (err) {
+      const data = err?.response?.data || {};
+      const forced =
+        data?.forceLogout === true ||
+        String(data?.error || "").trim() === "session_invalidated";
+
+      if (forced) {
+        hardLocalLogout();
+        consumeForcedLogoutMessage();
+      }
+
       return null;
     }
-  }, [persistUserIfChanged]);
+  }, [persistUserIfChanged, hardLocalLogout, consumeForcedLogoutMessage]);
 
   useEffect(() => {
     syncFromStorage({ withLoading: true });
@@ -472,10 +528,18 @@ export function AuthProvider({ children }) {
     heartbeatRef.current = setInterval(async () => {
       try {
         await iamApi.heartbeat(token);
-      } catch {
-        // no bloquea UI
+      } catch (err) {
+        const data = err?.response?.data || {};
+        const forced =
+          data?.forceLogout === true ||
+          String(data?.error || "").trim() === "session_invalidated";
+
+        if (forced) {
+          hardLocalLogout();
+          consumeForcedLogoutMessage();
+        }
       }
-    }, 60000);
+    }, 15000);
 
     return () => {
       if (heartbeatRef.current) {
@@ -483,7 +547,7 @@ export function AuthProvider({ children }) {
         heartbeatRef.current = null;
       }
     };
-  }, [token]);
+  }, [token, hardLocalLogout, consumeForcedLogoutMessage]);
 
   const bootstrap = useCallback(async () => {
     const hydrated = syncFromStorage({ withLoading: true });
@@ -573,6 +637,10 @@ export function AuthProvider({ children }) {
 
     clearToken();
   }, [persistUserIfChanged]);
+
+  const dismissForcedLogoutMessage = useCallback(() => {
+    setForcedLogoutMessageState("");
+  }, []);
 
   const setReturnTo = useCallback((path) => {
     if (!safeInternalPath(path)) return;
@@ -668,6 +736,9 @@ export function AuthProvider({ children }) {
       isAdminLike,
       isSupervisorLike,
 
+      forcedLogoutMessage,
+      dismissForcedLogoutMessage,
+
       login,
       logout,
       bootstrap,
@@ -681,6 +752,8 @@ export function AuthProvider({ children }) {
     user,
     token,
     isLoading,
+    forcedLogoutMessage,
+    dismissForcedLogoutMessage,
     login,
     logout,
     bootstrap,

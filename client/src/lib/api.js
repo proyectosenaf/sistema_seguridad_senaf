@@ -35,6 +35,9 @@ export const TOKEN_KEY_LEGACY = "token";
 /** ✅ Evento para notificar cambios de token en la MISMA pestaña */
 export const TOKEN_UPDATED_EVENT = "senaf:token_updated";
 
+/** ✅ Mensaje temporal cuando se fuerza logout por sesión reemplazada */
+export const FORCED_LOGOUT_MESSAGE_KEY = "senaf_forced_logout_message";
+
 function emitTokenUpdated() {
   try {
     if (typeof window !== "undefined") {
@@ -67,6 +70,30 @@ function safeStorageSet(key, val) {
 function safeStorageRemove(key) {
   try {
     localStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function safeSessionGet(key) {
+  try {
+    return sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function safeSessionSet(key, val) {
+  try {
+    sessionStorage.setItem(key, val);
+  } catch {
+    // ignore
+  }
+}
+
+function safeSessionRemove(key) {
+  try {
+    sessionStorage.removeItem(key);
   } catch {
     // ignore
   }
@@ -124,6 +151,80 @@ export function clearToken() {
 }
 
 /* =========================
+   Auth cleanup helpers
+========================= */
+
+export function clearAuthStorage() {
+  clearToken();
+
+  // user payloads / flags usados por SENAF
+  safeStorageRemove("senaf_user");
+  safeSessionRemove("senaf_user");
+
+  safeStorageRemove("senaf_is_visitor");
+  safeSessionRemove("senaf_is_visitor");
+
+  safeStorageRemove("user");
+  safeSessionRemove("user");
+
+  safeStorageRemove("auth_user");
+  safeSessionRemove("auth_user");
+
+  safeStorageRemove("visitor");
+  safeSessionRemove("visitor");
+}
+
+export function setForcedLogoutMessage(message) {
+  const msg = String(message || "").trim();
+  if (!msg) return;
+
+  safeStorageSet(FORCED_LOGOUT_MESSAGE_KEY, msg);
+  safeSessionSet(FORCED_LOGOUT_MESSAGE_KEY, msg);
+}
+
+export function readForcedLogoutMessage() {
+  const localMsg = safeStorageGet(FORCED_LOGOUT_MESSAGE_KEY);
+  if (localMsg) return localMsg;
+
+  const sessionMsg = safeSessionGet(FORCED_LOGOUT_MESSAGE_KEY);
+  if (sessionMsg) return sessionMsg;
+
+  return "";
+}
+
+export function clearForcedLogoutMessage() {
+  safeStorageRemove(FORCED_LOGOUT_MESSAGE_KEY);
+  safeSessionRemove(FORCED_LOGOUT_MESSAGE_KEY);
+}
+
+function redirectToLogin() {
+  try {
+    if (typeof window === "undefined") return;
+
+    const currentPath = window.location.pathname || "/";
+    const currentSearch = window.location.search || "";
+    const currentHash = window.location.hash || "";
+    const currentFullPath = `${currentPath}${currentSearch}${currentHash}`;
+
+    if (currentPath === "/login") return;
+
+    const encodedNext = encodeURIComponent(currentFullPath);
+    window.location.replace(`/login?reason=session_replaced&next=${encodedNext}`);
+  } catch {
+    // ignore
+  }
+}
+
+function handleForcedLogout(serverMessage) {
+  const fallback =
+    "Solo se permite una sesión activa por cuenta. Tu sesión fue cerrada porque iniciaste sesión en otro dispositivo.";
+
+  clearAuthStorage();
+  setForcedLogoutMessage(serverMessage || fallback);
+  redirectToLogin();
+}
+
+/* =========================
    Axios instance
 ========================= */
 
@@ -151,17 +252,23 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// ⚠️ Opcional: limpiar token en 401.
-// Por defecto: NO para no sacarte por permisos mal puestos.
-const SHOULD_CLEAR_ON_401 = false;
-
+// ⚠️ No limpiar token en cualquier 401.
+// Solo forzar logout si el backend lo marca explícitamente.
 api.interceptors.response.use(
   (res) => res,
   (error) => {
     const status = error?.response?.status;
+    const data = error?.response?.data || {};
+    const errCode = String(data?.error || "").trim();
+    const forceLogout = data?.forceLogout === true;
 
-    if (status === 401 && SHOULD_CLEAR_ON_401) {
-      clearToken();
+    const isSessionInvalidated =
+      forceLogout ||
+      errCode === "session_invalidated" ||
+      errCode === "invalid_session_replaced";
+
+    if (status === 401 && isSessionInvalidated) {
+      handleForcedLogout(data?.message);
     }
 
     return Promise.reject(error);

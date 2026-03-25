@@ -123,8 +123,8 @@ async function req(
       body === undefined || body === null
         ? undefined
         : shouldJson
-        ? JSON.stringify(body)
-        : body,
+          ? JSON.stringify(body)
+          : body,
   };
 
   let r;
@@ -233,6 +233,18 @@ function normalizePermissionKeys(list = []) {
       arr.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean)
     ),
   ];
+}
+
+function downloadBlob(blobLike, filename) {
+  const blob = blobLike instanceof Blob ? blobLike : new Blob([blobLike]);
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 /* =========================
@@ -377,6 +389,56 @@ export const iamApi = {
 
   listOnlineSessions(token) {
     return req("/sessions/online", { token });
+  },
+
+  listSessionsHistory(params = {}, token) {
+    const safe = {
+      q: params?.q ?? "",
+      page: Math.max(1, toInt(params?.page, 1)),
+      limit: Math.max(1, Math.min(100, toInt(params?.limit, 5))),
+    };
+
+    return req(`/sessions/history${buildQueryString(safe)}`, { token });
+  },
+
+  async exportSessionsHistory(params = {}, token) {
+    const format = String(params?.format || "csv").trim().toLowerCase();
+    const query = buildQueryString({
+      q: params?.q ?? "",
+      format,
+    });
+
+    const bearer = token || getToken() || null;
+    const headers = {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+    };
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+    const response = await fetch(`${buildUrl("/sessions/history/export")}${query}`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+      credentials: "omit",
+    });
+
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      throw makeError(response, payload, await toText(response));
+    }
+
+    const blob = await response.blob();
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const ext =
+      format === "excel" ? "xlsx" : format === "xlsx" ? "xlsx" : format;
+
+    downloadBlob(blob, `historial_ingresos_${stamp}.${ext}`);
+    return true;
   },
 
   kickSession(sessionId, token) {
