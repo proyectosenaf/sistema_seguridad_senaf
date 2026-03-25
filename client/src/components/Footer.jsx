@@ -326,7 +326,7 @@ export default function Footer() {
                   onClick={handleOpenDocumentation}
                   className="hover:underline text-left"
                 >
-                  Documentación
+                  Centro de ayuda
                 </button>
               </li>
             </ul>

@@ -43,6 +43,7 @@ export function normalizeCompanionItem(item) {
 
 export function formatCompanionsSummary(list) {
   if (!Array.isArray(list) || list.length === 0) return "—";
+
   return list
     .map((item) => {
       const n = String(item?.name || "").trim();
@@ -174,21 +175,34 @@ export function getTodayRange() {
 }
 
 export function normalizeCitaEstado(value) {
-  const raw = String(value || "").trim();
+  const raw = String(value || "").trim().toLowerCase();
 
   const map = {
     solicitada: "Programada",
     programada: "Programada",
+
     "en revisión": "En revisión",
+    "en revision": "En revisión",
     en_revision: "En revisión",
+
     autorizada: "Autorizada",
+    autorizado: "Autorizada",
+
     denegada: "Denegada",
+    denegado: "Denegada",
+
     cancelada: "Cancelada",
+    cancelado: "Cancelada",
+
     dentro: "Dentro",
+    ingresada: "Dentro",
+    ingresado: "Dentro",
+
     finalizada: "Finalizada",
+    finalizado: "Finalizada",
   };
 
-  return map[raw.toLowerCase()] || raw || "Programada";
+  return map[raw] || (String(value || "").trim() || "Programada");
 }
 
 export function prettyCitaEstado(value) {
@@ -247,6 +261,40 @@ export function normalizeQrPayloadValue(payload) {
   return primitive;
 }
 
+function parseCitaDate(cita) {
+  if (cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())) {
+    return cita.citaAt;
+  }
+
+  if (cita?.citaAt) {
+    const temp = new Date(cita.citaAt);
+    if (!Number.isNaN(temp.getTime())) return temp;
+  }
+
+  if (cita?.fecha && cita?.hora) {
+    const temp = new Date(`${cita.fecha}T${cita.hora}:00`);
+    if (!Number.isNaN(temp.getTime())) return temp;
+  }
+
+  return null;
+}
+
+function shouldKeepQrFieldsForCita(cita) {
+  const estado = normalizeCitaEstado(cita?.estado);
+  return estado === "Autorizada" || estado === "Dentro";
+}
+
+function sanitizeCitaQrFields(cita = {}) {
+  const keepQr = shouldKeepQrFieldsForCita(cita);
+
+  return {
+    ...cita,
+    qrDataUrl: keepQr ? String(cita?.qrDataUrl || "").trim() : "",
+    qrPayload: keepQr ? cita?.qrPayload ?? "" : "",
+    qrToken: keepQr ? String(cita?.qrToken || "").trim() : "",
+  };
+}
+
 export function buildQrValueForCita(cita) {
   if (!cita) return "";
 
@@ -265,16 +313,18 @@ export function buildQrValueForCita(cita) {
   const empleado = cita.empleado || "—";
   const motivo = cita.motivo || "—";
 
+  const citaDate = parseCitaDate(cita);
+
   let fecha = "—";
   let hora = "—";
 
-  if (cita.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())) {
-    fecha = cita.citaAt.toLocaleDateString("es-ES", {
+  if (citaDate) {
+    fecha = citaDate.toLocaleDateString("es-ES", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
     });
-    hora = cita.citaAt.toLocaleTimeString("es-ES", {
+    hora = citaDate.toLocaleTimeString("es-ES", {
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -338,10 +388,10 @@ export function buildQrDownloadFilename(cita) {
     .replace(/\s+/g, "")
     .replace(/[^a-zA-Z0-9-_]/g, "");
 
-  const fecha =
-    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
-      ? cita.citaAt.toISOString().slice(0, 10)
-      : String(cita?.fecha || "").replace(/\//g, "-");
+  const citaDate = parseCitaDate(cita);
+  const fecha = citaDate
+    ? citaDate.toISOString().slice(0, 10)
+    : String(cita?.fecha || "").replace(/\//g, "-");
 
   return `senaf-cita-${nombre || "qr"}${documento ? `-${documento}` : ""}${
     fecha ? `-${fecha}` : ""
@@ -367,18 +417,18 @@ export async function printQrCita(cita) {
   const win = window.open("", "_blank", "width=900,height=720");
   if (!win) return;
 
-  const fecha =
-    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
-      ? cita.citaAt.toLocaleDateString("es-HN")
-      : cita?.fecha || "—";
+  const citaDate = parseCitaDate(cita);
 
-  const hora =
-    cita?.citaAt instanceof Date && !Number.isNaN(cita.citaAt.getTime())
-      ? cita.citaAt.toLocaleTimeString("es-HN", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : cita?.hora || "—";
+  const fecha = citaDate
+    ? citaDate.toLocaleDateString("es-HN")
+    : cita?.fecha || "—";
+
+  const hora = citaDate
+    ? citaDate.toLocaleTimeString("es-HN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : cita?.hora || "—";
 
   const acompanantes =
     Array.isArray(cita?.acompanantes) && cita.acompanantes.length
@@ -448,11 +498,15 @@ export function saveToStorage(next) {
   }
 }
 
-export function saveCitasToStorage(next) {
+/**
+ * Citas de negocio NO se guardan en localStorage.
+ * Se deja la función por compatibilidad.
+ */
+export function saveCitasToStorage(_next) {
   try {
-    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(next));
+    localStorage.removeItem(CITA_STORAGE_KEY);
   } catch (e) {
-    console.warn("[citas] no se pudieron guardar en localStorage:", e);
+    console.warn("[citas] no se pudo limpiar localStorage:", e);
   }
 }
 
@@ -462,6 +516,7 @@ export function loadFromStorage() {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
+
     return arr.map((v) => ({
       ...v,
       entryAt: v.entryAt ? new Date(v.entryAt) : null,
@@ -479,35 +534,12 @@ export function loadFromStorage() {
   }
 }
 
+/**
+ * Citas de negocio NO se cargan desde localStorage.
+ * Se deja la función por compatibilidad.
+ */
 export function loadCitasFromStorage() {
-  try {
-    const raw = localStorage.getItem(CITA_STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-
-    return arr.map((c, idx) => {
-      const baseId = c._id || c.id || `local-cita-${idx}`;
-      let citaAt = null;
-
-      if (c.citaAt) {
-        citaAt = new Date(c.citaAt);
-      } else if (c.fecha && c.hora) {
-        citaAt = new Date(`${c.fecha}T${c.hora}:00`);
-      }
-
-      return {
-        ...c,
-        _id: baseId,
-        id: baseId,
-        citaAt,
-        estado: normalizeCitaEstado(c.estado),
-      };
-    });
-  } catch (e) {
-    console.warn("[citas] no se pudo leer de localStorage:", e);
-    return [];
-  }
+  return [];
 }
 
 export function normalizeVisitFromServer(v) {
@@ -589,24 +621,16 @@ export function normalizeVisitFromServer(v) {
 
 export function normalizeCitaFromServer(c, index = 0) {
   const id = c?._id || c?.id || `server-cita-${index}`;
-  let citaAt = null;
+  const citaAt = parseCitaDate(c);
+  const estado = normalizeCitaEstado(c?.estado);
 
-  if (c?.citaAt) {
-    citaAt = new Date(c.citaAt);
-  } else if (c?.fecha && c?.hora) {
-    citaAt = new Date(`${c.fecha}T${c.hora}:00`);
-  }
-
-  return {
+  return sanitizeCitaQrFields({
     ...c,
     _id: id,
     id,
     citaAt,
-    estado: normalizeCitaEstado(c?.estado),
-    qrDataUrl: c?.qrDataUrl || "",
-    qrPayload: c?.qrPayload ?? "",
-    qrToken: c?.qrToken || "",
-  };
+    estado,
+  });
 }
 
 export function mergeVisitLists(serverList, localList) {
@@ -630,22 +654,44 @@ export function mergeVisitLists(serverList, localList) {
   });
 }
 
+/**
+ * Para citas:
+ * - el backend manda siempre
+ * - local no puede pisar estados, QR ni horarios oficiales
+ */
 export function mergeCitaLists(serverList, localList) {
   const map = new Map();
 
-  for (const item of localList) {
-    map.set(item._id, item);
+  for (const raw of serverList || []) {
+    const item = sanitizeCitaQrFields({
+      ...raw,
+      _id: raw?._id || raw?.id,
+      id: raw?.id || raw?._id,
+      citaAt: parseCitaDate(raw),
+      estado: normalizeCitaEstado(raw?.estado),
+    });
+
+    if (!item._id) continue;
+    map.set(String(item._id), item);
   }
 
-  for (const item of serverList) {
-    const prev = map.get(item._id) || {};
-    map.set(item._id, {
-      ...prev,
-      ...item,
-      qrDataUrl: item.qrDataUrl || prev.qrDataUrl || "",
-      qrPayload: item.qrPayload ?? prev.qrPayload ?? "",
-      qrToken: item.qrToken || prev.qrToken || "",
+  for (const raw of localList || []) {
+    const id = raw?._id || raw?.id;
+    if (!id) continue;
+
+    if (map.has(String(id))) {
+      continue;
+    }
+
+    const item = sanitizeCitaQrFields({
+      ...raw,
+      _id: id,
+      id,
+      citaAt: parseCitaDate(raw),
+      estado: normalizeCitaEstado(raw?.estado),
     });
+
+    map.set(String(id), item);
   }
 
   return Array.from(map.values()).sort((a, b) => {
@@ -751,15 +797,18 @@ export function buildExportCitasRows(list) {
         ? "Personal"
         : "";
 
+    const citaDate = parseCitaDate(c);
+
     let fecha = "";
     let hora = "";
-    if (c.citaAt instanceof Date && !Number.isNaN(c.citaAt.getTime())) {
-      fecha = c.citaAt.toLocaleDateString("es-ES", {
+
+    if (citaDate) {
+      fecha = citaDate.toLocaleDateString("es-ES", {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
       });
-      hora = c.citaAt.toLocaleTimeString("es-ES", {
+      hora = citaDate.toLocaleTimeString("es-ES", {
         hour: "2-digit",
         minute: "2-digit",
       });

@@ -18,21 +18,34 @@ export function normalizeModelItem(item) {
 }
 
 export function normalizeEstadoValue(value) {
-  const raw = String(value || "").trim();
+  const raw = String(value || "").trim().toLowerCase();
 
   const map = {
     solicitada: "Programada",
     programada: "Programada",
+
     "en revisión": "En revisión",
+    "en revision": "En revisión",
     en_revision: "En revisión",
+
     autorizada: "Autorizada",
+    autorizado: "Autorizada",
+
     denegada: "Denegada",
+    denegado: "Denegada",
+
     cancelada: "Cancelada",
+    cancelado: "Cancelada",
+
     dentro: "Dentro",
+    ingresada: "Dentro",
+    ingresado: "Dentro",
+
     finalizada: "Finalizada",
+    finalizado: "Finalizada",
   };
 
-  return map[raw.toLowerCase()] || raw || "Programada";
+  return map[raw] || (String(value || "").trim() || "Programada");
 }
 
 export function buildISOFromDateAndTime(fecha, hora) {
@@ -43,7 +56,7 @@ export function buildISOFromDateAndTime(fecha, hora) {
 
 function shouldKeepQrFields(item) {
   const estado = normalizeEstadoValue(item?.estado || "Programada");
-  return estado === "Autorizada";
+  return estado === "Autorizada" || estado === "Dentro";
 }
 
 function sanitizeQrFieldsByEstado(item = {}) {
@@ -57,62 +70,67 @@ function sanitizeQrFieldsByEstado(item = {}) {
   };
 }
 
-export function mergeServerAndLocal(serverList, localList) {
+function normalizeServerItem(it = {}) {
+  const _id = it?._id || it?.id;
+  if (!_id) return null;
+
+  return sanitizeQrFieldsByEstado({
+    ...it,
+    _id,
+    id: _id,
+    estado: normalizeEstadoValue(it?.estado),
+    acompanado:
+      typeof it?.acompanado === "boolean"
+        ? it.acompanado
+        : !!it?.tieneAcompanante ||
+          !!it?.conAcompanante ||
+          !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
+    acompanantes: normalizeCompanionArray(it?.acompanantes),
+  });
+}
+
+function normalizeLocalItem(it = {}) {
+  const _id = it?._id || it?.id;
+  if (!_id) return null;
+
+  return sanitizeQrFieldsByEstado({
+    ...it,
+    _id,
+    id: _id,
+    estado: normalizeEstadoValue(it?.estado),
+    acompanado:
+      typeof it?.acompanado === "boolean"
+        ? it.acompanado
+        : !!it?.tieneAcompanante ||
+          !!it?.conAcompanante ||
+          !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
+    acompanantes: normalizeCompanionArray(it?.acompanantes),
+  });
+}
+
+/**
+ * Regla segura:
+ * - backend manda siempre
+ * - local solo se agrega si NO existe en backend
+ * - NO se permite que local pise estado/QR/fecha/hora del servidor
+ */
+export function mergeServerAndLocal(serverList = [], localList = []) {
   const map = new Map();
 
-  for (const it of serverList || []) {
-    const key = it?._id || it?.id;
-    if (!key) continue;
-
-    const normalizedServerItem = sanitizeQrFieldsByEstado({
-      ...it,
-      acompanado:
-        typeof it?.acompanado === "boolean"
-          ? it.acompanado
-          : !!it?.tieneAcompanante ||
-            !!it?.conAcompanante ||
-            !!(Array.isArray(it?.acompanantes) && it.acompanantes.length),
-      acompanantes: normalizeCompanionArray(it?.acompanantes),
-    });
-
-    map.set(key, normalizedServerItem);
+  for (const raw of serverList) {
+    const item = normalizeServerItem(raw);
+    if (!item) continue;
+    map.set(String(item._id), item);
   }
 
-  for (const local of localList || []) {
-    const key = local?._id || local?.id;
-    if (!key) continue;
+  for (const raw of localList) {
+    const item = normalizeLocalItem(raw);
+    if (!item) continue;
 
-    if (map.has(key)) {
-      const serverItem = map.get(key);
+    const key = String(item._id);
 
-      const merged = {
-        ...local,
-        ...serverItem,
-        acompanado:
-          typeof serverItem?.acompanado === "boolean"
-            ? serverItem.acompanado
-            : typeof local?.acompanado === "boolean"
-            ? local.acompanado
-            : !!(serverItem?.acompanantes?.length || local?.acompanantes?.length),
-        acompanantes: normalizeCompanionArray(
-          serverItem?.acompanantes?.length
-            ? serverItem.acompanantes
-            : local?.acompanantes
-        ),
-      };
-
-      map.set(key, sanitizeQrFieldsByEstado(merged));
-    } else {
-      const normalizedLocalItem = {
-        ...local,
-        acompanado:
-          typeof local?.acompanado === "boolean"
-            ? local.acompanado
-            : !!local?.acompanantes?.length,
-        acompanantes: normalizeCompanionArray(local?.acompanantes),
-      };
-
-      map.set(key, sanitizeQrFieldsByEstado(normalizedLocalItem));
+    if (!map.has(key)) {
+      map.set(key, item);
     }
   }
 

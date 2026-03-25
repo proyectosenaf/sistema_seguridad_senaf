@@ -1,5 +1,6 @@
 import IamUser from "../models/IamUser.model.js";
 import IamRole from "../models/IamRole.model.js";
+import IamSession from "../models/IamSession.model.js";
 import { getBearer, verifyToken } from "./jwt.util.js";
 
 const IAM_DEBUG = String(process.env.IAM_DEBUG || "0") === "1";
@@ -63,23 +64,98 @@ function normalizeEmail(v) {
   return String(v || "").trim().toLowerCase();
 }
 
+function normalizeSubToUserId(sub) {
+  const raw = String(sub || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("local|") ? raw.slice(6) : raw;
+}
+
 /* =========================
-   JWT
+   JWT + SESSION
 ========================= */
-function getJwtPayload(req) {
+async function validateActiveSessionFromPayload(payload) {
+  const sessionId = String(payload?.sid || "").trim();
+  const userId = normalizeSubToUserId(payload?.sub);
+
+  if (!sessionId || !userId) {
+    return {
+      ok: false,
+      error: "invalid_session",
+      details: "Token sin sid o sub válido",
+    };
+  }
+
+  const session = await withTimeout(
+    IamSession.findOne({
+      userId,
+      sessionId,
+      isActive: true,
+    }).lean(),
+    4000,
+    "IamSession.findOne(active-session)"
+  );
+
+  if (!session) {
+    return {
+      ok: false,
+      error: "session_invalidated",
+      details: "La sesión ya no está activa",
+    };
+  }
+
+  await IamSession.updateOne(
+    { _id: session._id },
+    { $set: { lastActivityAt: new Date() } }
+  ).catch(() => {});
+
+  return { ok: true, session };
+}
+
+async function getJwtPayload(req) {
   const pre = req?.auth?.payload;
-  if (pre && typeof pre === "object") return { payload: pre };
+  if (pre && typeof pre === "object") {
+    const sessionCheck = await validateActiveSessionFromPayload(pre).catch(
+      () => null
+    );
+
+    if (!sessionCheck?.ok) {
+      return { payload: null, session: null };
+    }
+
+    req.auth = req.auth || {};
+    req.auth.session = sessionCheck.session;
+    req.session = sessionCheck.session;
+    req.sessionId = sessionCheck.session?.sessionId || pre?.sid || "";
+
+    return { payload: pre, session: sessionCheck.session };
+  }
 
   const token = getBearer(req);
-  if (!token) return { payload: null };
+  if (!token) return { payload: null, session: null };
 
   try {
-    return { payload: verifyToken(token) };
+    const payload = verifyToken(token);
+
+    const sessionCheck = await validateActiveSessionFromPayload(payload);
+    if (!sessionCheck.ok) {
+      if (!IS_PROD && IAM_DEBUG) {
+        console.warn("[iam] inactive session:", sessionCheck.error);
+      }
+      return { payload: null, session: null };
+    }
+
+    req.auth = req.auth || {};
+    req.auth.payload = payload;
+    req.auth.session = sessionCheck.session;
+    req.session = sessionCheck.session;
+    req.sessionId = sessionCheck.session?.sessionId || payload?.sid || "";
+
+    return { payload, session: sessionCheck.session };
   } catch (e) {
     if (!IS_PROD && IAM_DEBUG) {
       console.warn("[iam] jwt verify failed:", e?.message || e);
     }
-    return { payload: null };
+    return { payload: null, session: null };
   }
 }
 
@@ -243,7 +319,7 @@ async function repairProtectedSuperadminUser(user, email, payloadName = "") {
    Context builder (CORE)
 ========================= */
 export async function buildContextFrom(req) {
-  const { payload } = getJwtPayload(req);
+  const { payload } = await getJwtPayload(req);
 
   const allowDevHeaders = canUseDevHeaders();
 
@@ -286,9 +362,6 @@ export async function buildContextFrom(req) {
 
   const forcedSuperadmin = isSuperadminEmail(email);
 
-  /* =========================
-     AUTO-PROVISION
-  ========================= */
   if (!user && hasIdentity && email) {
     const doc = forcedSuperadmin
       ? getForcedSuperadminProfile(email, payloadName)
@@ -332,33 +405,24 @@ export async function buildContextFrom(req) {
     }
   }
 
-  /* =========================
-     REPARAR SUPERADMIN SI EXISTE MAL
-  ========================= */
   if (user && forcedSuperadmin) {
     user = await repairProtectedSuperadminUser(user, email, payloadName);
   }
 
-  /* =========================
-     ROLES
-  ========================= */
   const baseRolesRaw = Array.isArray(user?.roles) ? user.roles : [];
   const roleNames = new Set(
-    [...baseRolesRaw.map(normalizeRoleValue), ...headerRoles.map(normalizeRoleValue)].filter(Boolean)
+    [
+      ...baseRolesRaw.map(normalizeRoleValue),
+      ...headerRoles.map(normalizeRoleValue),
+    ].filter(Boolean)
   );
 
-  /* =========================
-     PERMISOS DIRECTOS
-  ========================= */
   const permSet = new Set(
     [...(Array.isArray(user?.perms) ? user.perms : []), ...headerPerms]
       .map(normPerm)
       .filter(Boolean)
   );
 
-  /* =========================
-     EXPANDIR ROLES -> PERMISOS
-  ========================= */
   if (roleNames.size) {
     const roleCodes = [...roleNames];
 
@@ -394,9 +458,6 @@ export async function buildContextFrom(req) {
     }
   }
 
-  /* =========================
-     SUPERADMIN
-  ========================= */
   const isSuperAdmin = forcedSuperadmin;
 
   if (isSuperAdmin) {

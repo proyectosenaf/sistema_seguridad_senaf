@@ -1,11 +1,30 @@
-// client/src/iam/api/iamApi.js
 import { API, getToken, setToken, clearToken } from "../../lib/api.js";
 
-const API_ROOT = String(API || "").replace(/\/$/, "");
+/* =========================
+   Base URL robusta
+========================= */
+function stripTrailingSlash(s) {
+  return String(s || "").replace(/\/+$/, "");
+}
+
+function normalizeApiBase(raw) {
+  let base = stripTrailingSlash(raw || "");
+
+  // Si ya viene con /api/iam/v1 o /iam/v1, se limpia para no duplicar
+  base = base.replace(/\/api\/iam\/v1$/i, "");
+  base = base.replace(/\/iam\/v1$/i, "");
+  base = base.replace(/\/api\/iam$/i, "");
+  base = base.replace(/\/iam$/i, "");
+
+  return base;
+}
+
+const API_BASE = normalizeApiBase(API || "");
+const API_ROOT = /\/api$/i.test(API_BASE) ? API_BASE : `${API_BASE}/api`;
 const V1 = `${API_ROOT}/iam/v1`;
 
 // ✅ Base para endpoints públicos (OTP)
-const PUBLIC_AUTH_BASE = `${API_ROOT.replace(/\/api\/?$/, "")}/api/public/v1/auth`;
+const PUBLIC_AUTH_BASE = `${API_ROOT}/public/v1/auth`;
 
 /* =========================
    Helpers
@@ -39,11 +58,13 @@ function isArrayBuffer(x) {
 }
 
 function buildUrl(path) {
-  return `${V1}${path.startsWith("/") ? path : `/${path}`}`;
+  const p = String(path || "").startsWith("/") ? path : `/${path}`;
+  return `${V1}${p}`;
 }
 
 function buildPublicAuthUrl(path) {
-  return `${PUBLIC_AUTH_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const p = String(path || "").startsWith("/") ? path : `/${path}`;
+  return `${PUBLIC_AUTH_BASE}${p}`;
 }
 
 function makeError(r, payload, fallbackText = "") {
@@ -74,9 +95,10 @@ async function req(
 ) {
   const urlBase = isPublicAuth ? buildPublicAuthUrl(path) : buildUrl(path);
 
-  const headers = {};
-  headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
-  headers["Pragma"] = "no-cache";
+  const headers = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+  };
 
   const bearer = token || getToken() || null;
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
@@ -127,6 +149,7 @@ async function req(
 
     const controller2 = new AbortController();
     const timer2 = setTimeout(() => controller2.abort(), timeoutMs);
+
     try {
       r = await fetch(urlNoCache, { ...fetchOpts, signal: controller2.signal });
     } catch (e) {
@@ -308,17 +331,68 @@ export const iamApi = {
   },
 
   async logout() {
-    const out = await req("/auth/logout", {
+    try {
+      const out = await req("/sessions/me/logout", {
+        method: "POST",
+        body: {},
+        credentials: "omit",
+      });
+      clearToken();
+      return out;
+    } catch (e) {
+      try {
+        const out = await req("/auth/logout", {
+          method: "POST",
+          body: {},
+          credentials: "omit",
+        });
+        clearToken();
+        return out;
+      } catch {
+        clearToken();
+        return { ok: true };
+      }
+    }
+  },
+
+  heartbeat(token) {
+    return req("/sessions/heartbeat", {
       method: "POST",
       body: {},
+      token,
       credentials: "omit",
+      timeoutMs: 15000,
     });
-    clearToken();
-    return out;
+  },
+
+  listSessions(params = {}, token) {
+    const safe = {
+      q: params?.q ?? "",
+      onlyActive: to01(params?.onlyActive, 1),
+      limit: Math.max(1, Math.min(500, toInt(params?.limit, 100))),
+    };
+
+    return req(`/sessions${buildQueryString(safe)}`, { token });
+  },
+
+  listOnlineSessions(token) {
+    return req("/sessions/online", { token });
+  },
+
+  kickSession(sessionId, token) {
+    return req(`/sessions/${encodeURIComponent(sessionId)}/kick`, {
+      method: "POST",
+      body: {},
+      token,
+    });
   },
 
   getCivilStatusCatalog(token) {
-    return reqCatalogs("/catalogos/estado-civil", "/catalogs/civil-status", token);
+    return reqCatalogs(
+      "/catalogos/estado-civil",
+      "/catalogs/civil-status",
+      token
+    );
   },
 
   getCountriesCatalog(token) {
@@ -326,7 +400,11 @@ export const iamApi = {
   },
 
   getProfessionsCatalog(token) {
-    return reqCatalogs("/catalogos/profesiones", "/catalogs/professions", token);
+    return reqCatalogs(
+      "/catalogos/profesiones",
+      "/catalogs/professions",
+      token
+    );
   },
 
   getAllCatalogs(token) {
@@ -342,9 +420,11 @@ export const iamApi = {
           ? r.items
           : r;
 
-      const estadosCiviles = src?.estadosCiviles || src?.civilStatus || src?.civil || [];
+      const estadosCiviles =
+        src?.estadosCiviles || src?.civilStatus || src?.civil || [];
       const countries = src?.countries || src?.paises || [];
-      const profesiones = src?.profesiones || src?.professions || src?.oficios || [];
+      const profesiones =
+        src?.profesiones || src?.professions || src?.oficios || [];
 
       return {
         ok: true,
@@ -390,7 +470,10 @@ export const iamApi = {
   },
 
   deleteRole(id, token) {
-    return req(`/roles/${encodeURIComponent(id)}`, { method: "DELETE", token });
+    return req(`/roles/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      token,
+    });
   },
 
   getRolePerms(id, token) {
@@ -448,7 +531,10 @@ export const iamApi = {
   },
 
   deletePerm(id, token) {
-    return req(`/permissions/${encodeURIComponent(id)}`, { method: "DELETE", token });
+    return req(`/permissions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      token,
+    });
   },
 
   listUsers(qOrParams = "", token) {
@@ -525,7 +611,10 @@ export const iamApi = {
   },
 
   deleteUser(id, token) {
-    return req(`/users/${encodeURIComponent(id)}`, { method: "DELETE", token });
+    return req(`/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      token,
+    });
   },
 
   listAudit(params = {}, token) {

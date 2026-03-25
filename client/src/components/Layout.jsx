@@ -105,22 +105,22 @@ export default function Layout({
     hideFooterProp !== undefined
       ? Boolean(hideFooterProp)
       : hideFooterCtx !== undefined
-      ? Boolean(hideFooterCtx)
-      : Boolean(modeHideFooter);
+        ? Boolean(hideFooterCtx)
+        : Boolean(modeHideFooter);
 
   const hideChatDock =
     hideChatDockProp !== undefined
       ? Boolean(hideChatDockProp)
       : hideChatDockCtx !== undefined
-      ? Boolean(hideChatDockCtx)
-      : Boolean(modeHideChatDock);
+        ? Boolean(hideChatDockCtx)
+        : Boolean(modeHideChatDock);
 
   const hideTopbar =
     hideTopbarProp !== undefined
       ? Boolean(hideTopbarProp)
       : hideTopbarCtx !== undefined
-      ? Boolean(hideTopbarCtx)
-      : Boolean(modeHideTopbar);
+        ? Boolean(hideTopbarCtx)
+        : Boolean(modeHideTopbar);
 
   const showSidebar = !hideSidebar;
 
@@ -175,7 +175,7 @@ export default function Layout({
 
   return (
     <div
-      className="relative min-h-[100svh]"
+      className="relative min-h-[100svh] overflow-x-hidden"
       style={{ color: "var(--text)", background: "var(--bg)" }}
     >
       <GlobalPanicListener />
@@ -240,16 +240,19 @@ export default function Layout({
 
       <div
         className={[
-          "relative z-10 flex flex-col",
+          "relative z-10 flex min-w-0 flex-col",
           contentMinHClass,
           showSidebar ? "md:pl-64" : "",
         ].join(" ")}
       >
-        <main id="app-main" className="flex-1">
+        <main
+          id="app-main"
+          className="flex-1 min-w-0 overflow-x-hidden"
+        >
           <div
             className={[
               showSidebar ? "max-w-7xl" : "max-w-[1600px]",
-              "layer-content mx-auto w-full px-4 py-6 md:px-6 md:py-6 space-y-6",
+              "layer-content mx-auto w-full min-w-0 px-4 py-6 md:px-6 md:py-6 space-y-6",
             ].join(" ")}
           >
             {children}

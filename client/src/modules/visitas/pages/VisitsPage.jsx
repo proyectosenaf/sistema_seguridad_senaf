@@ -32,11 +32,35 @@ import {
   exportCitasPDF,
 } from "../utils/helpers.js";
 
-import {
-  sxGhostBtn,
-  sxPrimaryBtn,
-  sxInput,
-} from "../styles/styles.js";
+import { sxGhostBtn, sxPrimaryBtn, sxInput } from "../styles/styles.js";
+
+function getAuthToken(auth) {
+  return (
+    auth?.token ||
+    auth?.accessToken ||
+    auth?.user?.token ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    sessionStorage.getItem("token") ||
+    sessionStorage.getItem("accessToken") ||
+    ""
+  );
+}
+
+function extractArrayFromApiResponse(payload, preferredKeys = []) {
+  if (Array.isArray(payload)) return payload;
+
+  for (const key of preferredKeys) {
+    if (Array.isArray(payload?.[key])) return payload[key];
+  }
+
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  if (Array.isArray(payload?.results)) return payload.results;
+
+  return [];
+}
 
 export default function VisitsPage() {
   const navigate = useNavigate();
@@ -68,24 +92,70 @@ export default function VisitsPage() {
       let serverVisits = [];
       let serverCitas = [];
 
+      const token = getAuthToken(auth);
+
       try {
-        const visitasRes = await fetch(VISITAS_API_URL);
+        const visitasRes = await fetch(VISITAS_API_URL, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: "include",
+        });
+
         const visitasData = await visitasRes.json().catch(() => ({}));
-        if (visitasRes.ok && Array.isArray(visitasData?.items)) {
-          serverVisits = visitasData.items.map(normalizeVisitFromServer);
+
+        if (!visitasRes.ok) {
+          console.warn(
+            "[visitas] backend respondió con error:",
+            visitasRes.status,
+            visitasData
+          );
         }
+
+        const rawVisits = extractArrayFromApiResponse(visitasData, [
+          "items",
+          "visitas",
+          "visitors",
+        ]);
+
+        serverVisits = rawVisits.map(normalizeVisitFromServer);
       } catch (err) {
         console.warn("[visitas] no se pudo leer backend:", err);
       }
 
       try {
-        const citasRes = await fetch(CITAS_API_URL);
+        const citasRes = await fetch(CITAS_API_URL, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: "include",
+        });
+
         const citasData = await citasRes.json().catch(() => ({}));
-        if (citasRes.ok && Array.isArray(citasData?.items)) {
-          serverCitas = citasData.items.map((c, idx) =>
-            normalizeCitaFromServer(c, idx)
+
+        if (!citasRes.ok) {
+          console.warn(
+            "[citas] backend respondió con error:",
+            citasRes.status,
+            citasData
           );
         }
+
+        const rawCitas = extractArrayFromApiResponse(citasData, [
+          "items",
+          "citas",
+          "appointments",
+        ]);
+
+        serverCitas = rawCitas.map((c, idx) => normalizeCitaFromServer(c, idx));
+
+        console.log("[VisitsPage] CITAS_API_URL:", CITAS_API_URL);
+        console.log("[VisitsPage] citasData:", citasData);
+        console.log("[VisitsPage] serverCitas normalizadas:", serverCitas);
       } catch (err) {
         console.warn("[citas] no se pudo leer backend:", err);
       }
@@ -109,7 +179,7 @@ export default function VisitsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [auth]);
 
   useEffect(() => {
     loadAllData();
@@ -281,6 +351,8 @@ export default function VisitsPage() {
 
     let backendId = null;
     try {
+      const token = getAuthToken(auth);
+
       const payload = {
         nombre: formData.name?.trim(),
         documento: formData.document?.trim(),
@@ -311,7 +383,11 @@ export default function VisitsPage() {
 
       const res = await fetch(VISITAS_API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
         body: JSON.stringify(payload),
       });
 
@@ -370,9 +446,17 @@ export default function VisitsPage() {
     setSavingExit(id);
 
     try {
+      const token = getAuthToken(auth);
+
       const res = await fetch(
         `${ROOT}/visitas/${encodeURIComponent(id)}/cerrar`,
-        { method: "PATCH" }
+        {
+          method: "PATCH",
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: "include",
+        }
       );
 
       const data = await res.json().catch(() => null);
@@ -409,6 +493,18 @@ export default function VisitsPage() {
     if (isVisitor) return;
     setEditingVisitor(visitor);
     setShowModal(true);
+  }
+
+  function handleEditCita(cita) {
+    if (isVisitor) return;
+    if (!cita?._id) return;
+
+    navigate("/visitas/agenda", {
+      state: {
+        editingCita: cita,
+        fromGestionVisitantes: true,
+      },
+    });
   }
 
   async function patchLocalAndRemoteCita(citaId, patch) {
@@ -449,11 +545,16 @@ export default function VisitsPage() {
     await patchLocalAndRemoteCita(citaId, { estado: normalized });
 
     try {
+      const token = getAuthToken(auth);
       const url = `${CITAS_API_URL}/${encodeURIComponent(citaId)}/estado`;
 
       const res = await fetch(url, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
         body: JSON.stringify({ estado: nuevoEstado }),
       });
 
@@ -466,7 +567,10 @@ export default function VisitsPage() {
           data
         );
       } else if (data?.item) {
-        await patchLocalAndRemoteCita(citaId, normalizeCitaFromServer(data.item));
+        await patchLocalAndRemoteCita(
+          citaId,
+          normalizeCitaFromServer(data.item)
+        );
       }
     } catch (err) {
       console.warn("[citas] error de red al actualizar estado:", err);
@@ -485,10 +589,15 @@ export default function VisitsPage() {
     await patchLocalAndRemoteCita(cita._id, { estado: "Dentro" });
 
     try {
+      const token = getAuthToken(auth);
       const url = `${CITAS_API_URL}/${encodeURIComponent(cita._id)}/checkin`;
 
       const res = await fetch(url, {
         method: "PATCH",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
       });
 
       const data = await res.json().catch(() => null);
@@ -496,7 +605,10 @@ export default function VisitsPage() {
       if (!res.ok) {
         console.warn("[citas] fallo al registrar check-in:", res.status, data);
       } else if (data?.item) {
-        await patchLocalAndRemoteCita(cita._id, normalizeCitaFromServer(data.item));
+        await patchLocalAndRemoteCita(
+          cita._id,
+          normalizeCitaFromServer(data.item)
+        );
       }
     } catch (err) {
       console.warn("[citas] error de red al registrar ingreso:", err);
@@ -664,6 +776,7 @@ export default function VisitsPage() {
           handleRegistrarIngreso={handleRegistrarIngreso}
           exportCitasExcel={exportCitasExcel}
           exportCitasPDF={exportCitasPDF}
+          onEditCita={handleEditCita}
         />
       )}
 

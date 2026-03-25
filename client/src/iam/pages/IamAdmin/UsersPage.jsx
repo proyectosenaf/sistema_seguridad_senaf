@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { iamApi } from "../../api/iamApi.js";
-import { Edit3, Trash2 } from "lucide-react";
+import {
+  Edit3,
+  Trash2,
+  Wifi,
+  RefreshCw,
+  LogOut,
+  Monitor,
+  Smartphone,
+  Globe,
+} from "lucide-react";
 import { getToken as getTokenCanonical } from "../../../lib/api.js";
 
 const DISABLE_AUTH = import.meta.env.VITE_DISABLE_AUTH === "1";
@@ -70,36 +79,6 @@ function sxPrimaryBtn(extra = {}) {
     color: "#ffffff",
     border: "1px solid transparent",
     boxShadow: "0 10px 20px color-mix(in srgb, #2563eb 22%, transparent)",
-    ...extra,
-  });
-}
-
-function sxDangerBtn(extra = {}) {
-  return sxBtnBase({
-    background: "linear-gradient(135deg, #dc2626, #ef4444)",
-    color: "#ffffff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
-    ...extra,
-  });
-}
-
-function sxSuccessBtn(extra = {}) {
-  return sxBtnBase({
-    background: "linear-gradient(135deg, #16a34a, #22c55e)",
-    color: "#ffffff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
-    ...extra,
-  });
-}
-
-function sxWarningBtn(extra = {}) {
-  return sxBtnBase({
-    background: "color-mix(in srgb, #f59e0b 12%, var(--card-solid))",
-    color: "#d97706",
-    border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)",
-    boxShadow: "var(--shadow-sm)",
     ...extra,
   });
 }
@@ -386,6 +365,144 @@ function passwordRules(p = "") {
   };
 }
 
+function PresencePill({ presence }) {
+  const val = String(presence || "").toLowerCase();
+
+  const map = {
+    online: {
+      label: "En línea",
+      bg: "color-mix(in srgb, #22c55e 12%, transparent)",
+      color: "#15803d",
+      border: "1px solid color-mix(in srgb, #22c55e 36%, transparent)",
+    },
+    idle: {
+      label: "Inactiva",
+      bg: "color-mix(in srgb, #f59e0b 12%, transparent)",
+      color: "#d97706",
+      border: "1px solid color-mix(in srgb, #f59e0b 36%, transparent)",
+    },
+    inactive: {
+      label: "Sin actividad",
+      bg: "color-mix(in srgb, #f97316 12%, transparent)",
+      color: "#ea580c",
+      border: "1px solid color-mix(in srgb, #f97316 36%, transparent)",
+    },
+    offline: {
+      label: "Desconectada",
+      bg: "color-mix(in srgb, #64748b 12%, transparent)",
+      color: "#475569",
+      border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
+    },
+    kicked: {
+      label: "Cerrada",
+      bg: "color-mix(in srgb, #ef4444 12%, transparent)",
+      color: "#dc2626",
+      border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+    },
+    closed: {
+      label: "Cerrada",
+      bg: "color-mix(in srgb, #ef4444 12%, transparent)",
+      color: "#dc2626",
+      border: "1px solid color-mix(in srgb, #ef4444 36%, transparent)",
+    },
+  };
+
+  const sx = map[val] || map.offline;
+
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+      style={{
+        background: sx.bg,
+        color: sx.color,
+        border: sx.border,
+      }}
+    >
+      <span className="w-2 h-2 rounded-full mr-1 bg-current" />
+      {sx.label}
+    </span>
+  );
+}
+
+function fmtDateTime(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
+
+function parseJwtPayload(token) {
+  try {
+    const raw = String(token || "").trim();
+    if (!raw) return null;
+    const parts = raw.split(".");
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4 || 4)) % 4);
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBrowserName(ua = "") {
+  const s = String(ua || "").toLowerCase();
+
+  if (s.includes("edg/")) return "Edge";
+  if (s.includes("opr/") || s.includes("opera")) return "Opera";
+  if (s.includes("samsungbrowser")) return "Samsung Browser";
+  if (s.includes("chrome/") && !s.includes("edg/")) return "Chrome";
+  if (s.includes("firefox/")) return "Firefox";
+  if (s.includes("safari/") && !s.includes("chrome/")) return "Safari";
+  return "Navegador";
+}
+
+function normalizeOsName(ua = "") {
+  const s = String(ua || "").toLowerCase();
+
+  if (s.includes("windows nt")) return "Windows";
+  if (s.includes("android")) return "Android";
+  if (s.includes("iphone") || s.includes("ipad") || s.includes("ios")) return "iOS";
+  if (s.includes("mac os") || s.includes("macintosh")) return "macOS";
+  if (s.includes("linux")) return "Linux";
+  return "Sistema";
+}
+
+function summarizeDevice(session = {}) {
+  const ua = String(session?.userAgent || session?.device || "").trim();
+  if (!ua) {
+    return {
+      label: "Dispositivo no identificado",
+      icon: Globe,
+    };
+  }
+
+  const browser = normalizeBrowserName(ua);
+  const os = normalizeOsName(ua);
+  const isMobile = /android|iphone|ipad|mobile/i.test(ua);
+
+  return {
+    label: `${os} / ${browser}`,
+    icon: isMobile ? Smartphone : Monitor,
+  };
+}
+
+function CurrentSessionPill() {
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+      style={{
+        background: "color-mix(in srgb, #2563eb 12%, transparent)",
+        color: "#2563eb",
+        border: "1px solid color-mix(in srgb, #2563eb 32%, transparent)",
+      }}
+    >
+      Sesión actual
+    </span>
+  );
+}
+
 function UsersPageInner() {
   const [items, setItems] = useState([]);
   const [roleCatalog, setRoleCatalog] = useState([]);
@@ -399,6 +516,11 @@ function UsersPageInner() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [errors, setErrors] = useState({});
+
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsErr, setSessionsErr] = useState("");
+  const [kickingSessionId, setKickingSessionId] = useState("");
 
   const PAGE_SIZE = 5;
   const [total, setTotal] = useState(0);
@@ -427,6 +549,24 @@ function UsersPageInner() {
   const firstFieldRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
 
+  function requireFn(fnName) {
+    if (typeof iamApi?.[fnName] !== "function") {
+      throw new Error(`iamApi.${fnName} no está implementado`);
+    }
+    return iamApi[fnName];
+  }
+
+  function requireTokenSafe() {
+    if (DISABLE_AUTH) return null;
+    const t = getTokenCanonical();
+    return t || null;
+  }
+
+  const authToken = requireTokenSafe();
+  const tokenPayload = useMemo(() => parseJwtPayload(authToken), [authToken]);
+  const currentSessionId = String(tokenPayload?.sid || "").trim();
+  const currentUserEmail = String(tokenPayload?.email || "").trim().toLowerCase();
+
   const roleLabelMap = useMemo(
     () =>
       Object.fromEntries(
@@ -437,19 +577,6 @@ function UsersPageInner() {
       ),
     [roleCatalog]
   );
-
-  function requireFn(fnName) {
-    if (typeof iamApi?.[fnName] !== "function") {
-      throw new Error(`iamApi.${fnName} no está implementado (por eso ves "Not implemented")`);
-    }
-    return iamApi[fnName];
-  }
-
-  function requireTokenOrNull() {
-    if (DISABLE_AUTH) return null;
-    const t = getTokenCanonical();
-    return t || null;
-  }
 
   function setField(name, value) {
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -462,8 +589,8 @@ function UsersPageInner() {
       setLoading(true);
       setErr("");
 
-      const token = requireTokenOrNull();
-      if (!DISABLE_AUTH && !token) {
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
         setErr("No se pudo obtener token de sesión. Inicia sesión de nuevo para gestionar usuarios.");
         setItems([]);
         setRoleCatalog([]);
@@ -485,9 +612,9 @@ function UsersPageInner() {
             createdFrom: createdFrom || "",
             createdTo: createdTo || "",
           },
-          token
+          liveToken
         ),
-        typeof iamApi.listRoles === "function" ? iamApi.listRoles(token) : Promise.resolve({}),
+        typeof iamApi.listRoles === "function" ? iamApi.listRoles(liveToken) : Promise.resolve({}),
       ]);
 
       if (myReqId !== requestIdRef.current) return;
@@ -522,14 +649,47 @@ function UsersPageInner() {
     }
   }
 
+  async function loadSessions() {
+    try {
+      setSessionsLoading(true);
+      setSessionsErr("");
+
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
+        setSessions([]);
+        setSessionsErr("No se pudo obtener token de sesión.");
+        return;
+      }
+
+      const listSessions = requireFn("listSessions");
+      const res = await listSessions({ onlyActive: 1, limit: 100 }, liveToken);
+      const list = Array.isArray(res?.items) ? res.items : [];
+
+      setSessions(list);
+    } catch (e) {
+      setSessions([]);
+      setSessionsErr(e?.message || "Error al cargar sesiones");
+    } finally {
+      setSessionsLoading(false);
+    }
+  }
+
   useEffect(() => {
     load({ append: false });
+    loadSessions();
   }, []);
 
   useEffect(() => {
     const t = setTimeout(() => load({ append: false }), 250);
     return () => clearTimeout(t);
   }, [q, onlyActive, createdFrom, createdTo]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      loadSessions();
+    }, 30000);
+    return () => clearInterval(t);
+  }, []);
 
   function validate() {
     const v = {};
@@ -586,8 +746,8 @@ function UsersPageInner() {
     try {
       setSubmitting(true);
 
-      const token = requireTokenOrNull();
-      if (!DISABLE_AUTH && !token) {
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
         alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para guardar.");
         return;
       }
@@ -596,12 +756,12 @@ function UsersPageInner() {
 
       if (editing) {
         const updateUser = requireFn("updateUser");
-        await updateUser(editing, payload, token);
+        await updateUser(editing, payload, liveToken);
         alert("Usuario actualizado correctamente");
       } else {
         const createUser = requireFn("createUser");
-        await createUser(payload, token);
-        alert("Usuario creado correctamente ✅");
+        await createUser(payload, liveToken);
+        alert("Usuario creado correctamente");
       }
 
       setForm(empty);
@@ -611,7 +771,7 @@ function UsersPageInner() {
 
       await load({ append: false });
     } catch (e2) {
-      alert("⚠️ Error al guardar: " + (e2?.message || "Revisa la consola"));
+      alert("Error al guardar: " + (e2?.message || "Revisa la consola"));
       console.error("[UsersPage] submit error:", e2);
     } finally {
       setSubmitting(false);
@@ -620,18 +780,18 @@ function UsersPageInner() {
 
   async function toggleActive(u) {
     try {
-      const token = requireTokenOrNull();
-      if (!DISABLE_AUTH && !token) {
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
         alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para cambiar estado.");
         return;
       }
 
       if (u.active === false) {
         const enableUser = requireFn("enableUser");
-        await enableUser(u._id, token);
+        await enableUser(u._id, liveToken);
       } else {
         const disableUser = requireFn("disableUser");
-        await disableUser(u._id, token);
+        await disableUser(u._id, liveToken);
       }
 
       await load({ append: false });
@@ -651,8 +811,8 @@ function UsersPageInner() {
 
     try {
       if (typeof iamApi.getUser === "function") {
-        const token = requireTokenOrNull();
-        const r = await iamApi.getUser(u._id, token);
+        const liveToken = requireTokenSafe();
+        const r = await iamApi.getUser(u._id, liveToken);
         full = r?.item || r?.user || r || u;
       }
     } catch (e) {
@@ -684,14 +844,14 @@ function UsersPageInner() {
     if (!ok) return;
 
     try {
-      const token = requireTokenOrNull();
-      if (!DISABLE_AUTH && !token) {
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
         alert("No se pudo obtener token de sesión. Inicia sesión nuevamente para eliminar.");
         return;
       }
 
       if (typeof iamApi.deleteUser === "function") {
-        await iamApi.deleteUser(u._id, token);
+        await iamApi.deleteUser(u._id, liveToken);
       } else {
         throw new Error("iamApi.deleteUser no está implementado");
       }
@@ -704,16 +864,66 @@ function UsersPageInner() {
     }
   }
 
+  async function handleKickSession(session) {
+    const isCurrent =
+      String(session?.sessionId || "").trim() &&
+      String(session?.sessionId || "").trim() === currentSessionId;
+
+    const label = session?.name || session?.email || session?.sessionId || "esta sesión";
+
+    const msg = isCurrent
+      ? `Estás a punto de cerrar tu sesión actual (${label}). Tendrás que volver a iniciar sesión. ¿Deseas continuar?`
+      : `¿Cerrar la sesión de "${label}"?`;
+
+    const ok = window.confirm(msg);
+    if (!ok) return;
+
+    try {
+      setKickingSessionId(session.sessionId);
+
+      const liveToken = requireTokenSafe();
+      if (!DISABLE_AUTH && !liveToken) {
+        alert("No se pudo obtener token de sesión. Inicia sesión nuevamente.");
+        return;
+      }
+
+      const kickSession = requireFn("kickSession");
+      await kickSession(session.sessionId, liveToken);
+
+      await loadSessions();
+
+      if (isCurrent) {
+        alert("Tu sesión actual fue cerrada. Debes volver a iniciar sesión.");
+        try {
+          if (typeof iamApi.logout === "function") {
+            await iamApi.logout();
+          }
+        } catch {
+          // ignore
+        }
+        window.location.href = "/login";
+        return;
+      }
+
+      alert("Sesión cerrada correctamente.");
+    } catch (e) {
+      alert(e?.message || "No se pudo cerrar la sesión");
+    } finally {
+      setKickingSessionId("");
+    }
+  }
+
   const visibleList = items;
+  const onlineCount = sessions.filter((s) => String(s.presence).toLowerCase() === "online").length;
 
   return (
     <div className="min-h-screen p-6 md:p-8 space-y-8">
-      <header className="max-w-5xl mx-auto">
+      <header className="max-w-6xl mx-auto">
         <h1 className="text-2xl md:text-3xl font-semibold mb-2" style={{ color: "var(--text)" }}>
           Administración de Usuarios (IAM)
         </h1>
         <p className="text-sm max-w-2xl" style={{ color: "var(--text-muted)" }}>
-          Crea y administra usuarios del sistema SENAF: cuenta, roles y seguridad mínima.
+          Crea y administra usuarios del sistema SENAF: cuentas, roles, permisos, sesiones activas y políticas de acceso.
         </p>
       </header>
 
@@ -1151,6 +1361,179 @@ function UsersPageInner() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="max-w-6xl mx-auto space-y-4">
+        <div className="flex flex-col md:flex-row gap-3 justify-between items-start">
+          <div className="flex items-start gap-3">
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center"
+              style={{
+                background: "color-mix(in srgb, #06b6d4 12%, transparent)",
+                border: "1px solid color-mix(in srgb, #06b6d4 24%, transparent)",
+                color: "#0891b2",
+              }}
+            >
+              <Wifi className="w-5 h-5" />
+            </div>
+
+            <div>
+              <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--text)" }}>
+                Usuarios en línea / Sesiones activas
+              </h2>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {onlineCount} en línea, {sessions.length} sesión(es) activa(s)
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadSessions}
+            disabled={sessionsLoading}
+            style={sxGhostBtn()}
+          >
+            <RefreshCw className={`w-4 h-4 ${sessionsLoading ? "animate-spin" : ""}`} />
+            {sessionsLoading ? "Actualizando..." : "Actualizar sesiones"}
+          </button>
+        </div>
+
+        {sessionsErr && (
+          <div
+            className="text-sm rounded-lg px-3 py-2"
+            style={{
+              background: "color-mix(in srgb, #ef4444 10%, transparent)",
+              border: "1px solid color-mix(in srgb, #ef4444 26%, transparent)",
+              color: "#fca5a5",
+            }}
+          >
+            {sessionsErr}
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-[24px]" style={sxCard()}>
+          <table className="min-w-full text-sm" style={{ color: "var(--text)" }}>
+            <thead
+              className="text-xs uppercase"
+              style={{
+                color: "var(--text-muted)",
+                borderBottom: "1px solid var(--border)",
+                background: "color-mix(in srgb, var(--card-solid) 92%, transparent)",
+              }}
+            >
+              <tr>
+                <th className="px-4 py-3 text-left">Usuario</th>
+                <th className="px-4 py-3 text-left">Estado</th>
+                <th className="px-4 py-3 text-left">IP</th>
+                <th className="px-4 py-3 text-left">Dispositivo</th>
+                <th className="px-4 py-3 text-left">Conectado</th>
+                <th className="px-4 py-3 text-left">Última actividad</th>
+                <th className="px-4 py-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {sessionsLoading && sessions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center" style={{ color: "var(--text-muted)" }}>
+                    Cargando sesiones…
+                  </td>
+                </tr>
+              ) : sessions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-6 text-center" style={{ color: "var(--text-muted)" }}>
+                    No hay sesiones activas.
+                  </td>
+                </tr>
+              ) : (
+                sessions.map((s) => {
+                  const deviceInfo = summarizeDevice(s);
+                  const DeviceIcon = deviceInfo.icon;
+                  const isCurrent =
+                    String(s?.sessionId || "").trim() &&
+                    String(s?.sessionId || "").trim() === currentSessionId;
+
+                  const sameEmail =
+                    currentUserEmail &&
+                    String(s?.email || "").trim().toLowerCase() === currentUserEmail;
+
+                  return (
+                    <tr key={s._id || s.sessionId} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td className="px-4 py-3">
+                        <div className="font-medium flex items-center gap-2 flex-wrap" style={{ color: "var(--text)" }}>
+                          <span>{s.name || s.email || "—"}</span>
+                          {isCurrent ? <CurrentSessionPill /> : null}
+                          {!isCurrent && sameEmail ? (
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                              style={{
+                                background: "color-mix(in srgb, #64748b 12%, transparent)",
+                                color: "#475569",
+                                border: "1px solid color-mix(in srgb, #64748b 32%, transparent)",
+                              }}
+                            >
+                              Misma cuenta
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          {s.email || "—"}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <PresencePill presence={s.presence || s.status} />
+                      </td>
+
+                      <td className="px-4 py-3">{s.ip || "—"}</td>
+
+                      <td className="px-4 py-3 max-w-[280px]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <DeviceIcon className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+                          <div className="min-w-0">
+                            <div className="truncate" title={s.device || s.userAgent || ""}>
+                              {deviceInfo.label}
+                            </div>
+                            <div
+                              className="truncate text-[11px]"
+                              style={{ color: "var(--text-muted)" }}
+                              title={s.device || s.userAgent || ""}
+                            >
+                              {s.device || s.userAgent || "—"}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">{fmtDateTime(s.connectedAt)}</td>
+
+                      <td className="px-4 py-3">{fmtDateTime(s.lastActivityAt)}</td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => handleKickSession(s)}
+                            disabled={kickingSessionId === s.sessionId}
+                            style={sxTableActionBtn("danger")}
+                            title={isCurrent ? "Cerrar mi sesión actual" : "Cerrar sesión"}
+                          >
+                            <LogOut className="w-3.5 h-3.5" />
+                            {kickingSessionId === s.sessionId
+                              ? "Cerrando..."
+                              : isCurrent
+                              ? "Cerrar mi sesión"
+                              : "Cerrar sesión"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

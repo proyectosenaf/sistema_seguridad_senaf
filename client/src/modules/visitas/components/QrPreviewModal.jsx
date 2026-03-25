@@ -1,6 +1,6 @@
 import React from "react";
 import { QRCodeSVG } from "qrcode.react";
-import CitaEstadoPill from "./CitaEstadoPill.jsx";
+import CitaEstadoPill from "../pages/agenda/components/CitaEstadoPill.jsx";
 import {
   downloadQrCita,
   printQrCita,

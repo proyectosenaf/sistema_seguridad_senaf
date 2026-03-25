@@ -1,4 +1,4 @@
-// server/modules/iam/utils/auth.util.js
+import IamSession from "../models/IamSession.model.js";
 import { getBearer, verifyToken } from "./jwt.util.js";
 
 function safeJsonParse(s) {
@@ -24,6 +24,46 @@ function normalizeArray(arr) {
         .filter(Boolean)
     )
   );
+}
+
+function normalizeSubToUserId(sub) {
+  const raw = String(sub || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("local|") ? raw.slice(6) : raw;
+}
+
+async function validateActiveSessionFromPayload(payload) {
+  const sessionId = String(payload?.sid || "").trim();
+  const userId = normalizeSubToUserId(payload?.sub);
+
+  if (!sessionId || !userId) {
+    return {
+      ok: false,
+      error: "invalid_session",
+      details: "Token sin sid o sub válido",
+    };
+  }
+
+  const session = await IamSession.findOne({
+    userId,
+    sessionId,
+    isActive: true,
+  }).lean();
+
+  if (!session) {
+    return {
+      ok: false,
+      error: "session_invalidated",
+      details: "La sesión ya no está activa",
+    };
+  }
+
+  await IamSession.updateOne(
+    { _id: session._id },
+    { $set: { lastActivityAt: new Date() } }
+  ).catch(() => {});
+
+  return { ok: true, session };
 }
 
 function readDevIdentityFromHeaders(req) {
@@ -102,7 +142,7 @@ export function makeAuthMw(options = {}) {
     };
   }
 
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const token = getBearer(req);
 
     if (!token) {
@@ -133,12 +173,29 @@ export function makeAuthMw(options = {}) {
     try {
       const payload = verifyToken(token);
 
+      const sessionCheck = await validateActiveSessionFromPayload(payload);
+      if (!sessionCheck.ok) {
+        return res.status(401).json({
+          ok: false,
+          error: sessionCheck.error,
+          details: sessionCheck.details,
+          message:
+            sessionCheck.error === "session_invalidated"
+              ? "Tu sesión fue cerrada porque iniciaste sesión en otro dispositivo."
+              : errorMessage,
+        });
+      }
+
       req.auth = req.auth || {};
       req.auth.payload = payload;
+      req.auth.session = sessionCheck.session;
 
       if (attachToReqUser) {
         req.user = req.user || payload;
       }
+
+      req.session = sessionCheck.session;
+      req.sessionId = sessionCheck.session?.sessionId || payload?.sid || "";
 
       return next();
     } catch (e) {

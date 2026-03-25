@@ -16,6 +16,7 @@ import api, {
 } from "../../lib/api.js";
 
 import { jwtDecode } from "jwt-decode";
+import { iamApi } from "../../iam/api/iamApi.js";
 
 const AuthContext = createContext(null);
 
@@ -137,9 +138,7 @@ function deriveAuthFromToken(token) {
   );
 
   const can = normalizeCan(
-    decoded.can ||
-      decoded.c ||
-      decoded["https://senaf/can"]
+    decoded.can || decoded.c || decoded["https://senaf/can"]
   );
 
   const email = String(
@@ -206,13 +205,9 @@ function normalizeUserLike(u) {
     u.sub || u.userSub || u.uid || u.userId || u.id || u._id || ""
   ).trim();
 
-  const id = String(
-    u.id || u.userId || u._id || u.uid || sub || ""
-  ).trim();
+  const id = String(u.id || u.userId || u._id || u.uid || sub || "").trim();
 
-  const _id = String(
-    u._id || u.id || u.userId || u.uid || sub || ""
-  ).trim();
+  const _id = String(u._id || u.id || u.userId || u.uid || sub || "").trim();
 
   return {
     ...u,
@@ -275,6 +270,7 @@ export function AuthProvider({ children }) {
   const meRequestRef = useRef(0);
   const lastSavedUserRef = useRef("");
   const focusSyncRef = useRef(0);
+  const heartbeatRef = useRef(null);
 
   const persistUserIfChanged = useCallback((nextUser) => {
     const payload = nextUser ? JSON.stringify(nextUser) : "";
@@ -340,16 +336,10 @@ export function AuthProvider({ children }) {
     meRequestRef.current = reqId;
 
     try {
-      const res = await api.get("/iam/v1/me", {
-        headers: {
-          "Cache-Control": "no-store, no-cache",
-          Pragma: "no-cache",
-        },
-      });
+      const payload = await iamApi.me(currentToken);
 
       if (meRequestRef.current !== reqId) return null;
 
-      const payload = res?.data ?? null;
       const nextUser = normalizeUserLike(
         payload?.user && typeof payload.user === "object"
           ? {
@@ -393,14 +383,8 @@ export function AuthProvider({ children }) {
                 payload?.user?.permissions ||
                 payload?.user?.perms ||
                 [],
-              roles:
-                payload?.roles ||
-                payload?.user?.roles ||
-                [],
-              can:
-                payload?.can ||
-                payload?.user?.can ||
-                null,
+              roles: payload?.roles || payload?.user?.roles || [],
+              can: payload?.can || payload?.user?.can || null,
               isSuperAdmin:
                 payload?.isSuperAdmin === true ||
                 payload?.superadmin === true ||
@@ -477,6 +461,30 @@ export function AuthProvider({ children }) {
     };
   }, [syncFromStorage]);
 
+  useEffect(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+
+    if (!token) return;
+
+    heartbeatRef.current = setInterval(async () => {
+      try {
+        await iamApi.heartbeat(token);
+      } catch {
+        // no bloquea UI
+      }
+    }, 60000);
+
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+    };
+  }, [token]);
+
   const bootstrap = useCallback(async () => {
     const hydrated = syncFromStorage({ withLoading: true });
     const currentToken = getToken() || "";
@@ -546,7 +554,13 @@ export function AuthProvider({ children }) {
     [token, persistUserIfChanged, refreshMe]
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await iamApi.logout();
+    } catch {
+      // ignore
+    }
+
     setUser(null);
     setTokenState("");
     persistUserIfChanged(null);

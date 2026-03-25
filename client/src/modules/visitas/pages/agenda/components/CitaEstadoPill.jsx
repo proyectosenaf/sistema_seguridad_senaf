@@ -1,48 +1,11 @@
 import React from "react";
-
-function normalizeEstadoValue(value) {
-  const raw = String(value || "").trim();
-
-  const map = {
-    solicitada: "Programada",
-    programada: "Programada",
-    "en revisión": "En revisión",
-    en_revision: "En revisión",
-    autorizada: "Autorizada",
-    denegada: "Denegada",
-    cancelada: "Cancelada",
-    dentro: "Dentro",
-    finalizada: "Finalizada",
-  };
-
-  return map[raw.toLowerCase()] || raw || "Programada";
-}
-
-function prettyCitaEstado(value) {
-  const estado = normalizeEstadoValue(value);
-
-  switch (estado) {
-    case "Programada":
-      return "programada";
-    case "En revisión":
-      return "en revisión";
-    case "Autorizada":
-      return "autorizada";
-    case "Denegada":
-      return "denegada";
-    case "Cancelada":
-      return "cancelada";
-    case "Dentro":
-      return "ingresada";
-    case "Finalizada":
-      return "finalizada";
-    default:
-      return estado.toLowerCase();
-  }
-}
+import {
+  normalizeCitaEstado,
+  prettyCitaEstado,
+} from "../../../utils/helpers.js";
 
 export default function CitaEstadoPill({ estado }) {
-  const normalized = normalizeEstadoValue(estado);
+  const normalized = normalizeCitaEstado(estado);
   const val = prettyCitaEstado(normalized);
 
   let style = {
@@ -84,14 +47,6 @@ export default function CitaEstadoPill({ estado }) {
       };
       break;
 
-    case "Finalizada":
-      style = {
-        background: "color-mix(in srgb, #64748b 18%, transparent)",
-        color: "#cbd5e1",
-        border: "1px solid color-mix(in srgb, #64748b 36%, transparent)",
-      };
-      break;
-
     case "Denegada":
       style = {
         background: "color-mix(in srgb, #ef4444 12%, transparent)",
@@ -101,6 +56,7 @@ export default function CitaEstadoPill({ estado }) {
       break;
 
     case "Cancelada":
+    case "Finalizada":
       style = {
         background: "color-mix(in srgb, #64748b 18%, transparent)",
         color: "#cbd5e1",

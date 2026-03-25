@@ -2,6 +2,8 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 
+import crypto from "crypto";
+import IamSession from "../models/IamSession.model.js";
 import IamUser from "../models/IamUser.model.js";
 import AuthOtp from "../models/AuthOtp.model.js";
 import { verifyPassword, hashPassword } from "../utils/password.util.js";
@@ -78,10 +80,22 @@ function jwtSecret() {
   return s;
 }
 
-function signLocalJwt(payload) {
+function signLocalJwt(payload, extra = {}) {
   const secret = jwtSecret();
   const expiresIn = String(process.env.JWT_EXPIRES_IN || "12h");
-  return jwt.sign(payload, secret, { expiresIn, algorithm: "HS256" });
+
+  const jti = crypto.randomUUID();
+  const sessionId = extra.sessionId || crypto.randomUUID();
+
+  return jwt.sign(
+    {
+      ...payload,
+      jti,
+      sid: sessionId,
+    },
+    secret,
+    { expiresIn, algorithm: "HS256" }
+  );
 }
 
 function normalizeRoleValue(role) {
@@ -131,12 +145,13 @@ function secondsRemaining(dateObj) {
 }
 
 function clientIp(req) {
-  return (
-    req.ip ||
-    req.headers["x-forwarded-for"] ||
-    req.connection?.remoteAddress ||
-    ""
-  );
+  const xff = req.headers["x-forwarded-for"];
+  if (Array.isArray(xff) && xff.length) return String(xff[0]).trim();
+  if (typeof xff === "string" && xff.trim()) {
+    return xff.split(",")[0].trim();
+  }
+
+  return req.ip || req.connection?.remoteAddress || "";
 }
 
 function auditActor(req, user = null, fallbackName = "Sistema IAM") {
@@ -175,6 +190,54 @@ async function logIamEvent(req, payload = {}) {
   }
 }
 
+async function createUserSession({ user, req, sessionId, jwtId }) {
+  const ip = clientIp(req);
+  const userAgent = req.get("user-agent") || "";
+
+  await IamSession.updateMany(
+    {
+      userId: user._id,
+      isActive: true,
+    },
+    {
+      $set: {
+        isActive: false,
+        status: "replaced",
+        disconnectedAt: new Date(),
+        reason: "Nueva sesión iniciada",
+      },
+    }
+  );
+
+  await IamSession.create({
+    userId: user._id,
+    email: user.email,
+    sessionId,
+    jwtId,
+    ip,
+    userAgent,
+    device: userAgent,
+    isActive: true,
+    status: "active",
+    connectedAt: new Date(),
+    lastActivityAt: new Date(),
+  });
+
+  try {
+    await IamUser.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          lastLoginAt: new Date(),
+          lastLoginIp: ip,
+        },
+      }
+    );
+  } catch (err) {
+    console.warn("[iam][session] no se pudo actualizar lastLogin:", err?.message || err);
+  }
+}
+
 function escapeRegex(s) {
   return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -208,8 +271,12 @@ async function ensureProtectedSuperadminUser(user, email) {
 
   if (!user) return null;
 
-  const roles = Array.isArray(user.roles) ? user.roles.map((r) => String(r).toLowerCase()) : [];
-  const perms = Array.isArray(user.perms) ? user.perms.map((p) => String(p).toLowerCase()) : [];
+  const roles = Array.isArray(user.roles)
+    ? user.roles.map((r) => String(r).toLowerCase())
+    : [];
+  const perms = Array.isArray(user.perms)
+    ? user.perms.map((p) => String(p).toLowerCase())
+    : [];
 
   const needsRepair =
     !roles.includes("superadmin") ||
@@ -269,6 +336,7 @@ function signPwResetToken({ email, userId }) {
   const secret = jwtSecret();
   const payload = { typ: "pwreset", email: normEmail(email), uid: String(userId) };
   const expMinutes = envNum("PWRESET_TOKEN_TTL_MINUTES", 10);
+
   return jwt.sign(payload, secret, {
     expiresIn: `${expMinutes}m`,
     algorithm: "HS256",
@@ -278,9 +346,11 @@ function signPwResetToken({ email, userId }) {
 function verifyPwResetToken(token) {
   const secret = jwtSecret();
   const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
+
   if (!decoded || decoded.typ !== "pwreset") {
     throw new Error("invalid_pwreset_token");
   }
+
   return decoded;
 }
 
@@ -561,11 +631,24 @@ async function loginOtpHandler(req, res) {
     : !!user.mustChangePassword || isPasswordExpired(user);
 
   if (!otpEnabled) {
-    const token = signLocalJwt({
-      sub: `local|${user._id}`,
-      email: user.email,
-      name: user.name || user.email,
-      provider: "local",
+    const sessionId = crypto.randomUUID();
+
+    const token = signLocalJwt(
+      {
+        sub: `local|${user._id}`,
+        email: user.email,
+        name: user.name || user.email,
+        provider: "local",
+      },
+      { sessionId }
+    );
+
+    const decodedToken = jwt.decode(token);
+    await createUserSession({
+      user,
+      req,
+      sessionId,
+      jwtId: decodedToken?.jti || "",
     });
 
     await logIamEvent(req, {
@@ -601,11 +684,24 @@ async function loginOtpHandler(req, res) {
     : firstTimeOtp || mustChange;
 
   if (!otpRequired) {
-    const token = signLocalJwt({
-      sub: `local|${user._id}`,
-      email: user.email,
-      name: user.name || user.email,
-      provider: "local",
+    const sessionId = crypto.randomUUID();
+
+    const token = signLocalJwt(
+      {
+        sub: `local|${user._id}`,
+        email: user.email,
+        name: user.name || user.email,
+        provider: "local",
+      },
+      { sessionId }
+    );
+
+    const decodedToken = jwt.decode(token);
+    await createUserSession({
+      user,
+      req,
+      sessionId,
+      jwtId: decodedToken?.jti || "",
     });
 
     await logIamEvent(req, {
@@ -957,7 +1053,7 @@ async function verifyOtpHandler(req, res) {
 
   let user = await findIamUserByEmail(
     email,
-    "email name roles perms +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
+    "_id email name roles perms +active +provider mustChangePassword passwordExpiresAt otpVerifiedAt"
   );
 
   const forcedSuperadmin = isSuperadminEmail(email);
@@ -1179,11 +1275,24 @@ async function verifyOtpHandler(req, res) {
     return res.json({ ok: true, mustChangePassword: true, resetToken });
   }
 
-  const token = signLocalJwt({
-    sub: `local|${user._id}`,
-    email: user.email,
-    name: user.name || user.email,
-    provider: "local",
+  const sessionId = crypto.randomUUID();
+
+  const token = signLocalJwt(
+    {
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    },
+    { sessionId }
+  );
+
+  const decodedToken = jwt.decode(token);
+  await createUserSession({
+    user,
+    req,
+    sessionId,
+    jwtId: decodedToken?.jti || "",
   });
 
   await logIamEvent(req, {
@@ -1268,7 +1377,7 @@ async function resetPasswordOtpHandler(req, res) {
 
   const user = await findIamUserByEmail(
     email,
-    "+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
+    "_id +passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
   );
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
@@ -1322,11 +1431,24 @@ async function resetPasswordOtpHandler(req, res) {
 
   await user.save();
 
-  const token = signLocalJwt({
-    sub: `local|${user._id}`,
-    email: user.email,
-    name: user.name || user.email,
-    provider: "local",
+  const sessionId = crypto.randomUUID();
+
+  const token = signLocalJwt(
+    {
+      sub: `local|${user._id}`,
+      email: user.email,
+      name: user.name || user.email,
+      provider: "local",
+    },
+    { sessionId }
+  );
+
+  const decodedToken = jwt.decode(token);
+  await createUserSession({
+    user,
+    req,
+    sessionId,
+    jwtId: decodedToken?.jti || "",
   });
 
   await logIamEvent(req, {
@@ -1374,7 +1496,7 @@ async function changePasswordHandler(req, res) {
 
   const user = await findIamUserByEmail(
     email,
-    "+passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
+    "_id +passwordHash roles +active +provider mustChangePassword passwordExpiresAt name email"
   );
 
   if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });

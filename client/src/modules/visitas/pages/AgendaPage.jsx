@@ -1,6 +1,5 @@
-// client/src/modules/visitas/pages/AgendaPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import api from "../../../lib/api.js";
 import {
   DNI_DIGITS,
@@ -18,8 +17,6 @@ import {
   formatDocumentoInput,
   createEmptyCompanion,
   normalizeCompanionArray,
-  loadStoredCitas,
-  saveStoredCitas,
 } from "./agenda/storage.js";
 import {
   normalizeCatalogArray,
@@ -27,7 +24,6 @@ import {
   normalizeModelItem,
   normalizeEstadoValue,
   buildISOFromDateAndTime,
-  mergeServerAndLocal,
   toDisplayName,
   toDisplayCompany,
 } from "./agenda/helpers.js";
@@ -40,11 +36,12 @@ import {
   sxSuccessBtn,
   sxDangerBtn,
 } from "./agenda/styles.js";
+
 import Field from "./agenda/components/Field.jsx";
-import CitaEstadoPill from "./agenda/components/CitaEstadoPill.jsx";
 import AgendaHeader from "./agenda/components/AgendaHeader.jsx";
 import AgendaTabs from "./agenda/components/AgendaTabs.jsx";
 import AgendaQrModal from "./agenda/components/AgendaQrModal.jsx";
+import CitaEstadoPill from "./agenda/components/CitaEstadoPill.jsx";
 
 /* ================== Helpers de rol ================== */
 
@@ -149,7 +146,7 @@ function readUserName(user) {
 function canShowQrForCita(cita) {
   const estado = normalizeEstadoValue(cita?.estado || "Programada");
   return (
-    estado === "Autorizada" &&
+    (estado === "Autorizada" || estado === "Dentro") &&
     (!!cita?.qrDataUrl || !!cita?.qrPayload || !!cita?.qrToken)
   );
 }
@@ -180,19 +177,46 @@ function getQrPendingMessage(cita) {
   return "Una vez autorizada esta agenda, se generará el código QR.";
 }
 
+function normalizeCitaFromServer(item) {
+  if (!item || typeof item !== "object") return null;
+
+  const citaAtValue = item.citaAt || item.fechaHora || item.fecha || "";
+
+  const estado = normalizeEstadoValue(item.estado || "Programada");
+  const keepQr = estado === "Autorizada" || estado === "Dentro";
+
+  return {
+    ...item,
+    _id: item._id || item.id || null,
+    id: item.id || item._id || null,
+    estado,
+    citaAt: citaAtValue,
+    acompanado:
+      typeof item.acompanado === "boolean"
+        ? item.acompanado
+        : !!item.tieneAcompanante ||
+          !!item.conAcompanante ||
+          !!(Array.isArray(item.acompanantes) && item.acompanantes.length),
+    acompanantes: normalizeCompanionArray(item.acompanantes),
+    qrDataUrl: keepQr ? item.qrDataUrl || "" : "",
+    qrPayload: keepQr ? item.qrPayload || "" : "",
+    qrToken: keepQr ? item.qrToken || "" : "",
+  };
+}
+
 /* ================== Página ================== */
 
 export default function AgendaPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [tab, setTab] = useState("agendar");
 
   const currentUser = useMemo(() => readCurrentUser(), []);
-
   const currentRoles = useMemo(
     () => extractRoleNames(currentUser),
     [currentUser]
   );
-
   const currentRole = useMemo(() => currentRoles[0] || "", [currentRoles]);
 
   const currentDocumento = useMemo(() => {
@@ -208,12 +232,10 @@ export default function AgendaPage() {
   }, [currentUser]);
 
   const currentEmail = useMemo(() => readUserEmail(currentUser), [currentUser]);
-
   const currentVisitorName = useMemo(
     () => readUserName(currentUser),
     [currentUser]
   );
-
   const isVisitante = useMemo(() => isVisitorUser(currentUser), [currentUser]);
 
   /* ===================== FORMULARIO: AGENDAR ===================== */
@@ -239,27 +261,22 @@ export default function AgendaPage() {
   const [okMsg, setOkMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Acompañante
   const [hasCompanion, setHasCompanion] = useState(false);
   const [companions, setCompanions] = useState([]);
 
-  // Vehículo
   const [hasVehicle, setHasVehicle] = useState(false);
   const [vehicleBrand, setVehicleBrand] = useState("");
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleModelCustom, setVehicleModelCustom] = useState("");
   const [vehiclePlate, setVehiclePlate] = useState("");
 
-  // Catálogos backend
   const [vehicleBrands, setVehicleBrands] = useState([]);
   const [vehicleModels, setVehicleModels] = useState([]);
   const [loadingBrands, setLoadingBrands] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Cita que se está editando
   const [editingCita, setEditingCita] = useState(null);
 
-  // Listado
   const [mode, setMode] = useState("day");
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [items, setItems] = useState([]);
@@ -273,7 +290,6 @@ export default function AgendaPage() {
   const [citasSearch, setCitasSearch] = useState("");
   const [citasEstado, setCitasEstado] = useState("todos");
 
-  // Modal QR
   const [qrModal, setQrModal] = useState({
     open: false,
     qrDataUrl: "",
@@ -285,8 +301,6 @@ export default function AgendaPage() {
   useEffect(() => {
     setForm(initialFormState);
   }, [initialFormState]);
-
-  /* ===================== Catálogos ===================== */
 
   useEffect(() => {
     let mounted = true;
@@ -602,8 +616,8 @@ export default function AgendaPage() {
         vehicleModel === "__custom"
           ? vehicleModelCustom.trim()
           : vehicleBrand === "Otra"
-          ? vehicleModelCustom.trim()
-          : vehicleModel.trim();
+            ? vehicleModelCustom.trim()
+            : vehicleModel.trim();
 
       if (!finalModel) e.vehicleModel = "Requerido";
 
@@ -643,8 +657,9 @@ export default function AgendaPage() {
     });
   }
 
-  async function fetchCitas() {
-    setLoading(true);
+   const fetchCitas = useCallback(
+  async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
 
     try {
       const params = {};
@@ -656,11 +671,9 @@ export default function AgendaPage() {
       }
 
       const { data } = await api.get("/citas", { params });
-
       let list = Array.isArray(data?.items) ? data.items : [];
 
-      const stored = loadStoredCitas();
-      list = mergeServerAndLocal(list, stored);
+      list = list.map(normalizeCitaFromServer).filter(Boolean);
 
       if ((showMyCitas || isVisitante) && myDocumento.trim()) {
         const doc = normalizeDocumento(myDocumento.trim());
@@ -675,44 +688,36 @@ export default function AgendaPage() {
         );
       }
 
+      if (mode === "month" && month) {
+        list = list.filter(
+          (it) => String(it.citaAt || "").slice(0, 7) === month
+        );
+      }
+
       list.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
-      setItems(list);
+
+      setItems((prev) => {
+        const prevJson = JSON.stringify(prev);
+        const nextJson = JSON.stringify(list);
+        return prevJson === nextJson ? prev : list;
+      });
+
+      setErrorMsg("");
     } catch (e) {
-      console.error("[citas] Error leyendo desde backend, usando local:", e);
+      console.error("[citas] Error leyendo desde backend:", e);
 
-      try {
-        const all = loadStoredCitas();
-        let list = [...all];
-
-        if ((showMyCitas || isVisitante) && myDocumento.trim()) {
-          const doc = normalizeDocumento(myDocumento.trim());
-          list = list.filter(
-            (it) => normalizeDocumento(it.documento || "") === doc
-          );
-        }
-
-        if (mode === "month") {
-          if (month) {
-            list = list.filter(
-              (it) => String(it.citaAt || "").slice(0, 7) === month
-            );
-          }
-        } else if (dateFilter) {
-          list = list.filter(
-            (it) => String(it.citaAt || "").slice(0, 10) === dateFilter
-          );
-        }
-
-        list.sort((a, b) => new Date(a.citaAt || 0) - new Date(b.citaAt || 0));
-        setItems(list);
-      } catch (e2) {
-        console.error("[citas] Error leyendo citas local:", e2);
+      if (!silent) {
         setItems([]);
+        setErrorMsg(
+          "No se pudieron cargar las citas desde el servidor. Verifica la conexión o el endpoint /citas."
+        );
       }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  },
+  [mode, month, dateFilter, showMyCitas, isVisitante, myDocumento]
+);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -736,8 +741,8 @@ export default function AgendaPage() {
       vehicleModel === "__custom"
         ? vehicleModelCustom.trim()
         : vehicleBrand === "Otra"
-        ? vehicleModelCustom.trim()
-        : vehicleModel.trim();
+          ? vehicleModelCustom.trim()
+          : vehicleModel.trim();
 
     const tipo = form.tipoCita || "personal";
 
@@ -752,21 +757,15 @@ export default function AgendaPage() {
 
     try {
       if (editingCita) {
-        const updated = {
-          ...editingCita,
+        const payload = {
           nombre: form.visitante.trim(),
           documento: form.documento.trim(),
-          tipoCita: tipo,
-          empresa: form.empresa.trim(),
-          empleado: form.empleado.trim(),
+          empresa: form.empresa.trim() || null,
+          empleado: form.empleado.trim() || null,
           motivo: form.motivo.trim(),
           telefono: form.telefono.trim() || null,
           correo: form.correo.trim() || null,
-          fecha,
-          hora,
           citaAt: citaAtISO,
-          acompanado: !!hasCompanion,
-          acompanantes: companionsPayload,
           llegoEnVehiculo: !!hasVehicle,
           vehiculo: hasVehicle
             ? {
@@ -775,22 +774,9 @@ export default function AgendaPage() {
                 placa: vehiclePlate.trim(),
               }
             : null,
-        };
-
-        const payload = {
-          nombre: updated.nombre,
-          documento: updated.documento,
-          empresa: updated.empresa || null,
-          empleado: updated.empleado || null,
-          motivo: updated.motivo,
-          telefono: updated.telefono || null,
-          correo: updated.correo || null,
-          citaAt: updated.citaAt,
-          llegoEnVehiculo: updated.llegoEnVehiculo,
-          vehiculo: updated.vehiculo,
-          acompanado: updated.acompanado,
-          acompanantes: updated.acompanantes,
-          tipoCita: updated.tipoCita,
+          acompanado: !!hasCompanion,
+          acompanantes: companionsPayload,
+          tipoCita: tipo,
         };
 
         let serverError = "";
@@ -824,55 +810,14 @@ export default function AgendaPage() {
           return;
         }
 
-        const finalItem = itemFromServer
-          ? {
-              ...updated,
-              ...itemFromServer,
-              qrDataUrl:
-                itemFromServer.estado === "Autorizada"
-                  ? itemFromServer.qrDataUrl || updated.qrDataUrl || ""
-                  : "",
-              qrPayload:
-                itemFromServer.estado === "Autorizada"
-                  ? itemFromServer.qrPayload || updated.qrPayload || ""
-                  : "",
-              qrToken:
-                itemFromServer.estado === "Autorizada"
-                  ? itemFromServer.qrToken || updated.qrToken || ""
-                  : "",
-              acompanado:
-                typeof itemFromServer.acompanado === "boolean"
-                  ? itemFromServer.acompanado
-                  : updated.acompanado,
-              acompanantes: normalizeCompanionArray(
-                itemFromServer.acompanantes?.length
-                  ? itemFromServer.acompanantes
-                  : updated.acompanantes
-              ),
-            }
-          : updated;
+        const finalItem = normalizeCitaFromServer(itemFromServer || {
+          ...editingCita,
+          ...payload,
+        });
 
         setItems((prev) =>
           prev.map((it) => (it._id === editingCita._id ? finalItem : it))
         );
-
-        const stored = loadStoredCitas();
-        let found = false;
-
-        const storedUpdated = stored.map((it) => {
-          const key = it._id || it.id;
-          if (key === editingCita._id) {
-            found = true;
-            return { ...it, ...finalItem };
-          }
-          return it;
-        });
-
-        if (!found) {
-          storedUpdated.push(finalItem);
-        }
-
-        saveStoredCitas(storedUpdated);
 
         setOkMsg(
           serverMessage ||
@@ -887,22 +832,15 @@ export default function AgendaPage() {
         return;
       }
 
-      const nuevaCita = {
-        _id: `local-${Date.now()}`,
+      const payload = {
         nombre: form.visitante.trim(),
         documento: form.documento.trim(),
-        tipoCita: tipo,
-        empresa: form.empresa.trim(),
+        empresa: form.empresa.trim() || null,
         empleado: form.empleado.trim(),
         motivo: form.motivo.trim(),
-        telefono: form.telefono.trim() || undefined,
-        correo: form.correo.trim() || undefined,
-        fecha,
-        hora,
+        telefono: form.telefono.trim() || null,
+        correo: form.correo.trim() || null,
         citaAt: citaAtISO,
-        estado: "Programada",
-        acompanado: !!hasCompanion,
-        acompanantes: companionsPayload,
         llegoEnVehiculo: !!hasVehicle,
         vehiculo: hasVehicle
           ? {
@@ -911,34 +849,11 @@ export default function AgendaPage() {
               placa: vehiclePlate.trim(),
             }
           : null,
-        qrDataUrl: "",
-        qrPayload: "",
-        qrToken: "",
-      };
-
-      const payload = {
-        nombre: nuevaCita.nombre,
-        documento: nuevaCita.documento,
-        empresa: nuevaCita.empresa || null,
-        empleado: nuevaCita.empleado,
-        motivo: nuevaCita.motivo,
-        telefono: nuevaCita.telefono || null,
-        correo: nuevaCita.correo || null,
-        citaAt: nuevaCita.citaAt,
-        llegoEnVehiculo: !!nuevaCita.vehiculo,
-        vehiculo: nuevaCita.vehiculo
-          ? {
-              marca: nuevaCita.vehiculo.marca,
-              modelo: nuevaCita.vehiculo.modelo,
-              placa: nuevaCita.vehiculo.placa,
-            }
-          : null,
         tipoCita: tipo,
         acompanado: !!hasCompanion,
         acompanantes: companionsPayload,
       };
 
-      let syncedWithServer = false;
       let serverError = "";
       let createdFromServer = null;
       let serverMessage = "";
@@ -949,42 +864,6 @@ export default function AgendaPage() {
         if (data?.ok) {
           createdFromServer = data?.item || null;
           serverMessage = data?.message || "";
-
-          if (createdFromServer) {
-            syncedWithServer = true;
-            nuevaCita._id = createdFromServer._id || nuevaCita._id;
-            nuevaCita.citaAt = createdFromServer.citaAt || nuevaCita.citaAt;
-            nuevaCita.estado =
-              normalizeEstadoValue(createdFromServer.estado) || nuevaCita.estado;
-            nuevaCita.qrDataUrl = "";
-            nuevaCita.qrPayload = "";
-            nuevaCita.qrToken = "";
-            nuevaCita.nombre = createdFromServer.nombre || nuevaCita.nombre;
-            nuevaCita.documento =
-              createdFromServer.documento || nuevaCita.documento;
-            nuevaCita.empresa = createdFromServer.empresa || nuevaCita.empresa;
-            nuevaCita.empleado =
-              createdFromServer.empleado || nuevaCita.empleado;
-            nuevaCita.motivo = createdFromServer.motivo || nuevaCita.motivo;
-            nuevaCita.telefono =
-              createdFromServer.telefono || nuevaCita.telefono;
-            nuevaCita.correo = createdFromServer.correo || nuevaCita.correo;
-            nuevaCita.vehiculo =
-              createdFromServer.vehiculo || nuevaCita.vehiculo;
-            nuevaCita.llegoEnVehiculo =
-              typeof createdFromServer.llegoEnVehiculo === "boolean"
-                ? createdFromServer.llegoEnVehiculo
-                : nuevaCita.llegoEnVehiculo;
-            nuevaCita.acompanado =
-              typeof createdFromServer.acompanado === "boolean"
-                ? createdFromServer.acompanado
-                : nuevaCita.acompanado;
-            nuevaCita.acompanantes = normalizeCompanionArray(
-              createdFromServer.acompanantes?.length
-                ? createdFromServer.acompanantes
-                : nuevaCita.acompanantes
-            );
-          }
         } else {
           serverError =
             data?.error ||
@@ -1007,24 +886,15 @@ export default function AgendaPage() {
         return;
       }
 
-      const current = loadStoredCitas();
-      const next = [...current, nuevaCita];
-      saveStoredCitas(next);
+      const finalCreated = normalizeCitaFromServer(createdFromServer || payload);
 
-      setItems((prev) => [...prev, nuevaCita]);
+      setItems((prev) => [...prev, finalCreated]);
 
-      if (syncedWithServer) {
-        setOkMsg(
-          serverMessage ||
-            "✅ Cita agendada correctamente. Una vez autorizada esta agenda, se generará el código QR."
-        );
-        setErrorMsg("");
-      } else {
-        setOkMsg(
-          "✅ La cita se guardó solo como respaldo local. (No se pudo contactar al servidor)"
-        );
-        setErrorMsg("");
-      }
+      setOkMsg(
+        serverMessage ||
+          "✅ Cita agendada correctamente. Una vez autorizada esta agenda, se generará el código QR."
+      );
+      setErrorMsg("");
 
       resetFormState();
 
@@ -1042,9 +912,18 @@ export default function AgendaPage() {
   function handleEditCita(it) {
     const fechaInput =
       it.fecha || (it.citaAt ? String(it.citaAt).slice(0, 10) : "");
-    const horaInput =
-      it.hora ||
-      (it.citaAt ? new Date(it.citaAt).toISOString().slice(11, 16) : "");
+
+    let horaInput = it.hora || "";
+    if (!horaInput && it.citaAt) {
+      const parsed = new Date(it.citaAt);
+      if (!Number.isNaN(parsed.getTime())) {
+        horaInput = parsed.toLocaleTimeString("sv-SE", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        });
+      }
+    }
 
     const tipo = it.tipoCita || (it.empresa ? "profesional" : "personal");
     const companionsFromItem = normalizeCompanionArray(it.acompanantes);
@@ -1076,10 +955,10 @@ export default function AgendaPage() {
     setHasVehicle(hasVeh);
 
     if (hasVeh) {
-      setVehicleBrand(it.vehiculo.marca || "");
-      setVehicleModel(it.vehiculo.modelo || "");
+      setVehicleBrand(it.vehiculo?.marca || "");
+      setVehicleModel(it.vehiculo?.modelo || "");
       setVehicleModelCustom("");
-      setVehiclePlate(it.vehiculo.placa || "");
+      setVehiclePlate(it.vehiculo?.placa || "");
     } else {
       setVehicleBrand("");
       setVehicleModel("");
@@ -1092,6 +971,7 @@ export default function AgendaPage() {
     setErrorMsg("");
     setEditingCita(it);
     setTab("agendar");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   useEffect(() => {
@@ -1102,11 +982,35 @@ export default function AgendaPage() {
   }, [isVisitante, currentDocumento]);
 
   useEffect(() => {
+    const stateCita = location.state?.editingCita;
+    if (!stateCita) return;
+
+    const normalized = normalizeCitaFromServer(stateCita);
+    if (!normalized?._id) return;
+
+    handleEditCita(normalized);
+
+    navigate(location.pathname, {
+      replace: true,
+      state: {},
+    });
+  }, [location.state, location.pathname, navigate]);
+
+  useEffect(() => {
     if (tab === "citas") {
       fetchCitas();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento]);
+  }, [tab, mode, month, dateFilter, showMyCitas, myDocumento, fetchCitas]);
+
+useEffect(() => {
+  if (tab !== "citas") return;
+
+  const intervalId = setInterval(() => {
+    fetchCitas({ silent: true });
+  }, 10000);
+
+  return () => clearInterval(intervalId);
+}, [tab, fetchCitas]);
 
   const filteredItems = useMemo(() => {
     const search = citasSearch.trim().toLowerCase();
@@ -1499,8 +1403,8 @@ export default function AgendaPage() {
                             {!vehicleBrand
                               ? "Seleccione marca primero…"
                               : loadingModels
-                              ? "Cargando modelos..."
-                              : "Seleccione modelo…"}
+                                ? "Cargando modelos..."
+                                : "Seleccione modelo…"}
                           </option>
                           {vehicleModels.map((m) => (
                             <option key={m} value={m}>
@@ -1580,8 +1484,8 @@ export default function AgendaPage() {
                       ? "Actualizando..."
                       : "Agendando..."
                     : editingCita
-                    ? "Guardar cambios"
-                    : "Agendar cita"}
+                      ? "Guardar cambios"
+                      : "Agendar cita"}
                 </button>
               </div>
             </div>

@@ -36,6 +36,7 @@ export function readCurrentUser() {
   } catch (err) {
     console.warn("[AgendaPage] No se pudo leer usuario actual:", err);
   }
+
   return null;
 }
 
@@ -70,6 +71,7 @@ export function normalizeCompanionArray(list) {
       if (typeof item === "string") {
         const nombre = item.trim();
         if (!nombre) return null;
+
         return {
           nombre,
           documento: "",
@@ -86,7 +88,12 @@ export function normalizeCompanionArray(list) {
       ).trim();
 
       const documento = formatDocumentoInput(
-        item.documento || item.dni || item.identidad || item.idNumber || ""
+        item.documento ||
+          item.dni ||
+          item.identidad ||
+          item.idNumber ||
+          item.document ||
+          ""
       );
 
       if (!nombre && !documento) return null;
@@ -99,27 +106,40 @@ export function normalizeCompanionArray(list) {
     .filter(Boolean);
 }
 
-function normalizeEstadoValue(value) {
-  const raw = String(value || "").trim();
+export function normalizeEstadoValue(value) {
+  const raw = String(value || "").trim().toLowerCase();
 
   const map = {
     solicitada: "Programada",
     programada: "Programada",
+
     "en revisión": "En revisión",
+    "en revision": "En revisión",
     en_revision: "En revisión",
+
     autorizada: "Autorizada",
+    autorizado: "Autorizada",
+
     denegada: "Denegada",
+    denegado: "Denegada",
+
     cancelada: "Cancelada",
+    cancelado: "Cancelada",
+
     dentro: "Dentro",
+    ingresada: "Dentro",
+    ingresado: "Dentro",
+
     finalizada: "Finalizada",
+    finalizado: "Finalizada",
   };
 
-  return map[raw.toLowerCase()] || raw || "Programada";
+  return map[raw] || (String(value || "").trim() || "Programada");
 }
 
 function shouldKeepQrFields(item) {
   const estado = normalizeEstadoValue(item?.estado || "Programada");
-  return estado === "Autorizada";
+  return estado === "Autorizada" || estado === "Dentro";
 }
 
 function sanitizeQrFieldsByEstado(item = {}) {
@@ -127,60 +147,62 @@ function sanitizeQrFieldsByEstado(item = {}) {
 
   return {
     ...item,
-    qrDataUrl: keepQr ? item?.qrDataUrl || "" : "",
+    qrDataUrl: keepQr ? String(item?.qrDataUrl || "").trim() : "",
     qrPayload: keepQr ? item?.qrPayload || "" : "",
-    qrToken: keepQr ? item?.qrToken || "" : "",
+    qrToken: keepQr ? String(item?.qrToken || "").trim() : "",
   };
 }
 
+/**
+ * En producto serio, las citas NO deben salir de localStorage.
+ * Se deja esta función para no romper imports existentes.
+ */
 export function loadStoredCitas() {
+  return [];
+}
+
+/**
+ * En producto serio, las citas NO deben persistirse en localStorage.
+ * Se deja la función para compatibilidad y además limpia residuos viejos.
+ */
+export function saveStoredCitas(_list) {
   try {
-    const raw = localStorage.getItem(CITA_STORAGE_KEY);
-    if (!raw) return [];
-
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return [];
-
-    return arr.map((it) => {
-      const _id = it._id || it.id || `local-${Date.now()}-${Math.random()}`;
-      let citaAt = it.citaAt;
-
-      if (!citaAt && it.fecha && it.hora) {
-        const temp = new Date(`${it.fecha}T${it.hora}:00`);
-        if (!Number.isNaN(temp.getTime())) {
-          citaAt = temp.toISOString();
-        }
-      }
-
-      const normalizedItem = {
-        ...it,
-        _id,
-        citaAt,
-        acompanado:
-          typeof it.acompanado === "boolean"
-            ? it.acompanado
-            : !!it.tieneAcompanante ||
-              !!it.conAcompanante ||
-              !!(Array.isArray(it.acompanantes) && it.acompanantes.length),
-        acompanantes: normalizeCompanionArray(it.acompanantes),
-      };
-
-      return sanitizeQrFieldsByEstado(normalizedItem);
-    });
+    localStorage.removeItem(CITA_STORAGE_KEY);
   } catch (e) {
-    console.warn("[citas] No se pudo leer de localStorage:", e);
-    return [];
+    console.warn("[citas] No se pudo limpiar localStorage:", e);
   }
 }
 
-export function saveStoredCitas(list) {
-  try {
-    const safeList = Array.isArray(list)
-      ? list.map((item) => sanitizeQrFieldsByEstado(item))
-      : [];
+/**
+ * Helper opcional por compatibilidad:
+ * normaliza una cita proveniente del backend o de memoria temporal.
+ * No persiste nada en navegador.
+ */
+export function normalizeCitaRecord(it = {}) {
+  const _id = it._id || it.id || null;
 
-    localStorage.setItem(CITA_STORAGE_KEY, JSON.stringify(safeList));
-  } catch (e) {
-    console.warn("[citas] No se pudo guardar en localStorage:", e);
+  let citaAt = it.citaAt || null;
+  if (!citaAt && it.fecha && it.hora) {
+    const temp = new Date(`${it.fecha}T${it.hora}:00`);
+    if (!Number.isNaN(temp.getTime())) {
+      citaAt = temp.toISOString();
+    }
   }
+
+  const normalizedItem = {
+    ...it,
+    _id,
+    id: it.id || _id || null,
+    citaAt,
+    estado: normalizeEstadoValue(it.estado),
+    acompanado:
+      typeof it.acompanado === "boolean"
+        ? it.acompanado
+        : !!it.tieneAcompanante ||
+          !!it.conAcompanante ||
+          !!(Array.isArray(it.acompanantes) && it.acompanantes.length),
+    acompanantes: normalizeCompanionArray(it.acompanantes),
+  };
+
+  return sanitizeQrFieldsByEstado(normalizedItem);
 }

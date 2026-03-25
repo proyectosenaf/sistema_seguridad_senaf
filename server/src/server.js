@@ -63,7 +63,14 @@ import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync
 // ✅ Search global
 import searchRoutes from "../modules/search/search.routes.js";
 
+
+
+
+
 const app = express();
+
+
+
 app.set("trust proxy", 1);
 
 // ✅ evita 304 por If-None-Match en API
@@ -339,12 +346,14 @@ app.use(async (req, _res, next) => {
 });
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
-
 await registerIAMModule({
   app,
   basePath: "/api/iam/v1",
-  enableLegacyRedirects: true,
+  enableLegacyRedirects: false,
 });
+
+
+
 
 /* ───────────────────── ✅ CATÁLOGOS REGISTER ✅ ───────────────────── */
 
