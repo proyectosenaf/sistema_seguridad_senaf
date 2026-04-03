@@ -259,7 +259,7 @@ app.use((req, _res, next) => {
 /* ───────────────────── ✅ SYSTEM MODULE REGISTER ✅ ───────────────────── */
 registerSystemModule(app);
 bootSystemModule();
-startBackupsCron();
+/**startBackupsCron();*/
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 
