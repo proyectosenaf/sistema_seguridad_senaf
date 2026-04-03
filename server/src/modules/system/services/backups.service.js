@@ -70,10 +70,67 @@ function getMongorestoreBin() {
   return String(process.env.MONGORESTORE_BIN || "mongorestore").trim();
 }
 
+function assertBinaryExists(binPath, label) {
+  if (!binPath) {
+    throw makeError(`No se configuró la ruta de ${label}.`, 500);
+  }
+
+  const looksLikePath =
+    binPath.includes("/") || binPath.includes("\\") || binPath.startsWith(".");
+
+  if (looksLikePath && !fs.existsSync(binPath)) {
+    throw makeError(
+      `No se encontró el ejecutable de ${label} en la ruta: ${binPath}`,
+      500
+    );
+  }
+}
+
+function sanitizeToolOutput(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const filtered = lines.filter((line) => {
+    const lower = line.toLowerCase();
+
+    if (
+      lower.includes("warning: on some systems, a password provided directly") ||
+      lower.includes("consider omitting the password to provide it via stdin") ||
+      lower.includes("using the --config option to specify a configuration file")
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return filtered.join("\n").trim();
+}
+
+function buildFriendlyCommandError(command, code, stdout, stderr) {
+  const cleanedStdout = sanitizeToolOutput(stdout);
+  const cleanedStderr = sanitizeToolOutput(stderr);
+  const details = cleanedStderr || cleanedStdout;
+
+  if (details) {
+    return makeError(`Falló la ejecución de ${command}. ${details}`, 500);
+  }
+
+  return makeError(
+    `El comando ${command} terminó con código ${code}.`,
+    500
+  );
+}
+
 function runCommand(command, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      shell: process.platform === "win32",
+      shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -101,20 +158,13 @@ function runCommand(command, args = []) {
     child.on("close", (code) => {
       if (code === 0) {
         resolve({
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
+          stdout: sanitizeToolOutput(stdout),
+          stderr: sanitizeToolOutput(stderr),
         });
         return;
       }
 
-      reject(
-        makeError(
-          stderr?.trim() ||
-            stdout?.trim() ||
-            `El comando ${command} terminó con código ${code}.`,
-          500
-        )
-      );
+      reject(buildFriendlyCommandError(command, code, stdout, stderr));
     });
   });
 }
@@ -130,6 +180,9 @@ export async function createBackup() {
   const mongoUri = getMongoUri();
   const baseDir = ensureBackupDir();
   const mongodumpBin = getMongodumpBin();
+
+  assertBinaryExists(mongodumpBin, "mongodump");
+
   const name = buildBackupName("senaf-backup");
   const fullPath = path.join(baseDir, name);
 
@@ -199,6 +252,8 @@ export async function restoreBackup(name) {
   const mongoUri = getMongoUri();
   const filePath = getBackupFilePath(safeName);
   const mongorestoreBin = getMongorestoreBin();
+
+  assertBinaryExists(mongorestoreBin, "mongorestore");
 
   await runCommand(mongorestoreBin, [
     `--uri=${mongoUri}`,

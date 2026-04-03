@@ -242,8 +242,6 @@ async function createUserSession({ user, req, sessionId, jwtId }) {
   const userAgent = req.get("user-agent") || "";
   const adminLike = isAdminLikeUser(user);
 
-  // Solo usuarios normales: una sesión activa.
-  // Admin/superadmin pueden mantener varias sesiones simultáneas.
   if (!adminLike) {
     await IamSession.updateMany(
       {
@@ -389,6 +387,20 @@ function verifyPwResetToken(token) {
   }
 
   return decoded;
+}
+
+function buildMustChangePasswordResponse(user) {
+  const resetToken = signPwResetToken({
+    email: user.email,
+    userId: user._id,
+  });
+
+  return {
+    ok: true,
+    mustChangePassword: true,
+    resetToken,
+    email: user.email,
+  };
 }
 
 /* =========================================================
@@ -668,6 +680,23 @@ async function loginOtpHandler(req, res) {
     : !!user.mustChangePassword || isPasswordExpired(user);
 
   if (!otpEnabled) {
+    if (mustChange) {
+      await logIamEvent(req, {
+        accion: "PASSWORD_RESET_REQUIRED",
+        entidad: "IamUser",
+        entidadId: String(user._id),
+        user,
+        titulo: "Cambio de contraseña requerido sin OTP",
+        descripcion: `El usuario ${user.email} debe cambiar su contraseña antes de continuar.`,
+        estado: "Pendiente",
+        prioridad: "Media",
+        source: "iam-password",
+        nombre: user.name || user.email,
+      });
+
+      return res.json(buildMustChangePasswordResponse(user));
+    }
+
     const sessionId = crypto.randomUUID();
 
     const token = signLocalJwt(
@@ -702,7 +731,7 @@ async function loginOtpHandler(req, res) {
       nombre: user.name || user.email,
       after: {
         email: user.email,
-        mustChangePassword: mustChange,
+        mustChangePassword: false,
         otpRequired: false,
       },
     });
@@ -711,7 +740,7 @@ async function loginOtpHandler(req, res) {
       ok: true,
       otpRequired: false,
       token,
-      mustChangePassword: mustChange,
+      mustChangePassword: false,
     });
   }
 
@@ -1298,11 +1327,6 @@ async function verifyOtpHandler(req, res) {
     : !!user.mustChangePassword || isPasswordExpired(user);
 
   if (mustChange) {
-    const resetToken = signPwResetToken({
-      email: user.email,
-      userId: user._id,
-    });
-
     await logIamEvent(req, {
       accion: "PASSWORD_RESET_REQUIRED",
       entidad: "IamUser",
@@ -1316,7 +1340,7 @@ async function verifyOtpHandler(req, res) {
       nombre: user.name || user.email,
     });
 
-    return res.json({ ok: true, mustChangePassword: true, resetToken });
+    return res.json(buildMustChangePasswordResponse(user));
   }
 
   const sessionId = crypto.randomUUID();

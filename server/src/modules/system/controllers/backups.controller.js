@@ -87,6 +87,14 @@ function getErrorStatus(error) {
   return error?.status || error?.statusCode || 500;
 }
 
+function sanitizeBackupForResponse(result = {}) {
+  return {
+    name: result?.name || "",
+    size: Number(result?.size || 0),
+    createdAt: result?.createdAt || null,
+  };
+}
+
 export async function createBackupHandler(req, res) {
   try {
     const result = await backupsService.createBackup();
@@ -107,7 +115,7 @@ export async function createBackupHandler(req, res) {
     return res.json({
       ok: true,
       message: "Respaldo generado correctamente.",
-      data: result,
+      data: sanitizeBackupForResponse(result),
     });
   } catch (error) {
     return res.status(getErrorStatus(error)).json({

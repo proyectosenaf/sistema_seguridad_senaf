@@ -12,10 +12,6 @@ import fs from "node:fs";
 
 import { registerSystemModule, bootSystemModule } from "./modules/system/index.js";
 
-// Importando el middleware para forzar cambio de contraseña
-import forcePasswordChange from "./middleware/forcePasswordChange.js";
-// (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo)
-
 // ✅ AUTH LOCAL (JWT HS256) – centralizado en IAM utils
 import { makeAuthMw } from "../modules/iam/utils/auth.util.js";
 
@@ -27,6 +23,9 @@ import iamOtpAuthRoutes from "../modules/iam/routes/auth.otp.routes.js";
 
 // ✅ PASSWORD RESET PÚBLICO
 import passwordResetRoutes from "../modules/iam/routes/password-reset.routes.js";
+
+// ✅ Force change password
+import forcePasswordChange from "./middleware/forcePasswordChange.js";
 
 // Core de notificaciones
 import { makeNotifier } from "./core/notify.js";
@@ -252,7 +251,6 @@ app.use((req, _res, next) => {
 /* ───────────────────── ✅ SYSTEM MODULE REGISTER ✅ ───────────────────── */
 
 registerSystemModule(app);
-bootSystemModule();
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 
@@ -292,6 +290,8 @@ try {
   console.error("[IAM] error sincronizando permisos:", e?.message || e);
 }
 
+bootSystemModule();
+
 /* ─────────────────── Auth opcional (GLOBAL) ──────────────────── */
 
 const requireAuth = makeAuthMw();
@@ -308,18 +308,44 @@ function optionalAuth(req, res, next) {
 }
 app.use(optionalAuth);
 
+function readClaimArray(payload, ...keys) {
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string" && value.trim()) return [value.trim()];
+  }
+  return [];
+}
+
+function readClaimObject(payload, ...keys) {
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  }
+  return {};
+}
+
 function attachAuthUser(req, _res, next) {
   if (req?.auth?.payload) {
+    const payload = req.auth.payload;
+
     req.user = {
-      sub: req.auth.payload.sub || null,
-      email: req.auth.payload.email || null,
-      name: req.auth.payload.name || null,
-      provider: req.auth.payload.provider || "local",
+      sub: payload.sub || null,
+      email: payload.email || null,
+      name: payload.name || null,
+      provider: payload.provider || "local",
+      roles: readClaimArray(payload, "roles", "role", "https://senaf/roles"),
+      perms: readClaimArray(payload, "perms", "permissions", "https://senaf/perms"),
+      can: readClaimObject(payload, "can", "https://senaf/can"),
     };
   }
   next();
 }
 app.use(attachAuthUser);
+
+/* ─────────────────── Force change password ──────────────────── */
+
+app.use(forcePasswordChange);
 
 /**
  * ✅ Construye req.iam solo cuando realmente hay identidad.
@@ -1194,4 +1220,4 @@ process.on("unhandledRejection", (err) =>
 );
 process.on("uncaughtException", (err) =>
   console.error("[api] UncaughtException:", err)
-);
+);   

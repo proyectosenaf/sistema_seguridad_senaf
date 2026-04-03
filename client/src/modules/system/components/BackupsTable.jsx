@@ -3,14 +3,26 @@ import { Download, RotateCcw, Trash2 } from "lucide-react";
 
 function formatBytes(bytes = 0) {
   if (!bytes) return "0 B";
+
   const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
+  let value = Number(bytes);
   let unit = 0;
+
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit += 1;
   }
+
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+
+  return d.toLocaleString();
 }
 
 export default function BackupsTable({
@@ -57,9 +69,7 @@ export default function BackupsTable({
                   style={{ borderColor: "var(--border)" }}
                 >
                   <td className="px-4 py-3 font-medium">{item.name}</td>
-                  <td className="px-4 py-3">
-                    {new Date(item.createdAt).toLocaleString()}
-                  </td>
+                  <td className="px-4 py-3">{formatDate(item.createdAt)}</td>
                   <td className="px-4 py-3">{formatBytes(item.size)}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
@@ -73,7 +83,7 @@ export default function BackupsTable({
                         Descargar
                       </button>
 
-                      {canRestore && (
+                      {canRestore ? (
                         <button
                           type="button"
                           onClick={() => onRestore?.(item.name)}
@@ -83,9 +93,9 @@ export default function BackupsTable({
                           <RotateCcw size={15} />
                           Restaurar
                         </button>
-                      )}
+                      ) : null}
 
-                      {canDelete && (
+                      {canDelete ? (
                         <button
                           type="button"
                           onClick={() => onDelete?.(item.name)}
@@ -95,7 +105,7 @@ export default function BackupsTable({
                           <Trash2 size={15} />
                           Eliminar
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   </td>
                 </tr>

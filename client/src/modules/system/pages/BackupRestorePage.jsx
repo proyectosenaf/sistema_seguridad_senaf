@@ -29,6 +29,7 @@ export default function BackupRestorePage() {
   const [busy, setBusy] = useState(false);
   const [backups, setBackups] = useState([]);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [restoreTarget, setRestoreTarget] = useState("");
 
   const currentUser = useMemo(() => readStoredUser(), []);
@@ -47,13 +48,17 @@ export default function BackupRestorePage() {
     try {
       setError("");
       setLoading(true);
+
       const res = await systemApi.listBackups();
       setBackups(Array.isArray(res?.data) ? res.data : []);
     } catch (err) {
       setError(
         err?.response?.data?.message || "No se pudieron cargar los respaldos."
       );
-      console.error("[BackupRestorePage] loadBackups error:", err?.response?.data || err);
+      console.error(
+        "[BackupRestorePage] loadBackups error:",
+        err?.response?.data || err
+      );
     } finally {
       setLoading(false);
     }
@@ -65,9 +70,15 @@ export default function BackupRestorePage() {
     try {
       setBusy(true);
       setError("");
-      await systemApi.createBackup();
+      setSuccessMessage("");
+
+      const res = await systemApi.createBackup();
+
       await loadBackups();
-      window.alert("Respaldo generado correctamente.");
+
+      setSuccessMessage(
+        res?.message || "Respaldo generado correctamente."
+      );
     } catch (err) {
       setError(
         err?.response?.data?.message || "No se pudo generar el respaldo."
@@ -81,6 +92,7 @@ export default function BackupRestorePage() {
     try {
       setBusy(true);
       setError("");
+      setSuccessMessage("");
 
       const blob = await systemApi.downloadBackup(name);
       const url = window.URL.createObjectURL(blob);
@@ -110,8 +122,14 @@ export default function BackupRestorePage() {
       try {
         setBusy(true);
         setError("");
-        await systemApi.deleteBackup(name);
+        setSuccessMessage("");
+
+        const res = await systemApi.deleteBackup(name);
         await loadBackups();
+
+        setSuccessMessage(
+          res?.message || "Respaldo eliminado correctamente."
+        );
       } catch (err) {
         setError(
           err?.response?.data?.message || "No se pudo eliminar el respaldo."
@@ -129,9 +147,14 @@ export default function BackupRestorePage() {
     try {
       setBusy(true);
       setError("");
-      await systemApi.restoreBackup(restoreTarget);
+      setSuccessMessage("");
+
+      const res = await systemApi.restoreBackup(restoreTarget);
       setRestoreTarget("");
-      window.alert("Respaldo restaurado correctamente.");
+
+      setSuccessMessage(
+        res?.message || "Respaldo restaurado correctamente."
+      );
     } catch (err) {
       setError(
         err?.response?.data?.message || "No se pudo restaurar el respaldo."
@@ -182,6 +205,15 @@ export default function BackupRestorePage() {
           style={{ borderColor: "var(--border)" }}
         >
           {error}
+        </div>
+      ) : null}
+
+      {!error && successMessage ? (
+        <div
+          className="rounded-xl border px-4 py-3 text-sm text-emerald-400"
+          style={{ borderColor: "var(--border)" }}
+        >
+          {successMessage}
         </div>
       ) : null}
 
