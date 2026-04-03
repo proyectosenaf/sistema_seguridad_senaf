@@ -4,7 +4,7 @@
   "type": "module",
   "main": "src/server.js",
   "engines": {
-    "node": "20.x"
+    "node": ">=18.17"
   },
   "scripts": {
     "dev": "cross-env NODE_ENV=development PORT=4000 API_PORT=4000 IAM_DEV_ALLOW_ALL=1 nodemon --ext js,mjs,cjs,json --signal SIGTERM src/server.js",
