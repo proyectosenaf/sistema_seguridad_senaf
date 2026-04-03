@@ -1,37 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { getBackupBaseDir, buildBackupName } from "../utils/backupPaths.js";
-
-const execAsync = promisify(exec);
-
-function getMongoTools() {
-  return {
-    mongodump: process.env.MONGODUMP_BIN || "mongodump",
-    mongorestore: process.env.MONGORESTORE_BIN || "mongorestore",
-  };
-}
-
-function getMongoUri() {
-  return process.env.MONGO_URI || process.env.MONGODB_URI || "";
-}
-
-function assertMongoUri() {
-  if (!getMongoUri()) {
-    const error = new Error("MONGO_URI/MONGODB_URI no está configurada.");
-    error.status = 500;
-    throw error;
-  }
-}
-
-function assertRestoreEnabled() {
-  if (String(process.env.ENABLE_BACKUP_RESTORE).toLowerCase() !== "true") {
-    const error = new Error("La restauración está deshabilitada en este entorno.");
-    error.status = 403;
-    throw error;
-  }
-}
+import { getBackupBaseDir } from "../utils/backupPaths.js";
 
 function assertSafeFileName(name) {
   if (
@@ -58,26 +27,11 @@ function ensureBackupDir() {
 }
 
 export async function createBackup() {
-  assertMongoUri();
-
-  const mongoUri = getMongoUri();
-  const { mongodump } = getMongoTools();
-  const baseDir = ensureBackupDir();
-  const backupName = `${buildBackupName()}.gz`;
-  const archivePath = path.join(baseDir, backupName);
-
-  const command = `"${mongodump}" --uri="${mongoUri}" --archive="${archivePath}" --gzip`;
-
-  await execAsync(command);
-
-  const stats = fs.statSync(archivePath);
-
-  return {
-    name: backupName,
-    path: archivePath,
-    size: stats.size,
-    createdAt: stats.birthtime || stats.mtime,
-  };
+  const error = new Error(
+    "La creación de respaldos automáticos con mongodump ha sido deshabilitada en este entorno."
+  );
+  error.status = 501;
+  throw error;
 }
 
 export function listBackups() {
@@ -114,24 +68,12 @@ export function getBackupFilePath(name) {
   return fullPath;
 }
 
-export async function restoreBackup(name) {
-  assertRestoreEnabled();
-  assertMongoUri();
-  assertSafeFileName(name);
-
-  const mongoUri = getMongoUri();
-  const { mongorestore } = getMongoTools();
-  const filePath = getBackupFilePath(name);
-
-  const command = `"${mongorestore}" --uri="${mongoUri}" --archive="${filePath}" --gzip --drop`;
-
-  await execAsync(command);
-
-  return {
-    restored: true,
-    name,
-    restoredAt: new Date().toISOString(),
-  };
+export async function restoreBackup() {
+  const error = new Error(
+    "La restauración automática con mongorestore ha sido deshabilitada en este entorno."
+  );
+  error.status = 501;
+  throw error;
 }
 
 export function deleteBackup(name) {
