@@ -2,6 +2,7 @@ FROM node:18-bullseye
 
 WORKDIR /app
 
+# Instalar herramientas necesarias + MongoDB Database Tools
 RUN apt-get update \
   && apt-get install -y curl gnupg ca-certificates \
   && mkdir -p /etc/apt/keyrings \
@@ -13,9 +14,11 @@ RUN apt-get update \
   && apt-get install -y mongodb-database-tools \
   && rm -rf /var/lib/apt/lists/*
 
+# Instalar dependencias del backend
 COPY package*.json ./
 RUN npm ci --omit=dev
 
+# Copiar código
 COPY . .
 
 ENV NODE_ENV=production
