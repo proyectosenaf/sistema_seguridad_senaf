@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { UI } from "../utils/accesos.constants.js";
 import {
   sxCard,
@@ -15,7 +16,11 @@ export default function ObservacionMovimientoModal({
   onClose,
   onSave,
 }) {
+  const { t } = useTranslation();
+
   if (!open) return null;
+
+  const isEntrada = obsTipo === "ENTRADA";
 
   return (
     <div
@@ -30,7 +35,13 @@ export default function ObservacionMovimientoModal({
           className="text-base sm:text-lg font-semibold mb-3 sm:mb-4"
           style={{ color: "var(--text)" }}
         >
-          {obsTipo === "ENTRADA" ? "Registrar entrada" : "Registrar salida"}
+          {isEntrada
+            ? t("access.observationModal.registerEntry", {
+                defaultValue: "Registrar entrada",
+              })
+            : t("access.observationModal.registerExit", {
+                defaultValue: "Registrar salida",
+              })}
         </h2>
 
         <p
@@ -41,14 +52,22 @@ export default function ObservacionMovimientoModal({
         </p>
 
         <div className="space-y-2">
-          <label className="block text-sm" style={{ color: "var(--text-muted)" }}>
-            Observación
+          <label
+            className="block text-sm"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {t("access.observationModal.label", {
+              defaultValue: "Observación",
+            })}
           </label>
+
           <textarea
             className={UI.fieldInput}
             style={sxInput()}
             rows={3}
-            placeholder="Escribe una observación (opcional)"
+            placeholder={t("access.observationModal.placeholder", {
+              defaultValue: "Escribe una observación (opcional)",
+            })}
             value={obsValue}
             onChange={(e) => setObsValue(e.target.value)}
           />
@@ -61,7 +80,7 @@ export default function ObservacionMovimientoModal({
             style={sxGhostBtn()}
             onClick={onClose}
           >
-            Cancelar
+            {t("actions.cancel", { defaultValue: "Cancelar" })}
           </button>
 
           <button
@@ -70,7 +89,7 @@ export default function ObservacionMovimientoModal({
             style={sxSuccessBtn()}
             onClick={onSave}
           >
-            Guardar
+            {t("actions.save", { defaultValue: "Guardar" })}
           </button>
         </div>
       </div>

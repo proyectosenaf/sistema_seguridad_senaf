@@ -15,6 +15,16 @@ export const permisosCanonicos = {
   "iam.permissions.manage": "Usuarios y Roles • Gestionar permisos",
 
   // ======================
+  // SYSTEM / RESPALDO Y RESTAURACIÓN
+  // ======================
+  "system.backups.read": "Respaldo y Restauración • Ver respaldos",
+  "system.backups.create": "Respaldo y Restauración • Generar respaldos",
+  "system.backups.restore": "Respaldo y Restauración • Restaurar respaldos",
+  "system.backups.download": "Respaldo y Restauración • Descargar respaldos",
+  "system.backups.delete": "Respaldo y Restauración • Eliminar respaldos",
+  "system.backups.schedule": "Respaldo y Restauración • Gestionar programación de respaldos",
+
+  // ======================
   // RONDAS QR
   // ======================
   "rondasqr.assignments.read": "Rondas QR • Asignaciones (ver)",
@@ -140,6 +150,11 @@ export const LEGACY_PERMISSION_ALIASES = {
   "iam.roles.manage": "iam.roles.write",
   "iam.audit.view": "iam.audit.read",
 
+  // System / Backups legacy
+  "system.backups.view": "system.backups.read",
+  "system.backups.manage": "system.backups.create",
+  "system.backups.remove": "system.backups.delete",
+
   // Rondas QR legacy
   "rondasqr.view": "rondasqr.rounds.read",
   "rondasqr.create": "rondasqr.assignments.write",
@@ -201,6 +216,16 @@ export const permisosKeys = {
   "iam.users.manage": "Usuarios y Roles • Gestionar usuarios",
   "iam.roles.manage": "Usuarios y Roles • Gestionar roles",
   "iam.audit.view": "Usuarios y Roles • Ver historial (audit)",
+
+  // System / Backups legacy / compat
+  "system.backups.view": "Respaldo y Restauración • Ver respaldos",
+  "system.backups.manage": "Respaldo y Restauración • Generar respaldos",
+  "system.backups.read": "Respaldo y Restauración • Ver respaldos",
+  "system.backups.create": "Respaldo y Restauración • Generar respaldos",
+  "system.backups.restore": "Respaldo y Restauración • Restaurar respaldos",
+  "system.backups.download": "Respaldo y Restauración • Descargar respaldos",
+  "system.backups.delete": "Respaldo y Restauración • Eliminar respaldos",
+  "system.backups.schedule": "Respaldo y Restauración • Gestionar programación de respaldos",
 
   // Rondas QR legacy / compat
   "rondasqr.view": "Rondas QR • Ver lista/detalle",
@@ -366,6 +391,9 @@ export const rolesKeys = {
     "iam.users.view",
     "iam.audit.view",
 
+    "system.backups.view",
+    "system.backups.download",
+
     "rondasqr.view",
     "rondasqr.create",
     "rondasqr.edit",
@@ -477,6 +505,11 @@ export const rolesKeys = {
     "iam.users.manage",
     "iam.roles.manage",
     "iam.audit.view",
+
+    "system.backups.view",
+    "system.backups.manage",
+    "system.backups.download",
+    "system.backups.schedule",
 
     "rondasqr.view",
     "rondasqr.export",

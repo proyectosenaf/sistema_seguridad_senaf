@@ -1,4 +1,7 @@
-function Pill({ ok, disabled, onClick, okText = "Sí", noText = "No" }) {
+import React from "react";
+import { useTranslation } from "react-i18next";
+
+function Pill({ ok, disabled, onClick, okText, noText }) {
   return (
     <button
       type="button"
@@ -24,6 +27,8 @@ function Pill({ ok, disabled, onClick, okText = "Sí", noText = "No" }) {
 }
 
 export default function EnEmpresaSwitch({ value, onChange, disabled }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex items-center gap-1 sm:gap-2">
       <Pill
@@ -32,8 +37,8 @@ export default function EnEmpresaSwitch({ value, onChange, disabled }) {
         onClick={() => {
           if (!disabled) onChange(!value);
         }}
-        okText="Sí"
-        noText="No"
+        okText={t("common.yes")}
+        noText={t("common.no")}
       />
 
       <button
@@ -42,7 +47,7 @@ export default function EnEmpresaSwitch({ value, onChange, disabled }) {
         onClick={() => {
           if (!disabled) onChange(!value);
         }}
-        title="Cambiar estado de En Empresa"
+        title={t("access.changeInCompanyStatus")}
         className="focus:outline-none"
         style={{ cursor: disabled ? "not-allowed" : "pointer" }}
       >

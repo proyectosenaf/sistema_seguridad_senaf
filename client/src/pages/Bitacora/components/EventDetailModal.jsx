@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import Pill from "./Pill";
 import {
   estadoTone,
@@ -6,9 +7,17 @@ import {
   prioridadTone,
 } from "../utils/bitacora.formatters";
 
-function pretty(value) {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "Sí" : "No";
+function pretty(value, t) {
+  if (value === null || value === undefined || value === "") {
+    return t("bitacora.eventDetail.empty", { defaultValue: "—" });
+  }
+
+  if (typeof value === "boolean") {
+    return value
+      ? t("common.yes", { defaultValue: "Sí" })
+      : t("common.no", { defaultValue: "No" });
+  }
+
   if (typeof value === "number") return String(value);
 
   if (typeof value === "string") {
@@ -26,9 +35,17 @@ function pretty(value) {
   }
 }
 
-function rawValue(value) {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "Sí" : "No";
+function rawValue(value, t) {
+  if (value === null || value === undefined || value === "") {
+    return t("bitacora.eventDetail.empty", { defaultValue: "—" });
+  }
+
+  if (typeof value === "boolean") {
+    return value
+      ? t("common.yes", { defaultValue: "Sí" })
+      : t("common.no", { defaultValue: "No" });
+  }
+
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return value;
 
@@ -67,9 +84,9 @@ function downloadTextFile(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function buildPdfHtml(view) {
+function buildPdfHtml(view, t) {
   const esc = (v) =>
-    String(v ?? "—")
+    String(v ?? t("bitacora.eventDetail.empty", { defaultValue: "—" }))
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -78,7 +95,7 @@ function buildPdfHtml(view) {
   const row = (label, value) => `
     <div class="item">
       <div class="label">${esc(label)}</div>
-      <div class="value">${esc(rawValue(value))}</div>
+      <div class="value">${esc(rawValue(value, t))}</div>
     </div>
   `;
 
@@ -86,17 +103,25 @@ function buildPdfHtml(view) {
     <section class="section">
       <div class="section-title">${esc(title)}</div>
       <pre>${esc(
-        typeof data === "string" ? data : JSON.stringify(data ?? "—", null, 2)
+        typeof data === "string"
+          ? data
+          : JSON.stringify(
+              data ?? t("bitacora.eventDetail.empty", { defaultValue: "—" }),
+              null,
+              2
+            )
       )}</pre>
     </section>
   `;
 
   return `
     <!doctype html>
-    <html lang="es">
+    <html lang="${esc(i18nLangFromT(t))}">
       <head>
         <meta charset="utf-8" />
-        <title>Detalle del Evento</title>
+        <title>${esc(
+          t("bitacora.eventDetail.title", { defaultValue: "Detalle del Evento" })
+        )}</title>
         <style>
           @page { size: A4; margin: 18mm; }
           body {
@@ -168,64 +193,190 @@ function buildPdfHtml(view) {
         </style>
       </head>
       <body>
-        <h1>Detalle del Evento</h1>
-        <div class="subtitle">Vista completa de auditoría y trazabilidad</div>
+        <h1>${esc(
+          t("bitacora.eventDetail.title", { defaultValue: "Detalle del Evento" })
+        )}</h1>
+        <div class="subtitle">${esc(
+          t("bitacora.eventDetail.subtitle", {
+            defaultValue: "Vista completa de auditoría y trazabilidad",
+          })
+        )}</div>
 
         <div class="grid">
-          ${row("Fecha y Hora", view.fecha)}
-          ${row("Módulo", view.modulo)}
-          ${row("Tipo", view.tipo)}
-          ${row("Acción", view.accion)}
-          ${row("Agente", view.agente)}
-          ${row("Actor", view.actorEmail || view.nombre)}
-          ${row("Rol del actor", view.actorRol)}
-          ${row("Turno", view.turno)}
-          ${row("Entidad", view.entidad)}
-          ${row("ID Entidad", view.entidadId)}
-          ${row("IP", view.ip)}
-          ${row("Source", view.source)}
-          ${row("Prioridad", view.prioridad)}
-          ${row("Estado", view.estado)}
-          ${row("Nombre relacionado", view.nombre)}
-          ${row("Empresa / Zona", view.empresa)}
-          ${row("Actor ID", view.actorId)}
-          ${row("User Agent", view.userAgent)}
-          ${row("Archivado", view.archived ? "Sí" : "No")}
-          ${row("Archivado por", view.archivedBy)}
-          ${row("Fecha archivado", view.archivedAt)}
-          ${row("Visible", view.visible ? "Sí" : "No")}
+          ${row(
+            t("bitacora.eventDetail.fields.dateTime", {
+              defaultValue: "Fecha y Hora",
+            }),
+            view.fecha
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.module", {
+              defaultValue: "Módulo",
+            }),
+            view.modulo
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.type", { defaultValue: "Tipo" }),
+            view.tipo
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.action", { defaultValue: "Acción" }),
+            view.accion
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.agent", { defaultValue: "Agente" }),
+            view.agente
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.actor", { defaultValue: "Actor" }),
+            view.actorEmail || view.nombre
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.actorRole", {
+              defaultValue: "Rol del actor",
+            }),
+            view.actorRol
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.shift", { defaultValue: "Turno" }),
+            view.turno
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.entity", {
+              defaultValue: "Entidad",
+            }),
+            view.entidad
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.entityId", {
+              defaultValue: "ID Entidad",
+            }),
+            view.entidadId
+          )}
+          ${row(t("bitacora.eventDetail.fields.ip", { defaultValue: "IP" }), view.ip)}
+          ${row(
+            t("bitacora.eventDetail.fields.source", { defaultValue: "Source" }),
+            view.source
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.priority", {
+              defaultValue: "Prioridad",
+            }),
+            view.prioridad
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.status", { defaultValue: "Estado" }),
+            view.estado
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.relatedName", {
+              defaultValue: "Nombre relacionado",
+            }),
+            view.nombre
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.companyZone", {
+              defaultValue: "Empresa / Zona",
+            }),
+            view.empresa
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.actorId", {
+              defaultValue: "Actor ID",
+            }),
+            view.actorId
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.userAgent", {
+              defaultValue: "User Agent",
+            }),
+            view.userAgent
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.archived", {
+              defaultValue: "Archivado",
+            }),
+            view.archived
+              ? t("common.yes", { defaultValue: "Sí" })
+              : t("common.no", { defaultValue: "No" })
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.archivedBy", {
+              defaultValue: "Archivado por",
+            }),
+            view.archivedBy
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.archivedAt", {
+              defaultValue: "Fecha archivado",
+            }),
+            view.archivedAt
+          )}
+          ${row(
+            t("bitacora.eventDetail.fields.visible", {
+              defaultValue: "Visible",
+            }),
+            view.visible
+              ? t("common.yes", { defaultValue: "Sí" })
+              : t("common.no", { defaultValue: "No" })
+          )}
         </div>
 
         <section class="section">
-          <div class="section-title">Título</div>
-          <div class="section-body">${esc(rawValue(view.titulo))}</div>
+          <div class="section-title">${esc(
+            t("bitacora.eventDetail.sections.title", { defaultValue: "Título" })
+          )}</div>
+          <div class="section-body">${esc(rawValue(view.titulo, t))}</div>
         </section>
 
         <section class="section">
-          <div class="section-title">Descripción</div>
-          <div class="section-body">${esc(rawValue(view.descripcion))}</div>
+          <div class="section-title">${esc(
+            t("bitacora.eventDetail.sections.description", {
+              defaultValue: "Descripción",
+            })
+          )}</div>
+          <div class="section-body">${esc(rawValue(view.descripcion, t))}</div>
         </section>
 
         ${
           view.meta && typeof view.meta === "object"
-            ? jsonBlock("Meta", view.meta)
+            ? jsonBlock(
+                t("bitacora.eventDetail.sections.meta", {
+                  defaultValue: "Meta",
+                }),
+                view.meta
+              )
             : ""
         }
 
         ${
           view.before !== undefined && view.before !== null && view.before !== ""
-            ? jsonBlock("Before", view.before)
+            ? jsonBlock(
+                t("bitacora.eventDetail.sections.before", {
+                  defaultValue: "Before",
+                }),
+                view.before
+              )
             : ""
         }
 
         ${
           view.after !== undefined && view.after !== null && view.after !== ""
-            ? jsonBlock("After", view.after)
+            ? jsonBlock(
+                t("bitacora.eventDetail.sections.after", {
+                  defaultValue: "After",
+                }),
+                view.after
+              )
             : ""
         }
       </body>
     </html>
   `;
+}
+
+function i18nLangFromT(t) {
+  return t?.i18n?.language || "es";
 }
 
 function exportEventJson(view) {
@@ -248,8 +399,8 @@ function exportEventJson(view) {
   );
 }
 
-function exportEventPdf(view) {
-  const html = buildPdfHtml(view);
+function exportEventPdf(view, t) {
+  const html = buildPdfHtml(view, t);
 
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
@@ -265,7 +416,11 @@ function exportEventPdf(view) {
   const doc = iframe.contentWindow?.document;
   if (!doc || !iframe.contentWindow) {
     document.body.removeChild(iframe);
-    alert("No se pudo generar el PDF.");
+    alert(
+      t("bitacora.eventDetail.errors.pdfFailed", {
+        defaultValue: "No se pudo generar el PDF.",
+      })
+    );
     return;
   }
 
@@ -279,7 +434,11 @@ function exportEventPdf(view) {
       iframe.contentWindow.print();
     } catch (err) {
       console.error("Error imprimiendo PDF:", err);
-      alert("No se pudo generar el PDF.");
+      alert(
+        t("bitacora.eventDetail.errors.pdfFailed", {
+          defaultValue: "No se pudo generar el PDF.",
+        })
+      );
     } finally {
       setTimeout(() => {
         if (iframe.parentNode) {
@@ -297,6 +456,8 @@ function exportEventPdf(view) {
 }
 
 function JsonBlock({ title, data }) {
+  const { t } = useTranslation();
+
   return (
     <div className="bitacora-modal-section">
       <div className="bitacora-modal-section-head">
@@ -304,7 +465,7 @@ function JsonBlock({ title, data }) {
       </div>
       <div className="bitacora-modal-section-body">
         <pre className="bitacora-modal-pre rounded-xl bg-black/5 p-3 text-xs leading-relaxed dark:bg-white/5">
-          {pretty(data)}
+          {pretty(data, t)}
         </pre>
       </div>
     </div>
@@ -312,10 +473,12 @@ function JsonBlock({ title, data }) {
 }
 
 function MetaItem({ label, value }) {
+  const { t } = useTranslation();
+
   return (
     <div className="bitacora-modal-card">
       <div className="bitacora-modal-label">{label}</div>
-      <div className="bitacora-modal-value">{pretty(value)}</div>
+      <div className="bitacora-modal-value">{pretty(value, t)}</div>
     </div>
   );
 }
@@ -328,6 +491,8 @@ export default function EventDetailModal({
   loading = false,
   error = "",
 }) {
+  const { t } = useTranslation();
+
   if (!view) return null;
 
   const handleClose = () => {
@@ -347,7 +512,7 @@ export default function EventDetailModal({
 
   const handleExportPdf = () => {
     if (deleting || loading || !view) return;
-    exportEventPdf(view);
+    exportEventPdf(view, t);
   };
 
   const hasBefore =
@@ -364,9 +529,15 @@ export default function EventDetailModal({
       >
         <div className="bitacora-modal-head">
           <div>
-            <div className="bitacora-modal-title">Detalle del Evento</div>
+            <div className="bitacora-modal-title">
+              {t("bitacora.eventDetail.title", {
+                defaultValue: "Detalle del Evento",
+              })}
+            </div>
             <div className="bitacora-modal-subtitle">
-              Vista completa de auditoría y trazabilidad
+              {t("bitacora.eventDetail.subtitle", {
+                defaultValue: "Vista completa de auditoría y trazabilidad",
+              })}
             </div>
           </div>
 
@@ -374,7 +545,7 @@ export default function EventDetailModal({
             type="button"
             onClick={handleClose}
             className="bitacora-modal-close"
-            aria-label="Cerrar"
+            aria-label={t("actions.close", { defaultValue: "Cerrar" })}
             disabled={deleting}
           >
             ✕
@@ -384,7 +555,9 @@ export default function EventDetailModal({
         <div className="bitacora-modal-body">
           {loading && (
             <div className="bitacora-modal-card mb-4 text-sm opacity-80">
-              Cargando detalle del evento…
+              {t("bitacora.eventDetail.loading", {
+                defaultValue: "Cargando detalle del evento…",
+              })}
             </div>
           )}
 
@@ -395,29 +568,94 @@ export default function EventDetailModal({
           )}
 
           <div className="bitacora-modal-grid">
-            <MetaItem label="Fecha y Hora" value={view.fecha} />
-            <MetaItem label="Módulo" value={view.modulo} />
-            <MetaItem label="Tipo" value={view.tipo} />
-            <MetaItem label="Acción" value={view.accion} />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.dateTime", {
+                defaultValue: "Fecha y Hora",
+              })}
+              value={view.fecha}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.module", {
+                defaultValue: "Módulo",
+              })}
+              value={view.modulo}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.type", {
+                defaultValue: "Tipo",
+              })}
+              value={view.tipo}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.action", {
+                defaultValue: "Acción",
+              })}
+              value={view.accion}
+            />
 
-            <MetaItem label="Agente" value={view.agente} />
-            <MetaItem label="Actor" value={view.actorEmail || view.nombre} />
-            <MetaItem label="Rol del actor" value={view.actorRol} />
-            <MetaItem label="Turno" value={view.turno} />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.agent", {
+                defaultValue: "Agente",
+              })}
+              value={view.agente}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.actor", {
+                defaultValue: "Actor",
+              })}
+              value={view.actorEmail || view.nombre}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.actorRole", {
+                defaultValue: "Rol del actor",
+              })}
+              value={view.actorRol}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.shift", {
+                defaultValue: "Turno",
+              })}
+              value={view.turno}
+            />
 
-            <MetaItem label="Entidad" value={view.entidad} />
-            <MetaItem label="ID Entidad" value={view.entidadId} />
-            <MetaItem label="IP" value={view.ip} />
-            <MetaItem label="Source" value={view.source} />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.entity", {
+                defaultValue: "Entidad",
+              })}
+              value={view.entidad}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.entityId", {
+                defaultValue: "ID Entidad",
+              })}
+              value={view.entidadId}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.ip", {
+                defaultValue: "IP",
+              })}
+              value={view.ip}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.source", {
+                defaultValue: "Source",
+              })}
+              value={view.source}
+            />
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="bitacora-modal-card flex items-center justify-between gap-3">
               <div>
-                <div className="bitacora-modal-label">Prioridad</div>
+                <div className="bitacora-modal-label">
+                  {t("bitacora.eventDetail.fields.priority", {
+                    defaultValue: "Prioridad",
+                  })}
+                </div>
                 <div className="mt-1">
                   <Pill tone={prioridadTone(view.prioridad)}>
-                    {view.prioridad || "—"}
+                    {view.prioridad ||
+                      t("bitacora.eventDetail.empty", { defaultValue: "—" })}
                   </Pill>
                 </div>
               </div>
@@ -425,10 +663,15 @@ export default function EventDetailModal({
 
             <div className="bitacora-modal-card flex items-center justify-between gap-3">
               <div>
-                <div className="bitacora-modal-label">Estado</div>
+                <div className="bitacora-modal-label">
+                  {t("bitacora.eventDetail.fields.status", {
+                    defaultValue: "Estado",
+                  })}
+                </div>
                 <div className="mt-1">
                   <Pill tone={estadoTone(view.estado)}>
-                    {view.estado || "—"}
+                    {view.estado ||
+                      t("bitacora.eventDetail.empty", { defaultValue: "—" })}
                   </Pill>
                 </div>
               </div>
@@ -437,43 +680,114 @@ export default function EventDetailModal({
 
           <div className="bitacora-modal-section">
             <div className="bitacora-modal-section-head">
-              <div className="bitacora-modal-section-title">Título</div>
+              <div className="bitacora-modal-section-title">
+                {t("bitacora.eventDetail.sections.title", {
+                  defaultValue: "Título",
+                })}
+              </div>
             </div>
             <div className="bitacora-modal-section-body">
               <div className="bitacora-modal-value whitespace-pre-wrap leading-relaxed">
-                {view.titulo || "—"}
+                {view.titulo ||
+                  t("bitacora.eventDetail.empty", { defaultValue: "—" })}
               </div>
             </div>
           </div>
 
           <div className="bitacora-modal-section">
             <div className="bitacora-modal-section-head">
-              <div className="bitacora-modal-section-title">Descripción</div>
+              <div className="bitacora-modal-section-title">
+                {t("bitacora.eventDetail.sections.description", {
+                  defaultValue: "Descripción",
+                })}
+              </div>
             </div>
             <div className="bitacora-modal-section-body">
               <div className="whitespace-pre-wrap leading-relaxed text-[15px] text-[var(--text)]">
-                {view.descripcion || "—"}
+                {view.descripcion ||
+                  t("bitacora.eventDetail.empty", { defaultValue: "—" })}
               </div>
             </div>
           </div>
 
           <div className="mt-4 bitacora-modal-grid">
-            <MetaItem label="Nombre relacionado" value={view.nombre} />
-            <MetaItem label="Empresa / Zona" value={view.empresa} />
-            <MetaItem label="Actor ID" value={view.actorId} />
-            <MetaItem label="User Agent" value={view.userAgent} />
-            <MetaItem label="Archivado" value={view.archived ? "Sí" : "No"} />
-            <MetaItem label="Archivado por" value={view.archivedBy} />
-            <MetaItem label="Fecha archivado" value={view.archivedAt} />
-            <MetaItem label="Visible" value={view.visible} />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.relatedName", {
+                defaultValue: "Nombre relacionado",
+              })}
+              value={view.nombre}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.companyZone", {
+                defaultValue: "Empresa / Zona",
+              })}
+              value={view.empresa}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.actorId", {
+                defaultValue: "Actor ID",
+              })}
+              value={view.actorId}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.userAgent", {
+                defaultValue: "User Agent",
+              })}
+              value={view.userAgent}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.archived", {
+                defaultValue: "Archivado",
+              })}
+              value={
+                view.archived
+                  ? t("common.yes", { defaultValue: "Sí" })
+                  : t("common.no", { defaultValue: "No" })
+              }
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.archivedBy", {
+                defaultValue: "Archivado por",
+              })}
+              value={view.archivedBy}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.archivedAt", {
+                defaultValue: "Fecha archivado",
+              })}
+              value={view.archivedAt}
+            />
+            <MetaItem
+              label={t("bitacora.eventDetail.fields.visible", {
+                defaultValue: "Visible",
+              })}
+              value={view.visible}
+            />
           </div>
 
-          {hasMeta && <JsonBlock title="Meta" data={view.meta} />}
+          {hasMeta && (
+            <JsonBlock
+              title={t("bitacora.eventDetail.sections.meta", {
+                defaultValue: "Meta",
+              })}
+              data={view.meta}
+            />
+          )}
 
           {(hasBefore || hasAfter) && (
             <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <JsonBlock title="Before" data={view.before} />
-              <JsonBlock title="After" data={view.after} />
+              <JsonBlock
+                title={t("bitacora.eventDetail.sections.before", {
+                  defaultValue: "Before",
+                })}
+                data={view.before}
+              />
+              <JsonBlock
+                title={t("bitacora.eventDetail.sections.after", {
+                  defaultValue: "After",
+                })}
+                data={view.after}
+              />
             </div>
           )}
 
@@ -484,7 +798,7 @@ export default function EventDetailModal({
               disabled={deleting}
               className="bitacora-modal-btn disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Cerrar
+              {t("actions.close", { defaultValue: "Cerrar" })}
             </button>
 
             <button
@@ -493,7 +807,9 @@ export default function EventDetailModal({
               disabled={deleting || loading}
               className="bitacora-modal-btn disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Exportar PDF
+              {t("bitacora.eventDetail.actions.exportPdf", {
+                defaultValue: "Exportar PDF",
+              })}
             </button>
 
             <button
@@ -502,7 +818,9 @@ export default function EventDetailModal({
               disabled={deleting || loading}
               className="bitacora-modal-btn disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Exportar JSON
+              {t("bitacora.eventDetail.actions.exportJson", {
+                defaultValue: "Exportar JSON",
+              })}
             </button>
 
             <button
@@ -511,7 +829,13 @@ export default function EventDetailModal({
               disabled={deleting}
               className="bitacora-modal-btn bitacora-modal-btn--danger disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {deleting ? "Archivando..." : "Archivar"}
+              {deleting
+                ? t("bitacora.eventDetail.actions.archiving", {
+                    defaultValue: "Archivando...",
+                  })
+                : t("bitacora.eventDetail.actions.archive", {
+                    defaultValue: "Archivar",
+                  })}
             </button>
           </div>
         </div>

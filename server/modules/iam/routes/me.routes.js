@@ -274,6 +274,22 @@ function buildRouteRules() {
       ],
     },
 
+    "nav.system": {
+      anyOf: [
+        "system.backups.read",
+        "system.backups.create",
+        "system.backups.restore",
+        "system.backups.download",
+        "system.backups.delete",
+
+        // aliases legacy
+        "system.backups.view",
+        "system.backups.manage",
+        "system.backups.remove",
+        "*",
+      ],
+    },
+
     "iam.admin": {
       anyOf: [
         "iam.users.read",
@@ -481,6 +497,44 @@ function buildRouteRules() {
         "*",
       ],
     },
+
+    "system.backups.read": {
+      anyOf: [
+        "system.backups.read",
+        "system.backups.view",
+        "*",
+      ],
+    },
+
+    "system.backups.create": {
+      anyOf: [
+        "system.backups.create",
+        "system.backups.manage",
+        "*",
+      ],
+    },
+
+    "system.backups.restore": {
+      anyOf: [
+        "system.backups.restore",
+        "*",
+      ],
+    },
+
+    "system.backups.download": {
+      anyOf: [
+        "system.backups.download",
+        "*",
+      ],
+    },
+
+    "system.backups.delete": {
+      anyOf: [
+        "system.backups.delete",
+        "system.backups.remove",
+        "*",
+      ],
+    },
   };
 }
 
@@ -511,6 +565,25 @@ function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = fals
     Plow.has("iam.users.manage") ||
     Plow.has("iam.roles.manage");
 
+  const hasSystemBackups =
+    hasWildcard ||
+    P.has("system.backups.read") ||
+    P.has("system.backups.create") ||
+    P.has("system.backups.restore") ||
+    P.has("system.backups.download") ||
+    P.has("system.backups.delete") ||
+    P.has("system.backups.view") ||
+    P.has("system.backups.manage") ||
+    P.has("system.backups.remove") ||
+    Plow.has("system.backups.read") ||
+    Plow.has("system.backups.create") ||
+    Plow.has("system.backups.restore") ||
+    Plow.has("system.backups.download") ||
+    Plow.has("system.backups.delete") ||
+    Plow.has("system.backups.view") ||
+    Plow.has("system.backups.manage") ||
+    Plow.has("system.backups.remove");
+
   const hasRondasPanel =
     hasWildcard ||
     P.has("rondasqr.scan.execute") ||
@@ -534,6 +607,7 @@ function pickDefaultRoute({ visitor, roles = [], perms = [], isSuperAdmin = fals
     P.has("visitas.manage");
 
   if (hasIamAdmin) return "/iam/admin";
+  if (hasSystemBackups) return "/system/backups";
   if (hasRondasPanel) return "/rondasqr";
   if (hasVisitasControl) return "/visitas/control";
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthProvider.jsx";
 import { api } from "../../lib/api";
 
@@ -78,6 +79,7 @@ function sortRegistrosByFechaDesc(items = []) {
 }
 
 export default function Accesos() {
+  const { t, i18n } = useTranslation();
   const { hasPerm, isSuperAdmin } = useAuth();
 
   const canReadAccesos =
@@ -179,7 +181,11 @@ export default function Accesos() {
 
   async function handleGuardarObs() {
     if (!canWriteAccesos) {
-      alert("No tienes permiso para registrar movimientos.");
+      alert(
+        t("access.messages.noPermissionRegisterMovements", {
+          defaultValue: "No tienes permiso para registrar movimientos.",
+        })
+      );
       return;
     }
 
@@ -191,7 +197,10 @@ export default function Accesos() {
     const fechaIso = now.toISOString().slice(0, 10);
     const persona = fila?.empleado?.nombreCompleto || "";
     const placa = fila?.vehiculo?.placa || "";
-    const tipoRegistro = obsTipo === "ENTRADA" ? "Entrada" : "Salida";
+    const tipoRegistro =
+      obsTipo === "ENTRADA"
+        ? t("access.movementTypes.entry", { defaultValue: "Entrada" })
+        : t("access.movementTypes.exit", { defaultValue: "Salida" });
 
     const nuevoRegistro = {
       fechaHora,
@@ -216,7 +225,11 @@ export default function Accesos() {
 
   async function agregarRegistro(registro) {
     if (!canWriteAccesos) {
-      alert("No tienes permiso para registrar movimientos.");
+      alert(
+        t("access.messages.noPermissionRegisterMovements", {
+          defaultValue: "No tienes permiso para registrar movimientos.",
+        })
+      );
       return;
     }
 
@@ -225,7 +238,12 @@ export default function Accesos() {
     try {
       await crearRegistroManual(normalized);
     } catch (e) {
-      alert(e.message || "No se pudo registrar el movimiento manual.");
+      alert(
+        e.message ||
+          t("access.messages.manualMovementCreateError", {
+            defaultValue: "No se pudo registrar el movimiento manual.",
+          })
+      );
       return;
     }
 
@@ -272,7 +290,9 @@ export default function Accesos() {
       const stored = localStorage.getItem(MOVIMIENTOS_STORAGE_KEY);
       if (stored) {
         const arr = JSON.parse(stored);
-        setRegistros(sortRegistrosByFechaDesc(toSafeArray(arr).map(normalizeMovimientoLocal)));
+        setRegistros(
+          sortRegistrosByFechaDesc(toSafeArray(arr).map(normalizeMovimientoLocal))
+        );
       } else {
         setRegistros([]);
       }
@@ -283,7 +303,11 @@ export default function Accesos() {
         const stored = localStorage.getItem(MOVIMIENTOS_STORAGE_KEY);
         if (stored) {
           const arr = JSON.parse(stored);
-          setRegistros(sortRegistrosByFechaDesc(toSafeArray(arr).map(normalizeMovimientoLocal)));
+          setRegistros(
+            sortRegistrosByFechaDesc(
+              toSafeArray(arr).map(normalizeMovimientoLocal)
+            )
+          );
           return;
         }
       } catch {
@@ -296,7 +320,12 @@ export default function Accesos() {
 
   async function crearRegistroManual(registro) {
     if (!canWriteAccesos) {
-      throw new Error("No tienes permiso para registrar movimientos manuales");
+      throw new Error(
+        t("access.messages.noPermissionRegisterManualMovements", {
+          defaultValue:
+            "No tienes permiso para registrar movimientos manuales",
+        })
+      );
     }
 
     let fechaHoraISO = null;
@@ -373,7 +402,12 @@ export default function Accesos() {
       setRows(normalizeItems(items));
     } catch (e) {
       console.error(e);
-      setErr(e.message || "Error de red");
+      setErr(
+        e.message ||
+          t("system.networkError", {
+            defaultValue: "Error de red",
+          })
+      );
       setRows([]);
     } finally {
       setLoading(false);
@@ -391,7 +425,12 @@ export default function Accesos() {
       setVehiculosVisitas(items);
     } catch (e) {
       console.error(e);
-      setErrVehVis(e.message || "Error al cargar vehículos de visitas");
+      setErrVehVis(
+        e.message ||
+          t("access.messages.loadVisitorVehiclesError", {
+            defaultValue: "Error al cargar vehículos de visitas",
+          })
+      );
       setVehiculosVisitas([]);
     } finally {
       setLoadingVehVis(false);
@@ -440,22 +479,35 @@ export default function Accesos() {
         )
       );
 
-      alert(e.message || "Error actualizando vehículo");
+      alert(
+        e.message ||
+          t("access.messages.updateVehicleError", {
+            defaultValue: "Error actualizando vehículo",
+          })
+      );
     }
   }
 
   async function handleDeleteEmpleado(empleado) {
     if (!canDeleteAccesos) {
-      alert("No tienes permiso para eliminar empleados.");
+      alert(
+        t("access.messages.noPermissionDeleteEmployees", {
+          defaultValue: "No tienes permiso para eliminar empleados.",
+        })
+      );
       return;
     }
 
     if (!empleado?._id) return;
 
     const confirmDelete = window.confirm(
-      `¿Estás seguro de que deseas eliminar a “${
-        empleado.nombreCompleto || "este empleado"
-      }”? Esta acción no se puede deshacer.`
+      t("access.messages.confirmDeleteEmployee", {
+        defaultValue:
+          "¿Estás seguro de que deseas eliminar a “{{name}}”? Esta acción no se puede deshacer.",
+        name:
+          empleado.nombreCompleto ||
+          t("access.generic.thisEmployee", { defaultValue: "este empleado" }),
+      })
     );
     if (!confirmDelete) return;
 
@@ -463,21 +515,36 @@ export default function Accesos() {
       await api.delete(`/acceso/empleados/${empleado._id}`);
       await fetchItems();
     } catch (error) {
-      alert(error.message || "Error al eliminar el empleado");
+      alert(
+        error.message ||
+          t("access.messages.deleteEmployeeError", {
+            defaultValue: "Error al eliminar el empleado",
+          })
+      );
     }
   }
 
   async function registrarMovimientoRapido(tipo, fila) {
     if (!canWriteAccesos) {
-      alert("No tienes permiso para registrar movimientos.");
+      alert(
+        t("access.messages.noPermissionRegisterMovements", {
+          defaultValue: "No tienes permiso para registrar movimientos.",
+        })
+      );
       return;
     }
 
     const persona = fila?.empleado?.nombreCompleto || "";
     const confirmMsg =
       tipo === "ENTRADA"
-        ? `¿Registrar entrada para ${persona}?`
-        : `¿Registrar salida para ${persona}?`;
+        ? t("access.messages.confirmRegisterEntry", {
+            defaultValue: "¿Registrar entrada para {{name}}?",
+            name: persona,
+          })
+        : t("access.messages.confirmRegisterExit", {
+            defaultValue: "¿Registrar salida para {{name}}?",
+            name: persona,
+          });
 
     const ok = window.confirm(confirmMsg);
     if (!ok) return;
@@ -508,7 +575,9 @@ export default function Accesos() {
       if (e && e._id && !map.has(e._id)) map.set(e._id, e);
     });
     return Array.from(map.values()).sort((a, b) =>
-      String(a?.nombreCompleto || "").localeCompare(String(b?.nombreCompleto || ""))
+      String(a?.nombreCompleto || "").localeCompare(
+        String(b?.nombreCompleto || "")
+      )
     );
   }, [rows]);
 
@@ -540,16 +609,26 @@ export default function Accesos() {
   const registrosEntradas = useMemo(() => {
     return registrosFiltrados.filter((r) => {
       const tipo = String(r.tipo || "").toLowerCase();
-      return tipo === "entrada" || tipo === "salida";
+      return (
+        tipo === "entrada" ||
+        tipo === "salida" ||
+        tipo === t("access.movementTypes.entry", { defaultValue: "Entrada" }).toLowerCase() ||
+        tipo === t("access.movementTypes.exit", { defaultValue: "Salida" }).toLowerCase()
+      );
     });
-  }, [registrosFiltrados]);
+  }, [registrosFiltrados, t]);
 
   const registrosPermisos = useMemo(() => {
     return registrosFiltrados.filter((r) => {
       const tipo = String(r.tipo || "").toLowerCase();
-      return tipo === "permiso";
+      return (
+        tipo === "permiso" ||
+        tipo === t("access.movementTypes.permission", {
+          defaultValue: "Permiso",
+        }).toLowerCase()
+      );
     });
-  }, [registrosFiltrados]);
+  }, [registrosFiltrados, t]);
 
   const visibleRegistrosEntradas = useMemo(() => {
     if (showAllRegistros) return registrosEntradas;
@@ -569,13 +648,15 @@ export default function Accesos() {
         <div className={UI.cardSoft} style={sxCard()}>
           <div className="px-4 py-10 text-center">
             <h1 className={UI.title} style={{ color: "var(--text)" }}>
-              Control de Acceso
+              {t("nav.accesos", { defaultValue: "Control de Acceso" })}
             </h1>
             <p
               className="mt-3 text-sm"
               style={{ color: "var(--text-muted)" }}
             >
-              No tienes permisos para ver este módulo.
+              {t("access.messages.noModulePermission", {
+                defaultValue: "No tienes permisos para ver este módulo.",
+              })}
             </p>
           </div>
         </div>
@@ -585,7 +666,11 @@ export default function Accesos() {
 
   function handleExportCsv() {
     if (!canExportAccesos) {
-      alert("No tienes permiso para exportar registros.");
+      alert(
+        t("access.messages.noPermissionExportRecords", {
+          defaultValue: "No tienes permiso para exportar registros.",
+        })
+      );
       return;
     }
     exportarRegistrosCsv(registrosFiltrados);
@@ -593,7 +678,11 @@ export default function Accesos() {
 
   function handleExportPdf() {
     if (!canExportAccesos) {
-      alert("No tienes permiso para exportar registros.");
+      alert(
+        t("access.messages.noPermissionExportRecords", {
+          defaultValue: "No tienes permiso para exportar registros.",
+        })
+      );
       return;
     }
     exportarRegistrosPdf(registrosFiltrados);
@@ -603,10 +692,12 @@ export default function Accesos() {
     <div className={UI.page}>
       <div className="mb-2 sm:mb-4">
         <h1 className={UI.title} style={{ color: "var(--text)" }}>
-          Control de Acceso
+          {t("nav.accesos", { defaultValue: "Control de Acceso" })}
         </h1>
         <p className={UI.subtitle} style={{ color: "var(--text-muted)" }}>
-          Registro de personal y vehículos.
+          {t("access.subtitle", {
+            defaultValue: "Registro de personal y vehículos.",
+          })}
         </p>
       </div>
 
@@ -619,8 +710,10 @@ export default function Accesos() {
               style={sxInfoBtn()}
               onClick={() => setShowNewEmp(true)}
             >
-              <span className="text-lg sm:text-xl leading-none">＋</span> Nuevo
-              Empleado
+              <span className="text-lg sm:text-xl leading-none">＋</span>{" "}
+              {t("access.actions.newEmployee", {
+                defaultValue: "Nuevo Empleado",
+              })}
             </button>
           )}
 
@@ -631,8 +724,10 @@ export default function Accesos() {
               style={sxSuccessBtn()}
               onClick={() => setShowNewVeh(true)}
             >
-              <span className="text-lg sm:text-xl leading-none">＋</span> Nuevo
-              Vehículo
+              <span className="text-lg sm:text-xl leading-none">＋</span>{" "}
+              {t("access.actions.newVehicle", {
+                defaultValue: "Nuevo Vehículo",
+              })}
             </button>
           )}
         </div>
@@ -642,7 +737,9 @@ export default function Accesos() {
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por nombre, id persona, depto, placa…"
+            placeholder={t("access.searchPlaceholder", {
+              defaultValue: "Buscar por nombre, id persona, depto, placa…",
+            })}
             className={UI.input}
             style={sxInput()}
           />
@@ -665,8 +762,12 @@ export default function Accesos() {
               style={{ color: "var(--accent)" }}
             >
               {showAllAccesos
-                ? "Ver solo primeros 5 registros"
-                : "Ver todos los registros"}
+                ? t("access.actions.showOnlyFirst5Records", {
+                    defaultValue: "Ver solo primeros 5 registros",
+                  })
+                : t("access.actions.showAllRecords", {
+                    defaultValue: "Ver todos los registros",
+                  })}
             </button>
           )}
         </div>
@@ -676,24 +777,32 @@ export default function Accesos() {
             <thead className={UI.thead} style={sxSectionBar()}>
               <tr>
                 <th className="px-4 py-3 font-medium hidden sm:table-cell">
-                  Foto
+                  {t("access.table.photo", { defaultValue: "Foto" })}
                 </th>
-                <th className="px-4 py-3 font-medium">Nombre</th>
-                <th className="px-4 py-3 font-medium hidden md:table-cell">
-                  ID Persona
+                <th className="px-4 py-3 font-medium">
+                  {t("access.table.name", { defaultValue: "Nombre" })}
                 </th>
                 <th className="px-4 py-3 font-medium hidden md:table-cell">
-                  Depto
+                  {t("access.table.personId", { defaultValue: "ID Persona" })}
+                </th>
+                <th className="px-4 py-3 font-medium hidden md:table-cell">
+                  {t("access.table.department", { defaultValue: "Depto" })}
                 </th>
                 <th className="px-4 py-3 font-medium hidden lg:table-cell">
-                  Vehículo
+                  {t("access.table.vehicle", { defaultValue: "Vehículo" })}
                 </th>
-                <th className="px-4 py-3 font-medium">No. Placa</th>
-                <th className="px-4 py-3 font-medium">En Empresa</th>
+                <th className="px-4 py-3 font-medium">
+                  {t("access.table.plateNumber", { defaultValue: "No. Placa" })}
+                </th>
+                <th className="px-4 py-3 font-medium">
+                  {t("access.table.inCompany", { defaultValue: "En Empresa" })}
+                </th>
                 <th className="px-4 py-3 font-medium hidden sm:table-cell">
-                  Registro
+                  {t("access.table.record", { defaultValue: "Registro" })}
                 </th>
-                <th className="px-4 py-3 font-medium">Acciones</th>
+                <th className="px-4 py-3 font-medium">
+                  {t("access.table.actions", { defaultValue: "Acciones" })}
+                </th>
               </tr>
             </thead>
 
@@ -705,7 +814,7 @@ export default function Accesos() {
                     className="px-4 py-10 text-center"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Cargando…
+                    {t("system.loading", { defaultValue: "Cargando..." })}
                   </td>
                 </tr>
               )}
@@ -717,7 +826,7 @@ export default function Accesos() {
                     className="px-4 py-10 text-center"
                     style={{ color: "#dc2626" }}
                   >
-                    Error: {err}
+                    {t("system.errorLabel", { defaultValue: "Error" })}: {err}
                   </td>
                 </tr>
               )}
@@ -729,7 +838,7 @@ export default function Accesos() {
                     className="px-4 py-10 text-center"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Sin resultados.
+                    {t("system.noResults", { defaultValue: "Sin resultados." })}
                   </td>
                 </tr>
               )}
@@ -761,8 +870,15 @@ export default function Accesos() {
                           className="md:hidden text-[11px]"
                           style={{ color: "var(--text-muted)" }}
                         >
-                          {row?.empleado?.departamento || "Sin depto"} ·{" "}
-                          {row?.empleado?.id_persona || "Sin ID"}
+                          {row?.empleado?.departamento ||
+                            t("access.generic.noDepartment", {
+                              defaultValue: "Sin depto",
+                            })}{" "}
+                          ·{" "}
+                          {row?.empleado?.id_persona ||
+                            t("access.generic.noId", {
+                              defaultValue: "Sin ID",
+                            })}
                         </span>
                       </div>
                     </td>
@@ -806,7 +922,9 @@ export default function Accesos() {
                           <>
                             <button
                               type="button"
-                              title="Registrar entrada"
+                              title={t("access.actions.registerEntry", {
+                                defaultValue: "Registrar entrada",
+                              })}
                               className="px-2 py-1 rounded-lg text-[11px] sm:text-xs transition"
                               style={{
                                 background:
@@ -817,12 +935,16 @@ export default function Accesos() {
                                 registrarMovimientoRapido("ENTRADA", row)
                               }
                             >
-                              Entrada
+                              {t("access.movementTypes.entry", {
+                                defaultValue: "Entrada",
+                              })}
                             </button>
 
                             <button
                               type="button"
-                              title="Registrar salida"
+                              title={t("access.actions.registerExit", {
+                                defaultValue: "Registrar salida",
+                              })}
                               className="px-2 py-1 rounded-lg text-[11px] sm:text-xs transition"
                               style={{
                                 background:
@@ -833,7 +955,9 @@ export default function Accesos() {
                                 registrarMovimientoRapido("SALIDA", row)
                               }
                             >
-                              Salida
+                              {t("access.movementTypes.exit", {
+                                defaultValue: "Salida",
+                              })}
                             </button>
                           </>
                         )}
@@ -844,7 +968,7 @@ export default function Accesos() {
                       <div className="flex flex-wrap gap-2 items-center">
                         {canWriteAccesos && (
                           <button
-                            title="Editar empleado"
+                            title={t("actions.edit", { defaultValue: "Editar" })}
                             className="p-1.5 rounded-lg transition"
                             style={{ background: "transparent" }}
                             onClick={() => setEditEmpleado(row.empleado)}
@@ -874,7 +998,7 @@ export default function Accesos() {
 
                         {canDeleteAccesos && (
                           <button
-                            title="Eliminar empleado"
+                            title={t("actions.delete", { defaultValue: "Eliminar" })}
                             className="p-1.5 rounded-lg transition"
                             style={{ background: "transparent", color: "#dc2626" }}
                             onClick={() => handleDeleteEmpleado(row.empleado)}
@@ -910,7 +1034,9 @@ export default function Accesos() {
                             <>
                               <button
                                 type="button"
-                                title="Registrar entrada"
+                                title={t("access.actions.registerEntry", {
+                                  defaultValue: "Registrar entrada",
+                                })}
                                 className="flex-1 px-2 py-1 rounded-lg text-[11px] transition"
                                 style={{
                                   background:
@@ -921,12 +1047,16 @@ export default function Accesos() {
                                   registrarMovimientoRapido("ENTRADA", row)
                                 }
                               >
-                                Entrada
+                                {t("access.movementTypes.entry", {
+                                  defaultValue: "Entrada",
+                                })}
                               </button>
 
                               <button
                                 type="button"
-                                title="Registrar salida"
+                                title={t("access.actions.registerExit", {
+                                  defaultValue: "Registrar salida",
+                                })}
                                 className="flex-1 px-2 py-1 rounded-lg text-[11px] transition"
                                 style={{
                                   background:
@@ -937,7 +1067,9 @@ export default function Accesos() {
                                   registrarMovimientoRapido("SALIDA", row)
                                 }
                               >
-                                Salida
+                                {t("access.movementTypes.exit", {
+                                  defaultValue: "Salida",
+                                })}
                               </button>
                             </>
                           )}
@@ -954,8 +1086,10 @@ export default function Accesos() {
           className="px-4 py-3 text-[11px] sm:text-xs"
           style={{ color: "var(--text-muted)" }}
         >
-          Consejo: “En Empresa” indica si el vehículo del empleado está dentro
-          del estacionamiento. Haz clic en la flecha para actualizar su estado.
+          {t("access.tips.inCompany", {
+            defaultValue:
+              "Consejo: “En Empresa” indica si el vehículo del empleado está dentro del estacionamiento. Haz clic en la flecha para actualizar su estado.",
+          })}
         </div>
       </div>
 
@@ -963,17 +1097,24 @@ export default function Accesos() {
         <div className={UI.sectionHeader} style={sxSectionBar()}>
           <div>
             <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
-              Vehículos de visitantes en el estacionamiento
+              {t("access.visitorVehicles.title", {
+                defaultValue: "Vehículos de visitantes en el estacionamiento",
+              })}
             </h2>
             <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Información tomada del módulo de Visitas (solo visitas con estado
-              “Dentro” y que llegaron en vehículo).
+              {t("access.visitorVehicles.subtitle", {
+                defaultValue:
+                  "Información tomada del módulo de Visitas (solo visitas con estado “Dentro” y que llegaron en vehículo).",
+              })}
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {vehiculosVisitas.length} vehículos
+              {t("access.visitorVehicles.count", {
+                defaultValue: "{{count}} vehículos",
+                count: vehiculosVisitas.length,
+              })}
             </span>
 
             {vehiculosVisitas.length > 5 && (
@@ -984,8 +1125,12 @@ export default function Accesos() {
                 style={{ color: "var(--accent)" }}
               >
                 {showAllVehVis
-                  ? "Ver solo 5 registros"
-                  : "Ver todos los registros"}
+                  ? t("access.actions.showOnly5Records", {
+                      defaultValue: "Ver solo 5 registros",
+                    })
+                  : t("access.actions.showAllRecords", {
+                      defaultValue: "Ver todos los registros",
+                    })}
               </button>
             )}
           </div>
@@ -995,15 +1140,39 @@ export default function Accesos() {
           <table className={UI.table}>
             <thead style={sxSectionBar()}>
               <tr className="text-left text-[11px] sm:text-xs uppercase tracking-wide">
-                <th className="px-4 py-3">Visitante</th>
-                <th className="px-4 py-3 hidden md:table-cell">Documento</th>
-                <th className="px-4 py-3 hidden lg:table-cell">Empresa</th>
-                <th className="px-4 py-3 hidden sm:table-cell">
-                  Empleado anfitrión
+                <th className="px-4 py-3">
+                  {t("access.visitorVehicles.table.visitor", {
+                    defaultValue: "Visitante",
+                  })}
                 </th>
-                <th className="px-4 py-3">Vehículo</th>
-                <th className="px-4 py-3">No. Placa</th>
-                <th className="px-4 py-3">Hora entrada</th>
+                <th className="px-4 py-3 hidden md:table-cell">
+                  {t("access.visitorVehicles.table.document", {
+                    defaultValue: "Documento",
+                  })}
+                </th>
+                <th className="px-4 py-3 hidden lg:table-cell">
+                  {t("access.visitorVehicles.table.company", {
+                    defaultValue: "Empresa",
+                  })}
+                </th>
+                <th className="px-4 py-3 hidden sm:table-cell">
+                  {t("access.visitorVehicles.table.hostEmployee", {
+                    defaultValue: "Empleado anfitrión",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.visitorVehicles.table.vehicle", {
+                    defaultValue: "Vehículo",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.table.plateNumber", { defaultValue: "No. Placa" })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.visitorVehicles.table.entryTime", {
+                    defaultValue: "Hora entrada",
+                  })}
+                </th>
               </tr>
             </thead>
 
@@ -1015,7 +1184,9 @@ export default function Accesos() {
                     className="px-4 py-6 text-center text-sm"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Cargando vehículos de visitantes…
+                    {t("access.messages.loadingVisitorVehicles", {
+                      defaultValue: "Cargando vehículos de visitantes...",
+                    })}
                   </td>
                 </tr>
               )}
@@ -1027,7 +1198,7 @@ export default function Accesos() {
                     className="px-4 py-6 text-center text-sm"
                     style={{ color: "#dc2626" }}
                   >
-                    Error: {errVehVis}
+                    {t("system.errorLabel", { defaultValue: "Error" })}: {errVehVis}
                   </td>
                 </tr>
               )}
@@ -1068,7 +1239,8 @@ export default function Accesos() {
                       className="px-4 py-3 uppercase whitespace-nowrap"
                       style={{ color: "var(--text)" }}
                     >
-                      {`${v.vehiculoMarca || ""} ${v.vehiculoModelo || ""}`.trim() || "—"}
+                      {`${v.vehiculoMarca || ""} ${v.vehiculoModelo || ""}`.trim() ||
+                        "—"}
                     </td>
                     <td
                       className="px-4 py-3 uppercase whitespace-nowrap"
@@ -1081,7 +1253,9 @@ export default function Accesos() {
                       style={{ color: "var(--text)" }}
                     >
                       {v.horaEntrada
-                        ? new Date(v.horaEntrada).toLocaleString()
+                        ? new Date(v.horaEntrada).toLocaleString(
+                            i18n.language === "en" ? "en-US" : "es-HN"
+                          )
                         : "—"}
                     </td>
                   </tr>
@@ -1096,8 +1270,10 @@ export default function Accesos() {
                       className="px-4 py-6 text-center text-sm"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      No hay vehículos de visitantes dentro de la empresa en este
-                      momento.
+                      {t("access.messages.noVisitorVehiclesInside", {
+                        defaultValue:
+                          "No hay vehículos de visitantes dentro de la empresa en este momento.",
+                      })}
                     </td>
                   </tr>
                 )}
@@ -1113,11 +1289,15 @@ export default function Accesos() {
         >
           <div>
             <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
-              Historial de movimientos manuales
+              {t("access.manualHistory.title", {
+                defaultValue: "Historial de movimientos manuales",
+              })}
             </h2>
             <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Registra manualmente entradas, salidas y permisos de empleados y
-              vehículos.
+              {t("access.manualHistory.subtitle", {
+                defaultValue:
+                  "Registra manualmente entradas, salidas y permisos de empleados y vehículos.",
+              })}
             </p>
           </div>
 
@@ -1130,8 +1310,12 @@ export default function Accesos() {
                 style={{ color: "var(--accent)" }}
               >
                 {showAllRegistros
-                  ? "Ver solo 5 registros por tabla"
-                  : "Ver todos los registros"}
+                  ? t("access.actions.showOnly5PerTable", {
+                      defaultValue: "Ver solo 5 registros por tabla",
+                    })
+                  : t("access.actions.showAllRecords", {
+                      defaultValue: "Ver todos los registros",
+                    })}
               </button>
             )}
 
@@ -1142,7 +1326,10 @@ export default function Accesos() {
                 style={sxSuccessBtn()}
                 onClick={() => setShowNuevoMov(true)}
               >
-                <span className="text-lg leading-none">＋</span> Registrar permiso
+                <span className="text-lg leading-none">＋</span>{" "}
+                {t("access.actions.registerPermission", {
+                  defaultValue: "Registrar permiso",
+                })}
               </button>
             )}
 
@@ -1153,7 +1340,8 @@ export default function Accesos() {
                 style={sxInfoBtn()}
                 onClick={handleExportCsv}
               >
-                <span className="text-lg leading-none">⇩</span> Exportar CSV
+                <span className="text-lg leading-none">⇩</span>{" "}
+                {t("actions.export", { defaultValue: "Exportar" })} CSV
               </button>
             )}
 
@@ -1164,7 +1352,8 @@ export default function Accesos() {
                 style={sxPrimaryBtn()}
                 onClick={handleExportPdf}
               >
-                <span className="text-lg leading-none">🖨</span> Exportar PDF
+                <span className="text-lg leading-none">🖨</span>{" "}
+                {t("actions.export", { defaultValue: "Exportar" })} PDF
               </button>
             )}
           </div>
@@ -1179,7 +1368,7 @@ export default function Accesos() {
               className="block text-xs mb-1"
               style={{ color: "var(--text-muted)" }}
             >
-              Empleado
+              {t("access.filters.employee", { defaultValue: "Empleado" })}
             </label>
             <select
               className="w-full sm:w-40 rounded-[12px] px-2 py-1 text-xs outline-none"
@@ -1187,7 +1376,9 @@ export default function Accesos() {
               value={filterEmpleado}
               onChange={(e) => setFilterEmpleado(e.target.value)}
             >
-              <option value="">Todos</option>
+              <option value="">
+                {t("access.filters.all", { defaultValue: "Todos" })}
+              </option>
               {empleadosList.map((e) => (
                 <option key={e._id} value={e._id}>
                   {e.nombreCompleto}
@@ -1201,7 +1392,9 @@ export default function Accesos() {
               className="block text-xs mb-1"
               style={{ color: "var(--text-muted)" }}
             >
-              Departamento
+              {t("access.filters.department", {
+                defaultValue: "Departamento",
+              })}
             </label>
             <select
               className="w-full sm:w-40 rounded-[12px] px-2 py-1 text-xs outline-none"
@@ -1209,7 +1402,9 @@ export default function Accesos() {
               value={filterDepto}
               onChange={(e) => setFilterDepto(e.target.value)}
             >
-              <option value="">Todos</option>
+              <option value="">
+                {t("access.filters.all", { defaultValue: "Todos" })}
+              </option>
               {deptosDisponibles.map((d) => (
                 <option key={d} value={d}>
                   {d}
@@ -1223,7 +1418,7 @@ export default function Accesos() {
               className="block text-xs mb-1"
               style={{ color: "var(--text-muted)" }}
             >
-              Desde
+              {t("access.filters.from", { defaultValue: "Desde" })}
             </label>
             <input
               type="date"
@@ -1239,7 +1434,7 @@ export default function Accesos() {
               className="block text-xs mb-1"
               style={{ color: "var(--text-muted)" }}
             >
-              Hasta
+              {t("access.filters.to", { defaultValue: "Hasta" })}
             </label>
             <input
               type="date"
@@ -1253,16 +1448,36 @@ export default function Accesos() {
 
         <div className={UI.tableWrap}>
           <div className={UI.subtleBar} style={sxSectionBar()}>
-            Entradas y salidas
+            {t("access.manualHistory.entriesAndExits", {
+              defaultValue: "Entradas y salidas",
+            })}
           </div>
           <table className={UI.table}>
             <thead style={sxSectionBar()}>
               <tr className="text-left text-[11px] sm:text-xs uppercase tracking-wide">
-                <th className="px-4 py-3">Fecha/Hora</th>
-                <th className="px-4 py-3">Tipo</th>
-                <th className="px-4 py-3">Persona</th>
-                <th className="px-4 py-3">Placa</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Observación</th>
+                <th className="px-4 py-3">
+                  {t("access.manualHistory.table.dateTime", {
+                    defaultValue: "Fecha/Hora",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.manualHistory.table.type", {
+                    defaultValue: "Tipo",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.manualHistory.table.person", {
+                    defaultValue: "Persona",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.table.plateNumber", { defaultValue: "Placa" })}
+                </th>
+                <th className="px-4 py-3 hidden sm:table-cell">
+                  {t("access.manualHistory.table.observation", {
+                    defaultValue: "Observación",
+                  })}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1273,14 +1488,19 @@ export default function Accesos() {
                     className="px-4 py-6 text-center text-sm"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    No hay registros de entradas o salidas con los filtros
-                    actuales.
+                    {t("access.messages.noEntryExitRecords", {
+                      defaultValue:
+                        "No hay registros de entradas o salidas con los filtros actuales.",
+                    })}
                   </td>
                 </tr>
               )}
 
               {visibleRegistrosEntradas.map((r, idx) => (
-                <tr key={`${r.fechaHora}-${r.persona}-${idx}`} style={{ borderTop: "1px solid var(--border)" }}>
+                <tr
+                  key={`${r.fechaHora}-${r.persona}-${idx}`}
+                  style={{ borderTop: "1px solid var(--border)" }}
+                >
                   <td
                     className="px-4 py-3 whitespace-nowrap"
                     style={{ color: "var(--text)" }}
@@ -1313,16 +1533,34 @@ export default function Accesos() {
 
         <div className={UI.tableWrap}>
           <div className={UI.subtleBar} style={sxSectionBar()}>
-            Permisos
+            {t("access.movementTypes.permissionPlural", {
+              defaultValue: "Permisos",
+            })}
           </div>
           <table className={UI.table}>
             <thead style={sxSectionBar()}>
               <tr className="text-left text-[11px] sm:text-xs uppercase tracking-wide">
-                <th className="px-4 py-3">Hora salida</th>
-                <th className="px-4 py-3">Hora regreso</th>
-                <th className="px-4 py-3">Empleado</th>
-                <th className="px-4 py-3">Placa</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Observación</th>
+                <th className="px-4 py-3">
+                  {t("access.manualHistory.permissionsTable.exitTime", {
+                    defaultValue: "Hora salida",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.manualHistory.permissionsTable.returnTime", {
+                    defaultValue: "Hora regreso",
+                  })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.filters.employee", { defaultValue: "Empleado" })}
+                </th>
+                <th className="px-4 py-3">
+                  {t("access.table.plateNumber", { defaultValue: "Placa" })}
+                </th>
+                <th className="px-4 py-3 hidden sm:table-cell">
+                  {t("access.manualHistory.table.observation", {
+                    defaultValue: "Observación",
+                  })}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1333,13 +1571,19 @@ export default function Accesos() {
                     className="px-4 py-6 text-center text-sm"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    No hay permisos registrados con los filtros actuales.
+                    {t("access.messages.noPermissionsRecords", {
+                      defaultValue:
+                        "No hay permisos registrados con los filtros actuales.",
+                    })}
                   </td>
                 </tr>
               )}
 
               {visibleRegistrosPermisos.map((r, idx) => (
-                <tr key={`${r.fechaHora}-${r.persona}-${idx}`} style={{ borderTop: "1px solid var(--border)" }}>
+                <tr
+                  key={`${r.fechaHora}-${r.persona}-${idx}`}
+                  style={{ borderTop: "1px solid var(--border)" }}
+                >
                   <td
                     className="px-4 py-3 whitespace-nowrap"
                     style={{ color: "var(--text)" }}
@@ -1350,7 +1594,11 @@ export default function Accesos() {
                     className="px-4 py-3 whitespace-nowrap"
                     style={{ color: "var(--text)" }}
                   >
-                    {r.noRegresa ? "✕" : r.fechaFin || "—"}
+                    {r.noRegresa
+                      ? t("access.manualHistory.noReturn", {
+                          defaultValue: "✕",
+                        })
+                      : r.fechaFin || "—"}
                   </td>
                   <td className="px-4 py-3" style={{ color: "var(--text)" }}>
                     {r.persona || "—"}

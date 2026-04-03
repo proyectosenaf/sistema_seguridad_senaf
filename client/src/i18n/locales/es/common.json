@@ -1,0 +1,693 @@
+{
+  "labels": {
+    "language": "Idioma"
+  },
+  "actions": {
+    "back": "Regresar",
+    "close": "Cerrar",
+    "clear": "Limpiar",
+    "exit": "Salir",
+    "save": "Guardar",
+    "saving": "Guardando...",
+    "cancel": "Cancelar",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "search": "Buscar",
+    "export": "Exportar",
+    "title": "Acciones"
+  },
+  "nav": {
+    "dashboard": "Panel principal",
+    "accesos": "Control de Acceso",
+    "rondas": "Rondas de Vigilancia",
+    "rondasQr": "Rondas QR",
+    "incidentes": "Gestión de Incidentes",
+    "visitas": "Control de Visitas",
+    "bitacora": "Bitácora Digital",
+    "iam": "Usuarios y Permisos",
+    "systemBackups": "Respaldo y Restauración",
+    "logout": "Cerrar sesión"
+  },
+  "system": {
+    "loading": "Cargando...",
+    "loadingSession": "Cargando sesión...",
+    "redirecting": "Redirigiendo...",
+    "unauthorized": "No autorizado",
+    "notFound": "No encontrado",
+    "interfaceError": "Error de interfaz",
+    "errorGeneric": "Ocurrió un error inesperado",
+    "select": "- Seleccionar -"
+  },
+  "auth": {
+    "mustLogin": "Debes iniciar sesión para acceder al sistema.",
+    "goToLogin": "Ir al inicio de sesión",
+    "redirectingToLogin": "Redirigiendo a inicio de sesión...",
+    "loginButton": {
+      "label": "Iniciar sesión"
+    },
+    "placeholders": {
+      "password": "Contraseña"
+    },
+    "actions": {
+      "showPassword": "Mostrar contraseña",
+      "hidePassword": "Ocultar contraseña"
+    },
+    "roleRedirect": {
+      "redirecting": "Redirigiendo..."
+    },
+    "resetPassword": {
+      "title": "Restablecer contraseña",
+      "subtitle": "Escribe tu correo, el código recibido y tu nueva contraseña.",
+      "placeholders": {
+        "email": "Correo electrónico",
+        "token": "Código temporal",
+        "newPassword": "Nueva contraseña",
+        "confirmPassword": "Confirmar contraseña"
+      },
+      "actions": {
+        "showPassword": "Mostrar contraseña",
+        "hidePassword": "Ocultar contraseña",
+        "showConfirmation": "Mostrar confirmación",
+        "hideConfirmation": "Ocultar confirmación",
+        "updating": "Actualizando...",
+        "saveNewPassword": "Guardar nueva contraseña"
+      },
+      "passwordRules": {
+        "summary": "Mínimo 8 caracteres, debe incluir letras, números y un carácter especial.",
+        "minLength": "Al menos 8 caracteres",
+        "letter": "Al menos una letra",
+        "number": "Al menos un número",
+        "special": "Al menos un carácter especial"
+      },
+      "links": {
+        "requestNewCode": "Solicitar nuevo código",
+        "backToLogin": "Volver al login"
+      },
+      "success": {
+        "updated": "Contraseña actualizada correctamente."
+      },
+      "errors": {
+        "missingFields": "Completa todos los campos.",
+        "passwordMismatch": "Las contraseñas no coinciden.",
+        "invalidPassword": "La contraseña debe tener mínimo 8 caracteres e incluir letras, números y un carácter especial.",
+        "invalidReset": "Solicitud inválida.",
+        "resetNotRequested": "Primero debes solicitar un código.",
+        "resetAlreadyUsed": "Ese código ya fue utilizado.",
+        "resetExpired": "El código ha expirado.",
+        "tooManyAttempts": "Demasiados intentos. Solicita un nuevo código.",
+        "invalidResetToken": "El código es incorrecto.",
+        "networkError": "Error de conexión con el servidor.",
+        "generic": "No se pudo restablecer la contraseña."
+      }
+    }
+  },
+  "sidebar": {
+    "ariaLabel": "Barra lateral",
+    "mobileAriaLabel": "Barra lateral (móvil)",
+    "platform": "Plataforma de seguridad"
+  },
+  "topbar": {
+    "route": "Ruta",
+    "breadcrumbAria": "Breadcrumb",
+    "module": "Módulo",
+    "openModule": "Abrir módulo",
+    "enabledModules": "Módulos habilitados",
+    "senafHome": "Inicio del sistema SENAF",
+    "global": "Global",
+    "accessDesc": "Entradas, salidas, personal y vehículos",
+    "employees": "Empleados",
+    "employeeList": "Listado de empleados",
+    "vehicles": "Vehículos",
+    "vehicleControl": "Listado y control vehicular",
+    "roundsDesc": "Patrullaje y recorridos",
+    "roundsQrDesc": "Escaneo y control de puntos QR",
+    "incidentsDesc": "Incidentes, alertas y reportes",
+    "visitsDesc": "Visitantes, agenda y autorizaciones",
+    "appointmentAgenda": "Agenda de Citas",
+    "visitSchedule": "Programación de visitas",
+    "logbookDesc": "Registro histórico y seguimiento",
+    "iamDesc": "Gestión de usuarios, roles y permisos",
+    "newEmployee": "Nuevo Empleado",
+    "createEmployeeRecord": "Crear registro de empleado",
+    "newVehicle": "Nuevo Vehículo",
+    "createVehicleRecord": "Crear registro de vehículo",
+    "findEmployee": "Buscar Empleado",
+    "goEmployeeList": "Ir al listado de empleados",
+    "findVehicle": "Buscar Vehículo",
+    "goVehicleList": "Ir al listado de vehículos",
+    "viewRounds": "Ver Rondas",
+    "openRounds": "Abrir recorridos y rondas",
+    "scanQr": "Escanear QR",
+    "openRoundsQr": "Abrir módulo de rondas QR",
+    "newIncident": "Nuevo Incidente",
+    "registerIncident": "Registrar incidente",
+    "viewIncidents": "Ver Incidentes",
+    "goIncidentsList": "Ir al listado de incidentes",
+    "newVisit": "Nueva Visita",
+    "registerVisit": "Registrar visitante o visita",
+    "openVisitAgenda": "Abrir agenda de visitas",
+    "scanVisitQr": "Escanear QR de Visita",
+    "goVisitControl": "Ir al control de visitas",
+    "viewLogbook": "Ver Bitácora",
+    "openEventHistory": "Abrir historial de eventos",
+    "logbookReports": "Reportes de Bitácora",
+    "openReportsMetrics": "Abrir reportes y métricas",
+    "newUser": "Nuevo Usuario",
+    "createSystemUser": "Crear usuario del sistema",
+    "rolesPermissions": "Roles y Permisos",
+    "managePermissions": "Administrar permisos",
+    "deleteUser": "Eliminar Usuario",
+    "goUsersDelete": "Ir al módulo de usuarios para eliminar",
+    "actionsSection": "Acciones",
+    "actions": "Acciones",
+    "recentSearch": "Búsqueda reciente",
+    "recent": "Recientes",
+    "openInternalRoute": "Abrir ruta interna del sistema",
+    "openExternalUrl": "Abrir URL externa",
+    "searchCurrentModule": "Buscar en el módulo actual",
+    "filterInModule": "Filtrar en {{module}}",
+    "openMenu": "Abrir menú",
+    "searchPlaceholder": "Buscar rutas, acciones, módulos o URL... (Ctrl/⌘+K)",
+    "fullGlobalSearch": "Búsqueda global completa",
+    "allowedModulesSearch": "Búsqueda según tus módulos permitidos",
+    "notifications": "Notificaciones",
+    "visitor": "Visitante",
+    "smartGlobalSearch": "Búsqueda global inteligente",
+    "smartAllowedModulesSearch": "Búsqueda inteligente por módulos permitidos",
+    "smartSearchPlaceholder": "Busca módulos, acciones, rutas, datos o pega una URL...",
+    "searchHelp": "↑ ↓ para navegar · Enter para abrir · Esc para cerrar",
+    "includesGlobalData": "Incluye datos y navegación global",
+    "includesAllowedModules": "Incluye tus módulos y acciones permitidas",
+    "results": "Resultados",
+    "searching": "Buscando...",
+    "options": "opciones",
+    "noMatches": "No encontré coincidencias. Puedes presionar Enter para buscar dentro del módulo actual.",
+    "startTyping": "Empieza a escribir para ver sugerencias o una búsqueda reciente.",
+    "noEnabledModules": "No hay módulos habilitados para tu usuario.",
+    "unread": "Sin leer",
+    "alerts": "Alertas",
+    "total": "Total",
+    "markAllRead": "Marcar todo como leído"
+  },
+  "rondas": {
+    "title": "Rondas de Vigilancia",
+    "subtitle": "Accesos según tu perfil.",
+    "checkpointScanner": "Registrador Punto Control",
+    "checkpointScannerDesc": "Escanea puntos asignados y envía alertas.",
+    "reports": "Reportes",
+    "reportsDesc": "Dashboard y reportes de rondas.",
+    "admin": "Administración",
+    "adminDesc": "Ciudades, rondas, puntos, planes y asignaciones.",
+    "noAccess": "No tienes permisos para acceder a este módulo.",
+    "noSections": "No tienes permisos para ver secciones de rondas.",
+    "guard": {
+      "sidebar": {
+        "ariaLabel": "Acciones del módulo de rondas",
+        "subtitle": "Rondas de Vigilancia",
+        "alerts": {
+          "send": "Enviar Alerta",
+          "noPermission": "No tienes permiso para enviar alertas de pánico.",
+          "noPermissionTitle": "No tienes permiso para enviar alertas",
+          "panicTitle": "🚨 Alerta de pánico",
+          "panicSent": "Alerta de pánico enviada",
+          "panicSentWithIcon": "🚨 Alerta de pánico enviada.",
+          "sendFailed": "No se pudo enviar la alerta. Revisa conexión e intenta de nuevo."
+        },
+        "incident": {
+          "message": "Mensaje Incidente",
+          "create": "Crear incidente",
+          "noPermission": "No tienes permiso para crear mensajes/incidentes.",
+          "noPermissionTitle": "No tienes permiso para crear incidentes"
+        }
+      }
+    }
+  },
+  "home": {
+    "sectionsTitle": "Secciones",
+    "sectionsSubtitle": "Acceso rápido a los módulos habilitados para tu usuario.",
+    "noSections": "No hay secciones habilitadas para tu usuario.",
+    "analyticsTitle": "Análisis y métricas",
+    "analyticsSubtitle": "Resumen visual de eventos registrados en la bitácora.",
+    "goToSection": "Ir a {{section}}"
+  },
+  "footer": {
+    "description": "Plataforma integral de seguridad: accesos, rondas, incidentes, visitas y más.",
+    "protectedData": "Datos protegidos · Roles · Auditoría",
+    "sections": "Secciones",
+    "noSections": "No hay secciones habilitadas.",
+    "support": "Soporte",
+    "openChat": "Abrir chat",
+    "helpCenter": "Centro de ayuda",
+    "loadingManuals": "Cargando manuales...",
+    "docsQueryError": "No se pudo consultar la documentación.",
+    "noManualsForRole": "No hay manuales disponibles para este rol.",
+    "pending": "pendiente",
+    "systemStatus": "Estado del sistema",
+    "pingLabel": "Ping",
+    "versionLabel": "Versión",
+    "copyright": "Todos los derechos reservados",
+    "privacy": "Privacidad",
+    "terms": "Términos",
+    "docsNotAvailable": "La documentación aún no está disponible. Cuando subas los manuales al backend, aparecerán aquí automáticamente."
+  },
+  "bitacora": {
+    "titleUpper": "BITÁCORA",
+    "subtitle": "Consulta y análisis de eventos registrados en el sistema.",
+    "loading": "Cargando...",
+    "tabLog": "Bitácora",
+    "tabAnalytics": "Analítica",
+    "kpiVisits": "Visitas",
+    "kpiActiveVisits": "{{count}} activas",
+    "kpiRounds": "Rondas",
+    "kpiRegisteredInPeriod": "Registradas en el período",
+    "kpiAccesses": "Accesos",
+    "kpiAccessRecords": "Registros de acceso",
+    "kpiIncidents": "Incidentes",
+    "kpiManagedInLog": "Gestionados en bitácora",
+    "showingRecords": "Mostrando {{visible}} de {{total}} registros",
+    "defaultShowingLast": "Mostrando por defecto los últimos {{count}} registros",
+    "filteredShowing": "Mostrando resultados filtrados",
+    "viewOnlyLast": "Ver solo los últimos {{count}}",
+    "viewAll": "Ver todos",
+    "detailLoadError": "No se pudo cargar el detalle del evento.",
+    "invalidId": "Identificador inválido.",
+    "archiveError": "No se pudo archivar o eliminar el registro.",
+    "filters": {
+      "title": "Filtros de Búsqueda",
+      "fields": {
+        "fromDate": "Fecha Desde",
+        "toDate": "Fecha Hasta",
+        "agent": "Agente",
+        "shift": "Turno",
+        "eventType": "Tipo de Evento",
+        "module": "Módulo"
+      },
+      "placeholders": {
+        "agent": "Buscar agente…"
+      },
+      "buttons": {
+        "clearFilters": "Limpiar Filtros",
+        "exportFilteredExcel": "Exportar Filtrados (.XLS con estilo)",
+        "downloadPdf": "Descargar PDF"
+      },
+      "moduleOptions": {
+        "all": "Todos"
+      }
+    },
+    "table": {
+      "title": "Registro de Eventos ({{count}})",
+      "subtitle": "Historial cronológico de todas las actividades del sistema",
+      "headers": {
+        "dateTime": "Fecha y Hora",
+        "actor": "Actor",
+        "role": "Rol",
+        "module": "Módulo",
+        "action": "Acción",
+        "description": "Descripción",
+        "priority": "Prioridad",
+        "status": "Estado",
+        "actions": "Acciones"
+      },
+      "buttons": {
+        "view": "Ver",
+        "archive": "Archivar",
+        "archiving": "Archivando..."
+      },
+      "empty": "No hay resultados con los filtros seleccionados."
+    },
+    "deleteConfirm": {
+      "title": "Confirmar archivado",
+      "message": "¿Archivar el <strong>{{type}}</strong> de <strong>{{actor}}</strong> correspondiente a <strong>{{month}}</strong>?",
+      "description": "El registro no se eliminará físicamente. Quedará oculto de la bitácora principal y podrá restaurarse después.",
+      "buttons": {
+        "archive": "Archivar",
+        "archiving": "Archivando..."
+      },
+      "defaults": {
+        "event": "evento"
+      }
+    },
+    "analytics": {
+      "eventsByModule": "Eventos por Módulo",
+      "byShift": "Distribución por Turno",
+      "eventsCount": "{{count}} eventos ({{pct}}%)",
+      "shiftLabel": "Turno {{shift}}",
+      "shifts": {
+        "morning": "Mañana",
+        "afternoon": "Tarde",
+        "night": "Noche"
+      },
+      "modules": {
+        "Todos": "Todos",
+        "Control de Acceso": "Control de Acceso",
+        "Rondas de Vigilancia": "Rondas de Vigilancia",
+        "Control de Visitas": "Control de Visitas",
+        "Gestión de Incidentes": "Gestión de Incidentes"
+      }
+    },
+    "eventDetail": {
+      "title": "Detalle del Evento",
+      "subtitle": "Vista completa de auditoría y trazabilidad",
+      "loading": "Cargando detalle del evento…",
+      "empty": "—",
+      "fields": {
+        "dateTime": "Fecha y Hora",
+        "module": "Módulo",
+        "type": "Tipo",
+        "action": "Acción",
+        "agent": "Agente",
+        "actor": "Actor",
+        "actorRole": "Rol del actor",
+        "shift": "Turno",
+        "entity": "Entidad",
+        "entityId": "ID Entidad",
+        "ip": "IP",
+        "source": "Source",
+        "priority": "Prioridad",
+        "status": "Estado",
+        "relatedName": "Nombre relacionado",
+        "companyZone": "Empresa / Zona",
+        "actorId": "Actor ID",
+        "userAgent": "User Agent",
+        "archived": "Archivado",
+        "archivedBy": "Archivado por",
+        "archivedAt": "Fecha archivado",
+        "visible": "Visible"
+      },
+      "sections": {
+        "title": "Título",
+        "description": "Descripción",
+        "meta": "Meta",
+        "before": "Before",
+        "after": "After"
+      },
+      "actions": {
+        "exportPdf": "Exportar PDF",
+        "exportJson": "Exportar JSON",
+        "archive": "Archivar",
+        "archiving": "Archivando..."
+      },
+      "errors": {
+        "pdfFailed": "No se pudo generar el PDF."
+      }
+    }
+  },
+  "common": {
+    "yes": "Sí",
+    "no": "No",
+    "audioRecorder": {
+      "title": "Grabar audio",
+      "statusLabel": "Estado",
+      "recordingTime": "{{seconds}}s",
+      "status": {
+        "idle": "Inactivo",
+        "recording": "Grabando",
+        "ready": "Listo",
+        "error": "Error"
+      },
+      "actions": {
+        "start": "Iniciar",
+        "stop": "Detener",
+        "save": "Guardar audio"
+      },
+      "errors": {
+        "previewFailed": "No se pudo preparar la previsualización del audio.",
+        "micDenied": "Permiso de micrófono denegado o no disponible.",
+        "convertFailed": "No se pudo convertir el audio."
+      }
+    }
+  },
+  "access": {
+    "changeInCompanyStatus": "Cambiar estado de En Empresa",
+    "observationModal": {
+      "registerEntry": "Registrar entrada",
+      "registerExit": "Registrar salida",
+      "label": "Observación",
+      "placeholder": "Escribe una observación (opcional)"
+    },
+    "employeeModal": {
+      "title": "Registrar Nuevo Empleado",
+      "fullName": "Nombre Completo",
+      "personId": "ID Persona",
+      "birthDate": "Fecha de Nacimiento",
+      "gender": "Sexo",
+      "phone": "Teléfono",
+      "address": "Dirección",
+      "department": "Área / Departamento",
+      "position": "Cargo",
+      "entryDate": "Fecha de Ingreso",
+      "status": "Estado",
+      "createError": "Error creando empleado"
+    }
+  },
+  "rondasqr": {
+    "assignments": {
+      "title": "Asignaciones de Rondas",
+      "unnamed": "(Sin nombre)",
+      "pointsAbbr": "pts",
+      "selectedPlan": "Plan seleccionado:",
+      "round": "Ronda:",
+      "points": "Puntos:",
+      "listTitle": "Listado ({{date}})",
+      "noAssignments": "Sin asignaciones.",
+      "fields": {
+        "date": "Fecha",
+        "site": "Sitio",
+        "plan": "Plan",
+        "guard": "Guardia",
+        "start": "Inicio",
+        "end": "Fin"
+      },
+      "actions": {
+        "create": "Crear asignación",
+        "refresh": "Actualizar"
+      },
+      "table": {
+        "guard": "Guardia",
+        "site": "Sitio",
+        "round": "Ronda",
+        "plan": "Plan",
+        "points": "Puntos",
+        "start": "Inicio",
+        "end": "Fin",
+        "status": "Estado",
+        "created": "Creado",
+        "actions": "Acciones"
+      },
+      "messages": {
+        "completeRequired": "Completa fecha, sitio, plan y guardia.",
+        "invalidStartTime": "Hora de inicio inválida (usa HH:mm)",
+        "invalidEndTime": "Hora de fin inválida (usa HH:mm)",
+        "createError": "No se pudo crear la asignación",
+        "deleteError": "No se pudo eliminar la asignación."
+      }
+    },
+    "scanPage": {
+      "system": {
+        "loadingSession": "Cargando sesión..."
+      },
+      "access": {
+        "deniedTitle": "Acceso denegado",
+        "deniedDescription": "No tienes permisos para acceder al módulo de Rondas de Vigilancia."
+      },
+      "header": {
+        "title": "Visión general",
+        "greeting": "Hola {{user}}, aquí verás tus rondas y alertas de hoy.",
+        "pendingToSend": "Rondas pendientes por enviar"
+      },
+      "buttons": {
+        "sendingUpper": "ENVIANDO...",
+        "alertUpper": "ALERTA",
+        "pointControlRegister": "Registrador Punto Control",
+        "incidentMessage": "Mensaje Incidente",
+        "continueRound": "Continuar ronda",
+        "finishRound": "Finalizar ronda",
+        "continue": "Continuar",
+        "start": "Iniciar",
+        "finish": "Finalizar",
+        "retry": "Reintentar",
+        "sending": "Enviando...",
+        "transmitNow": "Transmitir ahora",
+        "send": "Enviar",
+        "sendPhotos": "Enviar fotos",
+        "select": "Seleccionar",
+        "delete": "Eliminar"
+      },
+      "texts": {
+        "unknownGuard": "Guardia desconocido",
+        "guard": "guardia",
+        "pressInEmergency": "Oprima en caso de emergencia",
+        "notAuthorizedAlerts": "No autorizado para alertas",
+        "noActionsAvailable": "No tienes acciones disponibles en este módulo.",
+        "roundPhotos": "Fotos de ronda",
+        "round": "Ronda",
+        "site": "Sitio"
+      },
+      "progress": {
+        "title": "Progreso de Ronda",
+        "noPermission": "No tienes permiso para operar rondas.",
+        "lastPoint": "Último punto:",
+        "nextPoint": "Siguiente:",
+        "completedPercent": "{{pct}}% completado",
+        "emptyPrefix": "Para iniciar una ronda, abre el",
+        "emptySuffix": "y escanea el primer punto asignado."
+      },
+      "assignments": {
+        "loaded": "Asignaciones cargadas:",
+        "status": "Estado:",
+        "pending": "pendiente"
+      },
+      "qr": {
+        "title": "Escanear Punto",
+        "noPermission": "No tienes permiso para registrar puntos de control."
+      },
+      "outbox": {
+        "title": "Pendientes por enviar",
+        "pending": "Pendientes:"
+      },
+      "dump": {
+        "title": "Enviar base offline"
+      },
+      "photos": {
+        "title": "Fotos",
+        "noPermission": "No tienes permiso para adjuntar evidencias o incidentes.",
+        "takePhoto": "Toma foto {{index}}"
+      },
+      "alerts": {
+        "noPermissionStartRounds": "No tienes permiso para iniciar rondas.",
+        "noPermissionFinishRounds": "No tienes permiso para finalizar rondas.",
+        "noPermissionPanic": "No tienes permiso para enviar alertas de pánico.",
+        "panicTitle": "🚨 Alerta de pánico",
+        "panicMessage": "Alerta de pánico enviada desde ronda",
+        "panicNotificationBody": "reportó una alerta",
+        "panicSent": "🚨 Alerta de pánico enviada.",
+        "panicSendError": "No se pudo enviar la alerta.",
+        "noPermissionRegisterPoints": "No tienes permiso para registrar puntos.",
+        "offlineQrSaved": "📦 Sin conexión. QR guardado para transmitir más tarde.",
+        "pointRegistered": "✅ Punto registrado:",
+        "qrSavedForLater": "📦 No se pudo enviar. Guardado para transmitir más tarde.",
+        "noPermissionSendIncidents": "No tienes permiso para enviar incidentes.",
+        "writeMessage": "Escribe un mensaje.",
+        "messageSent": "✅ Mensaje enviado.",
+        "messageSendError": "No se pudo enviar el mensaje.",
+        "noPermissionPhotosIncidents": "No tienes permiso para enviar fotos/incidentes.",
+        "selectAtLeastOnePhoto": "Selecciona al menos una foto.",
+        "photosSent": "📤 Fotos enviadas.",
+        "photosSendError": "No se pudieron enviar las fotos.",
+        "noPermissionTransmitRounds": "No tienes permiso para transmitir rondas.",
+        "noPendingRounds": "No hay rondas pendientes.",
+        "transmitResult": "Transmitidas: {{ok}}  •  Fallidas: {{fail}}",
+        "transmitError": "Ocurrió un error al transmitir.",
+        "noPermissionOfflineMode": "No tienes permiso para manejar modo offline.",
+        "noOfflineInfo": "No hay información offline para enviar.",
+        "offlineDbSent": "📤 Base de datos local enviada.",
+        "offlineDbSendError": "No se pudo enviar la base de datos."
+      }
+    }
+  },
+  "iam": {
+    "permCatalog": {
+      "loading": "Cargando permisos…",
+      "loadError": "Error cargando permisos/roles",
+      "savedChanges": "✅ Cambios guardados.",
+      "missingPermissions": "❌ Permisos inexistentes: {{missing}}",
+      "saveError": "❌ Error guardando cambios.",
+      "completeFields": "Completa key, label y módulo.",
+      "permissionCreated": "✅ Permiso creado.",
+      "createError": "❌ No se pudo crear.",
+      "deleteRequiresId": "ID de permiso requerido para eliminar.",
+      "permissionDeleted": "✅ Permiso eliminado.",
+      "deleteError": "❌ No se pudo eliminar.",
+      "searchPlaceholder": "Buscar por clave, etiqueta o módulo…",
+      "searchAria": "Buscar permisos",
+      "createPermission": "Crear permiso",
+      "show": "Mostrar",
+      "showLess": "Ver menos",
+      "saveChanges": "Guardar cambios",
+      "noResults": "No se encontraron permisos para \"{{query}}\".",
+      "createPermissionTitle": "Crear permiso",
+      "create": "Crear",
+      "key": "Clave",
+      "keyPlaceholder": "modulo.recurso.accion",
+      "label": "Etiqueta",
+      "labelPlaceholder": "Módulo · Acción",
+      "module": "Módulo",
+      "deletePermissionTitle": "Eliminar permiso",
+      "deleteConfirm": "¿Seguro que deseas eliminar {{label}}?",
+      "header": {
+        "permissions": "Permisos"
+      },
+      "modules": {
+        "bitacora": "Bitácora",
+        "accesos": "Control de Acceso",
+        "iam": "IAM",
+        "incidentes": "Incidentes",
+        "rondasqr": "Rondas QR",
+        "visitas": "Visitas",
+        "reportes": "Reportes",
+        "general": "General"
+      }
+    },
+    "roleClone": {
+      "title": "Clonar rol",
+      "fields": {
+        "sourceRole": "Rol origen",
+        "newRoleName": "Nombre del nuevo rol",
+        "newRoleNamePlaceholder": "Ej. Operador Senior",
+        "codeOptional": "Código (opcional)",
+        "codePlaceholder": "operador_senior",
+        "includePermissions": "Incluir permisos del rol origen"
+      },
+      "actions": {
+        "clone": "Clonar",
+        "cloning": "Clonando…"
+      },
+      "messages": {
+        "selectRoleAndName": "Selecciona el rol a clonar y un nombre.",
+        "clonedFrom": "Clonado de {{name}}",
+        "cloneError": "No se pudo clonar el rol"
+      }
+    },
+    "permissions": {
+      "roleCanPermission": "{{role}} puede {{permission}}",
+      "groupSection": {
+        "permissionCount": "{{count}}"
+      },
+      "groups": {
+        "iam": "IAM",
+        "visitas": "Visitas",
+        "accesos": "Accesos",
+        "rondas": "Rondas",
+        "rondasqr": "Rondas QR",
+        "incidentes": "Incidentes",
+        "bitacora": "Bitácora",
+        "reportes": "Reportes",
+        "general": "General"
+      }
+    }
+  },
+  "camera": {
+    "title": "Tomar foto — SENAF",
+    "rotate": "↻ Rotar",
+    "instructions": "Gire el dispositivo para modo vertical u horizontal. Use el botón \"Rotar\" si la imagen se ve invertida.",
+    "capture": "📷 Capturar foto",
+    "errors": {
+      "noAccess": "No se pudo acceder a la cámara."
+    }
+  },
+  "photos": {
+    "title": "Enviar fotos",
+    "selectedCount": "Seleccionadas: <strong>{{count}}</strong> de 5",
+    "shotLabel": "Toma foto {{number}}",
+    "buttons": {
+      "remove": "Eliminar",
+      "send": "Enviar",
+      "sending": "Enviando..."
+    },
+    "alerts": {
+      "selectAtLeastOne": "Selecciona al menos una foto.",
+      "readyToSend": "Fotos listas para envío: {{count}}. Reemplaza este stub con tu API.",
+      "sendError": "No se pudieron enviar las fotos."
+    }
+  }
+}

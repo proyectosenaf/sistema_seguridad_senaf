@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import PermissionRow from "./PermissionRow";
 
 function roleIdOf(r) {
@@ -14,6 +15,8 @@ export default function GroupSection({
   onToggle,
   onDelete,
 }) {
+  const { t } = useTranslation();
+
   return (
     <div>
       {/* Cabecera del grupo: nombre del módulo fijo a la izquierda */}
@@ -33,18 +36,31 @@ export default function GroupSection({
           style={{
             background:
               "linear-gradient(90deg, color-mix(in srgb, var(--card-solid) 94%, transparent), color-mix(in srgb, #2563eb 6%, var(--card-solid)))",
-            boxShadow: "2px 0 0 0 color-mix(in srgb, var(--border) 90%, transparent)",
+            boxShadow:
+              "2px 0 0 0 color-mix(in srgb, var(--border) 90%, transparent)",
           }}
         >
-          <span className="text-base font-bold capitalize">{group.group}</span>
+          <span className="text-base font-bold capitalize">
+            {group?.group
+              ? t(`iam.permissions.groups.${String(group.group).trim().toLowerCase()}`, {
+                  defaultValue: group.group,
+                })
+              : ""}
+          </span>
+
           <span
             className="text-xs font-bold rounded-md px-2 py-0.5"
             style={{
               background: "color-mix(in srgb, #2563eb 14%, transparent)",
               color: "#bfdbfe",
             }}
+            title={t("iam.permissions.groupSection.permissionCount", {
+              count: group?.items?.length || 0,
+              defaultValue_one: "{{count}} permiso",
+              defaultValue_other: "{{count}} permisos",
+            })}
           >
-            {group.items.length}
+            {group?.items?.length || 0}
           </span>
         </div>
 
@@ -52,7 +68,7 @@ export default function GroupSection({
       </div>
 
       {/* Filas de permisos */}
-      {group.items.map((item) => {
+      {(group?.items || []).map((item) => {
         const permKey = String(item?.key || "").trim().toLowerCase();
 
         const flags = {};
@@ -70,7 +86,7 @@ export default function GroupSection({
 
         return (
           <PermissionRow
-            key={item._id || item.key}
+            key={item?._id || item?.key}
             item={item}
             roles={roles}
             gridCols={gridCols}

@@ -6,6 +6,7 @@ import {
   Users,
   NotebookPen,
   ShieldCheck,
+  Database, // <-- ESTE ES EL CORRECTO
 } from "lucide-react";
 
 /**
@@ -18,6 +19,7 @@ export const NAV_SECTIONS = [
   {
     key: "accesos",
     label: "Control de Acceso",
+    i18nKey: "nav.accesos",
     path: "/accesos",
     icon: DoorOpen,
     accessKey: "nav.accesos",
@@ -25,6 +27,7 @@ export const NAV_SECTIONS = [
   {
     key: "rondas",
     label: "Rondas de Vigilancia",
+    i18nKey: "nav.rondas",
     path: "/rondasqr",
     icon: Footprints,
     accessKey: "nav.rondas",
@@ -32,6 +35,7 @@ export const NAV_SECTIONS = [
   {
     key: "incidentes",
     label: "Gestión de Incidentes",
+    i18nKey: "nav.incidentes",
     path: "/incidentes",
     icon: AlertTriangle,
     accessKey: "nav.incidentes",
@@ -39,6 +43,7 @@ export const NAV_SECTIONS = [
   {
     key: "visitas",
     label: "Control de Visitas",
+    i18nKey: "nav.visitas",
     path: "/visitas",
     icon: Users,
     accessKey: "nav.visitas",
@@ -46,6 +51,7 @@ export const NAV_SECTIONS = [
   {
     key: "bitacora",
     label: "Bitácora Digital",
+    i18nKey: "nav.bitacora",
     path: "/bitacora",
     icon: NotebookPen,
     accessKey: "nav.bitacora",
@@ -53,9 +59,18 @@ export const NAV_SECTIONS = [
   {
     key: "iam",
     label: "Usuarios y Permisos",
+    i18nKey: "nav.iam",
     path: "/iam/admin",
     icon: ShieldCheck,
     accessKey: "nav.iam",
+  },
+  {
+    key: "system",
+    label: "Respaldo y Restauración",
+    i18nKey: "nav.systemBackups",
+    path: "/system/backups",
+    icon: Database, // <-- ICONO CORRECTO
+    accessKey: "nav.system",
   },
 ];
 

@@ -2,6 +2,7 @@
 import React, { useMemo } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, LogOut } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { clearToken } from "../lib/api.js";
@@ -236,6 +237,7 @@ function isVisitorUser(meLike) {
 export default function Sidebar({ onNavigate, variant }) {
   const nav = useNavigate();
   const { isAuthenticated, isLoading, user, logout } = useAuth();
+  const { t } = useTranslation();
 
   const effectiveMe = useMemo(() => {
     if (user && typeof user === "object") return normalizeMePayload(user);
@@ -288,12 +290,12 @@ export default function Sidebar({ onNavigate, variant }) {
     if (isVisitor) return null;
     return {
       key: "home",
-      label: "Director del panel",
+      label: t("nav.dashboard"),
       path: "/",
       icon: Home,
       emphasizeDark: true,
     };
-  }, [isVisitor]);
+  }, [isVisitor, t]);
 
   const items = useMemo(() => {
     const base = [];
@@ -302,7 +304,7 @@ export default function Sidebar({ onNavigate, variant }) {
     base.push(
       ...sessionSections.map((s) => ({
         key: s.key,
-        label: s.label,
+        label: s.i18nKey ? t(s.i18nKey, { defaultValue: s.label }) : s.label,
         path: s.path,
         icon: s.icon,
         emphasizeDark: false,
@@ -310,7 +312,7 @@ export default function Sidebar({ onNavigate, variant }) {
     );
 
     return base;
-  }, [homeItem, sessionSections]);
+  }, [homeItem, sessionSections, t]);
 
   const showNav =
     (!isLoading || !!effectiveMe) &&
@@ -319,7 +321,11 @@ export default function Sidebar({ onNavigate, variant }) {
   return (
     <div
       className="flex h-full w-full flex-col overflow-y-auto overscroll-contain p-4"
-      aria-label={variant === "mobile" ? "Barra lateral (móvil)" : "Barra lateral"}
+      aria-label={
+        variant === "mobile"
+          ? t("sidebar.mobileAriaLabel")
+          : t("sidebar.ariaLabel")
+      }
       style={{
         background: "transparent",
         color: "var(--text)",
@@ -336,7 +342,7 @@ export default function Sidebar({ onNavigate, variant }) {
           className="mt-1 text-xs font-medium uppercase tracking-[0.18em]"
           style={{ color: "var(--text-muted)" }}
         >
-          Plataforma de seguridad
+          {t("sidebar.platform")}
         </div>
       </div>
 
@@ -355,7 +361,7 @@ export default function Sidebar({ onNavigate, variant }) {
         </nav>
       ) : (
         <div className="px-2 text-sm" style={{ color: "var(--text-muted)" }}>
-          Cargando sesión…
+          {t("system.loadingSession")}
         </div>
       )}
 
@@ -366,7 +372,7 @@ export default function Sidebar({ onNavigate, variant }) {
           <button
             type="button"
             onClick={handleLogoutClick}
-            title="Cerrar sesión"
+            title={t("nav.logout")}
             className="group flex w-full items-center gap-3 rounded-[18px] px-4 py-3 text-left transition-all duration-150 hover:translate-x-[1px]"
             style={{
               border: "1px solid var(--border)",
@@ -380,7 +386,9 @@ export default function Sidebar({ onNavigate, variant }) {
               strokeWidth={2.4}
               style={{ color: "var(--text-muted)" }}
             />
-            <span className="text-[15px] font-medium leading-none">Salir</span>
+            <span className="text-[15px] font-medium leading-none">
+              {t("actions.exit")}
+            </span>
           </button>
         )}
       </div>

@@ -1,4 +1,11 @@
-import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import React, {
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import { useTranslation } from "react-i18next";
 
 import HeaderRow from "../components/HeaderRow";
 import GroupSection from "../components/GroupSection";
@@ -164,7 +171,7 @@ function isSameRow(a = {}, b = {}) {
 /* =========================
    Data inside this file
 ========================= */
-function usePermissionCatalogDataInline(onSaved) {
+function usePermissionCatalogDataInline(onSaved, t) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -255,11 +262,16 @@ function usePermissionCatalogDataInline(onSaved) {
       setRoleMatrix(matrix);
       setOrigMatrix(cloneMatrix(matrix));
     } catch (e) {
-      setErrorMsg(e?.message || "Error cargando permisos/roles");
+      setErrorMsg(
+        e?.message ||
+          t("iam.permCatalog.loadError", {
+            defaultValue: "Error cargando permisos/roles",
+          })
+      );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     loadAll();
@@ -289,7 +301,9 @@ function usePermissionCatalogDataInline(onSaved) {
 
       const validPermKeys = new Set(
         groups.flatMap((g) =>
-          Array.isArray(g.items) ? g.items.map((it) => normalizePermKey(it.key)) : []
+          Array.isArray(g.items)
+            ? g.items.map((it) => normalizePermKey(it.key))
+            : []
         )
       );
 
@@ -304,12 +318,17 @@ function usePermissionCatalogDataInline(onSaved) {
 
         const nextPerms = normalizePermList(
           Object.entries(rowNow)
-            .filter(([k, v]) => v === true && validPermKeys.has(normalizePermKey(k)))
+            .filter(
+              ([k, v]) =>
+                v === true && validPermKeys.has(normalizePermKey(k))
+            )
             .map(([k]) => k)
         );
 
         if (typeof iamApi.updateRolePermissions === "function") {
-          await iamApi.updateRolePermissions(String(rid), { permissions: nextPerms });
+          await iamApi.updateRolePermissions(String(rid), {
+            permissions: nextPerms,
+          });
         } else if (typeof iamApi.setRolePerms === "function") {
           await iamApi.setRolePerms(String(rid), nextPerms);
         } else {
@@ -323,21 +342,33 @@ function usePermissionCatalogDataInline(onSaved) {
         onSaved();
       }
 
-      setBanner({ type: "ok", msg: "✅ Cambios guardados." });
+      setBanner({
+        type: "ok",
+        msg: t("iam.permCatalog.savedChanges", {
+          defaultValue: "✅ Cambios guardados.",
+        }),
+      });
     } catch (e) {
-      const missing = Array.isArray(e?.payload?.missing) ? e.payload.missing.join(", ") : "";
+      const missing = Array.isArray(e?.payload?.missing)
+        ? e.payload.missing.join(", ")
+        : "";
       setBanner({
         type: "err",
         msg:
           e?.message ||
           (missing
-            ? `❌ Permisos inexistentes: ${missing}`
-            : "❌ Error guardando cambios."),
+            ? t("iam.permCatalog.missingPermissions", {
+                defaultValue: "❌ Permisos inexistentes: {{missing}}",
+                missing,
+              })
+            : t("iam.permCatalog.saveError", {
+                defaultValue: "❌ Error guardando cambios.",
+              })),
       });
     } finally {
       setSaving(false);
     }
-  }, [roles, roleMatrix, origMatrix, saving, loadAll, onSaved, groups]);
+  }, [roles, roleMatrix, origMatrix, saving, loadAll, onSaved, groups, t]);
 
   const onCreatePerm = useCallback(
     async (form) => {
@@ -347,25 +378,44 @@ function usePermissionCatalogDataInline(onSaved) {
 
         const keyRaw = normalizePermKey(form?.key);
         const label = String(form?.label || "").trim();
-        const group = String(form?.moduleValue || groupFromKey(keyRaw) || "general")
+        const group = String(
+          form?.moduleValue || groupFromKey(keyRaw) || "general"
+        )
           .trim()
           .toLowerCase();
 
         if (!keyRaw || !label || !group) {
-          setBanner({ type: "warn", msg: "Completa key, label y módulo." });
+          setBanner({
+            type: "warn",
+            msg: t("iam.permCatalog.completeFields", {
+              defaultValue: "Completa key, label y módulo.",
+            }),
+          });
           return false;
         }
 
         await iamApi.createPerm({ key: keyRaw, label, group, order: 0 });
-        setBanner({ type: "ok", msg: "✅ Permiso creado." });
+        setBanner({
+          type: "ok",
+          msg: t("iam.permCatalog.permissionCreated", {
+            defaultValue: "✅ Permiso creado.",
+          }),
+        });
         await loadAll();
         return true;
       } catch (e) {
-        setBanner({ type: "err", msg: e?.message || "❌ No se pudo crear." });
+        setBanner({
+          type: "err",
+          msg:
+            e?.message ||
+            t("iam.permCatalog.createError", {
+              defaultValue: "❌ No se pudo crear.",
+            }),
+        });
         return false;
       }
     },
-    [loadAll]
+    [loadAll, t]
   );
 
   const onDeletePerm = useCallback(
@@ -375,18 +425,36 @@ function usePermissionCatalogDataInline(onSaved) {
         setErrorMsg("");
 
         const id = it?.id || it?._id;
-        if (!id) throw new Error("ID de permiso requerido para eliminar.");
+        if (!id) {
+          throw new Error(
+            t("iam.permCatalog.deleteRequiresId", {
+              defaultValue: "ID de permiso requerido para eliminar.",
+            })
+          );
+        }
 
         await iamApi.deletePerm(String(id));
-        setBanner({ type: "ok", msg: "✅ Permiso eliminado." });
+        setBanner({
+          type: "ok",
+          msg: t("iam.permCatalog.permissionDeleted", {
+            defaultValue: "✅ Permiso eliminado.",
+          }),
+        });
         await loadAll();
         return true;
       } catch (e) {
-        setBanner({ type: "err", msg: e?.message || "❌ No se pudo eliminar." });
+        setBanner({
+          type: "err",
+          msg:
+            e?.message ||
+            t("iam.permCatalog.deleteError", {
+              defaultValue: "❌ No se pudo eliminar.",
+            }),
+        });
         return false;
       }
     },
-    [loadAll]
+    [loadAll, t]
   );
 
   return {
@@ -413,6 +481,8 @@ function usePermissionCatalogDataInline(onSaved) {
    Component
 ========================= */
 export default function PermissionCatalog({ onSaved }) {
+  const { t } = useTranslation();
+
   const {
     loading,
     saving,
@@ -430,7 +500,7 @@ export default function PermissionCatalog({ onSaved }) {
     onSaveAll,
     onCreatePerm,
     onDeletePerm,
-  } = usePermissionCatalogDataInline(onSaved);
+  } = usePermissionCatalogDataInline(onSaved, t);
 
   const scrollRef = useRef(null);
   const [openCreate, setOpenCreate] = useState(false);
@@ -441,8 +511,12 @@ export default function PermissionCatalog({ onSaved }) {
   });
   const [openDelete, setOpenDelete] = useState(null);
 
-  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(() => new Set());
-  const [expandedGroupsFull, setExpandedGroupsFull] = useState(() => new Set());
+  const [expandedGroupsCompact, setExpandedGroupsCompact] = useState(
+    () => new Set()
+  );
+  const [expandedGroupsFull, setExpandedGroupsFull] = useState(
+    () => new Set()
+  );
 
   const toggleGroupCompact = (groupKey) => {
     setExpandedGroupsCompact((prev) => {
@@ -482,8 +556,13 @@ export default function PermissionCatalog({ onSaved }) {
 
   useEffect(() => {
     if (!compactView) {
-      const all = new Set(filtered.map((g, i) => (g.group ? g.group : `g-${i}`)));
-      if (expandedGroupsFull.size === 0 || [...expandedGroupsFull].some((k) => !all.has(k))) {
+      const all = new Set(
+        filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
+      );
+      if (
+        expandedGroupsFull.size === 0 ||
+        [...expandedGroupsFull].some((k) => !all.has(k))
+      ) {
         setExpandedGroupsFull(all);
       }
     }
@@ -492,7 +571,9 @@ export default function PermissionCatalog({ onSaved }) {
   if (loading) {
     return (
       <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
-        Cargando permisos…
+        {t("iam.permCatalog.loading", {
+          defaultValue: "Cargando permisos…",
+        })}
       </div>
     );
   }
@@ -519,18 +600,21 @@ export default function PermissionCatalog({ onSaved }) {
             banner.type === "ok"
               ? {
                   background: "color-mix(in srgb, #22c55e 10%, transparent)",
-                  border: "1px solid color-mix(in srgb, #22c55e 26%, transparent)",
+                  border:
+                    "1px solid color-mix(in srgb, #22c55e 26%, transparent)",
                   color: "#bbf7d0",
                 }
               : banner.type === "warn"
               ? {
                   background: "color-mix(in srgb, #3b82f6 10%, transparent)",
-                  border: "1px solid color-mix(in srgb, #3b82f6 26%, transparent)",
+                  border:
+                    "1px solid color-mix(in srgb, #3b82f6 26%, transparent)",
                   color: "#bfdbfe",
                 }
               : {
                   background: "color-mix(in srgb, #ef4444 10%, transparent)",
-                  border: "1px solid color-mix(in srgb, #ef4444 26%, transparent)",
+                  border:
+                    "1px solid color-mix(in srgb, #ef4444 26%, transparent)",
                   color: "#fecaca",
                 }
           }
@@ -544,10 +628,14 @@ export default function PermissionCatalog({ onSaved }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por clave, etiqueta o módulo…"
+            placeholder={t("iam.permCatalog.searchPlaceholder", {
+              defaultValue: "Buscar por clave, etiqueta o módulo…",
+            })}
             className="w-full sm:max-w-[360px] rounded-xl px-3 py-2 text-sm outline-none"
             style={sxInput()}
-            aria-label="Buscar permisos"
+            aria-label={t("iam.permCatalog.searchAria", {
+              defaultValue: "Buscar permisos",
+            })}
           />
 
           <div className="flex gap-2 flex-wrap justify-end">
@@ -558,13 +646,19 @@ export default function PermissionCatalog({ onSaved }) {
               type="button"
             >
               <Plus className="w-4 h-4 opacity-90" />
-              <span>Crear permiso</span>
+              <span>
+                {t("iam.permCatalog.createPermission", {
+                  defaultValue: "Crear permiso",
+                })}
+              </span>
             </button>
 
             <button
               onClick={() => {
                 setCompactView(false);
-                const all = new Set(filtered.map((g, i) => (g.group ? g.group : `g-${i}`)));
+                const all = new Set(
+                  filtered.map((g, i) => (g.group ? g.group : `g-${i}`))
+                );
                 setExpandedGroupsFull(all);
               }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
@@ -572,7 +666,11 @@ export default function PermissionCatalog({ onSaved }) {
               type="button"
             >
               <Eye className="w-4 h-4 opacity-90" />
-              <span>Mostrar</span>
+              <span>
+                {t("iam.permCatalog.show", {
+                  defaultValue: "Mostrar",
+                })}
+              </span>
             </button>
 
             <button
@@ -586,7 +684,11 @@ export default function PermissionCatalog({ onSaved }) {
               type="button"
             >
               <Minus className="w-4 h-4 opacity-90" />
-              <span>Ver menos</span>
+              <span>
+                {t("iam.permCatalog.showLess", {
+                  defaultValue: "Ver menos",
+                })}
+              </span>
             </button>
 
             <button
@@ -595,10 +697,20 @@ export default function PermissionCatalog({ onSaved }) {
               style={sxSuccessBtn()}
               type="button"
               disabled={saving}
-              title={saving ? "Guardando..." : "Guardar cambios"}
+              title={
+                saving
+                  ? t("actions.saving", { defaultValue: "Guardando..." })
+                  : t("iam.permCatalog.saveChanges", {
+                      defaultValue: "Guardar cambios",
+                    })
+              }
             >
               <Square className="w-4 h-4 opacity-95" />
-              <span>{saving ? "Guardando..." : "Guardar"}</span>
+              <span>
+                {saving
+                  ? t("actions.saving", { defaultValue: "Guardando..." })
+                  : t("actions.save", { defaultValue: "Guardar" })}
+              </span>
             </button>
           </div>
         </div>
@@ -606,7 +718,10 @@ export default function PermissionCatalog({ onSaved }) {
 
       {filtered.length === 0 ? (
         <div className="p-6 text-sm" style={{ color: "var(--text-muted)" }}>
-          No se encontraron permisos para “{query}”.
+          {t("iam.permCatalog.noResults", {
+            defaultValue: 'No se encontraron permisos para "{{query}}".',
+            query,
+          })}
         </div>
       ) : compactView ? (
         <div className="rounded-[24px] p-0 overflow-hidden" style={sxCard()}>
@@ -616,7 +731,8 @@ export default function PermissionCatalog({ onSaved }) {
                 <div
                   className="backdrop-blur-md"
                   style={{
-                    background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                    background:
+                      "color-mix(in srgb, var(--card-solid) 94%, transparent)",
                     borderBottom: "1px solid var(--border)",
                   }}
                 >
@@ -634,7 +750,8 @@ export default function PermissionCatalog({ onSaved }) {
                       key={`${groupKey}-${idx}`}
                       style={{
                         background: "transparent",
-                        borderTop: idx === 0 ? "0" : "1px solid var(--border)",
+                        borderTop:
+                          idx === 0 ? "0" : "1px solid var(--border)",
                       }}
                     >
                       <button
@@ -645,13 +762,17 @@ export default function PermissionCatalog({ onSaved }) {
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize" style={{ color: "var(--text)" }}>
+                              <span
+                                className="font-semibold capitalize"
+                                style={{ color: "var(--text)" }}
+                              >
                                 {g.group}
                               </span>
                               <span
                                 className="text-xs font-bold rounded-md px-2 py-0.5"
                                 style={{
-                                  background: "color-mix(in srgb, #2563eb 12%, transparent)",
+                                  background:
+                                    "color-mix(in srgb, #2563eb 12%, transparent)",
                                   color: "#bfdbfe",
                                 }}
                               >
@@ -661,7 +782,9 @@ export default function PermissionCatalog({ onSaved }) {
                           )}
                         </div>
                         <span
-                          className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
+                          className={`i-lucide:chevron-down transition-transform ${
+                            isOpen ? "rotate-180" : ""
+                          }`}
                           aria-hidden
                           style={{ color: "var(--text-muted)" }}
                         />
@@ -678,7 +801,11 @@ export default function PermissionCatalog({ onSaved }) {
                             origMatrix={origMatrix}
                             onToggle={onToggle}
                             onDelete={(it) =>
-                              setOpenDelete({ id: it._id, key: it.key, label: it.label })
+                              setOpenDelete({
+                                id: it._id,
+                                key: it.key,
+                                label: it.label,
+                              })
                             }
                           />
                         </div>
@@ -698,7 +825,8 @@ export default function PermissionCatalog({ onSaved }) {
                 <div
                   className="backdrop-blur-md"
                   style={{
-                    background: "color-mix(in srgb, var(--card-solid) 94%, transparent)",
+                    background:
+                      "color-mix(in srgb, var(--card-solid) 94%, transparent)",
                     borderBottom: "1px solid var(--border)",
                   }}
                 >
@@ -715,7 +843,8 @@ export default function PermissionCatalog({ onSaved }) {
                     <div
                       key={`${groupKey}-${idx}`}
                       style={{
-                        borderTop: idx === 0 ? "0" : "1px solid var(--border)",
+                        borderTop:
+                          idx === 0 ? "0" : "1px solid var(--border)",
                       }}
                     >
                       <button
@@ -727,13 +856,17 @@ export default function PermissionCatalog({ onSaved }) {
                         <div className="flex items-center gap-3">
                           {!isOpen && (
                             <>
-                              <span className="font-semibold capitalize" style={{ color: "var(--text)" }}>
+                              <span
+                                className="font-semibold capitalize"
+                                style={{ color: "var(--text)" }}
+                              >
                                 {g.group}
                               </span>
                               <span
                                 className="text-xs font-bold rounded-md px-2 py-0.5"
                                 style={{
-                                  background: "color-mix(in srgb, #2563eb 12%, transparent)",
+                                  background:
+                                    "color-mix(in srgb, #2563eb 12%, transparent)",
                                   color: "#bfdbfe",
                                 }}
                               >
@@ -743,7 +876,9 @@ export default function PermissionCatalog({ onSaved }) {
                           )}
                         </div>
                         <span
-                          className={`i-lucide:chevron-down transition-transform ${isOpen ? "rotate-180" : ""}`}
+                          className={`i-lucide:chevron-down transition-transform ${
+                            isOpen ? "rotate-180" : ""
+                          }`}
                           aria-hidden
                           style={{ color: "var(--text-muted)" }}
                         />
@@ -759,7 +894,11 @@ export default function PermissionCatalog({ onSaved }) {
                           origMatrix={origMatrix}
                           onToggle={onToggle}
                           onDelete={(it) =>
-                            setOpenDelete({ id: it._id, key: it.key, label: it.label })
+                            setOpenDelete({
+                              id: it._id,
+                              key: it.key,
+                              label: it.label,
+                            })
                           }
                         />
                       )}
@@ -774,12 +913,19 @@ export default function PermissionCatalog({ onSaved }) {
 
       <Modal
         open={openCreate}
-        title="Crear permiso"
+        title={t("iam.permCatalog.createPermissionTitle", {
+          defaultValue: "Crear permiso",
+        })}
         onClose={() => setOpenCreate(false)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenCreate(false)} style={sxGhostBtn()} className="px-4 py-2 rounded-xl text-sm font-medium" type="button">
-              Cancelar
+            <button
+              onClick={() => setOpenCreate(false)}
+              style={sxGhostBtn()}
+              className="px-4 py-2 rounded-xl text-sm font-medium"
+              type="button"
+            >
+              {t("actions.cancel", { defaultValue: "Cancelar" })}
             </button>
             <button
               onClick={async () => {
@@ -797,54 +943,113 @@ export default function PermissionCatalog({ onSaved }) {
               className="px-4 py-2 rounded-xl text-sm font-semibold"
               type="button"
             >
-              Crear
+              {t("iam.permCatalog.create", {
+                defaultValue: "Crear",
+              })}
             </button>
           </div>
         }
       >
         <div className="space-y-3">
           <div>
-            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
-              Clave
+            <label
+              className="block text-sm mb-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {t("iam.permCatalog.key", {
+                defaultValue: "Clave",
+              })}
             </label>
             <input
               className="w-full rounded-xl px-3 py-2 text-sm outline-none"
               style={sxInput()}
               value={form.key}
-              onChange={(e) => setForm((prev) => ({ ...prev, key: e.target.value }))}
-              placeholder="modulo.recurso.accion"
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, key: e.target.value }))
+              }
+              placeholder={t("iam.permCatalog.keyPlaceholder", {
+                defaultValue: "modulo.recurso.accion",
+              })}
             />
           </div>
           <div>
-            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
-              Etiqueta
+            <label
+              className="block text-sm mb-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {t("iam.permCatalog.label", {
+                defaultValue: "Etiqueta",
+              })}
             </label>
             <input
               className="w-full rounded-xl px-3 py-2 text-sm outline-none"
               style={sxInput()}
               value={form.label}
-              onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
-              placeholder="Módulo · Acción"
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, label: e.target.value }))
+              }
+              placeholder={t("iam.permCatalog.labelPlaceholder", {
+                defaultValue: "Módulo · Acción",
+              })}
             />
           </div>
           <div>
-            <label className="block text-sm mb-1" style={{ color: "var(--text-muted)" }}>
-              Módulo
+            <label
+              className="block text-sm mb-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {t("iam.permCatalog.module", {
+                defaultValue: "Módulo",
+              })}
             </label>
             <select
               className="w-full rounded-xl px-3 py-2 text-sm outline-none"
               style={sxInput()}
               value={form.moduleValue}
-              onChange={(e) => setForm((prev) => ({ ...prev, moduleValue: e.target.value }))}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, moduleValue: e.target.value }))
+              }
             >
-              <option value="bitacora">Bitácora</option>
-              <option value="accesos">Control de Acceso</option>
-              <option value="iam">IAM</option>
-              <option value="incidentes">Incidentes</option>
-              <option value="rondasqr">Rondas QR</option>
-              <option value="visitas">Visitas</option>
-              <option value="reportes">Reportes</option>
-              <option value="general">General</option>
+              <option value="bitacora">
+                {t("iam.permCatalog.modules.bitacora", {
+                  defaultValue: "Bitácora",
+                })}
+              </option>
+              <option value="accesos">
+                {t("iam.permCatalog.modules.accesos", {
+                  defaultValue: "Control de Acceso",
+                })}
+              </option>
+              <option value="iam">
+                {t("iam.permCatalog.modules.iam", {
+                  defaultValue: "IAM",
+                })}
+              </option>
+              <option value="incidentes">
+                {t("iam.permCatalog.modules.incidentes", {
+                  defaultValue: "Incidentes",
+                })}
+              </option>
+              <option value="rondasqr">
+                {t("iam.permCatalog.modules.rondasqr", {
+                  defaultValue: "Rondas QR",
+                })}
+              </option>
+              <option value="visitas">
+                {t("iam.permCatalog.modules.visitas", {
+                  defaultValue: "Visitas",
+                })}
+              </option>
+              <option value="reportes">
+                {t("iam.permCatalog.modules.reportes", {
+                  defaultValue: "Reportes",
+                })}
+              </option>
+              <option value="general">
+                {t("iam.permCatalog.modules.general", {
+                  defaultValue: "General",
+                })}
+              </option>
             </select>
           </div>
         </div>
@@ -852,12 +1057,19 @@ export default function PermissionCatalog({ onSaved }) {
 
       <Modal
         open={!!openDelete}
-        title="Eliminar permiso"
+        title={t("iam.permCatalog.deletePermissionTitle", {
+          defaultValue: "Eliminar permiso",
+        })}
         onClose={() => setOpenDelete(null)}
         footer={
           <div className="flex justify-end gap-2">
-            <button onClick={() => setOpenDelete(null)} style={sxGhostBtn()} className="px-4 py-2 rounded-xl text-sm font-medium" type="button">
-              Cancelar
+            <button
+              onClick={() => setOpenDelete(null)}
+              style={sxGhostBtn()}
+              className="px-4 py-2 rounded-xl text-sm font-medium"
+              type="button"
+            >
+              {t("actions.cancel", { defaultValue: "Cancelar" })}
             </button>
             <button
               onClick={async () => {
@@ -868,16 +1080,23 @@ export default function PermissionCatalog({ onSaved }) {
               className="px-4 py-2 rounded-xl text-sm font-semibold"
               type="button"
             >
-              Eliminar
+              {t("actions.delete", { defaultValue: "Eliminar" })}
             </button>
           </div>
         }
       >
         {openDelete && (
           <p className="text-sm" style={{ color: "var(--text)" }}>
-            ¿Seguro que deseas eliminar <span className="font-semibold">{openDelete.label}</span>?
+            {t("iam.permCatalog.deleteConfirm", {
+              defaultValue:
+                "¿Seguro que deseas eliminar {{label}}?",
+              label: openDelete.label,
+            })}{" "}
             <br />
-            <span className="font-mono" style={{ color: "var(--text-muted)" }}>
+            <span
+              className="font-mono"
+              style={{ color: "var(--text-muted)" }}
+            >
               {openDelete.key}
             </span>
           </p>

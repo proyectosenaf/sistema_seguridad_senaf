@@ -1,0 +1,693 @@
+{
+  "labels": {
+    "language": "Language"
+  },
+  "actions": {
+    "back": "Back",
+    "close": "Close",
+    "clear": "Clear",
+    "exit": "Exit",
+    "save": "Save",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "search": "Search",
+    "export": "Export",
+    "title": "Actions"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "accesos": "Access Control",
+    "rondas": "Security Rounds",
+    "rondasQr": "QR Rounds",
+    "incidentes": "Incident Management",
+    "visitas": "Visit Control",
+    "bitacora": "Digital Logbook",
+    "iam": "Users and Permissions",
+    "systemBackups": "Backup and Restore",
+    "logout": "Log out"
+  },
+  "system": {
+    "loading": "Loading...",
+    "loadingSession": "Loading session...",
+    "redirecting": "Redirecting...",
+    "unauthorized": "Unauthorized",
+    "notFound": "Not found",
+    "interfaceError": "Interface error",
+    "errorGeneric": "An unexpected error occurred",
+    "select": "- Select -"
+  },
+  "auth": {
+    "mustLogin": "You must sign in to access the system.",
+    "goToLogin": "Go to sign in",
+    "redirectingToLogin": "Redirecting to sign in...",
+    "loginButton": {
+      "label": "Sign in"
+    },
+    "placeholders": {
+      "password": "Password"
+    },
+    "actions": {
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
+    },
+    "roleRedirect": {
+      "redirecting": "Redirecting..."
+    },
+    "resetPassword": {
+      "title": "Reset password",
+      "subtitle": "Enter your email, the code you received, and your new password.",
+      "placeholders": {
+        "email": "Email address",
+        "token": "Temporary code",
+        "newPassword": "New password",
+        "confirmPassword": "Confirm password"
+      },
+      "actions": {
+        "showPassword": "Show password",
+        "hidePassword": "Hide password",
+        "showConfirmation": "Show confirmation",
+        "hideConfirmation": "Hide confirmation",
+        "updating": "Updating...",
+        "saveNewPassword": "Save new password"
+      },
+      "passwordRules": {
+        "summary": "Minimum 8 characters, must include letters, numbers, and a special character.",
+        "minLength": "At least 8 characters",
+        "letter": "At least one letter",
+        "number": "At least one number",
+        "special": "At least one special character"
+      },
+      "links": {
+        "requestNewCode": "Request new code",
+        "backToLogin": "Back to login"
+      },
+      "success": {
+        "updated": "Password updated successfully."
+      },
+      "errors": {
+        "missingFields": "Please complete all fields.",
+        "passwordMismatch": "Passwords do not match.",
+        "invalidPassword": "Password must be at least 8 characters and include letters, numbers, and a special character.",
+        "invalidReset": "Invalid request.",
+        "resetNotRequested": "You must request a code first.",
+        "resetAlreadyUsed": "That code has already been used.",
+        "resetExpired": "The code has expired.",
+        "tooManyAttempts": "Too many attempts. Request a new code.",
+        "invalidResetToken": "The code is incorrect.",
+        "networkError": "Connection error with the server.",
+        "generic": "Could not reset the password."
+      }
+    }
+  },
+  "sidebar": {
+    "ariaLabel": "Sidebar",
+    "mobileAriaLabel": "Sidebar (mobile)",
+    "platform": "Security platform"
+  },
+  "topbar": {
+    "route": "Route",
+    "breadcrumbAria": "Breadcrumb",
+    "module": "Module",
+    "openModule": "Open module",
+    "enabledModules": "Enabled modules",
+    "senafHome": "SENAF system home",
+    "global": "Global",
+    "accessDesc": "Entries, exits, staff and vehicles",
+    "employees": "Employees",
+    "employeeList": "Employee list",
+    "vehicles": "Vehicles",
+    "vehicleControl": "Vehicle list and control",
+    "roundsDesc": "Patrolling and rounds",
+    "roundsQrDesc": "Scanning and QR checkpoint control",
+    "incidentsDesc": "Incidents, alerts and reports",
+    "visitsDesc": "Visitors, agenda and authorizations",
+    "appointmentAgenda": "Appointment Agenda",
+    "visitSchedule": "Visit scheduling",
+    "logbookDesc": "Historical record and tracking",
+    "iamDesc": "User, role and permission management",
+    "newEmployee": "New Employee",
+    "createEmployeeRecord": "Create employee record",
+    "newVehicle": "New Vehicle",
+    "createVehicleRecord": "Create vehicle record",
+    "findEmployee": "Find Employee",
+    "goEmployeeList": "Go to employee list",
+    "findVehicle": "Find Vehicle",
+    "goVehicleList": "Go to vehicle list",
+    "viewRounds": "View Rounds",
+    "openRounds": "Open rounds and patrols",
+    "scanQr": "Scan QR",
+    "openRoundsQr": "Open QR rounds module",
+    "newIncident": "New Incident",
+    "registerIncident": "Register incident",
+    "viewIncidents": "View Incidents",
+    "goIncidentsList": "Go to incidents list",
+    "newVisit": "New Visit",
+    "registerVisit": "Register visitor or visit",
+    "openVisitAgenda": "Open visit agenda",
+    "scanVisitQr": "Scan Visit QR",
+    "goVisitControl": "Go to visit control",
+    "viewLogbook": "View Logbook",
+    "openEventHistory": "Open event history",
+    "logbookReports": "Logbook Reports",
+    "openReportsMetrics": "Open reports and metrics",
+    "newUser": "New User",
+    "createSystemUser": "Create system user",
+    "rolesPermissions": "Roles and Permissions",
+    "managePermissions": "Manage permissions",
+    "deleteUser": "Delete User",
+    "goUsersDelete": "Go to users module to delete",
+    "actionsSection": "Actions",
+    "actions": "Actions",
+    "recentSearch": "Recent search",
+    "recent": "Recent",
+    "openInternalRoute": "Open internal system route",
+    "openExternalUrl": "Open external URL",
+    "searchCurrentModule": "Search in current module",
+    "filterInModule": "Filter in {{module}}",
+    "openMenu": "Open menu",
+    "searchPlaceholder": "Search routes, actions, modules or URL... (Ctrl/⌘+K)",
+    "fullGlobalSearch": "Full global search",
+    "allowedModulesSearch": "Search based on your allowed modules",
+    "notifications": "Notifications",
+    "visitor": "Visitor",
+    "smartGlobalSearch": "Smart global search",
+    "smartAllowedModulesSearch": "Smart search by allowed modules",
+    "smartSearchPlaceholder": "Search modules, actions, routes, data or paste a URL...",
+    "searchHelp": "↑ ↓ to navigate · Enter to open · Esc to close",
+    "includesGlobalData": "Includes global data and navigation",
+    "includesAllowedModules": "Includes your allowed modules and actions",
+    "results": "Results",
+    "searching": "Searching...",
+    "options": "options",
+    "noMatches": "No matches found. You can press Enter to search within the current module.",
+    "startTyping": "Start typing to see suggestions or a recent search.",
+    "noEnabledModules": "There are no enabled modules for your user.",
+    "unread": "Unread",
+    "alerts": "Alerts",
+    "total": "Total",
+    "markAllRead": "Mark all as read"
+  },
+  "rondas": {
+    "title": "Security Rounds",
+    "subtitle": "Access according to your profile.",
+    "checkpointScanner": "Checkpoint Scanner",
+    "checkpointScannerDesc": "Scan assigned points and send alerts.",
+    "reports": "Reports",
+    "reportsDesc": "Dashboard and rounds reports.",
+    "admin": "Administration",
+    "adminDesc": "Cities, rounds, checkpoints, plans and assignments.",
+    "noAccess": "You do not have permission to access this module.",
+    "noSections": "You do not have permission to view round sections.",
+    "guard": {
+      "sidebar": {
+        "ariaLabel": "Rounds module actions",
+        "subtitle": "Security Rounds",
+        "alerts": {
+          "send": "Send Alert",
+          "noPermission": "You do not have permission to send panic alerts.",
+          "noPermissionTitle": "You do not have permission to send alerts",
+          "panicTitle": "🚨 Panic alert",
+          "panicSent": "Panic alert sent",
+          "panicSentWithIcon": "🚨 Panic alert sent.",
+          "sendFailed": "The alert could not be sent. Check your connection and try again."
+        },
+        "incident": {
+          "message": "Incident Message",
+          "create": "Create incident",
+          "noPermission": "You do not have permission to create messages/incidents.",
+          "noPermissionTitle": "You do not have permission to create incidents"
+        }
+      }
+    }
+  },
+  "home": {
+    "sectionsTitle": "Sections",
+    "sectionsSubtitle": "Quick access to the modules enabled for your user.",
+    "noSections": "There are no enabled sections for your user.",
+    "analyticsTitle": "Analytics and metrics",
+    "analyticsSubtitle": "Visual summary of events recorded in the logbook.",
+    "goToSection": "Go to {{section}}"
+  },
+  "footer": {
+    "description": "Integrated security platform: access control, rounds, incidents, visits and more.",
+    "protectedData": "Protected data · Roles · Audit",
+    "sections": "Sections",
+    "noSections": "There are no enabled sections.",
+    "support": "Support",
+    "openChat": "Open chat",
+    "helpCenter": "Help center",
+    "loadingManuals": "Loading manuals...",
+    "docsQueryError": "Could not fetch documentation.",
+    "noManualsForRole": "There are no manuals available for this role.",
+    "pending": "pending",
+    "systemStatus": "System status",
+    "pingLabel": "Ping",
+    "versionLabel": "Version",
+    "copyright": "All rights reserved",
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "docsNotAvailable": "Documentation is not available yet. When you upload the manuals to the backend, they will appear here automatically."
+  },
+  "bitacora": {
+    "titleUpper": "LOGBOOK",
+    "subtitle": "Query and analyze events recorded in the system.",
+    "loading": "Loading...",
+    "tabLog": "Logbook",
+    "tabAnalytics": "Analytics",
+    "kpiVisits": "Visits",
+    "kpiActiveVisits": "{{count}} active",
+    "kpiRounds": "Rounds",
+    "kpiRegisteredInPeriod": "Registered in the period",
+    "kpiAccesses": "Accesses",
+    "kpiAccessRecords": "Access records",
+    "kpiIncidents": "Incidents",
+    "kpiManagedInLog": "Managed in logbook",
+    "showingRecords": "Showing {{visible}} of {{total}} records",
+    "defaultShowingLast": "Showing the latest {{count}} records by default",
+    "filteredShowing": "Showing filtered results",
+    "viewOnlyLast": "Show only the latest {{count}}",
+    "viewAll": "View all",
+    "detailLoadError": "Could not load event details.",
+    "invalidId": "Invalid identifier.",
+    "archiveError": "Could not archive or delete the record.",
+    "filters": {
+      "title": "Search Filters",
+      "fields": {
+        "fromDate": "From Date",
+        "toDate": "To Date",
+        "agent": "Agent",
+        "shift": "Shift",
+        "eventType": "Event Type",
+        "module": "Module"
+      },
+      "placeholders": {
+        "agent": "Search agent…"
+      },
+      "buttons": {
+        "clearFilters": "Clear Filters",
+        "exportFilteredExcel": "Export Filtered (.XLS styled)",
+        "downloadPdf": "Download PDF"
+      },
+      "moduleOptions": {
+        "all": "All"
+      }
+    },
+    "table": {
+      "title": "Event Log ({{count}})",
+      "subtitle": "Chronological history of all system activities",
+      "headers": {
+        "dateTime": "Date and Time",
+        "actor": "Actor",
+        "role": "Role",
+        "module": "Module",
+        "action": "Action",
+        "description": "Description",
+        "priority": "Priority",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "buttons": {
+        "view": "View",
+        "archive": "Archive",
+        "archiving": "Archiving..."
+      },
+      "empty": "There are no results for the selected filters."
+    },
+    "deleteConfirm": {
+      "title": "Confirm archive",
+      "message": "Archive the <strong>{{type}}</strong> from <strong>{{actor}}</strong> corresponding to <strong>{{month}}</strong>?",
+      "description": "The record will not be physically deleted. It will be hidden from the main logbook and can be restored later.",
+      "buttons": {
+        "archive": "Archive",
+        "archiving": "Archiving..."
+      },
+      "defaults": {
+        "event": "event"
+      }
+    },
+    "analytics": {
+      "eventsByModule": "Events by Module",
+      "byShift": "Distribution by Shift",
+      "eventsCount": "{{count}} events ({{pct}}%)",
+      "shiftLabel": "Shift {{shift}}",
+      "shifts": {
+        "morning": "Morning",
+        "afternoon": "Afternoon",
+        "night": "Night"
+      },
+      "modules": {
+        "Todos": "All",
+        "Control de Acceso": "Access Control",
+        "Rondas de Vigilancia": "Security Rounds",
+        "Control de Visitas": "Visit Control",
+        "Gestión de Incidentes": "Incident Management"
+      }
+    },
+    "eventDetail": {
+      "title": "Event Detail",
+      "subtitle": "Complete audit and traceability view",
+      "loading": "Loading event detail…",
+      "empty": "—",
+      "fields": {
+        "dateTime": "Date and Time",
+        "module": "Module",
+        "type": "Type",
+        "action": "Action",
+        "agent": "Agent",
+        "actor": "Actor",
+        "actorRole": "Actor Role",
+        "shift": "Shift",
+        "entity": "Entity",
+        "entityId": "Entity ID",
+        "ip": "IP",
+        "source": "Source",
+        "priority": "Priority",
+        "status": "Status",
+        "relatedName": "Related Name",
+        "companyZone": "Company / Zone",
+        "actorId": "Actor ID",
+        "userAgent": "User Agent",
+        "archived": "Archived",
+        "archivedBy": "Archived By",
+        "archivedAt": "Archived At",
+        "visible": "Visible"
+      },
+      "sections": {
+        "title": "Title",
+        "description": "Description",
+        "meta": "Meta",
+        "before": "Before",
+        "after": "After"
+      },
+      "actions": {
+        "exportPdf": "Export PDF",
+        "exportJson": "Export JSON",
+        "archive": "Archive",
+        "archiving": "Archiving..."
+      },
+      "errors": {
+        "pdfFailed": "Could not generate the PDF."
+      }
+    }
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "audioRecorder": {
+      "title": "Record audio",
+      "statusLabel": "Status",
+      "recordingTime": "{{seconds}}s",
+      "status": {
+        "idle": "Idle",
+        "recording": "Recording",
+        "ready": "Ready",
+        "error": "Error"
+      },
+      "actions": {
+        "start": "Start",
+        "stop": "Stop",
+        "save": "Save audio"
+      },
+      "errors": {
+        "previewFailed": "The audio preview could not be prepared.",
+        "micDenied": "Microphone permission was denied or is unavailable.",
+        "convertFailed": "The audio could not be converted."
+      }
+    }
+  },
+  "access": {
+    "changeInCompanyStatus": "Change In Company status",
+    "observationModal": {
+      "registerEntry": "Register entry",
+      "registerExit": "Register exit",
+      "label": "Observation",
+      "placeholder": "Write an observation (optional)"
+    },
+    "employeeModal": {
+      "title": "Register New Employee",
+      "fullName": "Full Name",
+      "personId": "Person ID",
+      "birthDate": "Birth Date",
+      "gender": "Gender",
+      "phone": "Phone",
+      "address": "Address",
+      "department": "Department",
+      "position": "Position",
+      "entryDate": "Entry Date",
+      "status": "Status",
+      "createError": "Error creating employee"
+    }
+  },
+  "rondasqr": {
+    "assignments": {
+      "title": "Round Assignments",
+      "unnamed": "(No name)",
+      "pointsAbbr": "pts",
+      "selectedPlan": "Selected plan:",
+      "round": "Round:",
+      "points": "Points:",
+      "listTitle": "List ({{date}})",
+      "noAssignments": "No assignments.",
+      "fields": {
+        "date": "Date",
+        "site": "Site",
+        "plan": "Plan",
+        "guard": "Guard",
+        "start": "Start",
+        "end": "End"
+      },
+      "actions": {
+        "create": "Create assignment",
+        "refresh": "Refresh"
+      },
+      "table": {
+        "guard": "Guard",
+        "site": "Site",
+        "round": "Round",
+        "plan": "Plan",
+        "points": "Points",
+        "start": "Start",
+        "end": "End",
+        "status": "Status",
+        "created": "Created",
+        "actions": "Actions"
+      },
+      "messages": {
+        "completeRequired": "Complete date, site, plan, and guard.",
+        "invalidStartTime": "Invalid start time (use HH:mm)",
+        "invalidEndTime": "Invalid end time (use HH:mm)",
+        "createError": "Could not create the assignment",
+        "deleteError": "Could not delete the assignment."
+      }
+    },
+    "scanPage": {
+      "system": {
+        "loadingSession": "Loading session..."
+      },
+      "access": {
+        "deniedTitle": "Access denied",
+        "deniedDescription": "You do not have permission to access the Security Rounds module."
+      },
+      "header": {
+        "title": "Overview",
+        "greeting": "Hello {{user}}, here you will see your rounds and alerts for today.",
+        "pendingToSend": "Rounds pending to send"
+      },
+      "buttons": {
+        "sendingUpper": "SENDING...",
+        "alertUpper": "ALERT",
+        "pointControlRegister": "Checkpoint Scanner",
+        "incidentMessage": "Incident Message",
+        "continueRound": "Continue round",
+        "finishRound": "Finish round",
+        "continue": "Continue",
+        "start": "Start",
+        "finish": "Finish",
+        "retry": "Retry",
+        "sending": "Sending...",
+        "transmitNow": "Transmit now",
+        "send": "Send",
+        "sendPhotos": "Send photos",
+        "select": "Select",
+        "delete": "Delete"
+      },
+      "texts": {
+        "unknownGuard": "Unknown guard",
+        "guard": "guard",
+        "pressInEmergency": "Press in case of emergency",
+        "notAuthorizedAlerts": "Not authorized for alerts",
+        "noActionsAvailable": "You have no available actions in this module.",
+        "roundPhotos": "Round photos",
+        "round": "Round",
+        "site": "Site"
+      },
+      "progress": {
+        "title": "Round Progress",
+        "noPermission": "You do not have permission to operate rounds.",
+        "lastPoint": "Last point:",
+        "nextPoint": "Next:",
+        "completedPercent": "{{pct}}% completed",
+        "emptyPrefix": "To start a round, open the",
+        "emptySuffix": "and scan the first assigned point."
+      },
+      "assignments": {
+        "loaded": "Loaded assignments:",
+        "status": "Status:",
+        "pending": "pending"
+      },
+      "qr": {
+        "title": "Scan Point",
+        "noPermission": "You do not have permission to register checkpoints."
+      },
+      "outbox": {
+        "title": "Pending to send",
+        "pending": "Pending:"
+      },
+      "dump": {
+        "title": "Send offline database"
+      },
+      "photos": {
+        "title": "Photos",
+        "noPermission": "You do not have permission to attach evidence or incidents.",
+        "takePhoto": "Take photo {{index}}"
+      },
+      "alerts": {
+        "noPermissionStartRounds": "You do not have permission to start rounds.",
+        "noPermissionFinishRounds": "You do not have permission to finish rounds.",
+        "noPermissionPanic": "You do not have permission to send panic alerts.",
+        "panicTitle": "🚨 Panic alert",
+        "panicMessage": "Panic alert sent from round",
+        "panicNotificationBody": "reported an alert",
+        "panicSent": "🚨 Panic alert sent.",
+        "panicSendError": "The alert could not be sent.",
+        "noPermissionRegisterPoints": "You do not have permission to register points.",
+        "offlineQrSaved": "📦 Offline. QR saved to transmit later.",
+        "pointRegistered": "✅ Point registered:",
+        "qrSavedForLater": "📦 Could not be sent. Saved to transmit later.",
+        "noPermissionSendIncidents": "You do not have permission to send incidents.",
+        "writeMessage": "Write a message.",
+        "messageSent": "✅ Message sent.",
+        "messageSendError": "The message could not be sent.",
+        "noPermissionPhotosIncidents": "You do not have permission to send photos/incidents.",
+        "selectAtLeastOnePhoto": "Select at least one photo.",
+        "photosSent": "📤 Photos sent.",
+        "photosSendError": "The photos could not be sent.",
+        "noPermissionTransmitRounds": "You do not have permission to transmit rounds.",
+        "noPendingRounds": "There are no pending rounds.",
+        "transmitResult": "Transmitted: {{ok}}  •  Failed: {{fail}}",
+        "transmitError": "An error occurred while transmitting.",
+        "noPermissionOfflineMode": "You do not have permission to manage offline mode.",
+        "noOfflineInfo": "There is no offline information to send.",
+        "offlineDbSent": "📤 Local database sent.",
+        "offlineDbSendError": "The database could not be sent."
+      }
+    }
+  },
+  "iam": {
+    "permCatalog": {
+      "loading": "Loading permissions…",
+      "loadError": "Error loading permissions/roles",
+      "savedChanges": "✅ Changes saved.",
+      "missingPermissions": "❌ Nonexistent permissions: {{missing}}",
+      "saveError": "❌ Error saving changes.",
+      "completeFields": "Complete key, label, and module.",
+      "permissionCreated": "✅ Permission created.",
+      "createError": "❌ Could not create.",
+      "deleteRequiresId": "Permission ID is required to delete.",
+      "permissionDeleted": "✅ Permission deleted.",
+      "deleteError": "❌ Could not delete.",
+      "searchPlaceholder": "Search by key, label, or module…",
+      "searchAria": "Search permissions",
+      "createPermission": "Create permission",
+      "show": "Show",
+      "showLess": "Show less",
+      "saveChanges": "Save changes",
+      "noResults": "No permissions found for \"{{query}}\".",
+      "createPermissionTitle": "Create permission",
+      "create": "Create",
+      "key": "Key",
+      "keyPlaceholder": "module.resource.action",
+      "label": "Label",
+      "labelPlaceholder": "Module · Action",
+      "module": "Module",
+      "deletePermissionTitle": "Delete permission",
+      "deleteConfirm": "Are you sure you want to delete {{label}}?",
+      "header": {
+        "permissions": "Permissions"
+      },
+      "modules": {
+        "bitacora": "Logbook",
+        "accesos": "Access Control",
+        "iam": "IAM",
+        "incidentes": "Incidents",
+        "rondasqr": "QR Rounds",
+        "visitas": "Visits",
+        "reportes": "Reports",
+        "general": "General"
+      }
+    },
+    "roleClone": {
+      "title": "Clone role",
+      "fields": {
+        "sourceRole": "Source role",
+        "newRoleName": "New role name",
+        "newRoleNamePlaceholder": "E.g. Senior Operator",
+        "codeOptional": "Code (optional)",
+        "codePlaceholder": "senior_operator",
+        "includePermissions": "Include source role permissions"
+      },
+      "actions": {
+        "clone": "Clone",
+        "cloning": "Cloning…"
+      },
+      "messages": {
+        "selectRoleAndName": "Select the role to clone and a name.",
+        "clonedFrom": "Cloned from {{name}}",
+        "cloneError": "Could not clone the role"
+      }
+    },
+    "permissions": {
+      "roleCanPermission": "{{role}} can {{permission}}",
+      "groupSection": {
+        "permissionCount": "{{count}}"
+      },
+      "groups": {
+        "iam": "IAM",
+        "visitas": "Visits",
+        "accesos": "Access",
+        "rondas": "Rounds",
+        "rondasqr": "QR Rounds",
+        "incidentes": "Incidents",
+        "bitacora": "Logbook",
+        "reportes": "Reports",
+        "general": "General"
+      }
+    }
+  },
+  "camera": {
+    "title": "Take photo — SENAF",
+    "rotate": "↻ Rotate",
+    "instructions": "Rotate the device to vertical or horizontal mode. Use the \"Rotate\" button if the image appears inverted.",
+    "capture": "📷 Capture photo",
+    "errors": {
+      "noAccess": "Could not access the camera."
+    }
+  },
+  "photos": {
+    "title": "Send photos",
+    "selectedCount": "Selected: <strong>{{count}}</strong> of 5",
+    "shotLabel": "Take photo {{number}}",
+    "buttons": {
+      "remove": "Remove",
+      "send": "Send",
+      "sending": "Sending..."
+    },
+    "alerts": {
+      "selectAtLeastOne": "Select at least one photo.",
+      "readyToSend": "Photos ready to send: {{count}}. Replace this stub with your API.",
+      "sendError": "The photos could not be sent."
+    }
+  }
+}

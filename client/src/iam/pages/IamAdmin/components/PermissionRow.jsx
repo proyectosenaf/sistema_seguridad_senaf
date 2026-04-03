@@ -1,8 +1,19 @@
 import React, { memo } from "react";
+import { useTranslation } from "react-i18next";
 import RoleCheck from "./RoleCheck";
 
 /** Fila de permiso con primera columna sticky en X */
-function PermissionRow({ item, roles, gridCols, flags, dirty, onToggle, onDelete }) {
+function PermissionRowComponent({
+  item,
+  roles,
+  gridCols,
+  flags,
+  dirty,
+  onToggle,
+  onDelete,
+}) {
+  const { t } = useTranslation();
+
   return (
     <div
       className={
@@ -26,7 +37,10 @@ function PermissionRow({ item, roles, gridCols, flags, dirty, onToggle, onDelete
           <RoleCheck
             checked={!!flags[r._id]}
             onChange={() => onToggle(r._id, item.key)}
-            label={`${r.name || r.code} puede ${item.label}`}
+            label={t("iam.permissions.roleCanPermission", {
+              role: r.name || r.code,
+              permission: item.label,
+            })}
           />
         </div>
       ))}
@@ -34,7 +48,7 @@ function PermissionRow({ item, roles, gridCols, flags, dirty, onToggle, onDelete
       <div className="flex items-center justify-center gap-2">
         <button
           type="button"
-          title="Eliminar"
+          title={t("actions.delete")}
           onClick={() => onDelete(item)}
           className="p-1.5 rounded-md bg-neutral-200/80 text-neutral-800 hover:bg-neutral-300/90 dark:bg-neutral-800/80 dark:text-neutral-200 dark:hover:bg-neutral-700/90 backdrop-blur-sm"
         >
@@ -47,13 +61,18 @@ function PermissionRow({ item, roles, gridCols, flags, dirty, onToggle, onDelete
   );
 }
 
-export default memo(PermissionRow, (prev, next) => {
+const PermissionRow = memo(PermissionRowComponent, (prev, next) => {
   if (prev.dirty !== next.dirty) return false;
   if (prev.roles.length !== next.roles.length) return false;
+
   const p = prev.flags;
   const n = next.flags;
+
   for (const r of next.roles) {
     if (Boolean(p[r._id]) !== Boolean(n[r._id])) return false;
   }
+
   return true;
-}); 
+});
+
+export default PermissionRow;

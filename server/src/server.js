@@ -10,6 +10,8 @@ import mongoose from "mongoose";
 import path from "node:path";
 import fs from "node:fs";
 
+import { registerSystemModule, bootSystemModule } from "./modules/system/index.js";
+
 // Importando el middleware para forzar cambio de contraseña
 import forcePasswordChange from "./middleware/forcePasswordChange.js";
 // (Nota: no lo estás usando aún; no lo activo aquí para no romper flujo)
@@ -64,7 +66,7 @@ import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync
 import searchRoutes from "../modules/search/search.routes.js";
 
 
-
+import { startBackupsCron } from "./modules/system/jobs/backups.cron.js";
 
 
 const app = express();
@@ -75,6 +77,7 @@ app.set("trust proxy", 1);
 
 // ✅ evita 304 por If-None-Match en API
 app.set("etag", false);
+
 
 /* ───────────────────── ENV / MODOS ───────────────────── */
 
@@ -252,6 +255,11 @@ app.use((req, _res, next) => {
   req.io = io;
   next();
 });
+
+/* ───────────────────── ✅ SYSTEM MODULE REGISTER ✅ ───────────────────── */
+registerSystemModule(app);
+bootSystemModule();
+startBackupsCron();
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 

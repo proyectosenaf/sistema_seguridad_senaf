@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { MODULES } from "../constants";
 import { percent } from "../utils/bitacora.formatters";
 import ProgressBar from "./ProgressBar";
@@ -24,14 +25,34 @@ function cardStyle() {
 }
 
 export default function BitacoraAnalytics({ rows = [] }) {
+  const { t } = useTranslation();
   const totalRows = rows.length || 1;
+
+  const shiftOptions = [
+    {
+      value: "Mañana",
+      label: t("bitacora.analytics.shifts.morning", { defaultValue: "Mañana" }),
+    },
+    {
+      value: "Tarde",
+      label: t("bitacora.analytics.shifts.afternoon", { defaultValue: "Tarde" }),
+    },
+    {
+      value: "Noche",
+      label: t("bitacora.analytics.shifts.night", { defaultValue: "Noche" }),
+    },
+  ];
 
   return (
     <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <div className="fx-card rounded-[24px] p-5" style={cardStyle()}>
         <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
           <span>📊</span>
-          <span style={{ color: "var(--text)" }}>Eventos por Módulo</span>
+          <span style={{ color: "var(--text)" }}>
+            {t("bitacora.analytics.eventsByModule", {
+              defaultValue: "Eventos por Módulo",
+            })}
+          </span>
         </h3>
 
         <div className="space-y-4">
@@ -41,13 +62,22 @@ export default function BitacoraAnalytics({ rows = [] }) {
 
             return (
               <div key={mod} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm gap-3">
-                  <span style={{ color: "var(--text)" }}>{mod}</span>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span style={{ color: "var(--text)" }}>
+                    {t(`bitacora.analytics.modules.${mod}`, {
+                      defaultValue: mod,
+                    })}
+                  </span>
+
                   <span
                     className="shrink-0"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    {count} eventos ({pctVal}%)
+                    {t("bitacora.analytics.eventsCount", {
+                      defaultValue: "{{count}} eventos ({{pct}}%)",
+                      count,
+                      pct: pctVal,
+                    })}
                   </span>
                 </div>
 
@@ -68,23 +98,37 @@ export default function BitacoraAnalytics({ rows = [] }) {
       <div className="fx-card rounded-[24px] p-5" style={cardStyle()}>
         <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
           <span>🕒</span>
-          <span style={{ color: "var(--text)" }}>Distribución por Turno</span>
+          <span style={{ color: "var(--text)" }}>
+            {t("bitacora.analytics.byShift", {
+              defaultValue: "Distribución por Turno",
+            })}
+          </span>
         </h3>
 
         <div className="space-y-4">
-          {["Mañana", "Tarde", "Noche"].map((turno) => {
-            const count = rows.filter((r) => r.turno === turno).length;
+          {shiftOptions.map((turno) => {
+            const count = rows.filter((r) => r.turno === turno.value).length;
             const pctVal = percent(count, totalRows);
 
             return (
-              <div key={turno} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm gap-3">
-                  <span style={{ color: "var(--text)" }}>Turno {turno}</span>
+              <div key={turno.value} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span style={{ color: "var(--text)" }}>
+                    {t("bitacora.analytics.shiftLabel", {
+                      defaultValue: "Turno {{shift}}",
+                      shift: turno.label,
+                    })}
+                  </span>
+
                   <span
                     className="shrink-0"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    {count} eventos ({pctVal}%)
+                    {t("bitacora.analytics.eventsCount", {
+                      defaultValue: "{{count}} eventos ({{pct}}%)",
+                      count,
+                      pct: pctVal,
+                    })}
                   </span>
                 </div>
 

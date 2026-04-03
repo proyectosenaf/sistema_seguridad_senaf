@@ -2,8 +2,8 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 
-function safeInternalPath(p) {
-  return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
+function safeInternalPath(path) {
+  return typeof path === "string" && path.startsWith("/") && !path.startsWith("//");
 }
 
 export default function LoginButton({
@@ -14,10 +14,9 @@ export default function LoginButton({
   const navigate = useNavigate();
 
   const handleLogin = () => {
-    const desired =
-      safeInternalPath(returnTo)
-        ? returnTo
-        : (window.location.pathname + window.location.search);
+    const desired = safeInternalPath(returnTo)
+      ? returnTo
+      : `${window.location.pathname}${window.location.search}`;
 
     try {
       sessionStorage.setItem("auth:returnTo", desired);
@@ -30,7 +29,7 @@ export default function LoginButton({
   };
 
   return (
-    <button onClick={handleLogin} className={className} type="button">
+    <button type="button" onClick={handleLogin} className={className}>
       {label}
     </button>
   );

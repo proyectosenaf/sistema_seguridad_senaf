@@ -1,12 +1,13 @@
-// client/src/pages/auth/LoginRedirect.jsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 function safeInternalPath(p) {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
 }
 
 export default function LoginRedirect() {
+  const { t } = useTranslation();
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -36,5 +37,5 @@ export default function LoginRedirect() {
     nav(`/login?to=${encodeURIComponent(returnTo)}`, { replace: true });
   }, [nav, loc.search]);
 
-  return <div className="p-6">Redirigiendo a inicio de sesión…</div>;
+  return <div className="p-6">{t("auth.redirectingToLogin")}</div>;
 }

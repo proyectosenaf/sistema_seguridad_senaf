@@ -1,5 +1,7 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+
 import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
 import ChatDock from "./chat/ChatDock.jsx";
@@ -67,6 +69,7 @@ export default function Layout({
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { t } = useTranslation(); // <-- idioma
 
   const {
     hideSidebar: hideSidebarCtx,
@@ -105,22 +108,22 @@ export default function Layout({
     hideFooterProp !== undefined
       ? Boolean(hideFooterProp)
       : hideFooterCtx !== undefined
-        ? Boolean(hideFooterCtx)
-        : Boolean(modeHideFooter);
+      ? Boolean(hideFooterCtx)
+      : Boolean(modeHideFooter);
 
   const hideChatDock =
     hideChatDockProp !== undefined
       ? Boolean(hideChatDockProp)
       : hideChatDockCtx !== undefined
-        ? Boolean(hideChatDockCtx)
-        : Boolean(modeHideChatDock);
+      ? Boolean(hideChatDockCtx)
+      : Boolean(modeHideChatDock);
 
   const hideTopbar =
     hideTopbarProp !== undefined
       ? Boolean(hideTopbarProp)
       : hideTopbarCtx !== undefined
-        ? Boolean(hideTopbarCtx)
-        : Boolean(modeHideTopbar);
+      ? Boolean(hideTopbarCtx)
+      : Boolean(modeHideTopbar);
 
   const showSidebar = !hideSidebar;
 
@@ -150,10 +153,10 @@ export default function Layout({
 
   const backProp = React.useMemo(() => {
     if (visitorMode) {
-      return { label: "Salir", onClick: doVisitorExit };
+      return { label: t("actions.exit"), onClick: doVisitorExit };
     }
-    return { label: back?.label || "Regresar", onClick: smartBack };
-  }, [visitorMode, doVisitorExit, back?.label, smartBack]);
+    return { label: back?.label || t("actions.back"), onClick: smartBack };
+  }, [visitorMode, doVisitorExit, back?.label, smartBack, t]);
 
   const showBack =
     !hideTopbar && (visitorMode || pathname !== "/" || !!back?.onClick);
@@ -242,6 +245,7 @@ export default function Layout({
         </aside>
       )}
 
+      {/* resto EXACTAMENTE igual */}
       <div
         className={[
           "relative z-10 h-full min-w-0",
@@ -317,13 +321,7 @@ export default function Layout({
               top: `${topbarOffset}px`,
             }}
           >
-            <div
-              className="h-full"
-              style={{
-                background:
-                  "linear-gradient(180deg, color-mix(in srgb, var(--card) 8%, transparent), transparent 24%)",
-              }}
-            >
+            <div className="h-full">
               <Sidebar
                 variant="mobile"
                 onNavigate={() => setMobileOpen(false)}

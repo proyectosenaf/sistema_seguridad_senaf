@@ -1,8 +1,7 @@
-
-// client/src/pages/auth/ResetPassword.jsx
 import React, { useMemo, useState } from "react";
 import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API as API_BASE } from "../../lib/api.js";
 import AuthBackground from "../../components/AuthBackground.jsx";
 
@@ -30,26 +29,27 @@ function getPasswordChecks(password) {
   };
 }
 
-function humanResetError(codeOrMsg) {
+function humanResetError(codeOrMsg, t) {
   const s = String(codeOrMsg || "").toLowerCase();
 
-  if (s.includes("missing_fields")) return "Completa todos los campos.";
-  if (s.includes("password_mismatch")) return "Las contraseñas no coinciden.";
+  if (s.includes("missing_fields")) return t("auth.resetPassword.errors.missingFields");
+  if (s.includes("password_mismatch")) return t("auth.resetPassword.errors.passwordMismatch");
   if (s.includes("invalid_password")) {
-    return "La contraseña debe tener mínimo 8 caracteres e incluir letras, números y un carácter especial.";
+    return t("auth.resetPassword.errors.invalidPassword");
   }
-  if (s.includes("invalid_reset")) return "Solicitud inválida.";
-  if (s.includes("reset_not_requested")) return "Primero debes solicitar un código.";
-  if (s.includes("reset_already_used")) return "Ese código ya fue utilizado.";
-  if (s.includes("reset_expired")) return "El código ha expirado.";
-  if (s.includes("too_many_attempts")) return "Demasiados intentos. Solicita un nuevo código.";
-  if (s.includes("invalid_reset_token")) return "El código es incorrecto.";
-  if (s.includes("network error")) return "Error de conexión con el servidor.";
+  if (s.includes("invalid_reset")) return t("auth.resetPassword.errors.invalidReset");
+  if (s.includes("reset_not_requested")) return t("auth.resetPassword.errors.resetNotRequested");
+  if (s.includes("reset_already_used")) return t("auth.resetPassword.errors.resetAlreadyUsed");
+  if (s.includes("reset_expired")) return t("auth.resetPassword.errors.resetExpired");
+  if (s.includes("too_many_attempts")) return t("auth.resetPassword.errors.tooManyAttempts");
+  if (s.includes("invalid_reset_token")) return t("auth.resetPassword.errors.invalidResetToken");
+  if (s.includes("network error")) return t("auth.resetPassword.errors.networkError");
 
-  return codeOrMsg || "No se pudo restablecer la contraseña.";
+  return codeOrMsg || t("auth.resetPassword.errors.generic");
 }
 
 export default function ResetPassword() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -101,19 +101,17 @@ export default function ResetPassword() {
     const confirmarPassword = String(form.confirmarPassword || "");
 
     if (!email || !token || !passwordNueva || !confirmarPassword) {
-      setError("Completa todos los campos.");
+      setError(t("auth.resetPassword.errors.missingFields"));
       return;
     }
 
     if (!validatePassword(passwordNueva)) {
-      setError(
-        "La contraseña debe tener mínimo 8 caracteres e incluir letras, números y un carácter especial."
-      );
+      setError(t("auth.resetPassword.errors.invalidPassword"));
       return;
     }
 
     if (passwordNueva !== confirmarPassword) {
-      setError("Las contraseñas no coinciden.");
+      setError(t("auth.resetPassword.errors.passwordMismatch"));
       return;
     }
 
@@ -128,18 +126,18 @@ export default function ResetPassword() {
       });
 
       if (data?.ok === false) {
-        setError(humanResetError(data?.error || data?.message));
+        setError(humanResetError(data?.error || data?.message, t));
         return;
       }
 
-      setMsg(data?.message || "Contraseña actualizada correctamente.");
+      setMsg(data?.message || t("auth.resetPassword.success.updated"));
       setTimeout(() => navigate("/login", { replace: true }), 1200);
     } catch (err) {
       const d = err?.response?.data;
       const msg =
         (d && typeof d === "object" && (d.error || d.message || d.details)) ||
         err?.message ||
-        "No se pudo restablecer la contraseña.";
+        t("auth.resetPassword.errors.generic");
 
       console.error("[ResetPassword] error:", {
         status: err?.response?.status,
@@ -147,7 +145,7 @@ export default function ResetPassword() {
         message: err?.message,
       });
 
-      setError(humanResetError(msg));
+      setError(humanResetError(msg, t));
     } finally {
       setLoading(false);
     }
@@ -164,11 +162,11 @@ export default function ResetPassword() {
 
           <div className="relative z-10 p-6">
             <h1 className="text-3xl mb-2 font-bold text-slate-900 dark:text-slate-100">
-              Restablecer contraseña
+              {t("auth.resetPassword.title")}
             </h1>
 
             <p className="mb-6 text-sm text-slate-600 dark:text-slate-300">
-              Escribe tu correo, el código recibido y tu nueva contraseña.
+              {t("auth.resetPassword.subtitle")}
             </p>
 
             <form onSubmit={handleSubmit}>
@@ -176,7 +174,7 @@ export default function ResetPassword() {
                 className={`${inputClass()} mb-3`}
                 name="email"
                 type="email"
-                placeholder="Correo electrónico"
+                placeholder={t("auth.resetPassword.placeholders.email")}
                 value={form.email}
                 onChange={onChange}
                 autoComplete="email"
@@ -186,7 +184,7 @@ export default function ResetPassword() {
                 className={`${inputClass()} mb-3`}
                 name="token"
                 type="text"
-                placeholder="Código temporal"
+                placeholder={t("auth.resetPassword.placeholders.token")}
                 value={form.token}
                 onChange={(e) =>
                   setForm((s) => ({
@@ -201,7 +199,7 @@ export default function ResetPassword() {
                   className={`${inputClass()} pr-10`}
                   name="passwordNueva"
                   type={showPass ? "text" : "password"}
-                  placeholder="Nueva contraseña"
+                  placeholder={t("auth.resetPassword.placeholders.newPassword")}
                   value={form.passwordNueva}
                   onChange={onChange}
                   autoComplete="new-password"
@@ -210,8 +208,16 @@ export default function ResetPassword() {
                   type="button"
                   onClick={() => setShowPass((s) => !s)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
-                  aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  title={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  aria-label={
+                    showPass
+                      ? t("auth.resetPassword.actions.hidePassword")
+                      : t("auth.resetPassword.actions.showPassword")
+                  }
+                  title={
+                    showPass
+                      ? t("auth.resetPassword.actions.hidePassword")
+                      : t("auth.resetPassword.actions.showPassword")
+                  }
                 >
                   {showPass ? "🙈" : "👁️"}
                 </button>
@@ -219,19 +225,19 @@ export default function ResetPassword() {
 
               <div className="mb-3 rounded border border-slate-200/70 bg-slate-50/80 px-3 py-2 text-xs text-slate-600 dark:border-slate-700/70 dark:bg-slate-900/40 dark:text-slate-300">
                 <div className="mb-1 font-medium">
-                  Mínimo 8 caracteres, debe incluir letras, números y un carácter especial.
+                  {t("auth.resetPassword.passwordRules.summary")}
                 </div>
                 <div className={checks.length ? "text-emerald-600" : "text-slate-500"}>
-                  {checks.length ? "✓" : "•"} Al menos 8 caracteres
+                  {checks.length ? "✓" : "•"} {t("auth.resetPassword.passwordRules.minLength")}
                 </div>
                 <div className={checks.letter ? "text-emerald-600" : "text-slate-500"}>
-                  {checks.letter ? "✓" : "•"} Al menos una letra
+                  {checks.letter ? "✓" : "•"} {t("auth.resetPassword.passwordRules.letter")}
                 </div>
                 <div className={checks.number ? "text-emerald-600" : "text-slate-500"}>
-                  {checks.number ? "✓" : "•"} Al menos un número
+                  {checks.number ? "✓" : "•"} {t("auth.resetPassword.passwordRules.number")}
                 </div>
                 <div className={checks.special ? "text-emerald-600" : "text-slate-500"}>
-                  {checks.special ? "✓" : "•"} Al menos un carácter especial
+                  {checks.special ? "✓" : "•"} {t("auth.resetPassword.passwordRules.special")}
                 </div>
               </div>
 
@@ -240,7 +246,7 @@ export default function ResetPassword() {
                   className={`${inputClass()} pr-10`}
                   name="confirmarPassword"
                   type={showConfirm ? "text" : "password"}
-                  placeholder="Confirmar contraseña"
+                  placeholder={t("auth.resetPassword.placeholders.confirmPassword")}
                   value={form.confirmarPassword}
                   onChange={onChange}
                   autoComplete="new-password"
@@ -249,8 +255,16 @@ export default function ResetPassword() {
                   type="button"
                   onClick={() => setShowConfirm((s) => !s)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
-                  aria-label={showConfirm ? "Ocultar confirmación" : "Mostrar confirmación"}
-                  title={showConfirm ? "Ocultar confirmación" : "Mostrar confirmación"}
+                  aria-label={
+                    showConfirm
+                      ? t("auth.resetPassword.actions.hideConfirmation")
+                      : t("auth.resetPassword.actions.showConfirmation")
+                  }
+                  title={
+                    showConfirm
+                      ? t("auth.resetPassword.actions.hideConfirmation")
+                      : t("auth.resetPassword.actions.showConfirmation")
+                  }
                 >
                   {showConfirm ? "🙈" : "👁️"}
                 </button>
@@ -261,7 +275,9 @@ export default function ResetPassword() {
                 disabled={loading}
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white w-full p-2 rounded"
               >
-                {loading ? "Actualizando..." : "Guardar nueva contraseña"}
+                {loading
+                  ? t("auth.resetPassword.actions.updating")
+                  : t("auth.resetPassword.actions.saveNewPassword")}
               </button>
             </form>
 
@@ -270,11 +286,11 @@ export default function ResetPassword() {
 
             <div className="mt-6 flex items-center justify-between">
               <Link to="/forgot-password" className="text-blue-600 hover:underline">
-                Solicitar nuevo código
+                {t("auth.resetPassword.links.requestNewCode")}
               </Link>
 
               <Link to="/login" className="text-slate-600 hover:underline">
-                Volver al login
+                {t("auth.resetPassword.links.backToLogin")}
               </Link>
             </div>
           </div>
@@ -283,4 +299,3 @@ export default function ResetPassword() {
     </AuthBackground>
   );
 }
-

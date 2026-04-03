@@ -1,6 +1,7 @@
 // client/src/modules/rondasqr/RondasLanding.jsx
 import React, { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Footprints, BarChart3, Settings2 } from "lucide-react";
 
 const fxCard =
@@ -14,7 +15,9 @@ function Tile({ title, subtitle, Icon, onClick }) {
         {Icon ? <Icon className="w-5 h-5 opacity-80" /> : null}
         <div className="font-medium">{title}</div>
       </div>
-      {subtitle ? <div className="text-xs mt-1 opacity-70">{subtitle}</div> : null}
+      {subtitle ? (
+        <div className="text-xs mt-1 opacity-70">{subtitle}</div>
+      ) : null}
     </button>
   );
 }
@@ -90,13 +93,13 @@ function hasPermLike(principal, key) {
 
 export default function RondasLanding({ me }) {
   const nav = useNavigate();
+  const { t } = useTranslation();
 
   const principal = resolvePrincipal(me);
   const can = principal?.can || {};
   const isSuperadmin =
     principal?.superadmin === true || principal?.isSuperAdmin === true;
 
-  // acceso general al módulo
   const allowModule =
     isSuperadmin ||
     can["nav.rondas"] === true ||
@@ -111,7 +114,6 @@ export default function RondasLanding({ me }) {
     hasPermLike(principal, "rondasqr.assignments.read") ||
     hasPermLike(principal, "rondasqr.rounds.read");
 
-  // acceso por secciones
   const allowScan =
     isSuperadmin ||
     can["rondasqr.scan"] === true ||
@@ -151,8 +153,8 @@ export default function RondasLanding({ me }) {
     if (allowScan) {
       list.push({
         key: "scan",
-        title: "Registrador Punto Control",
-        subtitle: "Escanea puntos asignados y envía alertas.",
+        title: t("rondas.checkpointScanner"),
+        subtitle: t("rondas.checkpointScannerDesc"),
         Icon: Footprints,
         go: "/rondasqr/scan",
       });
@@ -161,8 +163,8 @@ export default function RondasLanding({ me }) {
     if (allowReports) {
       list.push({
         key: "reports",
-        title: "Reportes",
-        subtitle: "Dashboard y reportes de rondas.",
+        title: t("rondas.reports"),
+        subtitle: t("rondas.reportsDesc"),
         Icon: BarChart3,
         go: "/rondasqr/reports",
       });
@@ -171,23 +173,25 @@ export default function RondasLanding({ me }) {
     if (allowAdmin) {
       list.push({
         key: "admin",
-        title: "Administración",
-        subtitle: "Ciudades, rondas, puntos, planes y asignaciones.",
+        title: t("rondas.admin"),
+        subtitle: t("rondas.adminDesc"),
         Icon: Settings2,
         go: "/rondasqr/admin",
       });
     }
 
     return list;
-  }, [allowScan, allowReports, allowAdmin]);
+  }, [allowScan, allowReports, allowAdmin, t]);
 
   if (!allowModule) {
     return (
       <div className="space-y-6 layer-content">
         <div className={fxCard + " p-5"}>
-          <h2 className="text-2xl font-extrabold tracking-tight">Rondas de Vigilancia</h2>
+          <h2 className="text-2xl font-extrabold tracking-tight">
+            {t("rondas.title")}
+          </h2>
           <p className="text-sm mt-1 text-neutral-600 dark:text-white/70">
-            No tienes permisos para acceder a este módulo.
+            {t("rondas.noAccess")}
           </p>
         </div>
       </div>
@@ -197,27 +201,29 @@ export default function RondasLanding({ me }) {
   return (
     <div className="space-y-6 layer-content">
       <div className={fxCard + " p-5"}>
-        <h2 className="text-2xl font-extrabold tracking-tight">Rondas de Vigilancia</h2>
+        <h2 className="text-2xl font-extrabold tracking-tight">
+          {t("rondas.title")}
+        </h2>
         <p className="text-sm mt-1 text-neutral-600 dark:text-white/70">
-          Accesos según tu perfil.
+          {t("rondas.subtitle")}
         </p>
       </div>
 
       <div className={fxCard + " p-5"}>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {tiles.map((t) => (
+          {tiles.map((tItem) => (
             <Tile
-              key={t.key}
-              title={t.title}
-              subtitle={t.subtitle}
-              Icon={t.Icon}
-              onClick={() => nav(t.go)}
+              key={tItem.key}
+              title={tItem.title}
+              subtitle={tItem.subtitle}
+              Icon={tItem.Icon}
+              onClick={() => nav(tItem.go)}
             />
           ))}
 
           {!tiles.length ? (
             <div className="text-sm text-neutral-600 dark:text-white/70">
-              No tienes permisos para ver secciones de rondas.
+              {t("rondas.noSections")}
             </div>
           ) : null}
         </div>

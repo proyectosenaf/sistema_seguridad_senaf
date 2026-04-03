@@ -1,5 +1,6 @@
 // client/src/modules/rondasqr/admin/AssignmentsPage.jsx
 import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { rondasqrApi as api } from "../api/rondasqrApi.js";
 import iamApi from "../../../iam/api/iamApi.js";
 
@@ -38,13 +39,7 @@ function toId(v) {
 }
 
 function pickPlanName(p) {
-  return String(
-    p?.name ||
-      p?.title ||
-      p?.planName ||
-      p?.nombre ||
-      ""
-  ).trim();
+  return String(p?.name || p?.title || p?.planName || p?.nombre || "").trim();
 }
 
 function pickSiteIdFromPlan(p) {
@@ -53,24 +48,14 @@ function pickSiteIdFromPlan(p) {
 
 function pickRoundIdFromPlan(p) {
   return toId(
-    p?.roundId ||
-      p?.round ||
-      p?.round_id ||
-      p?.rondaId ||
-      p?.ronda
+    p?.roundId || p?.round || p?.round_id || p?.rondaId || p?.ronda
   );
 }
 
 function pickRoundNameFromPlan(p) {
   const raw = p?.round || p?.roundId || p?.ronda;
   if (typeof raw === "string") return "";
-  return String(
-    p?.roundName ||
-      raw?.name ||
-      raw?.title ||
-      raw?.nombre ||
-      ""
-  ).trim();
+  return String(p?.roundName || raw?.name || raw?.title || raw?.nombre || "").trim();
 }
 
 function pickPointsCountFromPlan(p) {
@@ -130,6 +115,8 @@ async function tryListPlans(siteId) {
 }
 
 export default function AssignmentsPage() {
+  const { t } = useTranslation();
+
   const [date, setDate] = useState(today());
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -177,7 +164,12 @@ export default function AssignmentsPage() {
       const normalized = asArray(d)
         .map(normalizePlan)
         .filter((p) => !!p._id)
-        .filter((p) => !nextSiteId || String(p.siteId) === String(nextSiteId) || !p.siteId);
+        .filter(
+          (p) =>
+            !nextSiteId ||
+            String(p.siteId) === String(nextSiteId) ||
+            !p.siteId
+        );
 
       setPlans(normalized);
       setPlanId("");
@@ -248,17 +240,29 @@ export default function AssignmentsPage() {
 
   async function onCreate() {
     if (!date || !siteId || !planId || !guardId) {
-      alert("Completa fecha, sitio, plan y guardia.");
+      alert(
+        t("rondasqr.assignments.messages.completeRequired", {
+          defaultValue: "Completa fecha, sitio, plan y guardia.",
+        })
+      );
       return;
     }
 
     if (startTime && !isHHMM(startTime)) {
-      alert("Hora de inicio inválida (usa HH:mm)");
+      alert(
+        t("rondasqr.assignments.messages.invalidStartTime", {
+          defaultValue: "Hora de inicio inválida (usa HH:mm)",
+        })
+      );
       return;
     }
 
     if (endTime && !isHHMM(endTime)) {
-      alert("Hora de fin inválida (usa HH:mm)");
+      alert(
+        t("rondasqr.assignments.messages.invalidEndTime", {
+          defaultValue: "Hora de fin inválida (usa HH:mm)",
+        })
+      );
       return;
     }
 
@@ -271,7 +275,6 @@ export default function AssignmentsPage() {
       guardId,
       startTime: startTime || "",
       endTime: endTime || "",
-      // compatibilidad hacia atrás por si backend aún usa ronda
       roundId: fallbackRoundId || "",
     };
 
@@ -290,7 +293,9 @@ export default function AssignmentsPage() {
         e?.payload?.message ||
         e?.payload?.error ||
         e?.message ||
-        "No se pudo crear la asignación";
+        t("rondasqr.assignments.messages.createError", {
+          defaultValue: "No se pudo crear la asignación",
+        });
       alert(msg);
     }
   }
@@ -300,7 +305,13 @@ export default function AssignmentsPage() {
       await api.deleteAssignment(id);
     } catch (e) {
       console.error("[Assignments] deleteAssignment error:", e?.message || e);
-      alert(e?.payload?.message || e?.message || "No se pudo eliminar la asignación.");
+      alert(
+        e?.payload?.message ||
+          e?.message ||
+          t("rondasqr.assignments.messages.deleteError", {
+            defaultValue: "No se pudo eliminar la asignación.",
+          })
+      );
     } finally {
       await refresh();
     }
@@ -317,11 +328,15 @@ export default function AssignmentsPage() {
     const g = guards.find((x) => x._id === guardRawId);
 
     if (g) {
-      return `${g.name || "(Sin nombre)"}${g.email ? ` — ${g.email}` : ""}`;
+      return `${g.name || t("rondasqr.assignments.unnamed", { defaultValue: "(Sin nombre)" })}${
+        g.email ? ` — ${g.email}` : ""
+      }`;
     }
 
     if (a?.guardName || a?.guardEmail) {
-      return `${a.guardName || "(Sin nombre)"}${a.guardEmail ? ` — ${a.guardEmail}` : ""}`;
+      return `${a.guardName || t("rondasqr.assignments.unnamed", { defaultValue: "(Sin nombre)" })}${
+        a.guardEmail ? ` — ${a.guardEmail}` : ""
+      }`;
     }
 
     return guardRawId || "—";
@@ -338,12 +353,7 @@ export default function AssignmentsPage() {
   }
 
   function renderPlanCell(a) {
-    return (
-      a?.planName ||
-      a?.planId?.name ||
-      a?.plan?.name ||
-      "—"
-    );
+    return a?.planName || a?.planId?.name || a?.plan?.name || "—";
   }
 
   function renderPointsCell(a) {
@@ -360,11 +370,19 @@ export default function AssignmentsPage() {
 
   return (
     <div className="p-4">
-      <h1 className="text-2xl font-semibold mb-4">Asignaciones de Rondas</h1>
+      <h1 className="text-2xl font-semibold mb-4">
+        {t("rondasqr.assignments.title", {
+          defaultValue: "Asignaciones de Rondas",
+        })}
+      </h1>
 
       <div className="grid gap-3 md:grid-cols-12">
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Fecha</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.date", {
+              defaultValue: "Fecha",
+            })}
+          </label>
           <input
             type="date"
             value={date}
@@ -374,13 +392,19 @@ export default function AssignmentsPage() {
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Sitio</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.site", {
+              defaultValue: "Sitio",
+            })}
+          </label>
           <select
             value={siteId}
             onChange={(e) => setSiteId(e.target.value)}
             className={controlClass}
           >
-            <option value="">-- Selecciona --</option>
+            <option value="">
+              {t("system.select", { defaultValue: "-- Selecciona --" })}
+            </option>
             {sites.map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
@@ -390,42 +414,63 @@ export default function AssignmentsPage() {
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Plan</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.plan", {
+              defaultValue: "Plan",
+            })}
+          </label>
           <select
             value={planId}
             onChange={(e) => setPlanId(e.target.value)}
             disabled={!siteId}
             className={controlClass + " disabled:opacity-50"}
           >
-            <option value="">-- Selecciona --</option>
+            <option value="">
+              {t("system.select", { defaultValue: "-- Selecciona --" })}
+            </option>
             {plans.map((p) => (
               <option key={p._id} value={p._id}>
                 {p.name}
                 {p.roundName ? ` — ${p.roundName}` : ""}
-                {Number.isFinite(Number(p.pointsCount)) ? ` (${p.pointsCount} pts)` : ""}
+                {Number.isFinite(Number(p.pointsCount))
+                  ? ` (${p.pointsCount} ${t("rondasqr.assignments.pointsAbbr", {
+                      defaultValue: "pts",
+                    })})`
+                  : ""}
               </option>
             ))}
           </select>
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Guardia</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.guard", {
+              defaultValue: "Guardia",
+            })}
+          </label>
           <select
             value={guardId}
             onChange={(e) => setGuardId(e.target.value)}
             className={controlClass}
           >
-            <option value="">-- Selecciona --</option>
+            <option value="">
+              {t("system.select", { defaultValue: "-- Selecciona --" })}
+            </option>
             {guards.map((g) => (
               <option key={g._id} value={g._id}>
-                {g.name || "(Sin nombre)"} {g.email ? `— ${g.email}` : ""}
+                {g.name || t("rondasqr.assignments.unnamed", { defaultValue: "(Sin nombre)" })}{" "}
+                {g.email ? `— ${g.email}` : ""}
               </option>
             ))}
           </select>
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Inicio</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.start", {
+              defaultValue: "Inicio",
+            })}
+          </label>
           <input
             type="time"
             value={startTime}
@@ -435,7 +480,11 @@ export default function AssignmentsPage() {
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-sm mb-1 block">Fin</label>
+          <label className="text-sm mb-1 block">
+            {t("rondasqr.assignments.fields.end", {
+              defaultValue: "Fin",
+            })}
+          </label>
           <input
             type="time"
             value={endTime}
@@ -447,57 +496,122 @@ export default function AssignmentsPage() {
 
       {selectedPlan && (
         <div className="mt-3 text-sm text-slate-600 dark:text-zinc-300">
-          <span className="font-medium">Plan seleccionado:</span> {selectedPlan.name}
+          <span className="font-medium">
+            {t("rondasqr.assignments.selectedPlan", {
+              defaultValue: "Plan seleccionado:",
+            })}
+          </span>{" "}
+          {selectedPlan.name}
           {selectedPlan.roundName ? (
             <>
               {" "}
-              <span className="opacity-70">|</span> <span className="font-medium">Ronda:</span>{" "}
+              <span className="opacity-70">|</span>{" "}
+              <span className="font-medium">
+                {t("rondasqr.assignments.round", {
+                  defaultValue: "Ronda:",
+                })}
+              </span>{" "}
               {selectedPlan.roundName}
             </>
-          ) : null}
-          {" "}
-          <span className="opacity-70">|</span> <span className="font-medium">Puntos:</span>{" "}
+          ) : null}{" "}
+          <span className="opacity-70">|</span>{" "}
+          <span className="font-medium">
+            {t("rondasqr.assignments.points", {
+              defaultValue: "Puntos:",
+            })}
+          </span>{" "}
           {selectedPlan.pointsCount || 0}
         </div>
       )}
 
       <div className="mt-6 mb-2 flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Listado ({date})</h2>
+        <h2 className="text-lg font-semibold">
+          {t("rondasqr.assignments.listTitle", {
+            defaultValue: "Listado ({{date}})",
+            date,
+          })}
+        </h2>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={onCreate}
             className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition"
           >
-            Crear asignación
+            {t("rondasqr.assignments.actions.create", {
+              defaultValue: "Crear asignación",
+            })}
           </button>
           <button
             type="button"
             onClick={refresh}
             className="px-4 py-2 rounded-xl bg-cyan-500 text-white hover:bg-cyan-400 transition"
           >
-            Actualizar
+            {t("rondasqr.assignments.actions.refresh", {
+              defaultValue: "Actualizar",
+            })}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="text-slate-500 dark:text-zinc-400">Cargando…</div>
+        <div className="text-slate-500 dark:text-zinc-400">
+          {t("system.loading", { defaultValue: "Cargando…" })}
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-[#374151]">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-slate-700 dark:bg-[#0b1220] dark:text-zinc-300">
               <tr>
-                <th className="text-left p-3">Guardia</th>
-                <th className="text-left p-3">Sitio</th>
-                <th className="text-left p-3">Ronda</th>
-                <th className="text-left p-3">Plan</th>
-                <th className="text-left p-3">Puntos</th>
-                <th className="text-left p-3">Inicio</th>
-                <th className="text-left p-3">Fin</th>
-                <th className="text-left p-3">Estado</th>
-                <th className="text-left p-3">Creado</th>
-                <th className="text-left p-3">Acciones</th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.guard", {
+                    defaultValue: "Guardia",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.site", {
+                    defaultValue: "Sitio",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.round", {
+                    defaultValue: "Ronda",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.plan", {
+                    defaultValue: "Plan",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.points", {
+                    defaultValue: "Puntos",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.start", {
+                    defaultValue: "Inicio",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.end", {
+                    defaultValue: "Fin",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.status", {
+                    defaultValue: "Estado",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.created", {
+                    defaultValue: "Creado",
+                  })}
+                </th>
+                <th className="text-left p-3">
+                  {t("rondasqr.assignments.table.actions", {
+                    defaultValue: "Acciones",
+                  })}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -523,7 +637,7 @@ export default function AssignmentsPage() {
                       onClick={() => onDelete(a._id)}
                       className="px-3 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition"
                     >
-                      Eliminar
+                      {t("actions.delete", { defaultValue: "Eliminar" })}
                     </button>
                   </td>
                 </tr>
@@ -535,7 +649,9 @@ export default function AssignmentsPage() {
                     colSpan={10}
                     className="p-4 text-slate-500 dark:text-zinc-400 text-center"
                   >
-                    Sin asignaciones.
+                    {t("rondasqr.assignments.noAssignments", {
+                      defaultValue: "Sin asignaciones.",
+                    })}
                   </td>
                 </tr>
               )}

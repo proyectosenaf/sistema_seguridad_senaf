@@ -1,6 +1,7 @@
 // client/src/modules/rondasqr/guard/ScanPage.jsx
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import QrScanner from "../guard/QrScanner.jsx";
 import { rondasqrApi } from "../api/rondasqrApi.js";
 
@@ -133,7 +134,7 @@ function hasPermLike(principal, key) {
   return perms.includes("*") || perms.includes(wanted);
 }
 
-function buildGuardIdentity(user) {
+function buildGuardIdentity(user, t) {
   const id = user?._id || user?.id || user?.sub || null;
   const name =
     user?.fullName ||
@@ -157,7 +158,7 @@ function buildGuardIdentity(user) {
     label:
       String(name || "").trim() ||
       String(email || "").trim() ||
-      "Guardia desconocido",
+      t("rondasqr.scanPage.texts.unknownGuard"),
   };
 }
 
@@ -258,6 +259,7 @@ async function panicApiCompat(payload) {
 }
 
 export default function ScanPage() {
+  const { t } = useTranslation();
   const nav = useNavigate();
   const { pathname, hash } = useLocation();
 
@@ -466,7 +468,7 @@ export default function ScanPage() {
 
   function handleStartRound(a) {
     if (!allowScan) {
-      alert("No tienes permiso para iniciar rondas.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionStartRounds"));
       return;
     }
 
@@ -479,7 +481,7 @@ export default function ScanPage() {
 
   function handleFinishRound(a) {
     if (!allowScan) {
-      alert("No tienes permiso para finalizar rondas.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionFinishRounds"));
       return;
     }
 
@@ -545,7 +547,7 @@ export default function ScanPage() {
 
   const sendAlert = useCallback(async () => {
     if (!allowPanic) {
-      alert("No tienes permiso para enviar alertas de pánico.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionPanic"));
       return false;
     }
 
@@ -553,7 +555,7 @@ export default function ScanPage() {
     setSendingAlert(true);
 
     try {
-      const guard = buildGuardIdentity(safeUser);
+      const guard = buildGuardIdentity(safeUser, t);
       const geo = await getCurrentGeo({
         enableHighAccuracy: true,
         timeout: 10000,
@@ -563,9 +565,9 @@ export default function ScanPage() {
       const payload = {
         type: "panic",
         source: "rondasqr.scan.home-button",
-        title: "🚨 Alerta de pánico",
-        message: "Alerta de pánico enviada desde ronda",
-        incidentText: "Alerta de pánico enviada desde ronda",
+        title: t("rondasqr.scanPage.alerts.panicTitle"),
+        message: t("rondasqr.scanPage.alerts.panicMessage"),
+        incidentText: t("rondasqr.scanPage.alerts.panicMessage"),
         emittedAt: new Date().toISOString(),
         guard,
         guardId: guard.id,
@@ -615,24 +617,24 @@ export default function ScanPage() {
           "Notification" in window &&
           Notification.permission === "granted"
         ) {
-          new Notification("🚨 Alerta de pánico", {
-            body: `${guard.label} reportó una alerta${
-              geo?.coordsText ? ` · ${geo.coordsText}` : ""
-            }`,
+          new Notification(t("rondasqr.scanPage.alerts.panicTitle"), {
+            body: `${guard.label} ${t(
+              "rondasqr.scanPage.alerts.panicNotificationBody"
+            )}${geo?.coordsText ? ` · ${geo.coordsText}` : ""}`,
           });
         }
       } catch {}
 
-      alert("🚨 Alerta de pánico enviada.");
+      alert(t("rondasqr.scanPage.alerts.panicSent"));
       return true;
     } catch (err) {
       console.error("[ScanPage] error al enviar alerta", err);
-      alert("No se pudo enviar la alerta.");
+      alert(t("rondasqr.scanPage.alerts.panicSendError"));
       return false;
     } finally {
       setSendingAlert(false);
     }
-  }, [sendingAlert, safeUser, allowPanic]);
+  }, [sendingAlert, safeUser, allowPanic, t]);
 
   useEffect(() => {
     if (hash === "#alert" && allowPanic) {
@@ -645,7 +647,7 @@ export default function ScanPage() {
 
   async function handleScan(result) {
     if (!allowScan) {
-      alert("No tienes permiso para registrar puntos.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionRegisterPoints"));
       return;
     }
 
@@ -654,7 +656,7 @@ export default function ScanPage() {
 
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       queueCheckin({ qr, gps: null });
-      alert("📦 Sin conexión. QR guardado para transmitir más tarde.");
+      alert(t("rondasqr.scanPage.alerts.offlineQrSaved"));
       nav("/rondasqr/scan", { replace: true });
       return;
     }
@@ -683,7 +685,7 @@ export default function ScanPage() {
       safeLSSet("rondasqr:progressPct", "100");
       setProgress((prev) => ({ ...prev, lastPoint: qr, pct: 100 }));
 
-      alert("✅ Punto registrado: " + qr);
+      alert(`${t("rondasqr.scanPage.alerts.pointRegistered")} ${qr}`);
       window.dispatchEvent(new CustomEvent("qrscanner:stop"));
       nav("/rondasqr/scan", { replace: true });
     } catch (err) {
@@ -692,31 +694,31 @@ export default function ScanPage() {
         err
       );
       queueCheckin({ qr, gps: null });
-      alert("📦 No se pudo enviar. Guardado para transmitir más tarde.");
+      alert(t("rondasqr.scanPage.alerts.qrSavedForLater"));
       nav("/rondasqr/scan/outbox", { replace: true });
     }
   }
 
   async function sendMessage() {
     if (!allowIncidentMessage) {
-      alert("No tienes permiso para enviar incidentes.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionSendIncidents"));
       return;
     }
 
     if (sendingMsg) return;
     if (!msg.trim()) {
-      alert("Escribe un mensaje.");
+      alert(t("rondasqr.scanPage.alerts.writeMessage"));
       return;
     }
 
     setSendingMsg(true);
     try {
       await rondasqrApi.postIncident({ text: msg.trim() });
-      alert("✅ Mensaje enviado.");
+      alert(t("rondasqr.scanPage.alerts.messageSent"));
       setMsg("");
       nav("/rondasqr/scan");
     } catch {
-      alert("No se pudo enviar el mensaje.");
+      alert(t("rondasqr.scanPage.alerts.messageSendError"));
     } finally {
       setSendingMsg(false);
     }
@@ -724,28 +726,28 @@ export default function ScanPage() {
 
   async function sendPhotos() {
     if (!allowIncidentMessage) {
-      alert("No tienes permiso para enviar fotos/incidentes.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionPhotosIncidents"));
       return;
     }
 
     if (sendingPhotos) return;
     const base64s = photos.filter(Boolean);
     if (!base64s.length) {
-      alert("Selecciona al menos una foto.");
+      alert(t("rondasqr.scanPage.alerts.selectAtLeastOnePhoto"));
       return;
     }
 
     setSendingPhotos(true);
     try {
       await rondasqrApi.postIncident({
-        text: "Fotos de ronda",
+        text: t("rondasqr.scanPage.texts.roundPhotos"),
         photosBase64: base64s,
       });
-      alert("📤 Fotos enviadas.");
+      alert(t("rondasqr.scanPage.alerts.photosSent"));
       setPhotos([null, null, null, null, null]);
       nav("/rondasqr/scan");
     } catch {
-      alert("No se pudieron enviar las fotos.");
+      alert(t("rondasqr.scanPage.alerts.photosSendError"));
     } finally {
       setSendingPhotos(false);
     }
@@ -773,12 +775,12 @@ export default function ScanPage() {
 
   async function transmitNow() {
     if (!allowScan) {
-      alert("No tienes permiso para transmitir rondas.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionTransmitRounds"));
       return;
     }
 
     if (!outbox.length) {
-      alert("No hay rondas pendientes.");
+      alert(t("rondasqr.scanPage.alerts.noPendingRounds"));
       return;
     }
 
@@ -786,10 +788,15 @@ export default function ScanPage() {
     try {
       const res = await transmitOutbox(sendCheckinViaApi);
       refreshOutbox();
-      alert(`Transmitidas: ${res.ok}  •  Fallidas: ${res.fail}`);
+      alert(
+        t("rondasqr.scanPage.alerts.transmitResult", {
+          ok: res.ok,
+          fail: res.fail,
+        })
+      );
     } catch (e) {
       console.error("transmitNow error", e);
-      alert("Ocurrió un error al transmitir.");
+      alert(t("rondasqr.scanPage.alerts.transmitError"));
     } finally {
       setSyncing(false);
     }
@@ -843,7 +850,7 @@ export default function ScanPage() {
 
   async function sendOfflineDump() {
     if (!allowOffline) {
-      alert("No tienes permiso para manejar modo offline.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionOfflineMode"));
       return;
     }
 
@@ -852,20 +859,24 @@ export default function ScanPage() {
       const pending = payload.outbox;
 
       if (!pending || !pending.length) {
-        alert("No hay información offline para enviar.");
+        alert(t("rondasqr.scanPage.alerts.noOfflineInfo"));
         return;
       }
 
       if (typeof rondasqrApi.offlineDump === "function") {
         const json = await rondasqrApi.offlineDump(payload);
-        alert("📤 Base de datos local enviada.\n" + (json?.message || ""));
+        alert(
+          `${t("rondasqr.scanPage.alerts.offlineDbSent")}\n${
+            json?.message || ""
+          }`
+        );
         return;
       }
 
       throw new Error("rondasqrApi no implementa offlineDump(payload)");
     } catch (err) {
       console.error("[ScanPage] dump offline error", err);
-      alert("No se pudo enviar la base de datos.");
+      alert(t("rondasqr.scanPage.alerts.offlineDbSendError"));
     }
   }
 
@@ -968,7 +979,7 @@ export default function ScanPage() {
 
   function finishActiveIfAny() {
     if (!allowScan) {
-      alert("No tienes permiso para finalizar rondas.");
+      alert(t("rondasqr.scanPage.alerts.noPermissionFinishRounds"));
       return;
     }
 
@@ -980,7 +991,9 @@ export default function ScanPage() {
     return (
       <div className={pageClass}>
         <section className={[cardClass, cardFallback].join(" ")}>
-          <div className="text-sm opacity-70">Cargando sesión...</div>
+          <div className="text-sm opacity-70">
+            {t("rondasqr.scanPage.system.loadingSession")}
+          </div>
         </section>
       </div>
     );
@@ -990,9 +1003,11 @@ export default function ScanPage() {
     return (
       <div className={pageClass}>
         <section className={[cardClass, cardFallback].join(" ")}>
-          <h3 className="text-lg font-semibold">Acceso denegado</h3>
+          <h3 className="text-lg font-semibold">
+            {t("rondasqr.scanPage.access.deniedTitle")}
+          </h3>
           <p className="mt-2 text-sm text-slate-600 dark:text-white/80">
-            No tienes permisos para acceder al módulo de Rondas de Vigilancia.
+            {t("rondasqr.scanPage.access.deniedDescription")}
           </p>
 
           {DEBUG_PERMS && (
@@ -1019,10 +1034,13 @@ export default function ScanPage() {
 
       <div className={[headerClass, headerFallback].join(" ")}>
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold">Visión general</h2>
+          <h2 className="text-xl sm:text-2xl font-bold">
+            {t("rondasqr.scanPage.header.title")}
+          </h2>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-white/70 mt-0.5">
-            Hola {safeUser?.name || safeUser?.email || "guardia"}, aquí verás
-            tus rondas y alertas de hoy.
+            {t("rondasqr.scanPage.header.greeting", {
+              user: safeUser?.name || safeUser?.email || t("rondasqr.scanPage.texts.guard"),
+            })}
           </p>
 
           {DEBUG_PERMS && (
@@ -1033,7 +1051,9 @@ export default function ScanPage() {
         </div>
 
         <div className="text-right text-xs sm:text-sm">
-          <div className="opacity-70">Rondas pendientes por enviar</div>
+          <div className="opacity-70">
+            {t("rondasqr.scanPage.header.pendingToSend")}
+          </div>
           <div className="font-semibold text-lg sm:text-xl">
             {allowScan ? countOutbox() : 0}
           </div>
@@ -1060,12 +1080,14 @@ export default function ScanPage() {
                 ].join(" ")}
                 type="button"
               >
-                {sendingAlert ? "ENVIANDO..." : "ALERTA"}
+                {sendingAlert
+                  ? t("rondasqr.scanPage.buttons.sendingUpper")
+                  : t("rondasqr.scanPage.buttons.alertUpper")}
               </button>
               <p className="text-sm mt-2 text-slate-600 dark:text-white/80">
                 {allowPanic
-                  ? "Oprima en caso de emergencia"
-                  : "No autorizado para alertas"}
+                  ? t("rondasqr.scanPage.texts.pressInEmergency")
+                  : t("rondasqr.scanPage.texts.notAuthorizedAlerts")}
               </p>
             </div>
 
@@ -1076,7 +1098,7 @@ export default function ScanPage() {
                   onClick={() => nav("/rondasqr/scan/qr")}
                   className="w-full btn-neon"
                 >
-                  Registrador Punto Control
+                  {t("rondasqr.scanPage.buttons.pointControlRegister")}
                 </button>
               )}
 
@@ -1086,37 +1108,43 @@ export default function ScanPage() {
                   onClick={() => nav("/incidentes/nuevo?from=ronda")}
                   className="w-full btn-neon btn-neon-purple"
                 >
-                  Mensaje Incidente
+                  {t("rondasqr.scanPage.buttons.incidentMessage")}
                 </button>
               )}
 
               {!allowScan && !allowIncidentMessage && !allowPanic && (
                 <div className="text-sm opacity-70">
-                  No tienes acciones disponibles en este módulo.
+                  {t("rondasqr.scanPage.texts.noActionsAvailable")}
                 </div>
               )}
             </div>
           </section>
 
           <section className={[cardClass, cardFallback].join(" ")}>
-            <h3 className="font-semibold text-lg mb-3">Progreso de Ronda</h3>
+            <h3 className="font-semibold text-lg mb-3">
+              {t("rondasqr.scanPage.progress.title")}
+            </h3>
 
             {!allowScan ? (
               <p className="text-sm text-slate-600 dark:text-white/80">
-                No tienes permiso para operar rondas.
+                {t("rondasqr.scanPage.progress.noPermission")}
               </p>
             ) : progress.lastPoint || progress.nextPoint || progress.pct > 0 ? (
               <>
                 <div className="text-sm space-y-1 mb-3">
                   {progress.lastPoint && (
                     <div>
-                      <span className="opacity-70">Último punto: </span>
+                      <span className="opacity-70">
+                        {t("rondasqr.scanPage.progress.lastPoint")}{" "}
+                      </span>
                       <span className="font-medium">{progress.lastPoint}</span>
                     </div>
                   )}
                   {progress.nextPoint && (
                     <div>
-                      <span className="opacity-70">Siguiente: </span>
+                      <span className="opacity-70">
+                        {t("rondasqr.scanPage.progress.nextPoint")}{" "}
+                      </span>
                       <span className="font-medium">{progress.nextPoint}</span>
                     </div>
                   )}
@@ -1135,7 +1163,9 @@ export default function ScanPage() {
                 </div>
 
                 <div className="mt-1 text-right text-xs opacity-70">
-                  {Math.max(0, Math.min(100, progress.pct))}% completado
+                  {t("rondasqr.scanPage.progress.completedPercent", {
+                    pct: Math.max(0, Math.min(100, progress.pct)),
+                  })}
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3">
@@ -1144,22 +1174,22 @@ export default function ScanPage() {
                     onClick={() => nav("/rondasqr/scan/qr")}
                     className="btn-neon"
                   >
-                    Continuar ronda
+                    {t("rondasqr.scanPage.buttons.continueRound")}
                   </button>
                   <button
                     type="button"
                     onClick={finishActiveIfAny}
                     className="btn-neon btn-neon-amber"
                   >
-                    Finalizar ronda
+                    {t("rondasqr.scanPage.buttons.finishRound")}
                   </button>
                 </div>
               </>
             ) : (
               <p className="text-sm text-slate-600 dark:text-white/80">
-                Para iniciar una ronda, abre el{" "}
-                <strong>Registrador Punto Control</strong> y escanea el primer
-                punto asignado.
+                {t("rondasqr.scanPage.progress.emptyPrefix")}{" "}
+                <strong>{t("rondasqr.scanPage.buttons.pointControlRegister")}</strong>{" "}
+                {t("rondasqr.scanPage.progress.emptySuffix")}
               </p>
             )}
           </section>
@@ -1168,7 +1198,8 @@ export default function ScanPage() {
             className={[cardClass, cardFallback, "md:col-span-2"].join(" ")}
           >
             <div className="text-sm opacity-70">
-              Asignaciones cargadas: <b>{allowScan ? myAssignments.length : 0}</b>
+              {t("rondasqr.scanPage.assignments.loaded")}{" "}
+              <b>{allowScan ? myAssignments.length : 0}</b>
             </div>
 
             {!!myAssignments.length && allowScan && (
@@ -1185,14 +1216,15 @@ export default function ScanPage() {
                     >
                       <div>
                         <div className="font-semibold">
-                          {a.roundName || a.round?.name || "Ronda"}
+                          {a.roundName || a.round?.name || t("rondasqr.scanPage.texts.round")}
                         </div>
                         <div className="text-sm opacity-70">
-                          {a.siteName || a.site?.name || "Sitio"} ·{" "}
+                          {a.siteName || a.site?.name || t("rondasqr.scanPage.texts.site")} ·{" "}
                           {a.date || a.day || "—"}
                         </div>
                         <div className="text-xs opacity-70 mt-1">
-                          Estado: {st.status || "pendiente"}
+                          {t("rondasqr.scanPage.assignments.status")}{" "}
+                          {st.status || t("rondasqr.scanPage.assignments.pending")}
                         </div>
                       </div>
 
@@ -1202,14 +1234,16 @@ export default function ScanPage() {
                           onClick={() => handleStartRound(a)}
                           className="btn-neon btn-neon-green"
                         >
-                          {isActive ? "Continuar" : "Iniciar"}
+                          {isActive
+                            ? t("rondasqr.scanPage.buttons.continue")
+                            : t("rondasqr.scanPage.buttons.start")}
                         </button>
                         <button
                           type="button"
                           onClick={() => handleFinishRound(a)}
                           className="btn-neon btn-neon-amber"
                         >
-                          Finalizar
+                          {t("rondasqr.scanPage.buttons.finish")}
                         </button>
                       </div>
                     </div>
@@ -1223,11 +1257,13 @@ export default function ScanPage() {
 
       {tab === "qr" && (
         <section className={[cardClass, cardFallback].join(" ")}>
-          <h3 className="font-semibold text-lg mb-3">Escanear Punto</h3>
+          <h3 className="font-semibold text-lg mb-3">
+            {t("rondasqr.scanPage.qr.title")}
+          </h3>
 
           {!allowScan ? (
             <p className="text-sm text-slate-600 dark:text-white/80">
-              No tienes permiso para registrar puntos de control.
+              {t("rondasqr.scanPage.qr.noPermission")}
             </p>
           ) : (
             <>
@@ -1250,7 +1286,7 @@ export default function ScanPage() {
                   }}
                   className="btn-neon btn-neon-amber"
                 >
-                  Finalizar
+                  {t("rondasqr.scanPage.buttons.finish")}
                 </button>
                 <button
                   type="button"
@@ -1260,7 +1296,7 @@ export default function ScanPage() {
                   }}
                   className="btn-neon btn-neon-green"
                 >
-                  Reintentar
+                  {t("rondasqr.scanPage.buttons.retry")}
                 </button>
               </div>
             </>
@@ -1271,48 +1307,56 @@ export default function ScanPage() {
       {tab === "outbox" && (
         <section className={[cardClass, cardFallback].join(" ")}>
           <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="font-semibold text-lg">Pendientes por enviar</h3>
+            <h3 className="font-semibold text-lg">
+              {t("rondasqr.scanPage.outbox.title")}
+            </h3>
             <button
               type="button"
               disabled={syncing || !allowScan}
               onClick={transmitNow}
               className="btn-neon btn-neon-green"
             >
-              {syncing ? "Enviando..." : "Transmitir ahora"}
+              {syncing
+                ? t("rondasqr.scanPage.buttons.sending")
+                : t("rondasqr.scanPage.buttons.transmitNow")}
             </button>
           </div>
 
           <div className="text-sm opacity-80">
-            Pendientes: {allowScan ? outbox.length : 0}
+            {t("rondasqr.scanPage.outbox.pending")} {allowScan ? outbox.length : 0}
           </div>
         </section>
       )}
 
       {tab === "dump" && (
         <section className={[cardClass, cardFallback].join(" ")}>
-          <h3 className="font-semibold text-lg mb-3">Enviar base offline</h3>
+          <h3 className="font-semibold text-lg mb-3">
+            {t("rondasqr.scanPage.dump.title")}
+          </h3>
           <button
             type="button"
             onClick={sendOfflineDump}
             disabled={!allowOffline}
             className="btn-neon"
           >
-            Enviar
+            {t("rondasqr.scanPage.buttons.send")}
           </button>
         </section>
       )}
 
       {tab === "fotos" && (
         <section className={[cardClass, cardFallback].join(" ")}>
-          <h3 className="font-semibold text-lg mb-3">Fotos</h3>
+          <h3 className="font-semibold text-lg mb-3">
+            {t("rondasqr.scanPage.photos.title")}
+          </h3>
 
           {!allowIncidentMessage ? (
             <p className="text-sm text-slate-600 dark:text-white/80">
-              No tienes permiso para adjuntar evidencias o incidentes.
+              {t("rondasqr.scanPage.photos.noPermission")}
             </p>
           ) : (
             <>
-              <PhotoPicker photos={photos} setPhotos={setPhotos} />
+              <PhotoPicker photos={photos} setPhotos={setPhotos} t={t} />
               <div className="mt-4">
                 <button
                   type="button"
@@ -1320,7 +1364,9 @@ export default function ScanPage() {
                   onClick={sendPhotos}
                   className="btn-neon btn-neon-green"
                 >
-                  {sendingPhotos ? "Enviando..." : "Enviar fotos"}
+                  {sendingPhotos
+                    ? t("rondasqr.scanPage.buttons.sending")
+                    : t("rondasqr.scanPage.buttons.sendPhotos")}
                 </button>
               </div>
             </>
@@ -1331,13 +1377,13 @@ export default function ScanPage() {
   );
 }
 
-function PhotoPicker({ photos, setPhotos }) {
+function PhotoPicker({ photos, setPhotos, t }) {
   return (
     <>
       {photos.map((f, i) => (
         <div key={i} className="flex items-center justify-between mb-2">
           <span className="text-sm text-slate-700 dark:text-white/90">
-            Toma foto {i + 1}
+            {t("rondasqr.scanPage.photos.takePhoto", { index: i + 1 })}
           </span>
           <div className="flex gap-2">
             <input
@@ -1360,7 +1406,7 @@ function PhotoPicker({ photos, setPhotos }) {
               htmlFor={`foto-${i}`}
               className="px-3 py-1 rounded-md text-white bg-indigo-600 hover:bg-indigo-500 cursor-pointer"
             >
-              Seleccionar
+              {t("rondasqr.scanPage.buttons.select")}
             </label>
             <button
               onClick={() =>
@@ -1369,7 +1415,7 @@ function PhotoPicker({ photos, setPhotos }) {
               className="px-3 py-1 rounded-md text-white bg-rose-600 hover:bg-rose-500"
               type="button"
             >
-              Eliminar
+              {t("rondasqr.scanPage.buttons.delete")}
             </button>
           </div>
         </div>

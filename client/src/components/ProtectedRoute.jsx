@@ -1,6 +1,6 @@
-// client/src/components/ProtectedRoute.jsx
 import React, { useEffect, useMemo } from "react";
 import { useLocation, Navigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 
 // localhost?
@@ -29,6 +29,7 @@ function readAnyToken() {
 }
 
 export default function ProtectedRoute({ children }) {
+  const { t } = useTranslation();
   const { isAuthenticated, isLoading, user, token } = useAuth();
   const location = useLocation();
 
@@ -59,27 +60,27 @@ export default function ProtectedRoute({ children }) {
     } catch {
       // ignore
     }
-  }, [skipVerify, isLoading, isActuallyAuthenticated, location.pathname, location.search]);
+  }, [
+    skipVerify,
+    isLoading,
+    isActuallyAuthenticated,
+    location.pathname,
+    location.search,
+  ]);
 
   // ✅ Localhost con modo libre (DEV)
   if (skipVerify) return <>{children}</>;
 
   // ✅ Loading
   if (isLoading) {
-    return <div className="p-6">Cargando…</div>;
+    return <div className="p-6">{t("system.loading")}</div>;
   }
 
   // ✅ No autenticado: manda a /login y guarda returnTo
   if (!isActuallyAuthenticated) {
     const returnTo = location.pathname + location.search;
 
-    return (
-      <Navigate
-        to="/login"
-        replace
-        state={{ returnTo }}
-      />
-    );
+    return <Navigate to="/login" replace state={{ returnTo }} />;
   }
 
   return <>{children}</>;

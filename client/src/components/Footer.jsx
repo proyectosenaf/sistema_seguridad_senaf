@@ -1,5 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import api from "../lib/api.js";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { getNavSectionsForMe } from "../config/navConfig.js";
@@ -96,6 +97,7 @@ function sortDocs(list = []) {
 /* ───────────────────── Componente ───────────────────── */
 
 export default function Footer() {
+  const { t } = useTranslation();
   const auth = useAuth();
   const principal = React.useMemo(() => resolvePrincipal(auth), [auth]);
   const userRole = React.useMemo(() => getUserRole(principal), [principal]);
@@ -224,11 +226,9 @@ export default function Footer() {
         return;
       }
 
-      window.alert(
-        "La documentación aún no está disponible. Cuando subas los manuales al backend, aparecerán aquí automáticamente."
-      );
+      window.alert(t("footer.docsNotAvailable"));
     },
-    [firstAvailableDoc]
+    [firstAvailableDoc, t]
   );
 
   return (
@@ -264,34 +264,33 @@ export default function Footer() {
           <div>
             <div className="fx-title text-2xl font-bold">SENAF</div>
             <p className="mt-2 text-sm opacity-70">
-              Plataforma integral de seguridad: accesos, rondas, incidentes,
-              visitas y más.
+              {t("footer.description")}
             </p>
             <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
               <ShieldCheck className="h-4 w-4" />
-              Datos protegidos · Roles · Auditoría
+              {t("footer.protectedData")}
             </div>
           </div>
 
           <div>
-            <div className="mb-2 font-semibold">Secciones</div>
+            <div className="mb-2 font-semibold">{t("footer.sections")}</div>
             <ul className="space-y-1 text-sm">
               {sections.length ? (
                 sections.map((s) => (
                   <li key={s.key}>
                     <Link className="hover:underline" to={s.path}>
-                      {s.label}
+                      {s.i18nKey ? t(s.i18nKey) : s.label}
                     </Link>
                   </li>
                 ))
               ) : (
-                <li className="opacity-70">No hay secciones habilitadas.</li>
+                <li className="opacity-70">{t("footer.noSections")}</li>
               )}
             </ul>
           </div>
 
           <div>
-            <div className="mb-2 font-semibold">Soporte</div>
+            <div className="mb-2 font-semibold">{t("footer.support")}</div>
 
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-2">
@@ -303,7 +302,7 @@ export default function Footer() {
                   }
                   className="text-left hover:underline"
                 >
-                  Abrir chat
+                  {t("footer.openChat")}
                 </button>
               </li>
 
@@ -324,22 +323,18 @@ export default function Footer() {
                   onClick={handleOpenDocumentation}
                   className="text-left hover:underline"
                 >
-                  Centro de ayuda
+                  {t("footer.helpCenter")}
                 </button>
               </li>
             </ul>
 
             <div className="mt-3 space-y-1 text-sm">
               {docsLoading ? (
-                <div className="opacity-60">Cargando manuales...</div>
+                <div className="opacity-60">{t("footer.loadingManuals")}</div>
               ) : docsError ? (
-                <div className="opacity-60">
-                  No se pudo consultar la documentación.
-                </div>
+                <div className="opacity-60">{t("footer.docsQueryError")}</div>
               ) : visibleDocs.length === 0 ? (
-                <div className="opacity-60">
-                  No hay manuales disponibles para este rol.
-                </div>
+                <div className="opacity-60">{t("footer.noManualsForRole")}</div>
               ) : (
                 visibleDocs.map((doc) => (
                   <div key={doc.slug} className="flex items-start gap-2">
@@ -355,7 +350,7 @@ export default function Footer() {
                       </a>
                     ) : (
                       <span className="opacity-60">
-                        {doc.title} (pendiente)
+                        {doc.title} ({t("footer.pending")})
                       </span>
                     )}
                   </div>
@@ -365,7 +360,7 @@ export default function Footer() {
           </div>
 
           <div>
-            <div className="mb-2 font-semibold">Estado del sistema</div>
+            <div className="mb-2 font-semibold">{t("footer.systemStatus")}</div>
             <div className="space-y-1 text-sm">
               <div className="flex items-center gap-2">
                 <span
@@ -373,8 +368,8 @@ export default function Footer() {
                     apiUp === null
                       ? "bg-neutral-400"
                       : apiUp
-                        ? "bg-emerald-500"
-                        : "bg-rose-500"
+                      ? "bg-emerald-500"
+                      : "bg-rose-500"
                   }`}
                 />
                 <span className="opacity-80">API</span>
@@ -384,7 +379,7 @@ export default function Footer() {
 
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 opacity-70" />
-                <span className="opacity-80">Ping</span>
+                <span className="opacity-80">{t("footer.pingLabel")}</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-80">
                   {ping != null ? `${ping} ms` : "—"}
@@ -393,7 +388,7 @@ export default function Footer() {
 
               <div className="flex items-center gap-2">
                 <Server className="h-4 w-4 opacity-70" />
-                <span className="opacity-80">Versión</span>
+                <span className="opacity-80">{t("footer.versionLabel")}</span>
                 <span className="opacity-60">·</span>
                 <span className="opacity-80">v{version}</span>
               </div>
@@ -403,7 +398,7 @@ export default function Footer() {
 
         <div className="mt-6 flex flex-col items-center justify-between gap-3 border-t border-neutral-200 pt-6 text-xs opacity-70 dark:border-neutral-800 sm:flex-row">
           <div>
-            © {new Date().getFullYear()} SENAF · Todos los derechos reservados
+            © {new Date().getFullYear()} SENAF · {t("footer.copyright")}
           </div>
           <div className="flex items-center gap-4">
             <a
@@ -411,14 +406,14 @@ export default function Footer() {
               href="#"
               onClick={(e) => e.preventDefault()}
             >
-              Privacidad
+              {t("footer.privacy")}
             </a>
             <a
               className="hover:underline"
               href="#"
               onClick={(e) => e.preventDefault()}
             >
-              Términos
+              {t("footer.terms")}
             </a>
             <a
               className="inline-flex items-center gap-1 hover:underline"

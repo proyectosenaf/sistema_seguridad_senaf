@@ -1,6 +1,7 @@
 // client/src/App.jsx
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 // ✅ auth local
 import { useAuth } from "./pages/auth/AuthProvider.jsx";
@@ -14,6 +15,9 @@ import api, { getToken, clearToken } from "./lib/api.js";
 
 // ✅ Config central
 import { APP_CONFIG } from "./config/app.config.js";
+
+// ✅ i18n
+import i18n from "./i18n";
 
 // Login local
 import LoginLocal from "./pages/auth/LoginLocal.jsx";
@@ -45,6 +49,11 @@ const AdminHub = React.lazy(() => import("./modules/rondasqr/admin/AdminHub.jsx"
 const Accesos = React.lazy(() => import("./pages/Accesos/Accesos.jsx"));
 const Bitacora = React.lazy(() => import("./pages/Bitacora/Bitacora.jsx"));
 const Chat = React.lazy(() => import("./pages/Chat/Chat.jsx"));
+
+// ✅ NUEVO MÓDULO: Respaldo y Restauración
+const BackupRestorePage = React.lazy(() =>
+  import("./modules/system/pages/BackupRestorePage.jsx")
+);
 
 // Visitas
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
@@ -213,6 +222,7 @@ function pickHomeFromMe(me) {
   const can = me?.can && typeof me.can === "object" ? me.can : null;
   if (can) {
     if (can["nav.iam"] === true) return "/iam/admin";
+    if (can["nav.system"] === true) return "/system/backups";
     if (can["nav.rondas"] === true) return "/rondasqr";
     if (can["nav.visitas"] === true) return "/visitas/control";
     if (can["nav.accesos"] === true) return "/accesos";
@@ -253,9 +263,11 @@ class RootErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div className="p-6">
-          <div className="text-lg font-bold text-red-600">Error de interfaz</div>
+          <div className="text-lg font-bold text-red-600">
+            {i18n.t("system.interfaceError")}
+          </div>
           <div className="mt-2 text-sm opacity-80">
-            {String(this.state.err?.message || this.state.err || "Error")}
+            {String(this.state.err?.message || this.state.err || i18n.t("system.errorGeneric"))}
           </div>
           {!import.meta.env.PROD ? (
             <pre className="mt-3 text-[11px] whitespace-pre-wrap opacity-70">
@@ -369,13 +381,14 @@ function AppShell({ me, meLoading, children, shellProps = {} }) {
 
 /* ───────────────── ProtectedRoute ───────────────── */
 function ProtectedRoute({ children }) {
+  const { t } = useTranslation();
   const { isAuthenticated, isLoading, token } = useAuth();
   const loc = useLocation();
 
   const loginRoute = normalizePath(APP_CONFIG?.routes?.login || "/login");
   const hardToken = token || getToken() || "";
 
-  if (isLoading) return <div className="p-6">Cargando…</div>;
+  if (isLoading) return <div className="p-6">{t("system.loading")}</div>;
 
   if (!isAuthenticated && !hardToken) {
     return <Navigate to={loginRoute} replace state={{ from: loc.pathname }} />;
@@ -386,6 +399,7 @@ function ProtectedRoute({ children }) {
 
 /* ───────────────── SessionGate ───────────────── */
 function SessionGate({ me, meLoading, children }) {
+  const { t } = useTranslation();
   const location = useLocation();
   const path = location?.pathname || "/";
   const hardToken = getToken() || "";
@@ -398,14 +412,14 @@ function SessionGate({ me, meLoading, children }) {
   if (meLoading) {
     if (isPublic) return <>{children}</>;
     if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
-    return <div className="p-6">Cargando sesión…</div>;
+    return <div className="p-6">{t("system.loadingSession")}</div>;
   }
 
   if (!me) {
     if (!hardToken) return <>{children}</>;
     if (isPublic) return <>{children}</>;
     if (hintVisitor && startsWithPath(path, "/visitas")) return <>{children}</>;
-    return <div className="p-6">Cargando sesión…</div>;
+    return <div className="p-6">{t("system.loadingSession")}</div>;
   }
 
   return <>{children}</>;
@@ -413,8 +427,10 @@ function SessionGate({ me, meLoading, children }) {
 
 /* ───────────────── RouteAccess ───────────────── */
 function RouteAccess({ me, meLoading, routeKey, children }) {
-  if (meLoading) return <div className="p-6">Cargando…</div>;
-  if (!me) return <div className="p-6">Cargando sesión…</div>;
+  const { t } = useTranslation();
+
+  if (meLoading) return <div className="p-6">{t("system.loading")}</div>;
+  if (!me) return <div className="p-6">{t("system.loadingSession")}</div>;
 
   if (me?.superadmin === true || me?.isSuperAdmin === true) {
     return <>{children}</>;
@@ -422,17 +438,18 @@ function RouteAccess({ me, meLoading, routeKey, children }) {
 
   if (isVisitorMe(me)) {
     const allowed = String(routeKey || "").startsWith("visitas");
-    if (!allowed) return <div className="p-6">No autorizado</div>;
+    if (!allowed) return <div className="p-6">{t("system.unauthorized")}</div>;
   }
 
   const can = me?.can && typeof me.can === "object" ? me.can : null;
-  if (!can || !routeKey) return <div className="p-6">No autorizado</div>;
+  if (!can || !routeKey) return <div className="p-6">{t("system.unauthorized")}</div>;
 
-  return can[routeKey] === true ? <>{children}</> : <div className="p-6">No autorizado</div>;
+  return can[routeKey] === true ? <>{children}</> : <div className="p-6">{t("system.unauthorized")}</div>;
 }
 
 /* ───────────────── Redirección tras login ───────────────── */
 function RoleRedirectInline({ me, meLoading, refresh }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, token } = useAuth();
   const ranRef = useRef(false);
@@ -462,11 +479,12 @@ function RoleRedirectInline({ me, meLoading, refresh }) {
     };
   }, [navigate, isAuthenticated, isLoading, token, me, meLoading, refresh]);
 
-  return <div className="p-6">Redirigiendo…</div>;
+  return <div className="p-6">{t("system.redirecting")}</div>;
 }
 
 /* ───────────────── Bloqueo duro en PROD ───────────────── */
 function AuthTokenBridge({ children }) {
+  const { t } = useTranslation();
   const { isAuthenticated, isLoading, token } = useAuth();
   const location = useLocation();
 
@@ -479,10 +497,10 @@ function AuthTokenBridge({ children }) {
   if (IS_PROD && !isLoading && !isAuthenticated && !hardToken && !isPublicRoute) {
     return (
       <div className="p-6">
-        Debes iniciar sesión para acceder al sistema.
+        {t("auth.mustLogin")}
         <div className="mt-3">
           <a className="underline" href={loginRoute}>
-            Ir al inicio de sesión
+            {t("auth.goToLogin")}
           </a>
         </div>
       </div>
@@ -493,6 +511,7 @@ function AuthTokenBridge({ children }) {
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { token, isLoading: authLoading } = useAuth();
@@ -562,7 +581,7 @@ export default function App() {
       <AuthTokenBridge>
         <GlobalPanicListener />
 
-        <Suspense fallback={<div className="p-6">Cargando…</div>}>
+        <Suspense fallback={<div className="p-6">{t("system.loading")}</div>}>
           <Routes>
             <Route path={loginRoute} element={<LoginLocal />} />
 
@@ -668,6 +687,26 @@ export default function App() {
                     <AppShell me={me} meLoading={meLoading}>
                       <RouteAccess me={me} meLoading={meLoading} routeKey="iam.admin">
                         <IamAdminPage me={me} meLoading={meLoading} />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            {/* ✅ NUEVO MÓDULO: Respaldo y Restauración */}
+            <Route
+              path="/system/backups"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess
+                        me={me}
+                        meLoading={meLoading}
+                        routeKey="system.backups.read"
+                      >
+                        <BackupRestorePage />
                       </RouteAccess>
                     </AppShell>
                   </SessionGate>
@@ -852,7 +891,7 @@ export default function App() {
               }
             />
 
-            <Route path="*" element={<div className="p-6">No encontrado</div>} />
+            <Route path="*" element={<div className="p-6">{t("system.notFound")}</div>} />
           </Routes>
         </Suspense>
       </AuthTokenBridge>

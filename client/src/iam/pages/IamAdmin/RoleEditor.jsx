@@ -18,6 +18,11 @@ export default function RoleEditor({ role, perms, onChanged }) {
     permissions: Array.isArray(role?.permissions) ? role.permissions : [],
   }));
 
+  // Guarda el último set de permisos "granulares" para restaurarlo al desactivar "*"
+  const lastGranularRef = useRef(
+    (role?.permissions || []).filter((key) => key !== "*")
+  );
+
   // ✅ Si cambias de rol (o lo recargas), sincroniza el form
   useEffect(() => {
     setForm({
@@ -28,11 +33,10 @@ export default function RoleEditor({ role, perms, onChanged }) {
       permissions: Array.isArray(role?.permissions) ? role.permissions : [],
     });
 
-    lastGranularRef.current = (role?.permissions || []).filter((k) => k !== "*");
-  }, [role?._id]); // intencional: rehidratar solo cuando cambia el rol
-
-  // Guarda el último set de permisos "granulares" para restaurarlo al desactivar "*"
-  const lastGranularRef = useRef((role?.permissions || []).filter((k) => k !== "*"));
+    lastGranularRef.current = (role?.permissions || []).filter(
+      (key) => key !== "*"
+    );
+  }, [role?._id, role?.code, role?.name, role?.description, role?.permissions]);
 
   // Todas las keys disponibles (para expandir * si el backend no lo soporta)
   const allKeys = useMemo(
@@ -47,10 +51,11 @@ export default function RoleEditor({ role, perms, onChanged }) {
   // Agrupar permisos por módulo
   const groups = useMemo(() => {
     const map = new Map();
+
     (perms || []).forEach((p) => {
-      const g = p?.group || "General";
-      if (!map.has(g)) map.set(g, []);
-      map.get(g).push(p);
+      const groupName = p?.group || "General";
+      if (!map.has(groupName)) map.set(groupName, []);
+      map.get(groupName).push(p);
     });
 
     return [...map.entries()]
@@ -72,45 +77,55 @@ export default function RoleEditor({ role, perms, onChanged }) {
   const hasAll = (form.permissions || []).includes("*");
   const has = (key) => (form.permissions || []).includes(key);
 
-  const setPerms = (next) => setForm((f) => ({ ...f, permissions: next }));
+  const setPerms = (next) =>
+    setForm((prev) => ({ ...prev, permissions: next }));
 
   const toggle = (key) => {
     if (!key) return;
     if (hasAll) return; // con "*" activo, no se pueden cambiar individuales
 
-    const set = new Set(form.permissions || []);
-    set.has(key) ? set.delete(key) : set.add(key);
+    const nextSet = new Set(form.permissions || []);
+    if (nextSet.has(key)) nextSet.delete(key);
+    else nextSet.add(key);
 
-    const arr = [...set].filter(Boolean);
-    setPerms(arr);
-    lastGranularRef.current = arr;
+    const nextPermissions = [...nextSet].filter(Boolean);
+    setPerms(nextPermissions);
+    lastGranularRef.current = nextPermissions;
   };
 
   const selectGroup = (group, turnOn) => {
     if (hasAll) return;
 
     const keys = (groups.find((g) => g.group === group)?.items || [])
-      .map((i) => i?.key)
+      .map((item) => item?.key)
       .filter(Boolean);
 
-    const set = new Set(form.permissions || []);
-    keys.forEach((k) => (turnOn ? set.add(k) : set.delete(k)));
+    const nextSet = new Set(form.permissions || []);
+    keys.forEach((key) => {
+      if (turnOn) nextSet.add(key);
+      else nextSet.delete(key);
+    });
 
-    const arr = [...set].filter(Boolean);
-    setPerms(arr);
-    lastGranularRef.current = arr;
+    const nextPermissions = [...nextSet].filter(Boolean);
+    setPerms(nextPermissions);
+    lastGranularRef.current = nextPermissions;
   };
 
-  const toggleAllSwitch = (on) => {
-    if (on) {
+  const toggleAllSwitch = (enabled) => {
+    if (enabled) {
       // Guarda el snapshot granular y activa "*"
-      lastGranularRef.current = (form.permissions || []).filter((k) => k && k !== "*");
+      lastGranularRef.current = (form.permissions || []).filter(
+        (key) => key && key !== "*"
+      );
       setPerms(["*"]);
-    } else {
-      // Restaura el snapshot granular
-      const restored = lastGranularRef.current.length ? lastGranularRef.current : [];
-      setPerms(restored);
+      return;
     }
+
+    // Restaura el snapshot granular
+    const restored = lastGranularRef.current.length
+      ? lastGranularRef.current
+      : [];
+    setPerms(restored);
   };
 
   const buildCodeFromName = (name) =>
@@ -157,8 +172,11 @@ export default function RoleEditor({ role, perms, onChanged }) {
         permissions,
       };
 
-      if (form._id) await iamApi.updateRole(form._id, payload);
-      else await iamApi.createRole(payload);
+      if (form._id) {
+        await iamApi.updateRole(form._id, payload);
+      } else {
+        await iamApi.createRole(payload);
+      }
 
       setMsg("Guardado.");
       onChanged?.();
@@ -171,8 +189,7 @@ export default function RoleEditor({ role, perms, onChanged }) {
   };
 
   const remove = async () => {
-    if (!form._id) return;
-    if (removing) return;
+    if (!form._id || removing) return;
     if (!window.confirm("¿Eliminar rol?")) return;
 
     setRemoving(true);
@@ -192,25 +209,29 @@ export default function RoleEditor({ role, perms, onChanged }) {
 
   return (
     <div className="space-y-4">
-      {msg && (
+      {msg ? (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
           {msg}
         </div>
-      )}
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <input
-          className="border rounded px-3 py-2"
+          className="rounded border px-3 py-2"
           placeholder="Nombre del rol"
           value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          onChange={(e) =>
+            setForm((prev) => ({ ...prev, name: e.target.value }))
+          }
         />
 
         <textarea
-          className="border rounded px-3 py-2"
+          className="rounded border px-3 py-2"
           placeholder="Descripción"
           value={form.description}
-          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          onChange={(e) =>
+            setForm((prev) => ({ ...prev, description: e.target.value }))
+          }
           rows={2}
         />
 
@@ -224,7 +245,7 @@ export default function RoleEditor({ role, perms, onChanged }) {
         */}
       </div>
 
-      <div className="rounded border p-3 flex items-center justify-between">
+      <div className="flex items-center justify-between rounded border p-3">
         <label className="inline-flex items-center gap-2">
           <input
             type="checkbox"
@@ -234,32 +255,35 @@ export default function RoleEditor({ role, perms, onChanged }) {
           />
           <span>Todos los permisos (*)</span>
         </label>
-        {hasAll && (
-          <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800">
+
+        {hasAll ? (
+          <span className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-800">
             Concedido el 100% de permisos — los checks están bloqueados
           </span>
-        )}
+        ) : null}
       </div>
 
       {/* Matriz por grupos */}
       <div className="space-y-4">
-        {groups.map((g) => (
-          <div key={g.group} className="border rounded p-3">
+        {groups.map((groupItem) => (
+          <div key={groupItem.group} className="rounded border p-3">
             <div className="flex items-center justify-between">
-              <div className="font-medium">{g.group}</div>
+              <div className="font-medium">{groupItem.group}</div>
+
               <div className="flex gap-2">
                 <button
                   type="button"
-                  className="text-sm px-2 py-1 rounded bg-gray-200 disabled:opacity-60"
-                  onClick={() => selectGroup(g.group, true)}
+                  className="rounded bg-gray-200 px-2 py-1 text-sm disabled:opacity-60"
+                  onClick={() => selectGroup(groupItem.group, true)}
                   disabled={hasAll || saving || removing}
                 >
                   Seleccionar todo
                 </button>
+
                 <button
                   type="button"
-                  className="text-sm px-2 py-1 rounded bg-gray-200 disabled:opacity-60"
-                  onClick={() => selectGroup(g.group, false)}
+                  className="rounded bg-gray-200 px-2 py-1 text-sm disabled:opacity-60"
+                  onClick={() => selectGroup(groupItem.group, false)}
                   disabled={hasAll || saving || removing}
                 >
                   Quitar todo
@@ -267,23 +291,25 @@ export default function RoleEditor({ role, perms, onChanged }) {
               </div>
             </div>
 
-            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-              {g.items.map((p) => (
+            <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {groupItem.items.map((perm) => (
                 <label
-                  key={p?._id || p?.key}
-                  className={`flex items-center gap-2 border rounded px-2 py-2 ${
+                  key={perm?._id || perm?.key}
+                  className={`flex items-center gap-2 rounded border px-2 py-2 ${
                     hasAll ? "opacity-60" : ""
                   }`}
                 >
                   <input
                     type="checkbox"
-                    checked={hasAll ? true : has(p?.key)}
-                    onChange={() => toggle(p?.key)}
+                    checked={hasAll ? true : has(perm?.key)}
+                    onChange={() => toggle(perm?.key)}
                     disabled={hasAll || saving || removing}
                   />
-                  <span className="text-sm">{p?.label || p?.key}</span>
-                  <span className="text-[10px] text-gray-500 ml-auto font-mono">
-                    {p?.key}
+
+                  <span className="text-sm">{perm?.label || perm?.key}</span>
+
+                  <span className="ml-auto font-mono text-[10px] text-gray-500">
+                    {perm?.key}
                   </span>
                 </label>
               ))}
@@ -293,17 +319,20 @@ export default function RoleEditor({ role, perms, onChanged }) {
       </div>
 
       <div className="flex justify-end gap-2">
-        {form._id && (
+        {form._id ? (
           <button
-            className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-60"
+            type="button"
+            className="rounded bg-red-600 px-3 py-2 text-white disabled:opacity-60"
             onClick={remove}
             disabled={saving || removing}
           >
             {removing ? "Eliminando..." : "Eliminar"}
           </button>
-        )}
+        ) : null}
+
         <button
-          className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-60"
+          type="button"
+          className="rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-60"
           onClick={save}
           disabled={saving || removing}
         >

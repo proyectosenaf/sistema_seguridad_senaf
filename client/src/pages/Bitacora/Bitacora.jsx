@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { MODULES } from "./constants";
 import { useBitacoraData } from "./hooks/useBitacoraData";
 import { downloadExcel, printPDF } from "./utils/bitacora.exports";
@@ -11,6 +12,7 @@ import DeleteConfirmModal from "./components/DeleteConfirmModal";
 const DEFAULT_VISIBLE_ROWS = 5;
 
 export default function Bitacora() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("bitacora");
   const {
     rows,
@@ -186,7 +188,7 @@ export default function Bitacora() {
       setDetailError(
         err?.response?.data?.message ||
           err?.message ||
-          "No se pudo cargar el detalle del evento."
+          t("bitacora.detailLoadError")
       );
     }
   };
@@ -196,7 +198,7 @@ export default function Bitacora() {
 
     const rowId = String(confirmRow._id || confirmRow.id || "");
     if (!rowId) {
-      setDeleteError("El registro no tiene un identificador válido.");
+      setDeleteError(t("bitacora.invalidId"));
       return;
     }
 
@@ -214,7 +216,7 @@ export default function Bitacora() {
       setDeleteError(
         err?.response?.data?.message ||
           err?.message ||
-          "No se pudo archivar el registro."
+          t("bitacora.archiveError")
       );
     }
   };
@@ -223,18 +225,13 @@ export default function Bitacora() {
     <div className="layer-content bitacora-uniform" data-fx="neon">
       <div className="mb-2 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">BITÁCORA</h1>
-          <p className="text-sm opacity-75">
-            Registro consolidado de actividades del sistema con actualización
-            automática
-          </p>
+          <h1 className="text-2xl font-bold">{t("bitacora.titleUpper")}</h1>
+          <p className="text-sm opacity-75">{t("bitacora.subtitle")}</p>
         </div>
       </div>
 
       {loading && (
-        <p className="mb-2 text-sm opacity-70">
-          Cargando registros de bitácora…
-        </p>
+        <p className="mb-2 text-sm opacity-70">{t("bitacora.loading")}</p>
       )}
 
       {!!loadError && !loading && (
@@ -243,18 +240,18 @@ export default function Bitacora() {
 
       <div className="bitacora-tabs mb-4 grid grid-cols-2 overflow-hidden rounded-xl">
         {[
-          { id: "bitacora", label: "Bitácora" },
-          { id: "analitica", label: "Análisis y Métricas" },
-        ].map((t) => (
+          { id: "bitacora", label: t("bitacora.tabLog") },
+          { id: "analitica", label: t("bitacora.tabAnalytics") },
+        ].map((tabItem) => (
           <button
-            key={t.id}
+            key={tabItem.id}
             type="button"
-            onClick={() => setTab(t.id)}
+            onClick={() => setTab(tabItem.id)}
             className={`bitacora-tab py-2 text-sm font-medium transition ${
-              tab === t.id ? "is-active" : ""
+              tab === tabItem.id ? "is-active" : ""
             }`}
           >
-            {t.label}
+            {tabItem.label}
           </button>
         ))}
       </div>
@@ -264,41 +261,45 @@ export default function Bitacora() {
           <section className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
             <div className="fx-card fx-kpi">
               <div className="flex items-center justify-between">
-                <h4 className="font-semibold">Total Visitas</h4>
+                <h4 className="font-semibold">{t("bitacora.kpiVisits")}</h4>
                 <span>👥</span>
               </div>
               <div className="mt-1 text-3xl font-bold">{visitas.length}</div>
-              <div className="text-sm opacity-75">{visitasActivas} activas</div>
+              <div className="text-sm opacity-75">
+                {t("bitacora.kpiActiveVisits", { count: visitasActivas })}
+              </div>
             </div>
 
             <div className="fx-card fx-kpi">
               <div className="flex items-center justify-between">
-                <h4 className="font-semibold">Rondas</h4>
+                <h4 className="font-semibold">{t("bitacora.kpiRounds")}</h4>
                 <span>⭕</span>
               </div>
               <div className="mt-1 text-3xl font-bold">{rondas.length}</div>
               <div className="text-sm opacity-75">
-                registradas en el período
+                {t("bitacora.kpiRegisteredInPeriod")}
               </div>
             </div>
 
             <div className="fx-card fx-kpi">
               <div className="flex items-center justify-between">
-                <h4 className="font-semibold">Total Accesos</h4>
+                <h4 className="font-semibold">{t("bitacora.kpiAccesses")}</h4>
                 <span>🛂</span>
               </div>
               <div className="mt-1 text-3xl font-bold">{accesosTotal}</div>
-              <div className="text-sm opacity-75">registros de acceso</div>
+              <div className="text-sm opacity-75">
+                {t("bitacora.kpiAccessRecords")}
+              </div>
             </div>
 
             <div className="fx-card fx-kpi">
               <div className="flex items-center justify-between">
-                <h4 className="font-semibold">Incidentes</h4>
+                <h4 className="font-semibold">{t("bitacora.kpiIncidents")}</h4>
                 <span>🚨</span>
               </div>
               <div className="mt-1 text-3xl font-bold">{stats.incidentes}</div>
               <div className="text-sm opacity-75">
-                gestionados en bitácora
+                {t("bitacora.kpiManagedInLog")}
               </div>
             </div>
           </section>
@@ -317,15 +318,17 @@ export default function Bitacora() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="font-semibold">
-                  Mostrando{" "}
-                  <span className="font-bold">{visibleRows.length}</span> de{" "}
-                  <span className="font-bold">{filtered.length}</span>{" "}
-                  registros
+                  {t("bitacora.showingRecords", {
+                    visible: visibleRows.length,
+                    total: filtered.length,
+                  })}
                 </h3>
                 <p className="text-sm opacity-75">
                   {!hasActiveFilters
-                    ? `Por defecto se muestran los últimos ${DEFAULT_VISIBLE_ROWS}.`
-                    : "Se muestran los registros según los filtros aplicados."}
+                    ? t("bitacora.defaultShowingLast", {
+                        count: DEFAULT_VISIBLE_ROWS,
+                      })
+                    : t("bitacora.filteredShowing")}
                 </p>
               </div>
 
@@ -336,8 +339,10 @@ export default function Bitacora() {
                   className="bitacora-outline-btn rounded-xl px-3 py-2 transition"
                 >
                   {showAllRows
-                    ? `Ver solo últimos ${DEFAULT_VISIBLE_ROWS}`
-                    : "Ver todos"}
+                    ? t("bitacora.viewOnlyLast", {
+                        count: DEFAULT_VISIBLE_ROWS,
+                      })
+                    : t("bitacora.viewAll")}
                 </button>
               )}
             </div>

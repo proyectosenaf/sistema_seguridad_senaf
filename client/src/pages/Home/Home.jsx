@@ -1,5 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import { getNavSectionsForMe } from "../../config/navConfig.js";
 import api, { getToken } from "../../lib/api.js";
@@ -16,6 +17,7 @@ import {
   NotebookPen,
   ShieldCheck,
   Home as HomeIcon,
+  Database,
 } from "lucide-react";
 
 const ICONS = {
@@ -26,6 +28,7 @@ const ICONS = {
   visitas: Users,
   bitacora: NotebookPen,
   iam: ShieldCheck,
+  system: Database,
 };
 
 const MODULE_ACCENTS = {
@@ -64,6 +67,12 @@ const MODULE_ACCENTS = {
     iconColor: "#fde68a",
     glow: "rgba(234,179,8,0.18)",
     topLine: "linear-gradient(90deg, #facc15, #fb7185)",
+  },
+  system: {
+    iconBg: "rgba(148,163,184,0.16)",
+    iconColor: "#cbd5e1",
+    glow: "rgba(148,163,184,0.18)",
+    topLine: "linear-gradient(90deg, #94a3b8, #60a5fa)",
   },
   home: {
     iconBg: "rgba(59,130,246,0.16)",
@@ -107,10 +116,11 @@ function resolvePrincipal(raw) {
   };
 }
 
-function SectionCard({ section, onOpen }) {
+function SectionCard({ section, onOpen, t }) {
   const key = section.key;
-  const Icon = ICONS[key] || null;
+  const Icon = section.icon || ICONS[key] || null;
   const accent = MODULE_ACCENTS[key] || MODULE_ACCENTS.home;
+  const label = section.i18nKey ? t(section.i18nKey, { defaultValue: section.label }) : section.label;
 
   return (
     <button
@@ -164,14 +174,14 @@ function SectionCard({ section, onOpen }) {
             className="truncate text-[1.05rem] font-semibold tracking-[0.01em]"
             style={{ color: "var(--text)" }}
           >
-            {section.label}
+            {label}
           </div>
 
           <div
             className="mt-1.5 text-sm"
             style={{ color: "var(--text-muted)" }}
           >
-            Ir a {section.label}
+            {t("home.goToSection", { section: label })}
           </div>
         </div>
       </div>
@@ -180,6 +190,7 @@ function SectionCard({ section, onOpen }) {
 }
 
 export default function Home() {
+  const { t } = useTranslation();
   const nav = useNavigate();
   const auth = useAuth();
   const { user, isLoading } = auth || {};
@@ -244,6 +255,7 @@ export default function Home() {
       "incidentes",
       "visitas",
       "bitacora",
+      "system",
     ];
 
     const rank = (k) => {
@@ -257,7 +269,7 @@ export default function Home() {
   if (isLoading) {
     return (
       <div className="p-6" style={{ color: "var(--text-muted)" }}>
-        Cargando…
+        {t("system.loading")}
       </div>
     );
   }
@@ -265,7 +277,7 @@ export default function Home() {
   if (!principal) {
     return (
       <div className="p-6" style={{ color: "var(--text-muted)" }}>
-        Cargando sesión…
+        {t("system.loadingSession")}
       </div>
     );
   }
@@ -275,10 +287,8 @@ export default function Home() {
       <div className="mod-card">
         <div className="mod-card__head">
           <div>
-            <h2 className="mod-card__title">Secciones</h2>
-            <p className="mod-card__sub">
-              Acceso rápido a los módulos habilitados para tu usuario.
-            </p>
+            <h2 className="mod-card__title">{t("home.sectionsTitle")}</h2>
+            <p className="mod-card__sub">{t("home.sectionsSubtitle")}</p>
           </div>
         </div>
 
@@ -292,7 +302,7 @@ export default function Home() {
                 color: "var(--text-muted)",
               }}
             >
-              No hay secciones habilitadas para tu usuario.
+              {t("home.noSections")}
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -301,6 +311,7 @@ export default function Home() {
                   key={s.key}
                   section={s}
                   onOpen={() => nav(s.path)}
+                  t={t}
                 />
               ))}
             </div>
@@ -311,10 +322,8 @@ export default function Home() {
       <div className="mod-card">
         <div className="mod-card__head">
           <div>
-            <h2 className="mod-card__title">Análisis y métricas</h2>
-            <p className="mod-card__sub">
-              Resumen visual de eventos registrados en la bitácora.
-            </p>
+            <h2 className="mod-card__title">{t("home.analyticsTitle")}</h2>
+            <p className="mod-card__sub">{t("home.analyticsSubtitle")}</p>
           </div>
         </div>
 

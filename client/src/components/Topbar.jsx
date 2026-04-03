@@ -1,10 +1,13 @@
+// client/src/components/Topbar.jsx
 import React from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import ThemeToggle from "./ThemeToggle.jsx";
 import ThemeFxPicker from "./ThemeFxPicker.jsx";
 import { useAuth } from "../pages/auth/AuthProvider.jsx";
 import { getNavSectionsForMe } from "../config/navConfig.js";
 import { clearToken } from "../lib/api.js";
+
 import {
   Menu,
   LogOut,
@@ -160,25 +163,25 @@ function hasAdminAccess(principal) {
 /* -------------------------
    PATH labels
 ------------------------- */
-function getPathLabel(pathname) {
+function getPathLabel(pathname, t) {
   const p = String(pathname || "/");
 
-  if (p === "/") return "Panel principal";
-  if (p.startsWith("/accesos")) return "Control de Acceso";
-  if (p.startsWith("/rondasqr") || p.startsWith("/rondas")) {
-    return "Rondas de Vigilancia";
-  }
-  if (p.startsWith("/incidentes")) return "Gestión de Incidentes";
-  if (p.startsWith("/visitas")) return "Control de Visitas";
-  if (p.startsWith("/bitacora")) return "Bitácora Digital";
-  if (p.startsWith("/iam")) return "Usuarios y Permisos";
+  if (p === "/") return t("nav.dashboard");
+  if (p.startsWith("/accesos")) return t("nav.accesos");
+  if (p.startsWith("/rondasqr")) return t("nav.rondasQr");
+  if (p.startsWith("/rondas")) return t("nav.rondas");
+  if (p.startsWith("/incidentes")) return t("nav.incidentes");
+  if (p.startsWith("/visitas")) return t("nav.visitas");
+  if (p.startsWith("/bitacora")) return t("nav.bitacora");
+  if (p.startsWith("/iam")) return t("nav.iam");
 
-  return p.replaceAll("/", "") || "Ruta";
+  return t("topbar.route");
 }
 
 /* ---------- Breadcrumbs ---------- */
 function Breadcrumbs() {
   const { pathname } = useLocation();
+  const { t } = useTranslation();
   const parts = pathname.split("/").filter(Boolean);
   const crumbs = [
     "/",
@@ -187,12 +190,12 @@ function Breadcrumbs() {
 
   return (
     <nav
-      aria-label="Breadcrumb"
+      aria-label={t("topbar.breadcrumbAria")}
       className="hidden lg:flex items-center gap-2 text-sm"
       style={{ color: "var(--text-muted)" }}
     >
       {crumbs.map((p, i) => {
-        const label = getPathLabel(p);
+        const label = getPathLabel(p, t);
         const last = i === crumbs.length - 1;
 
         return (
@@ -476,12 +479,14 @@ function getModuleAliases(key) {
   return map[String(key || "").toLowerCase()] || [];
 }
 
-function buildModuleSearchEntries(modules) {
+function buildModuleSearchEntries(modules, t) {
   return (Array.isArray(modules) ? modules : []).map((m) => ({
     id: `module-${m.key || m.path}`,
     type: "module",
-    title: String(m.label || m.title || "Módulo"),
-    description: `Abrir ${String(m.label || m.title || "módulo")}`,
+    title: String(m.i18nKey ? t(m.i18nKey) : m.label || m.title || t("topbar.module")),
+    description: t("topbar.openModule", {
+      module: String(m.i18nKey ? t(m.i18nKey) : m.label || m.title || t("topbar.module")),
+    }),
     keywords: [
       m.key,
       m.label,
@@ -490,140 +495,140 @@ function buildModuleSearchEntries(modules) {
       ...(Array.isArray(m.keywords) ? m.keywords : []),
     ].filter(Boolean),
     path: m.path || "/",
-    section: "Módulos habilitados",
+    section: t("topbar.enabledModules"),
     moduleKey: String(m.key || "").toLowerCase(),
     icon: m.icon || null,
   }));
 }
 
-function getGlobalRouteEntries() {
+function getGlobalRouteEntries(t) {
   return [
     {
       id: "home",
       type: "route",
-      title: "Panel principal",
-      description: "Inicio del sistema SENAF",
+      title: t("nav.dashboard"),
+      description: t("topbar.senafHome"),
       keywords: ["inicio", "panel", "dashboard", "home", "principal"],
       path: "/",
-      section: "Global",
+      section: t("topbar.global"),
     },
 
     {
       id: "accesos-main",
       type: "route",
-      title: "Control de Acceso",
-      description: "Entradas, salidas, personal y vehículos",
+      title: t("nav.accesos"),
+      description: t("topbar.accessDesc"),
       keywords: ["acceso", "entrada", "salida", "empleados", "vehiculos", "vehículos"],
       path: "/accesos",
-      section: "Control de Acceso",
+      section: t("nav.accesos"),
       moduleKey: "accesos",
     },
     {
       id: "accesos-empleados",
       type: "route",
-      title: "Empleados",
-      description: "Listado de empleados",
+      title: t("topbar.employees"),
+      description: t("topbar.employeeList"),
       keywords: ["empleados", "personal", "colaboradores", "lista empleados"],
       path: "/accesos",
-      section: "Control de Acceso",
+      section: t("nav.accesos"),
       moduleKey: "accesos",
     },
     {
       id: "accesos-vehiculos",
       type: "route",
-      title: "Vehículos",
-      description: "Listado y control vehicular",
+      title: t("topbar.vehicles"),
+      description: t("topbar.vehicleControl"),
       keywords: ["vehiculos", "vehículos", "placas", "autos", "carros"],
       path: "/accesos",
-      section: "Control de Acceso",
+      section: t("nav.accesos"),
       moduleKey: "accesos",
     },
 
     {
       id: "rondas-main",
       type: "route",
-      title: "Rondas de Vigilancia",
-      description: "Patrullaje y recorridos",
+      title: t("nav.rondas"),
+      description: t("topbar.roundsDesc"),
       keywords: ["rondas", "guardia", "patrulla", "vigilancia"],
       path: "/rondas",
-      section: "Rondas",
+      section: t("nav.rondas"),
       moduleKey: "rondas",
     },
     {
       id: "rondas-qr",
       type: "route",
-      title: "Rondas QR",
-      description: "Escaneo y control de puntos QR",
+      title: t("nav.rondasQr"),
+      description: t("topbar.roundsQrDesc"),
       keywords: ["rondas qr", "qr", "escaneo", "puntos qr"],
       path: "/rondasqr",
-      section: "Rondas",
+      section: t("nav.rondas"),
       moduleKey: "rondas",
     },
 
     {
       id: "incidentes-main",
       type: "route",
-      title: "Gestión de Incidentes",
-      description: "Incidentes, alertas y reportes",
+      title: t("nav.incidentes"),
+      description: t("topbar.incidentsDesc"),
       keywords: ["incidentes", "alertas", "reportes", "riesgo", "seguridad"],
       path: "/incidentes",
-      section: "Incidentes",
+      section: t("nav.incidentes"),
       moduleKey: "incidentes",
     },
 
     {
       id: "visitas-main",
       type: "route",
-      title: "Control de Visitas",
-      description: "Visitantes, agenda y autorizaciones",
+      title: t("nav.visitas"),
+      description: t("topbar.visitsDesc"),
       keywords: ["visitas", "visitantes", "agenda", "citas", "recepcion", "recepción"],
       path: "/visitas",
-      section: "Visitas",
+      section: t("nav.visitas"),
       moduleKey: "visitas",
     },
     {
       id: "visitas-agenda",
       type: "route",
-      title: "Agenda de Citas",
-      description: "Programación de visitas",
+      title: t("topbar.appointmentAgenda"),
+      description: t("topbar.visitSchedule"),
       keywords: ["agenda", "citas", "programar visita", "agenda citas"],
       path: "/visitas/agenda",
-      section: "Visitas",
+      section: t("nav.visitas"),
       moduleKey: "visitas",
     },
 
     {
       id: "bitacora-main",
       type: "route",
-      title: "Bitácora Digital",
-      description: "Registro histórico y seguimiento",
+      title: t("nav.bitacora"),
+      description: t("topbar.logbookDesc"),
       keywords: ["bitacora", "bitácora", "registro", "historial", "seguimiento"],
       path: "/bitacora",
-      section: "Bitácora",
+      section: t("nav.bitacora"),
       moduleKey: "bitacora",
     },
 
     {
       id: "iam-main",
       type: "route",
-      title: "Usuarios y Permisos",
-      description: "Gestión de usuarios, roles y permisos",
+      title: t("nav.iam"),
+      description: t("topbar.iamDesc"),
       keywords: ["iam", "usuarios", "roles", "permisos", "seguridad"],
       path: "/iam",
-      section: "IAM",
+      section: t("nav.iam"),
       moduleKey: "iam",
     },
   ];
 }
 
-function buildModuleActionEntries(modules) {
+function buildModuleActionEntries(modules, t) {
   const allowed = Array.isArray(modules) ? modules : [];
 
   const catalog = {
     accesos: [
       {
-        title: "Nuevo Empleado",
-        description: "Crear registro de empleado",
+        title: t("topbar.newEmployee"),
+        description: t("topbar.createEmployeeRecord"),
         path: "/accesos?action=create-employee",
         actionKind: "internal-route",
         actionLabel: "crear empleado",
@@ -636,8 +641,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Nuevo Vehículo",
-        description: "Crear registro de vehículo",
+        title: t("topbar.newVehicle"),
+        description: t("topbar.createVehicleRecord"),
         path: "/accesos?action=create-vehicle",
         actionKind: "internal-route",
         actionLabel: "crear vehiculo",
@@ -651,8 +656,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Buscar Empleado",
-        description: "Ir al listado de empleados",
+        title: t("topbar.findEmployee"),
+        description: t("topbar.goEmployeeList"),
         path: "/accesos",
         actionKind: "internal-route",
         actionLabel: "buscar empleado",
@@ -664,8 +669,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Buscar Vehículo",
-        description: "Ir al listado de vehículos",
+        title: t("topbar.findVehicle"),
+        description: t("topbar.goVehicleList"),
         path: "/accesos",
         actionKind: "internal-route",
         actionLabel: "buscar vehiculo",
@@ -682,16 +687,16 @@ function buildModuleActionEntries(modules) {
 
     rondas: [
       {
-        title: "Ver Rondas",
-        description: "Abrir recorridos y rondas",
+        title: t("topbar.viewRounds"),
+        description: t("topbar.openRounds"),
         path: "/rondas",
         actionKind: "internal-route",
         actionLabel: "ver rondas",
         keywords: ["rondas", "listar rondas", "patrullas", "guardias"],
       },
       {
-        title: "Escanear QR",
-        description: "Abrir módulo de rondas QR",
+        title: t("topbar.scanQr"),
+        description: t("topbar.openRoundsQr"),
         path: "/rondasqr",
         actionKind: "internal-route",
         actionLabel: "escanear qr",
@@ -701,8 +706,8 @@ function buildModuleActionEntries(modules) {
 
     incidentes: [
       {
-        title: "Nuevo Incidente",
-        description: "Registrar incidente",
+        title: t("topbar.newIncident"),
+        description: t("topbar.registerIncident"),
         path: "/incidentes?action=create",
         actionKind: "internal-route",
         actionLabel: "crear incidente",
@@ -715,8 +720,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Ver Incidentes",
-        description: "Ir al listado de incidentes",
+        title: t("topbar.viewIncidents"),
+        description: t("topbar.goIncidentsList"),
         path: "/incidentes",
         actionKind: "internal-route",
         actionLabel: "ver incidentes",
@@ -726,8 +731,8 @@ function buildModuleActionEntries(modules) {
 
     visitas: [
       {
-        title: "Nueva Visita",
-        description: "Registrar visitante o visita",
+        title: t("topbar.newVisit"),
+        description: t("topbar.registerVisit"),
         path: "/visitas?action=create",
         actionKind: "internal-route",
         actionLabel: "crear visita",
@@ -741,8 +746,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Agenda de Citas",
-        description: "Abrir agenda de visitas",
+        title: t("topbar.appointmentAgenda"),
+        description: t("topbar.openVisitAgenda"),
         path: "/visitas/agenda",
         actionKind: "internal-route",
         actionLabel: "agenda cita",
@@ -755,8 +760,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Escanear QR de Visita",
-        description: "Ir al control de visitas",
+        title: t("topbar.scanVisitQr"),
+        description: t("topbar.goVisitControl"),
         path: "/visitas",
         actionKind: "internal-route",
         actionLabel: "qr visita",
@@ -766,8 +771,8 @@ function buildModuleActionEntries(modules) {
 
     bitacora: [
       {
-        title: "Ver Bitácora",
-        description: "Abrir historial de eventos",
+        title: t("topbar.viewLogbook"),
+        description: t("topbar.openEventHistory"),
         path: "/bitacora",
         actionKind: "internal-route",
         actionLabel: "ver bitacora",
@@ -780,8 +785,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Reportes de Bitácora",
-        description: "Abrir reportes y métricas",
+        title: t("topbar.logbookReports"),
+        description: t("topbar.openReportsMetrics"),
         path: "/bitacora?tab=reportes",
         actionKind: "internal-route",
         actionLabel: "reportes bitacora",
@@ -795,8 +800,8 @@ function buildModuleActionEntries(modules) {
 
     iam: [
       {
-        title: "Nuevo Usuario",
-        description: "Crear usuario del sistema",
+        title: t("topbar.newUser"),
+        description: t("topbar.createSystemUser"),
         path: "/iam?action=create-user",
         actionKind: "internal-route",
         actionLabel: "crear usuario",
@@ -808,8 +813,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Roles y Permisos",
-        description: "Administrar permisos",
+        title: t("topbar.rolesPermissions"),
+        description: t("topbar.managePermissions"),
         path: "/iam?tab=roles",
         actionKind: "internal-route",
         actionLabel: "roles permisos",
@@ -821,8 +826,8 @@ function buildModuleActionEntries(modules) {
         ],
       },
       {
-        title: "Eliminar Usuario",
-        description: "Ir al módulo de usuarios para eliminar",
+        title: t("topbar.deleteUser"),
+        description: t("topbar.goUsersDelete"),
         path: "/iam",
         actionKind: "internal-route",
         actionLabel: "eliminar usuario",
@@ -851,7 +856,9 @@ function buildModuleActionEntries(modules) {
         path: item.path,
         actionKind: item.actionKind,
         actionLabel: item.actionLabel,
-        section: `${mod.label || key} · Acciones`,
+        section: `${mod.i18nKey ? t(mod.i18nKey) : mod.label || key} · ${t(
+          "topbar.actionsSection"
+        )}`,
         moduleKey: key,
         keywords: [...(item.keywords || []), key, mod.label].filter(Boolean),
         icon: mod.icon || null,
@@ -880,6 +887,7 @@ function filterEntriesByRole(entries, modules, isAdminSearch) {
 export default function Topbar({ onToggleMenu, showBack = false, back = null }) {
   const auth = useAuth();
   const { user, logout, isAuthenticated } = auth;
+  const { t } = useTranslation();
   const principal = React.useMemo(() => resolvePrincipal(auth), [auth]);
 
   const nav = useNavigate();
@@ -921,15 +929,15 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
 
   const localEntries = React.useMemo(() => {
     const routes = filterEntriesByRole(
-      getGlobalRouteEntries(),
+      getGlobalRouteEntries(t),
       modules,
       isAdminSearch
     );
-    const moduleEntries = buildModuleSearchEntries(modules);
-    const actionEntries = buildModuleActionEntries(modules);
+    const moduleEntries = buildModuleSearchEntries(modules, t);
+    const actionEntries = buildModuleActionEntries(modules, t);
 
     return dedupeEntries([...routes, ...moduleEntries, ...actionEntries]);
-  }, [modules, isAdminSearch]);
+  }, [modules, isAdminSearch, t]);
 
   const [q, setQ] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -989,12 +997,12 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       }
     }
 
-    const t = setTimeout(runRemoteSearch, 180);
+    const timeoutId = setTimeout(runRemoteSearch, 180);
 
     return () => {
       cancelled = true;
       controller.abort();
-      clearTimeout(t);
+      clearTimeout(timeoutId);
     };
   }, [trimmedQuery, likelyUrl, isVisitor]);
 
@@ -1008,41 +1016,41 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         actions.push({
           id: "action-internal-url",
           type: "action",
-          title: "Abrir ruta interna del sistema",
+          title: t("topbar.openInternalRoute"),
           description: internalPathFromValue(trimmedQuery),
           actionKind: "internal-url",
           value: trimmedQuery,
-          section: "Acciones",
+          section: t("topbar.actions"),
         });
       } else {
         actions.push({
           id: "action-external-url",
           type: "action",
-          title: "Abrir URL externa",
+          title: t("topbar.openExternalUrl"),
           description: toAbsoluteUrl(trimmedQuery),
           actionKind: "external-url",
           value: trimmedQuery,
-          section: "Acciones",
+          section: t("topbar.actions"),
         });
       }
       return actions;
     }
 
-    const currentBase = getCurrentModuleBase(pathname);
+    const currentBase = getCurrentModuleBase(pathname, t);
 
     actions.push({
       id: "action-current-module",
       type: "action",
-      title: "Buscar en el módulo actual",
-      description: `Filtrar en ${currentBase.label}`,
+      title: t("topbar.searchCurrentModule"),
+      description: t("topbar.filterInModule", { module: currentBase.label }),
       actionKind: "current-module-search",
       value: trimmedQuery,
       path: currentBase.path,
-      section: "Acciones",
+      section: t("topbar.actions"),
     });
 
     return actions;
-  }, [trimmedQuery, likelyUrl, pathname]);
+  }, [trimmedQuery, likelyUrl, pathname, t]);
 
   const visibleSuggestions = React.useMemo(() => {
     if (!trimmedQuery) {
@@ -1050,8 +1058,8 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         id: `recent-${index}-${item}`,
         type: "recent",
         title: item,
-        description: "Búsqueda reciente",
-        section: "Recientes",
+        description: t("topbar.recentSearch"),
+        section: t("topbar.recent"),
         value: item,
       }));
     }
@@ -1061,7 +1069,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
       ...remoteResults,
       ...searchActions,
     ]).slice(0, MAX_RESULTS);
-  }, [trimmedQuery, recentSearches, smartResults, remoteResults, searchActions]);
+  }, [trimmedQuery, recentSearches, smartResults, remoteResults, searchActions, t]);
 
   React.useEffect(() => {
     setActiveIndex(0);
@@ -1105,7 +1113,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
 
   function runModuleSearch(text) {
     const query = String(text || "").trim();
-    const base = getCurrentModuleBase(pathname).path;
+    const base = getCurrentModuleBase(pathname, t).path;
 
     if (query) nav(`${base}?q=${encodeURIComponent(query)}`);
     else nav(base);
@@ -1348,7 +1356,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         type="button"
         onClick={onToggleMenu}
         className={"md:hidden " + fxBtn}
-        aria-label="Abrir menú"
+        aria-label={t("topbar.openMenu")}
         style={controlStyle()}
         onMouseEnter={(e) =>
           Object.assign(e.currentTarget.style, controlHoverStyle())
@@ -1365,7 +1373,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           type="button"
           onClick={goBack}
           className={fxBtnText}
-          title={back?.label || "Regresar"}
+          title={back?.label || t("actions.back")}
           style={controlStyle()}
           onMouseEnter={(e) =>
             Object.assign(e.currentTarget.style, controlHoverStyle())
@@ -1375,7 +1383,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           }
         >
           <ArrowLeft className="h-4 w-4" />
-          <span className="hidden sm:inline">{back?.label || "Regresar"}</span>
+          <span className="hidden sm:inline">{back?.label || t("actions.back")}</span>
         </button>
       )}
 
@@ -1405,7 +1413,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 onChange={(e) => setQ(e.target.value)}
                 onFocus={() => setDesktopSearchFocused(true)}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Buscar rutas, acciones, módulos o URL... (Ctrl/⌘+K)"
+                placeholder={t("topbar.searchPlaceholder")}
                 className="w-full bg-transparent pl-12 pr-10 py-3 text-sm outline-none"
                 style={{
                   color: "var(--text)",
@@ -1421,7 +1429,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                     setQ("");
                     desktopInputRef.current?.focus();
                   }}
-                  aria-label="Limpiar"
+                  aria-label={t("actions.clear")}
                   type="button"
                 >
                   <X className="h-4 w-4" />
@@ -1439,8 +1447,8 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 loading={loadingRemote}
                 modeLabel={
                   isAdminSearch
-                    ? "Búsqueda global completa"
-                    : "Búsqueda según tus módulos permitidos"
+                    ? t("topbar.fullGlobalSearch")
+                    : t("topbar.allowedModulesSearch")
                 }
               />
             )}
@@ -1467,7 +1475,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
             type="button"
             onClick={() => setBellOpen((v) => !v)}
             className={"relative " + fxBtn}
-            aria-label="Notificaciones"
+            aria-label={t("topbar.notifications")}
             aria-haspopup="menu"
             aria-expanded={bellOpen}
             style={controlStyle()}
@@ -1512,6 +1520,12 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
         </div>
       )}
 
+      {!isVisitor && (
+        <div className="shrink-0">
+          <LanguageSwitcher />
+        </div>
+      )}
+
       <div className="sm:hidden flex items-center gap-2 shrink-0">
         <div className="shrink-0">
           <ThemeFxPicker />
@@ -1536,7 +1550,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
           {user?.name ||
             user?.fullName ||
             user?.email ||
-            (isVisitor ? "Visitante" : "")}
+            (isVisitor ? t("topbar.visitor") : "")}
         </span>
 
         {(isAuthenticated || isVisitor) && (
@@ -1544,7 +1558,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
             type="button"
             onClick={handleExit}
             className="inline-flex items-center gap-2 rounded-[16px] px-3 py-2 text-sm font-medium transition-all duration-150"
-            title="Salir"
+            title={t("actions.exit")}
             style={controlStyle()}
             onMouseEnter={(e) =>
               Object.assign(e.currentTarget.style, controlHoverStyle())
@@ -1554,7 +1568,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
             }
           >
             <LogOut className="h-4 w-4" />
-            <span className="hidden sm:inline">Salir</span>
+            <span className="hidden sm:inline">{t("actions.exit")}</span>
           </button>
         )}
       </div>
@@ -1580,8 +1594,8 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
               <Sparkles className="h-4 w-4" />
               <span>
                 {isAdminSearch
-                  ? "Búsqueda global inteligente"
-                  : "Búsqueda inteligente por módulos permitidos"}
+                  ? t("topbar.smartGlobalSearch")
+                  : t("topbar.smartAllowedModulesSearch")}
               </span>
             </div>
 
@@ -1597,7 +1611,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Busca módulos, acciones, rutas, datos o pega una URL..."
+                placeholder={t("topbar.smartSearchPlaceholder")}
                 className="w-full rounded-[18px] border bg-transparent pl-12 pr-10 py-4 text-base outline-none"
                 style={{
                   borderColor: "var(--input-border)",
@@ -1616,7 +1630,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                     setQ("");
                     modalInputRef.current?.focus();
                   }}
-                  aria-label="Limpiar"
+                  aria-label={t("actions.clear")}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1627,7 +1641,7 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
               className="mt-3 text-xs"
               style={{ color: "var(--text-muted)" }}
             >
-              ↑ ↓ para navegar · Enter para abrir · Esc para cerrar
+              {t("topbar.searchHelp")}
             </div>
 
             <div className="mt-3">
@@ -1640,8 +1654,8 @@ export default function Topbar({ onToggleMenu, showBack = false, back = null }) 
                 loading={loadingRemote}
                 modeLabel={
                   isAdminSearch
-                    ? "Incluye datos y navegación global"
-                    : "Incluye tus módulos y acciones permitidas"
+                    ? t("topbar.includesGlobalData")
+                    : t("topbar.includesAllowedModules")
                 }
                 inModal
               />
@@ -1665,6 +1679,7 @@ function SearchSuggestions({
   modeLabel = "",
   inModal = false,
 }) {
+  const { t } = useTranslation();
   const items = Array.isArray(results) ? results : [];
   const hasItems = items.length > 0;
 
@@ -1684,8 +1699,8 @@ function SearchSuggestions({
           color: "var(--text-muted)",
         }}
       >
-        <span>{modeLabel || "Resultados"}</span>
-        {loading ? <span>Buscando…</span> : <span>{items.length} opciones</span>}
+        <span>{modeLabel || t("topbar.results")}</span>
+        {loading ? <span>{t("topbar.searching")}</span> : <span>{items.length} {t("topbar.options")}</span>}
       </div>
 
       {!hasItems ? (
@@ -1694,8 +1709,8 @@ function SearchSuggestions({
           style={{ color: "var(--text-muted)" }}
         >
           {query
-            ? "No encontré coincidencias. Puedes presionar Enter para buscar dentro del módulo actual."
-            : "Empieza a escribir para ver sugerencias o una búsqueda reciente."}
+            ? t("topbar.noMatches")
+            : t("topbar.startTyping")}
         </div>
       ) : (
         <div className="max-h-[360px] overflow-auto p-2">
@@ -1804,15 +1819,15 @@ function SearchResultIcon({ item }) {
 
 /* ---------- Subcomponentes ---------- */
 
-function getCurrentModuleBase(pathname) {
-  if (pathname.startsWith("/visitas")) return { path: "/visitas", label: "Visitas" };
-  if (pathname.startsWith("/bitacora")) return { path: "/bitacora", label: "Bitácora" };
-  if (pathname.startsWith("/rondasqr")) return { path: "/rondasqr", label: "Rondas QR" };
-  if (pathname.startsWith("/rondas")) return { path: "/rondas", label: "Rondas" };
-  if (pathname.startsWith("/accesos")) return { path: "/accesos", label: "Control de Acceso" };
-  if (pathname.startsWith("/iam")) return { path: "/iam", label: "IAM" };
-  if (pathname.startsWith("/incidentes")) return { path: "/incidentes", label: "Incidentes" };
-  return { path: "/incidentes", label: "Incidentes" };
+function getCurrentModuleBase(pathname, t) {
+  if (pathname.startsWith("/visitas")) return { path: "/visitas", label: t("nav.visitas") };
+  if (pathname.startsWith("/bitacora")) return { path: "/bitacora", label: t("nav.bitacora") };
+  if (pathname.startsWith("/rondasqr")) return { path: "/rondasqr", label: t("nav.rondasQr") };
+  if (pathname.startsWith("/rondas")) return { path: "/rondas", label: t("nav.rondas") };
+  if (pathname.startsWith("/accesos")) return { path: "/accesos", label: t("nav.accesos") };
+  if (pathname.startsWith("/iam")) return { path: "/iam", label: t("nav.iam") };
+  if (pathname.startsWith("/incidentes")) return { path: "/incidentes", label: t("nav.incidentes") };
+  return { path: "/incidentes", label: t("nav.incidentes") };
 }
 
 function TopbarQuickMenu({
@@ -1825,6 +1840,8 @@ function TopbarQuickMenu({
   fxBtn,
   modules = [],
 }) {
+  const { t } = useTranslation();
+
   useDismissOnOutside(open, [btnRef, menuRef], () => {
     if (open) toggle();
   });
@@ -1836,7 +1853,7 @@ function TopbarQuickMenu({
           type="button"
           onClick={toggle}
           className={fxBtn}
-          title="Abrir módulo"
+          title={t("topbar.openModule")}
           aria-haspopup="menu"
           aria-expanded={open}
           style={controlStyle()}
@@ -1866,7 +1883,7 @@ function TopbarQuickMenu({
             className="px-3 py-2 text-xs font-semibold"
             style={{ color: "var(--text-muted)" }}
           >
-            Abrir módulo
+            {t("topbar.openModule")}
           </div>
 
           {!modules.length ? (
@@ -1874,10 +1891,10 @@ function TopbarQuickMenu({
               className="px-3 py-3 text-sm"
               style={{ color: "var(--text-muted)" }}
             >
-              No hay módulos habilitados para tu usuario.
+              {t("topbar.noEnabledModules")}
             </div>
           ) : (
-            modules.map(({ path, label, icon: Icon, key }) => (
+            modules.map(({ path, label, icon: Icon, key, i18nKey }) => (
               <button
                 key={key || path}
                 type="button"
@@ -1902,7 +1919,7 @@ function TopbarQuickMenu({
                     style={{ color: "var(--text-muted)" }}
                   />
                 ) : null}
-                <span>{label}</span>
+                <span>{i18nKey ? t(i18nKey) : label}</span>
               </button>
             ))
           )}
@@ -1913,6 +1930,8 @@ function TopbarQuickMenu({
 }
 
 function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
+  const { t } = useTranslation();
+
   React.useEffect(() => {
     if (!anchorRef.current) return;
 
@@ -1948,13 +1967,13 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
       role="menu"
     >
       <div className="px-2 py-1 text-sm" style={{ color: "var(--text-muted)" }}>
-        Notificaciones
+        {t("topbar.notifications")}
       </div>
 
       <div className="space-y-1 p-2 text-sm">
-        <RowStat label="Sin leer" value={counts.unread || 0} />
-        <RowStat label="Alertas" value={counts.alerts || 0} />
-        <RowStat label="Total" value={counts.total || 0} />
+        <RowStat label={t("topbar.unread")} value={counts.unread || 0} />
+        <RowStat label={t("topbar.alerts")} value={counts.alerts || 0} />
+        <RowStat label={t("topbar.total")} value={counts.total || 0} />
       </div>
 
       <div className="flex gap-2 p-2 pt-1">
@@ -1967,7 +1986,7 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
             boxShadow: "var(--shadow-sm)",
           }}
         >
-          Marcar todo como leído
+          {t("topbar.markAllRead")}
         </button>
         <button
           type="button"
@@ -1975,7 +1994,7 @@ function BellMenu({ anchorRef, counts, onClear, onClose, setPosFn, pos }) {
           className="rounded-[14px] px-3 py-2 transition"
           style={controlStyle()}
         >
-          Cerrar
+          {t("actions.close")}
         </button>
       </div>
     </div>
@@ -1993,5 +2012,37 @@ function RowStat({ label, value }) {
         {value}
       </span>
     </div>
+  );
+}
+
+function LanguageSwitcher() {
+  const { i18n, t } = useTranslation();
+
+  const current = String(i18n.resolvedLanguage || i18n.language || "es")
+    .toLowerCase()
+    .startsWith("en")
+    ? "en"
+    : "es";
+
+  const handleChange = async (e) => {
+    const next = e.target.value === "en" ? "en" : "es";
+    await i18n.changeLanguage(next);
+    try {
+      localStorage.setItem("senaf_lang", next);
+    } catch {}
+  };
+
+  return (
+    <select
+      value={current}
+      onChange={handleChange}
+      aria-label={t("labels.language")}
+      title={t("labels.language")}
+      className="rounded-[16px] px-3 py-2 text-sm transition-all duration-150 outline-none"
+      style={controlStyle()}
+    >
+      <option value="es">ES</option>
+      <option value="en">EN</option>
+    </select>
   );
 }

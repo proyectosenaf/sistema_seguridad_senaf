@@ -1,7 +1,10 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 /** Encabezado sticky en Y; primera celda sticky en X+Y */
 export default function HeaderRow({ roles = [], gridCols }) {
+  const { t } = useTranslation();
+
   return (
     <div
       className="sticky top-0 z-40 grid items-center px-4 py-3 text-xs font-semibold uppercase tracking-wide backdrop-blur-sm"
@@ -20,7 +23,11 @@ export default function HeaderRow({ roles = [], gridCols }) {
           boxShadow: "2px 0 0 0 color-mix(in srgb, var(--border) 90%, transparent)",
         }}
       >
-        <span style={{ color: "var(--text)" }}>Permisos</span>
+        <span style={{ color: "var(--text)" }}>
+          {t("iam.permissionCatalog.header.permissions", {
+            defaultValue: "Permisos",
+          })}
+        </span>
       </div>
 
       {roles.map((r) => (
@@ -29,7 +36,11 @@ export default function HeaderRow({ roles = [], gridCols }) {
         </div>
       ))}
 
-      <div className="text-center">Acciones</div>
+      <div className="text-center">
+        {t("actions.title", {
+          defaultValue: "Acciones",
+        })}
+      </div>
     </div>
   );
 }

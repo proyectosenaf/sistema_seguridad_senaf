@@ -1,292 +1,385 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { AlertTriangle, MessageSquare, LogOut } from "lucide-react";
 
-function pickMime() {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-  ];
-  for (const c of candidates) {
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
-  }
-  return "";
+import { rondasqrApi } from "../modules/rondasqr/api/rondasqrApi.js";
+import { emitLocalPanic } from "../modules/rondasqr/utils/panicBus.js";
+import { iamApi } from "../iam/api/iamApi.js";
+import { clearToken } from "../lib/api.js";
+import { useAuth } from "../pages/auth/AuthProvider.jsx";
+
+const ROUTE_LOGIN =
+  String(import.meta.env.VITE_ROUTE_LOGIN || "/login").trim() || "/login";
+
+const ROUTE_RONDAS_SCAN = "/rondasqr/scan";
+const ROUTE_INCIDENTE_NUEVO = "/incidentes/nuevo?from=ronda";
+
+const USER_KEY = "senaf_user";
+const RETURN_TO_KEY = "auth:returnTo";
+const VISITOR_HINT_KEY = "senaf_is_visitor";
+
+function normalizeArray(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).map(String);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
 }
 
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = reject;
-    r.readAsDataURL(blob);
-  });
+function uniqLower(arr) {
+  return Array.from(
+    new Set(
+      normalizeArray(arr)
+        .map((x) => String(x).trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 }
 
-function sxCard(extra = {}) {
+function normalizeCan(v) {
+  if (!v) return {};
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+  return {};
+}
+
+function resolvePrincipal(user) {
+  if (!user || typeof user !== "object") return null;
+
+  const base =
+    user.user && typeof user.user === "object"
+      ? { ...user.user, ...user }
+      : { ...user };
+
+  const roles = uniqLower(base.roles);
+  const perms = uniqLower(base.perms || base.permissions);
+  const can = normalizeCan(base.can);
+
   return {
-    background: "color-mix(in srgb, var(--card) 90%, transparent)",
+    ...base,
+    roles,
+    perms,
+    permissions: perms,
+    can,
+    superadmin: base?.superadmin === true || base?.isSuperAdmin === true,
+    isSuperAdmin: base?.isSuperAdmin === true || base?.superadmin === true,
+  };
+}
+
+function hasPermLike(principal, key) {
+  const perms = uniqLower(principal?.perms || principal?.permissions);
+  const wanted = String(key || "").trim().toLowerCase();
+  if (!wanted) return false;
+  return perms.includes("*") || perms.includes(wanted);
+}
+
+function hasCanLike(principal, key) {
+  const can = normalizeCan(principal?.can);
+  return can?.[key] === true;
+}
+
+export default function SidebarGuard({
+  variant = "desktop",
+  onCloseMobile,
+  onSendAlert,
+  asGlobal = false,
+}) {
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+  const { logout, user, hasPerm, isSuperAdmin } = useAuth();
+  const principal = useMemo(() => resolvePrincipal(user) || {}, [user]);
+
+  if (asGlobal) return null;
+
+  const canSendPanic =
+    isSuperAdmin ||
+    hasPerm?.("rondasqr.panic.write") ||
+    hasPermLike(principal, "rondasqr.panic.write") ||
+    hasPermLike(principal, "rondasqr.panic.send") ||
+    hasCanLike(principal, "rondasqr.scan") ||
+    hasCanLike(principal, "nav.rondas");
+
+  const canCreateIncident =
+    isSuperAdmin ||
+    hasPerm?.("incidentes.records.write") ||
+    hasPerm?.("incidentes.create") ||
+    hasPermLike(principal, "incidentes.records.write") ||
+    hasPermLike(principal, "incidentes.create") ||
+    hasCanLike(principal, "nav.incidentes");
+
+  async function doLogout() {
+    try {
+      await iamApi.logout?.();
+    } catch {
+      // ignore
+    }
+
+    try {
+      await logout?.();
+    } catch {
+      // ignore
+    }
+
+    try {
+      clearToken();
+
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(VISITOR_HINT_KEY);
+
+      sessionStorage.removeItem(RETURN_TO_KEY);
+
+      localStorage.removeItem("senaf_otp_email");
+      sessionStorage.removeItem("senaf_otp_flow");
+      sessionStorage.removeItem("senaf_pwreset_token");
+      sessionStorage.removeItem("senaf_otp_mustChange");
+    } catch {
+      // ignore
+    }
+
+    if (variant === "mobile" && typeof onCloseMobile === "function") {
+      onCloseMobile();
+    }
+
+    navigate(ROUTE_LOGIN, { replace: true });
+  }
+
+  async function handleAlert() {
+    if (!canSendPanic) {
+      window.alert(
+        t("rondas.guard.sidebar.alerts.noPermission", {
+          defaultValue: "No tienes permiso para enviar alertas de pánico.",
+        })
+      );
+      return;
+    }
+
+    if (typeof onSendAlert === "function") {
+      await onSendAlert();
+
+      if (variant === "mobile" && typeof onCloseMobile === "function") {
+        onCloseMobile();
+      }
+
+      return;
+    }
+
+    let gps = null;
+
+    try {
+      if (typeof navigator !== "undefined" && "geolocation" in navigator) {
+        await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              gps = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+              };
+              resolve();
+            },
+            () => resolve(),
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      await rondasqrApi.panic(gps);
+
+      emitLocalPanic({
+        source: "rondas_action_panel",
+        title: t("rondas.guard.sidebar.alerts.panicTitle", {
+          defaultValue: "🚨 Alerta de pánico",
+        }),
+        message: t("rondas.guard.sidebar.alerts.panicSent", {
+          defaultValue: "Alerta de pánico enviada",
+        }),
+        user: principal?.name || principal?.email || "",
+      });
+
+      window.alert(
+        t("rondas.guard.sidebar.alerts.panicSentWithIcon", {
+          defaultValue: "🚨 Alerta de pánico enviada.",
+        })
+      );
+
+      if (variant === "mobile" && typeof onCloseMobile === "function") {
+        onCloseMobile();
+      }
+
+      navigate(ROUTE_RONDAS_SCAN);
+    } catch {
+      window.alert(
+        t("rondas.guard.sidebar.alerts.sendFailed", {
+          defaultValue:
+            "No se pudo enviar la alerta. Revisa conexión e intenta de nuevo.",
+        })
+      );
+    }
+  }
+
+  function handleMsg() {
+    if (!canCreateIncident) {
+      window.alert(
+        t("rondas.guard.sidebar.incident.noPermission", {
+          defaultValue: "No tienes permiso para crear mensajes/incidentes.",
+        })
+      );
+      return;
+    }
+
+    if (variant === "mobile" && typeof onCloseMobile === "function") {
+      onCloseMobile();
+    }
+
+    navigate(ROUTE_INCIDENTE_NUEVO);
+  }
+
+  const containerBase =
+    variant === "mobile"
+      ? "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto overscroll-contain p-4 md:hidden"
+      : "flex w-64 flex-col overflow-y-auto overscroll-contain p-4";
+
+  const sectionCardStyle = {
+    background: "color-mix(in srgb, var(--card) 88%, transparent)",
     border: "1px solid var(--border)",
     boxShadow: "var(--shadow-md)",
-    backdropFilter: "blur(12px) saturate(130%)",
-    WebkitBackdropFilter: "blur(12px) saturate(130%)",
-    ...extra,
+    backdropFilter: "blur(14px) saturate(130%)",
+    WebkitBackdropFilter: "blur(14px) saturate(130%)",
   };
-}
 
-function sxGhostBtn(extra = {}) {
-  return {
+  const itemBase =
+    "w-full flex items-center gap-3 px-4 py-3 rounded-[18px] text-left transition-all duration-150";
+
+  const neutralItemStyle = {
+    border: "1px solid var(--border)",
     background: "color-mix(in srgb, var(--card-solid) 88%, transparent)",
     color: "var(--text)",
-    border: "1px solid var(--border)",
     boxShadow: "var(--shadow-sm)",
-    ...extra,
   };
-}
 
-function sxSuccessBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #16a34a, #22c55e)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #16a34a 22%, transparent)",
-    ...extra,
+  const disabledItemStyle = {
+    border: "1px solid var(--border)",
+    background: "color-mix(in srgb, var(--card-solid) 70%, transparent)",
+    color: "var(--text-muted)",
+    boxShadow: "none",
+    opacity: 0.65,
+    cursor: "not-allowed",
   };
-}
 
-function sxDangerBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #dc2626, #ef4444)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #dc2626 22%, transparent)",
-    ...extra,
+  const dangerItemStyle = {
+    border: "1px solid color-mix(in srgb, #ef4444 28%, var(--border))",
+    background: "color-mix(in srgb, #ef4444 10%, var(--card-solid))",
+    color: "#dc2626",
+    boxShadow: "var(--shadow-sm)",
   };
-}
-
-function sxPrimaryBtn(extra = {}) {
-  return {
-    background: "linear-gradient(135deg, #0891b2, #06b6d4)",
-    color: "#fff",
-    border: "1px solid transparent",
-    boxShadow: "0 10px 20px color-mix(in srgb, #0891b2 22%, transparent)",
-    ...extra,
-  };
-}
-
-export default function AudioRecorder({ onCapture, onClose }) {
-  const [status, setStatus] = React.useState("idle"); // idle | recording | ready | error
-  const [err, setErr] = React.useState("");
-  const [audioUrl, setAudioUrl] = React.useState("");
-  const [seconds, setSeconds] = React.useState(0);
-
-  const streamRef = React.useRef(null);
-  const recRef = React.useRef(null);
-  const chunksRef = React.useRef([]);
-
-  React.useEffect(() => {
-    let t = null;
-    if (status === "recording") {
-      t = setInterval(() => setSeconds((s) => s + 1), 1000);
-    }
-    return () => t && clearInterval(t);
-  }, [status]);
-
-  React.useEffect(() => {
-    return () => {
-      try {
-        if (recRef.current?.state === "recording") recRef.current.stop();
-      } catch {}
-      try {
-        streamRef.current?.getTracks()?.forEach((t) => t.stop());
-      } catch {}
-      try {
-        if (audioUrl) URL.revokeObjectURL(audioUrl);
-      } catch {}
-    };
-  }, [audioUrl]);
-
-  async function start() {
-    setErr("");
-    setSeconds(0);
-
-    try {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-    } catch {}
-
-    setAudioUrl("");
-    chunksRef.current = [];
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const mimeType = pickMime();
-      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recRef.current = rec;
-
-      rec.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      rec.onstop = () => {
-        try {
-          const blob = new Blob(chunksRef.current, {
-            type: rec.mimeType || "audio/webm",
-          });
-          const url = URL.createObjectURL(blob);
-          setAudioUrl(url);
-          setStatus("ready");
-        } catch {
-          setErr("No se pudo preparar la previsualización del audio.");
-          setStatus("error");
-        }
-      };
-
-      rec.start(250);
-      setStatus("recording");
-    } catch (e) {
-      setErr("Permiso de micrófono denegado o no disponible.");
-      setStatus("error");
-    }
-  }
-
-  function stop() {
-    try {
-      recRef.current?.stop();
-    } catch {}
-    try {
-      streamRef.current?.getTracks()?.forEach((t) => t.stop());
-    } catch {}
-  }
-
-  async function save() {
-    try {
-      const mime = recRef.current?.mimeType || "audio/webm";
-      const blob = new Blob(chunksRef.current, { type: mime });
-      const base64 = await blobToBase64(blob);
-      onCapture?.({ base64, mime, seconds });
-      onClose?.();
-    } catch {
-      setErr("No se pudo convertir el audio.");
-      setStatus("error");
-    }
-  }
-
-  function cancel() {
-    try {
-      if (recRef.current?.state === "recording") recRef.current.stop();
-    } catch {}
-    try {
-      streamRef.current?.getTracks()?.forEach((t) => t.stop());
-    } catch {}
-    try {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    } catch {}
-    onClose?.();
-  }
 
   return (
-    <div
-      className="fixed inset-0 z-[999] flex items-center justify-center p-4"
-      style={{
-        background: "rgba(2, 6, 23, 0.78)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-      }}
+    <aside
+      className={containerBase}
+      aria-label={t("rondas.guard.sidebar.ariaLabel", {
+        defaultValue: "Acciones del módulo de rondas",
+      })}
+      style={sectionCardStyle}
     >
-      <div
-        className="w-full max-w-lg rounded-[24px] p-5"
-        style={sxCard()}
-      >
+      <div className="mb-5 px-1">
         <div
-          className="mb-3 flex items-center justify-between"
-          style={{ borderBottom: "1px solid var(--border)", paddingBottom: "0.75rem" }}
+          className="text-2xl font-extrabold tracking-tight"
+          style={{ color: "var(--text)" }}
         >
-          <h3
-            className="text-lg font-semibold"
-            style={{ color: "var(--text)" }}
-          >
-            Grabar audio
-          </h3>
-
-          <button
-            onClick={cancel}
-            className="transition"
-            style={{ color: "var(--text-muted)" }}
-          >
-            ✕
-          </button>
+          SENAF
         </div>
 
-        {err ? (
-          <div
-            className="mb-2 text-sm"
-            style={{ color: "#fecdd3" }}
-          >
-            {err}
-          </div>
-        ) : null}
-
         <div
-          className="mb-3 text-sm"
+          className="mt-1 text-xs font-medium uppercase tracking-[0.18em]"
           style={{ color: "var(--text-muted)" }}
         >
-          Estado: <span style={{ color: "var(--text)" }}>{status}</span>
-          {status === "recording" ? (
-            <span className="ml-2">⏺️ {seconds}s</span>
-          ) : null}
+          {t("rondas.guard.sidebar.subtitle", {
+            defaultValue: "Rondas de Vigilancia",
+          })}
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          {status !== "recording" ? (
-            <button
-              type="button"
-              onClick={start}
-              className="px-4 py-2 rounded-[14px] transition"
-              style={sxSuccessBtn()}
-            >
-              🎙️ Iniciar
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={stop}
-              className="px-4 py-2 rounded-[14px] transition"
-              style={sxDangerBtn()}
-            >
-              ⏹️ Detener
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={cancel}
-            className="px-4 py-2 rounded-[14px] transition"
-            style={sxGhostBtn()}
-          >
-            Cancelar
-          </button>
-
-          {status === "ready" ? (
-            <button
-              type="button"
-              onClick={save}
-              className="ml-auto px-4 py-2 rounded-[14px] transition"
-              style={sxPrimaryBtn()}
-            >
-              ✅ Guardar audio
-            </button>
-          ) : null}
-        </div>
-
-        {audioUrl ? (
-          <div className="mt-4">
-            <audio src={audioUrl} controls className="w-full" />
-          </div>
-        ) : null}
       </div>
-    </div>
+
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleAlert}
+          disabled={!canSendPanic}
+          className={itemBase}
+          style={canSendPanic ? neutralItemStyle : disabledItemStyle}
+          title={
+            canSendPanic
+              ? t("rondas.guard.sidebar.alerts.send", {
+                  defaultValue: "Enviar alerta",
+                })
+              : t("rondas.guard.sidebar.alerts.noPermissionTitle", {
+                  defaultValue: "No tienes permiso para enviar alertas",
+                })
+          }
+        >
+          <AlertTriangle
+            size={18}
+            strokeWidth={2.3}
+            style={{ color: "var(--text-muted)" }}
+          />
+          <span className="text-[15px] font-medium leading-none">
+            {t("rondas.guard.sidebar.alerts.send", {
+              defaultValue: "Enviar Alerta",
+            })}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleMsg}
+          disabled={!canCreateIncident}
+          className={itemBase}
+          style={canCreateIncident ? neutralItemStyle : disabledItemStyle}
+          title={
+            canCreateIncident
+              ? t("rondas.guard.sidebar.incident.create", {
+                  defaultValue: "Crear incidente",
+                })
+              : t("rondas.guard.sidebar.incident.noPermissionTitle", {
+                  defaultValue: "No tienes permiso para crear incidentes",
+                })
+          }
+        >
+          <MessageSquare
+            size={18}
+            strokeWidth={2.3}
+            style={{ color: "var(--text-muted)" }}
+          />
+          <span className="text-[15px] font-medium leading-none">
+            {t("rondas.guard.sidebar.incident.message", {
+              defaultValue: "Mensaje Incidente",
+            })}
+          </span>
+        </button>
+      </div>
+
+      <div className="mt-auto pt-4">
+        <div
+          className="mb-3"
+          style={{ borderTop: "1px solid var(--border)" }}
+        />
+
+        <button
+          type="button"
+          onClick={doLogout}
+          className={itemBase}
+          style={dangerItemStyle}
+          title={t("nav.logout", { defaultValue: "Salir" })}
+        >
+          <LogOut size={18} strokeWidth={2.3} />
+          <span className="text-[15px] font-semibold leading-none">
+            {t("nav.logout", { defaultValue: "Salir" })}
+          </span>
+        </button>
+      </div>
+    </aside>
   );
 }

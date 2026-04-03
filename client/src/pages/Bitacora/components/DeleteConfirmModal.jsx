@@ -10,6 +10,10 @@ export default function DeleteConfirmModal({
 }) {
   if (!row) return null;
 
+  const actorName = row.agente || row.actorEmail || row.nombre || "—";
+  const itemType = String(row.tipo || "evento").toLowerCase();
+  const monthLabel = monthNameES(row.fecha);
+
   const handleBackdropClick = () => {
     if (deleting) return;
     onCancel?.();
@@ -44,9 +48,8 @@ export default function DeleteConfirmModal({
 
         <div className="space-y-3 p-5">
           <p className="leading-relaxed">
-            ¿Archivar el <strong>{(row.tipo || "evento").toLowerCase()}</strong>{" "}
-            de <strong>{row.agente || row.actorEmail || row.nombre || "—"}</strong>{" "}
-            correspondiente a <strong>{monthNameES(row.fecha)}</strong>?
+            ¿Archivar el <strong>{itemType}</strong> de <strong>{actorName}</strong>{" "}
+            correspondiente a <strong>{monthLabel}</strong>?
           </p>
 
           <p className="opacity-80">

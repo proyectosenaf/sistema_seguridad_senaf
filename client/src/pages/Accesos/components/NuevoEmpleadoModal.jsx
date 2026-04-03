@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { API_BASE, UI } from "../utils/accesos.constants.js";
 import {
   sxCard,
@@ -19,6 +20,8 @@ export default function NuevoEmpleadoModal({
   departamentos = [],
   cargos = [],
 }) {
+  const { t } = useTranslation();
+
   const INITIAL = {
     nombreCompleto: "",
     id_persona: "",
@@ -84,14 +87,24 @@ export default function NuevoEmpleadoModal({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok === false) {
-        throw new Error(data?.error || "Error creando empleado");
+        throw new Error(
+          data?.error ||
+            t("access.employeeModal.createError", {
+              defaultValue: "Error creando empleado",
+            })
+        );
       }
 
       onCreated?.(data.item);
       onClose?.();
       setForm(INITIAL);
     } catch (err) {
-      setError(err.message || "Error inesperado");
+      setError(
+        err.message ||
+          t("system.errorGeneric", {
+            defaultValue: "Error inesperado",
+          })
+      );
     } finally {
       setSubmitting(false);
     }
@@ -102,7 +115,9 @@ export default function NuevoEmpleadoModal({
       <div className="w-full max-w-3xl rounded-[22px]" style={sxCard()}>
         <div className={UI.modalHeader} style={{ borderBottom: "1px solid var(--border)" }}>
           <h2 className="text-base sm:text-lg font-semibold" style={{ color: "var(--text)" }}>
-            Registrar Nuevo Empleado
+            {t("access.employeeModal.title", {
+              defaultValue: "Registrar Nuevo Empleado",
+            })}
           </h2>
           <button onClick={onClose} style={{ color: "var(--text-muted)" }}>
             ✕
@@ -117,7 +132,7 @@ export default function NuevoEmpleadoModal({
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-            <Field label="Nombre Completo">
+            <Field label={t("access.employeeModal.fullName")}>
               <input
                 className={UI.fieldInput}
                 style={sxInput()}
@@ -127,7 +142,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="ID Persona">
+            <Field label={t("access.employeeModal.personId")}>
               <input
                 className={UI.fieldInput}
                 style={sxInput()}
@@ -148,7 +163,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="Fecha de Nacimiento">
+            <Field label={t("access.employeeModal.birthDate")}>
               <input
                 type="date"
                 className={UI.fieldInput}
@@ -159,7 +174,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="Sexo">
+            <Field label={t("access.employeeModal.gender")}>
               <select
                 className={UI.fieldSelect}
                 style={sxInput()}
@@ -167,7 +182,9 @@ export default function NuevoEmpleadoModal({
                 onChange={(e) => setVal("sexo", e.target.value)}
                 required
               >
-                <option value="">- Seleccionar -</option>
+                <option value="">
+                  {t("system.select", { defaultValue: "- Seleccionar -" })}
+                </option>
                 {sexos.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -176,7 +193,7 @@ export default function NuevoEmpleadoModal({
               </select>
             </Field>
 
-            <Field label="Teléfono">
+            <Field label={t("access.employeeModal.phone")}>
               <input
                 className={UI.fieldInput}
                 style={sxInput()}
@@ -187,7 +204,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="Dirección" span={2}>
+            <Field label={t("access.employeeModal.address")} span={2}>
               <input
                 className={UI.fieldInput}
                 style={sxInput()}
@@ -197,7 +214,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="Área / Departamento">
+            <Field label={t("access.employeeModal.department")}>
               <select
                 className={UI.fieldSelect}
                 style={sxInput()}
@@ -205,7 +222,9 @@ export default function NuevoEmpleadoModal({
                 onChange={(e) => setVal("departamento", e.target.value)}
                 required
               >
-                <option value="">- Seleccionar -</option>
+                <option value="">
+                  {t("system.select", { defaultValue: "- Seleccionar -" })}
+                </option>
                 {departamentos.map((d) => (
                   <option key={d} value={d}>
                     {d}
@@ -214,7 +233,7 @@ export default function NuevoEmpleadoModal({
               </select>
             </Field>
 
-            <Field label="Cargo">
+            <Field label={t("access.employeeModal.position")}>
               <select
                 className={UI.fieldSelect}
                 style={sxInput()}
@@ -222,7 +241,9 @@ export default function NuevoEmpleadoModal({
                 onChange={(e) => setVal("cargo", e.target.value)}
                 required
               >
-                <option value="">- Seleccionar -</option>
+                <option value="">
+                  {t("system.select", { defaultValue: "- Seleccionar -" })}
+                </option>
                 {cargos.map((c) => (
                   <option key={c} value={c}>
                     {c}
@@ -231,7 +252,7 @@ export default function NuevoEmpleadoModal({
               </select>
             </Field>
 
-            <Field label="Fecha de Ingreso">
+            <Field label={t("access.employeeModal.entryDate")}>
               <input
                 type="date"
                 className={UI.fieldInput}
@@ -242,7 +263,7 @@ export default function NuevoEmpleadoModal({
               />
             </Field>
 
-            <Field label="Estado">
+            <Field label={t("access.employeeModal.status")}>
               <select
                 className={UI.fieldSelect}
                 style={sxInput()}
@@ -267,7 +288,7 @@ export default function NuevoEmpleadoModal({
               style={sxGhostBtn()}
               disabled={submitting}
             >
-              Cancelar
+              {t("actions.cancel")}
             </button>
             <button
               type="submit"
@@ -275,7 +296,9 @@ export default function NuevoEmpleadoModal({
               style={sxPrimaryBtn()}
               disabled={submitting}
             >
-              {submitting ? "Guardando…" : "Guardar"}
+              {submitting
+                ? t("actions.saving", { defaultValue: "Guardando…" })
+                : t("actions.save")}
             </button>
           </div>
         </form>

@@ -1,5 +1,5 @@
-// src/components/CameraCapture.jsx
 import React, { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 function sxCard(extra = {}) {
   return {
@@ -33,6 +33,7 @@ function sxPrimaryBtn(extra = {}) {
 }
 
 export default function CameraCapture({ onCapture, onClose }) {
+  const { t } = useTranslation();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [stream, setStream] = useState(null);
@@ -63,7 +64,7 @@ export default function CameraCapture({ onCapture, onClose }) {
         }
       } catch (err) {
         console.error("[CameraCapture] getUserMedia error:", err);
-        alert("No se pudo acceder a la cámara.");
+        alert(t("camera.errors.noAccess"));
         onClose?.();
       }
     }
@@ -93,7 +94,6 @@ export default function CameraCapture({ onCapture, onClose }) {
     const ctx = canvas.getContext("2d");
 
     if (rotated) {
-      // si está rotado, dibujamos rotando el contexto
       canvas.width = h;
       canvas.height = w;
       ctx.translate(h / 2, w / 2);
@@ -131,11 +131,8 @@ export default function CameraCapture({ onCapture, onClose }) {
           background: "color-mix(in srgb, var(--panel) 38%, transparent)",
         }}
       >
-        <span
-          className="font-semibold"
-          style={{ color: "var(--text)" }}
-        >
-          Tomar foto — SENAF
+        <span className="font-semibold" style={{ color: "var(--text)" }}>
+          {t("camera.title")}
         </span>
 
         <button
@@ -145,7 +142,7 @@ export default function CameraCapture({ onCapture, onClose }) {
             borderRadius: "9999px",
           })}
         >
-          Cerrar
+          {t("actions.close")}
         </button>
       </div>
 
@@ -175,7 +172,7 @@ export default function CameraCapture({ onCapture, onClose }) {
               borderRadius: "9999px",
             })}
           >
-            ↻ Rotar
+            {t("camera.rotate")}
           </button>
         </div>
 
@@ -183,8 +180,7 @@ export default function CameraCapture({ onCapture, onClose }) {
           className="mt-3 max-w-md text-center text-xs"
           style={{ color: "var(--text-muted)" }}
         >
-          Gire el dispositivo para modo vertical u horizontal. Use el botón
-          “Rotar” si la imagen se ve invertida.
+          {t("camera.instructions")}
         </p>
 
         {/* Controles */}
@@ -196,7 +192,7 @@ export default function CameraCapture({ onCapture, onClose }) {
               borderRadius: "9999px",
             })}
           >
-            📷 Capturar foto
+            {t("camera.capture")}
           </button>
 
           <button
@@ -206,7 +202,7 @@ export default function CameraCapture({ onCapture, onClose }) {
               borderRadius: "9999px",
             })}
           >
-            Cancelar
+            {t("actions.cancel")}
           </button>
         </div>
       </div>

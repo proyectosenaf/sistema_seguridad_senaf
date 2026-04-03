@@ -4,16 +4,20 @@ export default function PhotosPage() {
   const [files, setFiles] = useState([null, null, null, null, null]);
   const [sending, setSending] = useState(false);
 
-  function onPick(i, fileList) {
-    const next = files.slice();
-    next[i] = fileList?.[0] || null;
-    setFiles(next);
+  function onPick(index, fileList) {
+    setFiles((prev) => {
+      const next = [...prev];
+      next[index] = fileList?.[0] || null;
+      return next;
+    });
   }
 
-  function clear(i) {
-    const next = files.slice();
-    next[i] = null;
-    setFiles(next);
+  function clear(index) {
+    setFiles((prev) => {
+      const next = [...prev];
+      next[index] = null;
+      return next;
+    });
   }
 
   const selectedCount = useMemo(() => files.filter(Boolean).length, [files]);
@@ -30,7 +34,9 @@ export default function PhotosPage() {
     setSending(true);
     try {
       // TODO: reemplazar con llamada real a tu API cuando me pases el endpoint
-      alert(`Fotos listas para envío: ${picked.length}. Reemplaza este stub con tu API.`);
+      alert(
+        `Fotos listas para envío: ${picked.length}. Reemplaza este stub con tu API.`
+      );
     } catch (e) {
       console.error("[PhotosPage] send error:", e?.message || e);
       alert("No se pudieron enviar las fotos.");
@@ -48,25 +54,25 @@ export default function PhotosPage() {
       </p>
 
       <div className="grid gap-3 md:grid-cols-2">
-        {files.map((f, i) => (
+        {files.map((file, index) => (
           <div
-            key={i}
+            key={index}
             className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-3"
           >
-            <div className="w-28 text-sm">Toma foto {i + 1}</div>
+            <div className="w-28 text-sm">Toma foto {index + 1}</div>
 
             <input
               type="file"
               accept="image/*"
-              onChange={(e) => onPick(i, e.target.files)}
+              onChange={(e) => onPick(index, e.target.files)}
               className="flex-1"
             />
 
             <button
               type="button"
               className="px-3 py-1 rounded bg-red-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => clear(i)}
-              disabled={!f}
+              onClick={() => clear(index)}
+              disabled={!file}
             >
               Eliminar
             </button>
