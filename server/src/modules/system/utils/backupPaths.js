@@ -22,5 +22,5 @@ export function buildBackupName(prefix = "senaf-backup") {
   const mi = String(now.getMinutes()).padStart(2, "0");
   const ss = String(now.getSeconds()).padStart(2, "0");
 
-  return `${prefix}-${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+  return `${prefix}-${yyyy}${mm}${dd}-${hh}${mi}${ss}.gz`;
 }

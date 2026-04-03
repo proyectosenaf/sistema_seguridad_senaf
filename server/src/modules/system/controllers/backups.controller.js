@@ -3,20 +3,11 @@ import * as backupsService from "../services/backups.service.js";
 import BitacoraEvent from "../../../../modules/bitacora/models/BitacoraEvent.model.js";
 
 function getActor(req) {
-  return (
-    req.user?.email ||
-    req.user?.username ||
-    req.user?.sub ||
-    "system"
-  );
+  return req.user?.email || req.user?.username || req.user?.sub || "system";
 }
 
 function getActorRole(req) {
-  const rawRoles =
-    req.user?.roles ||
-    req.auth?.roles ||
-    req.iam?.roles ||
-    [];
+  const rawRoles = req.user?.roles || req.auth?.roles || req.iam?.roles || [];
 
   if (Array.isArray(rawRoles) && rawRoles.length > 0) {
     return String(rawRoles[0] || "").trim();
@@ -47,7 +38,12 @@ function getShiftLabel(date = new Date()) {
 
 function buildEventKey(action, backupName = "") {
   const seed = `${action}::${backupName}::${Date.now()}::${Math.random()}`;
-  const suffix = crypto.createHash("sha1").update(seed).digest("hex").slice(0, 16);
+  const suffix = crypto
+    .createHash("sha1")
+    .update(seed)
+    .digest("hex")
+    .slice(0, 16);
+
   return `system.backups.${action}.${suffix}`;
 }
 
@@ -87,6 +83,10 @@ async function writeBackupBitacora(
   });
 }
 
+function getErrorStatus(error) {
+  return error?.status || error?.statusCode || 500;
+}
+
 export async function createBackupHandler(req, res) {
   try {
     const result = await backupsService.createBackup();
@@ -110,9 +110,9 @@ export async function createBackupHandler(req, res) {
       data: result,
     });
   } catch (error) {
-    return res.status(error.status || 500).json({
+    return res.status(getErrorStatus(error)).json({
       ok: false,
-      message: error.message || "No se pudo generar el respaldo.",
+      message: error?.message || "No se pudo generar el respaldo.",
     });
   }
 }
@@ -126,9 +126,9 @@ export async function listBackupsHandler(req, res) {
       data,
     });
   } catch (error) {
-    return res.status(error.status || 500).json({
+    return res.status(getErrorStatus(error)).json({
       ok: false,
-      message: error.message || "No se pudieron listar los respaldos.",
+      message: error?.message || "No se pudieron listar los respaldos.",
     });
   }
 }
@@ -155,9 +155,9 @@ export async function restoreBackupHandler(req, res) {
       data: result,
     });
   } catch (error) {
-    return res.status(error.status || 500).json({
+    return res.status(getErrorStatus(error)).json({
       ok: false,
-      message: error.message || "No se pudo restaurar el respaldo.",
+      message: error?.message || "No se pudo restaurar el respaldo.",
     });
   }
 }
@@ -184,9 +184,9 @@ export async function deleteBackupHandler(req, res) {
       data: result,
     });
   } catch (error) {
-    return res.status(error.status || 500).json({
+    return res.status(getErrorStatus(error)).json({
       ok: false,
-      message: error.message || "No se pudo eliminar el respaldo.",
+      message: error?.message || "No se pudo eliminar el respaldo.",
     });
   }
 }
@@ -198,9 +198,9 @@ export async function downloadBackupHandler(req, res) {
 
     return res.download(filePath, name);
   } catch (error) {
-    return res.status(error.status || 500).json({
+    return res.status(getErrorStatus(error)).json({
       ok: false,
-      message: error.message || "No se pudo descargar el respaldo.",
+      message: error?.message || "No se pudo descargar el respaldo.",
     });
   }
 }
