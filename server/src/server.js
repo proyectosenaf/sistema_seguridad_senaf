@@ -65,19 +65,10 @@ import { syncPermissionsCatalog } from "../modules/iam/services/permissions.sync
 // ✅ Search global
 import searchRoutes from "../modules/search/search.routes.js";
 
-
-import { startBackupsCron } from "./modules/system/jobs/backups.cron.js";
-
-
 const app = express();
 
-
-
 app.set("trust proxy", 1);
-
-// ✅ evita 304 por If-None-Match en API
 app.set("etag", false);
-
 
 /* ───────────────────── ENV / MODOS ───────────────────── */
 
@@ -144,6 +135,7 @@ if (!IS_PROD) app.use(morgan("dev"));
 app.use(compression());
 
 /* ─────────────────────── Parsers de body ──────────────────────── */
+
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ extended: true, limit: "30mb" }));
 
@@ -162,6 +154,7 @@ app.use("/api", (req, res, next) => {
 });
 
 /* ─────────────────────── DEV IDENTITY GLOBAL ───────────────────── */
+
 function devIdentity(req, _res, next) {
   if (IS_PROD) return next();
   if (!(DEV_OPEN || DISABLE_AUTH)) return next();
@@ -257,9 +250,9 @@ app.use((req, _res, next) => {
 });
 
 /* ───────────────────── ✅ SYSTEM MODULE REGISTER ✅ ───────────────────── */
+
 registerSystemModule(app);
 bootSystemModule();
-/**startBackupsCron();*/
 
 /* ─────────────────────────── MongoDB ──────────────────────────── */
 
@@ -354,14 +347,12 @@ app.use(async (req, _res, next) => {
 });
 
 /* ───────────────────── ✅ IAM MODULE REGISTER ✅ ───────────────────── */
+
 await registerIAMModule({
   app,
   basePath: "/api/iam/v1",
   enableLegacyRedirects: false,
 });
-
-
-
 
 /* ───────────────────── ✅ CATÁLOGOS REGISTER ✅ ───────────────────── */
 
@@ -409,6 +400,7 @@ app.get("/api/_debug/ping-assign", (req, res) => {
 });
 
 /* ───────────────────── ✅ CHAT REAL (API) ✅ ───────────────────── */
+
 app.use("/api/chat", chatRoutes);
 app.use("/chat", chatRoutes);
 
@@ -506,7 +498,7 @@ app.use((req, res) =>
 
 /* ─────────────────────── Start / Shutdown ─────────────────────── */
 
-const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
+const PORT = Number(process.env.PORT || 4000);
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[api] http://localhost:${PORT}`);
   console.log(`[cors] origins: ${origins ? origins.join(", ") : "(allow all)"}`);
@@ -553,12 +545,6 @@ function normalizeRoles(input) {
     .filter(Boolean);
 
   return [...new Set(raw)];
-}
-
-function isVisitorRole(role) {
-  return ["visitante", "visitantes", "visita", "visitor", "visitors"].includes(
-    String(role || "").trim().toLowerCase()
-  );
 }
 
 function cleanChatRoom(v) {
@@ -641,6 +627,19 @@ function getSocketIdentity(socket) {
   return socket?.data?.identity || { userId: "", email: "", roles: [] };
 }
 
+function resolveIdentityPayload(payload = {}) {
+  return {
+    userId:
+      payload?.userId ||
+      payload?.id ||
+      payload?._id ||
+      payload?.sub ||
+      "",
+    email: payload?.email || "",
+    roles: payload?.roles || payload?.role || payload?.rol || [],
+  };
+}
+
 /* ───────────────────────── Socket.IO ──────────────────────────── */
 
 io.on("connection", (s) => {
@@ -673,8 +672,12 @@ io.on("connection", (s) => {
 
     return {
       coordsText,
-      googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(coordsText)}`,
-      wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(coordsText)}&navigate=yes`,
+      googleMapsUrl: `https://www.google.com/maps?q=${encodeURIComponent(
+        coordsText
+      )}`,
+      wazeUrl: `https://waze.com/ul?ll=${encodeURIComponent(
+        coordsText
+      )}&navigate=yes`,
     };
   };
 
@@ -727,14 +730,11 @@ io.on("connection", (s) => {
       payload?.gps && typeof payload.gps === "object"
         ? payload.gps
         : payload?.location && typeof payload.location === "object"
-        ? payload.location
-        : {};
+          ? payload.location
+          : {};
 
     const lat = Number(
-      rawGps?.lat ??
-        rawGps?.latitude ??
-        payload?.lat ??
-        payload?.latitude
+      rawGps?.lat ?? rawGps?.latitude ?? payload?.lat ?? payload?.latitude
     );
     const lon = Number(
       rawGps?.lon ??
@@ -746,13 +746,12 @@ io.on("connection", (s) => {
     );
 
     const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
-    const linkData = hasCoords ? buildMapLinks(lat, lon) : buildMapLinks(null, null);
+    const linkData = hasCoords
+      ? buildMapLinks(lat, lon)
+      : buildMapLinks(null, null);
 
     const accuracyRaw =
-      rawGps?.accuracy ??
-      payload?.accuracy ??
-      payload?.location?.accuracy ??
-      null;
+      rawGps?.accuracy ?? payload?.accuracy ?? payload?.location?.accuracy ?? null;
 
     const event = {
       ok: true,
@@ -764,10 +763,7 @@ io.on("connection", (s) => {
       fromUserId: identity.userId || payload?.userId || guard.id || null,
       fromEmail: identity.email || payload?.email || guard.email || null,
       fromRoles: roles,
-      source:
-        payload?.source ||
-        payload?.module ||
-        "rondasqr.panic",
+      source: payload?.source || payload?.module || "rondasqr.panic",
       title: payload?.title || "🚨 Alerta de pánico",
       message:
         payload?.message ||
@@ -812,10 +808,11 @@ io.on("connection", (s) => {
                 ? null
                 : Number(rawGps.speed),
             capturedAt:
-              rawGps?.capturedAt || payload?.emittedAt || new Date(now).toISOString(),
+              rawGps?.capturedAt ||
+              payload?.emittedAt ||
+              new Date(now).toISOString(),
             source: rawGps?.source || "socket-client",
-            coordsText:
-              rawGps?.coordsText || linkData.coordsText || "",
+            coordsText: rawGps?.coordsText || linkData.coordsText || "",
           }
         : null,
       location: hasCoords
@@ -842,7 +839,9 @@ io.on("connection", (s) => {
               linkData.wazeUrl ||
               "",
             capturedAt:
-              rawGps?.capturedAt || payload?.emittedAt || new Date(now).toISOString(),
+              rawGps?.capturedAt ||
+              payload?.emittedAt ||
+              new Date(now).toISOString(),
           }
         : null,
       links: {
@@ -865,105 +864,52 @@ io.on("connection", (s) => {
     return event;
   };
 
-  s.on("join-room", ({ userId }) => joinRoomsLegacy(userId));
-
- s.on("join", (payload = {}) => {
-  const userId =
-    payload?.userId ||
-    payload?.id ||
-    payload?._id ||
-    payload?.sub ||
-    "";
-
-  joinRoomsLegacy(userId);
-  joinRoomsByIdentity(s, {
-    userId,
-    email: payload?.email || "",
-    roles: payload?.roles || payload?.role || payload?.rol || [],
-    role: payload?.role || payload?.rol || [],
-  });
-});
-
-s.on("presence:join", (payload = {}) => {
-  const identity = {
-    userId:
-      payload?.userId ||
-      payload?.id ||
-      payload?._id ||
-      payload?.sub ||
-      "",
-    email: payload?.email || "",
-    roles: payload?.roles || payload?.role || payload?.rol || [],
-  };
-
-  joinRoomsLegacy(identity.userId);
-  joinRoomsByIdentity(s, identity);
-
-  s.emit("presence:joined", {
-    ok: true,
-    socketId: s.id,
-    identity: getSocketIdentity(s),
+  s.on("join-room", ({ userId } = {}) => {
+    joinRoomsLegacy(userId);
   });
 
-  console.log("[io][presence] joined:", {
-    socketId: s.id,
-    userId: identity.userId,
-    email: identity.email,
-    roles: identity.roles,
+  s.on("join", (payload = {}) => {
+    const identity = resolveIdentityPayload(payload);
+    joinRoomsLegacy(identity.userId);
+    joinRoomsByIdentity(s, identity);
+
+    s.emit("join:ok", {
+      ok: true,
+      socketId: s.id,
+      identity: getSocketIdentity(s),
+    });
   });
-});
 
- function resolveIdentityPayload(payload = {}) {
-  return {
-    userId:
-      payload?.userId ||
-      payload?.id ||
-      payload?._id ||
-      payload?.sub ||
-      "",
-    email: payload?.email || "",
-    roles: payload?.roles || payload?.role || payload?.rol || [],
-  };
-}
+  s.on("presence:join", (payload = {}) => {
+    const identity = resolveIdentityPayload(payload);
+    joinRoomsLegacy(identity.userId);
+    joinRoomsByIdentity(s, identity);
 
-/* JOIN NORMAL */
-s.on("join", (payload = {}) => {
-  const identity = resolveIdentityPayload(payload);
-  joinRoomsLegacy(identity.userId);
-  joinRoomsByIdentity(s, identity);
+    s.emit("presence:joined", {
+      ok: true,
+      socketId: s.id,
+      identity: getSocketIdentity(s),
+    });
 
-  s.emit("join:ok", {
-    ok: true,
-    socketId: s.id,
-    identity: getSocketIdentity(s),
+    console.log("[io][presence] joined:", {
+      socketId: s.id,
+      userId: identity.userId,
+      email: identity.email,
+      roles: identity.roles,
+    });
   });
-});
 
-/* PRESENCE */
-s.on("presence:join", (payload = {}) => {
-  const identity = resolveIdentityPayload(payload);
-  joinRoomsLegacy(identity.userId);
-  joinRoomsByIdentity(s, identity);
+  s.on("auth:join", (payload = {}) => {
+    const identity = resolveIdentityPayload(payload);
+    joinRoomsLegacy(identity.userId);
+    joinRoomsByIdentity(s, identity);
 
-  s.emit("presence:joined", {
-    ok: true,
-    socketId: s.id,
-    identity: getSocketIdentity(s),
+    s.emit("auth:joined", {
+      ok: true,
+      socketId: s.id,
+      identity: getSocketIdentity(s),
+    });
   });
-});
-
-/* AUTH */
-s.on("auth:join", (payload = {}) => {
-  const identity = resolveIdentityPayload(payload);
-  joinRoomsLegacy(identity.userId);
-  joinRoomsByIdentity(s, identity);
-
-  s.emit("auth:joined", {
-    ok: true,
-    socketId: s.id,
-    identity: getSocketIdentity(s),
-  });
-});
 
   /* ───────────────── CHAT ───────────────── */
 
@@ -1006,8 +952,7 @@ s.on("auth:join", (payload = {}) => {
   });
 
   s.on("chat:private:leave", ({ fromUserId, toUserId, room } = {}) => {
-    const finalRoom =
-      room || buildPrivateChatRoom(fromUserId, toUserId) || null;
+    const finalRoom = room || buildPrivateChatRoom(fromUserId, toUserId) || null;
     if (!finalRoom) return;
 
     s.leave(finalRoom);
@@ -1020,7 +965,8 @@ s.on("auth:join", (payload = {}) => {
   s.on("chat:private:send", (payload = {}, ack) => {
     try {
       const finalRoom =
-        payload.room || buildPrivateChatRoom(payload.fromUserId, payload.toUserId);
+        payload.room ||
+        buildPrivateChatRoom(payload.fromUserId, payload.toUserId);
 
       if (!finalRoom) {
         if (typeof ack === "function") {
@@ -1050,31 +996,31 @@ s.on("auth:join", (payload = {}) => {
 
   /* ─────────────── PRESENCIA (ONLINE) ─────────────── */
 
-  s.on("presence:online", ({ userId }) => {
+  s.on("presence:online", ({ userId } = {}) => {
     if (!userId) return;
     s.broadcast.emit("presence:online", { userId });
   });
 
-  s.on("presence:offline", ({ userId }) => {
+  s.on("presence:offline", ({ userId } = {}) => {
     if (!userId) return;
     s.broadcast.emit("presence:offline", { userId });
   });
 
   /* ─────────────── TYPING ─────────────── */
 
-  s.on("chat:typing", ({ room, userId, name }) => {
+  s.on("chat:typing", ({ room, userId, name } = {}) => {
     if (!room) return;
     s.to(`chat:${room}`).emit("chat:typing", { room, userId, name });
   });
 
-  s.on("chat:stopTyping", ({ room, userId }) => {
+  s.on("chat:stopTyping", ({ room, userId } = {}) => {
     if (!room) return;
     s.to(`chat:${room}`).emit("chat:stopTyping", { room, userId });
   });
 
   /* ─────────────── SEEN (VISTO) ─────────────── */
 
-  s.on("chat:seen", ({ room, messageId, userId }) => {
+  s.on("chat:seen", ({ room, messageId, userId } = {}) => {
     if (!room || !messageId || !userId) return;
 
     io.to(`chat:${room}`).emit("chat:seen", {
@@ -1086,14 +1032,14 @@ s.on("auth:join", (payload = {}) => {
 
   /* ─────────────── EDIT ─────────────── */
 
-  s.on("chat:edit", ({ room, message }) => {
+  s.on("chat:edit", ({ room, message } = {}) => {
     if (!room || !message) return;
     io.to(`chat:${room}`).emit("chat:update", message);
   });
 
   /* ─────────────── DELETE ─────────────── */
 
-  s.on("chat:delete", ({ room, message }) => {
+  s.on("chat:delete", ({ room, message } = {}) => {
     if (!room || !message) return;
     io.to(`chat:${room}`).emit("chat:delete", message);
   });
@@ -1204,10 +1150,7 @@ s.on("auth:join", (payload = {}) => {
       message: event.message,
       guardName: event.guardName || "",
       guardEmail: event.guardEmail || "",
-      coords:
-        event?.location?.coordsText ||
-        event?.gps?.coordsText ||
-        "",
+      coords: event?.location?.coordsText || event?.gps?.coordsText || "",
     });
 
     if (typeof ack === "function") {
