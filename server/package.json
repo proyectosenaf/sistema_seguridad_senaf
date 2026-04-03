@@ -4,10 +4,11 @@
   "type": "module",
   "main": "src/server.js",
   "engines": {
-    "node": ">=18.17"
+    "node": "18.x"
   },
   "scripts": {
-    "dev": "cross-env NODE_ENV=development PORT=4000 API_PORT=4000 IAM_DEV_ALLOW_ALL=1 nodemon --ext js,mjs,cjs,json --signal SIGTERM src/server.js",
+    "build": "echo Build step not required",
+    "dev": "cross-env NODE_ENV=development PORT=4000 IAM_DEV_ALLOW_ALL=1 nodemon --ext js,mjs,cjs,json --signal SIGTERM src/server.js",
     "seed": "node src/scripts/seed.js",
     "seed:reset": "cross-env SEED_RESET=1 node src/scripts/seed.js",
     "start": "node src/server.js",
