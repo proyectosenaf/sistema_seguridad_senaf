@@ -2,27 +2,49 @@ import React from "react";
 
 function formatBytes(bytes = 0) {
   if (!bytes) return "0 B";
+
   const units = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
-  let value = bytes;
+  let value = Number(bytes);
   let unit = 0;
+
   while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit += 1;
   }
+
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
 }
 
+function isValidDateValue(value) {
+  if (!value) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime()) && d.getTime() > 0;
+}
+
+function formatDate(value) {
+  if (!isValidDateValue(value)) return "Sin registros";
+  return new Date(value).toLocaleString();
+}
+
 export default function BackupStatsCards({ backups = [] }) {
-  const total = backups.length;
-  const totalSize = backups.reduce((acc, item) => acc + (item.size || 0), 0);
-  const last = backups[0];
+  const safeBackups = Array.isArray(backups) ? backups : [];
+
+  const total = safeBackups.length;
+  const totalSize = safeBackups.reduce(
+    (acc, item) => acc + Number(item?.size || 0),
+    0
+  );
+
+  const latestBackup = safeBackups.find((item) => isValidDateValue(item?.createdAt));
 
   const cards = [
     { label: "Respaldos", value: total },
     { label: "Tamaño total", value: formatBytes(totalSize) },
     {
       label: "Último respaldo",
-      value: last ? new Date(last.createdAt).toLocaleString() : "Sin registros",
+      value: latestBackup
+        ? formatDate(latestBackup.createdAt)
+        : "Sin registros",
     },
   ];
 

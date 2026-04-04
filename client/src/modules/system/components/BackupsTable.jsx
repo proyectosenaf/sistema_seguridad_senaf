@@ -17,10 +17,10 @@ function formatBytes(bytes = 0) {
 }
 
 function formatDate(value) {
-  if (!value) return "—";
+  if (!value) return "Sin registro";
 
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "Sin registro";
 
   return d.toLocaleString();
 }
