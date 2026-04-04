@@ -58,6 +58,9 @@ const BackupRestorePage = React.lazy(() =>
 // Visitas
 const VisitsPageCore = React.lazy(() => import("./modules/visitas/pages/VisitsPage.jsx"));
 const AgendaPageCore = React.lazy(() => import("./modules/visitas/pages/AgendaPage.jsx"));
+const VisitFeedbackDashboard = React.lazy(() =>
+  import("./modules/visitas/pages/VisitFeedbackDashboard.jsx")
+);
 import CitasQrScannerPage from "./modules/visitas/pages/CitasQrScannerPage.jsx";
 
 /* ───────────────── ENV helpers ───────────────── */
@@ -557,6 +560,7 @@ export default function App() {
       "/visitas",
       "/visitas/control",
       "/visitas/agenda",
+      "/visitas/admin/feedback",
       "/otp",
       "/force-change-password",
       "/forgot-password",
@@ -856,6 +860,21 @@ export default function App() {
                     <AppShell me={me} meLoading={meLoading}>
                       <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
                         <CitasQrScannerPage />
+                      </RouteAccess>
+                    </AppShell>
+                  </SessionGate>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/visitas/admin/feedback"
+              element={
+                <ProtectedRoute>
+                  <SessionGate me={me} meLoading={meLoading}>
+                    <AppShell me={me} meLoading={meLoading}>
+                      <RouteAccess me={me} meLoading={meLoading} routeKey="visitas.control">
+                        <VisitFeedbackDashboard />
                       </RouteAccess>
                     </AppShell>
                   </SessionGate>

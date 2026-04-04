@@ -10,6 +10,10 @@ import {
   listVehiculosVisitasEnSitio,
   updateCitaEstado,
   scanQrCita,
+  getMyPendingVisitFeedback,
+  submitVisitFeedback,
+  listVisitFeedback,
+  getVisitFeedbackMetrics,
 } from "./visitas.controller.js";
 
 import { enforceBusinessHours } from "../../src/middleware/businessHours.js";
@@ -36,6 +40,10 @@ const VISITAS_PERMS = {
   CITAS_WRITE: "visitas.citas.write",
   CITAS_CHECKIN: "visitas.citas.checkin",
   CITAS_ESTADO: "visitas.citas.estado",
+
+  FEEDBACK_READ: "visitas.feedback.read",
+  FEEDBACK_WRITE: "visitas.feedback.write",
+  FEEDBACK_METRICS: "visitas.feedback.metrics",
 
   ALL: "*",
 };
@@ -104,6 +112,59 @@ router.get(
     VISITAS_PERMS.ALL
   ),
   asyncHandler(listVehiculosVisitasEnSitio)
+);
+
+/* =========================================================
+   FEEDBACK DE VISITAS
+   ========================================================= */
+
+router.get(
+  ["/visitas/v1/feedback/mine/pending", "/feedback/mine/pending"],
+  requirePermission(
+    VISITAS_PERMS.CITAS_READ,
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.FEEDBACK_READ,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(getMyPendingVisitFeedback)
+);
+
+router.post(
+  ["/visitas/v1/feedback", "/feedback"],
+  requirePermission(
+    VISITAS_PERMS.CITAS_WRITE,
+    VISITAS_PERMS.RECORDS_WRITE,
+    VISITAS_PERMS.WRITE_LEGACY,
+    VISITAS_PERMS.FEEDBACK_WRITE,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(submitVisitFeedback)
+);
+
+router.get(
+  ["/visitas/v1/feedback/list", "/feedback/list"],
+  requirePermission(
+    VISITAS_PERMS.REPORTS_READ,
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.FEEDBACK_READ,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(listVisitFeedback)
+);
+
+router.get(
+  ["/visitas/v1/feedback/metrics", "/feedback/metrics"],
+  requirePermission(
+    VISITAS_PERMS.REPORTS_READ,
+    VISITAS_PERMS.RECORDS_READ,
+    VISITAS_PERMS.READ_LEGACY,
+    VISITAS_PERMS.FEEDBACK_METRICS,
+    VISITAS_PERMS.FEEDBACK_READ,
+    VISITAS_PERMS.ALL
+  ),
+  asyncHandler(getVisitFeedbackMetrics)
 );
 
 /* =========================================================

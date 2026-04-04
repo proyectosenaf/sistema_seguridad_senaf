@@ -211,6 +211,38 @@ const VisitaSchema = new mongoose.Schema(
       default: null,
     },
 
+    /* Feedback / satisfacción */
+    feedbackEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    feedbackRequestedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    feedbackSubmitted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    feedbackScore: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 5,
+    },
+
+    feedbackSubmittedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
     /* Fechas */
     citaAt: {
       type: Date,
@@ -244,6 +276,9 @@ VisitaSchema.index({ qrToken: 1 });
 VisitaSchema.index({ documento: 1, tipo: 1, createdAt: -1 });
 VisitaSchema.index({ acompanado: 1, createdAt: -1 });
 VisitaSchema.index({ autorizadaAt: -1 });
+VisitaSchema.index({ feedbackEnabled: 1, feedbackSubmitted: 1, estado: 1 });
+VisitaSchema.index({ correo: 1, feedbackEnabled: 1, feedbackSubmitted: 1 });
+VisitaSchema.index({ documento: 1, feedbackEnabled: 1, feedbackSubmitted: 1 });
 
 /* Hook: normalización previa */
 VisitaSchema.pre("validate", function (next) {
@@ -274,6 +309,15 @@ VisitaSchema.pre("validate", function (next) {
     return next(
       new Error("Las visitas agendadas deben tener fecha y hora en citaAt")
     );
+  }
+
+  if (
+    this.feedbackScore != null &&
+    (!Number.isInteger(this.feedbackScore) ||
+      this.feedbackScore < 1 ||
+      this.feedbackScore > 5)
+  ) {
+    return next(new Error("feedbackScore debe estar entre 1 y 5"));
   }
 
   next();
@@ -389,6 +433,14 @@ VisitaSchema.pre("save", function (next) {
 
   if (this.estado === "Autorizada" && !this.autorizadaAt) {
     this.autorizadaAt = new Date();
+  }
+
+  /* Feedback: se habilita cuando la visita finaliza */
+  if (this.estado === "Finalizada") {
+    if (!this.feedbackRequestedAt) {
+      this.feedbackRequestedAt = new Date();
+    }
+    this.feedbackEnabled = true;
   }
 
   next();

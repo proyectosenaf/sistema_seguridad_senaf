@@ -5,6 +5,7 @@ import KpiCard from "../components/KpiCard.jsx";
 import CitasSection from "../components/CitasSection.jsx";
 import VisitorsSection from "../components/VisitorsSection.jsx";
 import QrPreviewModal from "../components/QrPreviewModal.jsx";
+import PendingFeedbackSection from "../components/PendingFeedbackSection.jsx";
 import { useAuth } from "../../../pages/auth/AuthProvider.jsx";
 
 import {
@@ -669,6 +670,15 @@ export default function VisitsPage() {
             >
               <span className="font-semibold">Escanear QR</span> 📷
             </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/visitas/admin/feedback")}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-sm px-4 py-2 rounded-full transition relative z-10"
+              style={sxGhostBtn({ borderRadius: "9999px" })}
+            >
+              <span className="font-semibold">Satisfacción</span> ⭐
+            </button>
           </div>
         )}
       </div>
@@ -779,6 +789,8 @@ export default function VisitsPage() {
           onEditCita={handleEditCita}
         />
       )}
+
+      {isVisitor && viewMode === "citas" && <PendingFeedbackSection />}
 
       {!isVisitor && viewMode === "visitas" && (
         <VisitorsSection

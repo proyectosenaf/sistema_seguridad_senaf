@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import QRCode from "qrcode";
 import Visita from "./visitas.model.js";
+import VisitFeedback from "./models/VisitFeedback.js";
 import { logBitacoraEvent } from "../bitacora/services/bitacora.service.js";
 
 const QR_PREFIX = "SENAF_CITA_QR::";
@@ -527,6 +528,44 @@ function shouldInvalidateQrOnUpdate(visita, payload = {}, nextCitaAt) {
   return false;
 }
 
+/* ───────────────────────── Helpers feedback ───────────────────────── */
+
+function isVisitFinished(visita) {
+  const estado = normalizeEstadoInput(visita?.estado || "");
+  return estado === "Finalizada";
+}
+
+function canVisitorAnswerFeedback(user, visita) {
+  if (!user || !visita) return false;
+  return isOwnCita(user, visita);
+}
+
+function normalizeRecommendValue(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return ["yes", "maybe", "no"].includes(raw) ? raw : "";
+}
+
+async function auditFeedback(req, visita, feedback, extra = {}) {
+  await auditVisita(req, {
+    accion: "FEEDBACK",
+    entidad: "Visita",
+    entidadId: visita?._id?.toString() || "",
+    titulo: "Feedback de visita registrado",
+    descripcion: `Se registró una calificación de ${feedback?.rating || "N/D"} estrella(s) para la visita de ${visita?.nombre || "Visitante"}.`,
+    estado: visita?.estado || "Finalizada",
+    nombre: visita?.nombre || "",
+    empresa: visita?.empresa || "",
+    source: "visitas-feedback",
+    meta: {
+      visitaId: visita?._id?.toString() || "",
+      rating: feedback?.rating || null,
+      wouldRecommend: feedback?.wouldRecommend || "",
+      hasComment: !!cleanText(feedback?.comment || ""),
+      ...extra,
+    },
+  });
+}
+
 /**
  * GET /api/visitas
  */
@@ -618,6 +657,10 @@ export async function closeVisita(req, res) {
     }
 
     visita.estado = "Finalizada";
+    visita.feedbackEnabled = true;
+    if (!visita.feedbackRequestedAt) {
+      visita.feedbackRequestedAt = new Date();
+    }
 
     await visita.save();
 
@@ -636,6 +679,8 @@ export async function closeVisita(req, res) {
       meta: {
         documento: visita.documento || "",
         fechaSalida: visita.fechaSalida || null,
+        feedbackEnabled: !!visita.feedbackEnabled,
+        feedbackRequestedAt: visita.feedbackRequestedAt || null,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -697,6 +742,11 @@ export async function createCita(req, res) {
       qrPayload: null,
       qrGeneratedAt: null,
       autorizadaAt: null,
+      feedbackEnabled: false,
+      feedbackSubmitted: false,
+      feedbackScore: null,
+      feedbackRequestedAt: null,
+      feedbackSubmittedAt: null,
     });
 
     await visita.save();
@@ -1153,6 +1203,13 @@ export async function updateCitaEstado(req, res) {
       visita.fechaSalida = new Date();
     }
 
+    if (nextEstado === "Finalizada") {
+      visita.feedbackEnabled = true;
+      if (!visita.feedbackRequestedAt) {
+        visita.feedbackRequestedAt = new Date();
+      }
+    }
+
     await visita.save();
 
     const item = visita.toObject ? visita.toObject() : visita;
@@ -1184,6 +1241,8 @@ export async function updateCitaEstado(req, res) {
         estado: nextEstado,
         qrToken: visita.qrToken || null,
         qrGeneratedAt: visita.qrGeneratedAt || null,
+        feedbackEnabled: !!visita.feedbackEnabled,
+        feedbackRequestedAt: visita.feedbackRequestedAt || null,
         acompanado: !!visita.acompanado,
         cantidadAcompanantes: Array.isArray(visita.acompanantes)
           ? visita.acompanantes.length
@@ -1472,6 +1531,373 @@ export async function listVehiculosVisitasEnSitio(req, res) {
   }
 }
 
+/**
+ * GET /api/visitas/feedback/mine/pending
+ */
+export async function getMyPendingVisitFeedback(req, res) {
+  try {
+    const visitante = isVisitanteUser(req.user);
+
+    if (!visitante) {
+      return res.json({ ok: true, items: [] });
+    }
+
+    const ownMatch = buildOwnCitasMatch(req);
+    if (!ownMatch) {
+      return res.json({ ok: true, items: [] });
+    }
+
+    const match = {
+      tipo: { $in: ["Ingreso", "Agendada"] },
+      estado: "Finalizada",
+      feedbackEnabled: true,
+      feedbackSubmitted: { $ne: true },
+    };
+
+    if (ownMatch.$or) {
+      match.$and = [ownMatch];
+    } else {
+      Object.assign(match, ownMatch);
+    }
+
+    const items = await Visita.find(match)
+      .sort({ fechaSalida: -1, updatedAt: -1, createdAt: -1 })
+      .lean();
+
+    return res.json({ ok: true, items });
+  } catch (err) {
+    console.error("[visitas] getMyPendingVisitFeedback", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * POST /api/visitas/feedback
+ */
+export async function submitVisitFeedback(req, res) {
+  try {
+    const visitante = isVisitanteUser(req.user);
+
+    if (!visitante) {
+      return res.status(403).json({
+        ok: false,
+        error: "Solo los visitantes pueden enviar esta calificación",
+      });
+    }
+
+    const {
+      visitaId,
+      rating,
+      comment = "",
+      wouldRecommend = "",
+    } = req.body || {};
+
+    if (!visitaId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Debe indicar la visita a calificar",
+      });
+    }
+
+    const numericRating = Number(rating);
+    if (
+      !Number.isInteger(numericRating) ||
+      numericRating < 1 ||
+      numericRating > 5
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "La calificación debe estar entre 1 y 5 estrellas",
+      });
+    }
+
+    const visita = await Visita.findById(visitaId);
+    if (!visita) {
+      return res.status(404).json({
+        ok: false,
+        error: "Visita no encontrada",
+      });
+    }
+
+    if (!canVisitorAnswerFeedback(req.user, visita)) {
+      return res.status(403).json({
+        ok: false,
+        error: "No tiene permiso para calificar esta visita",
+      });
+    }
+
+    if (!isVisitFinished(visita) || !visita.feedbackEnabled) {
+      return res.status(409).json({
+        ok: false,
+        error: "La visita aún no está habilitada para ser calificada",
+      });
+    }
+
+    if (visita.feedbackSubmitted) {
+      return res.status(409).json({
+        ok: false,
+        error: "Esta visita ya fue calificada",
+      });
+    }
+
+    const exists = await VisitFeedback.findOne({ visitaId: visita._id }).lean();
+    if (exists) {
+      visita.feedbackSubmitted = true;
+      visita.feedbackScore = exists.rating || null;
+      visita.feedbackSubmittedAt = exists.answeredAt || exists.createdAt || new Date();
+      await visita.save();
+
+      return res.status(409).json({
+        ok: false,
+        error: "Esta visita ya fue calificada",
+      });
+    }
+
+    const feedback = await VisitFeedback.create({
+      visitaId: visita._id,
+      visitorEmail: cleanText(getUserEmail(req.user) || visita.correo || "").toLowerCase(),
+      visitorName: cleanText(visita.nombre || getActorName(req)),
+      documento: cleanText(visita.documento || ""),
+      hostName: cleanText(visita.empleado || ""),
+      empresa: cleanText(visita.empresa || ""),
+      rating: numericRating,
+      comment: cleanText(comment).slice(0, 1000),
+      wouldRecommend: normalizeRecommendValue(wouldRecommend),
+      source: "visitor_portal",
+      answeredAt: new Date(),
+    });
+
+    visita.feedbackSubmitted = true;
+    visita.feedbackScore = numericRating;
+    visita.feedbackSubmittedAt = new Date();
+
+    await visita.save();
+
+    await auditFeedback(req, visita, feedback);
+
+    return res.status(201).json({
+      ok: true,
+      item: feedback,
+      message: "Gracias por tu opinión",
+    });
+  } catch (err) {
+    console.error("[visitas] submitVisitFeedback", err);
+    return res.status(400).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * GET /api/visitas/feedback/list
+ */
+export async function listVisitFeedback(req, res) {
+  try {
+    const {
+      from,
+      to,
+      rating,
+      withComment,
+      q,
+      page = 1,
+      limit = 20,
+    } = req.query || {};
+
+    const match = {};
+
+    if (from || to) {
+      match.answeredAt = {};
+      if (from) {
+        match.answeredAt.$gte = new Date(`${from}T00:00:00.000Z`);
+      }
+      if (to) {
+        match.answeredAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      }
+    }
+
+    if (rating) {
+      const n = Number(rating);
+      if (Number.isInteger(n) && n >= 1 && n <= 5) {
+        match.rating = n;
+      }
+    }
+
+    if (String(withComment || "").trim().toLowerCase() === "true") {
+      match.comment = { $exists: true, $ne: "" };
+    }
+
+    if (q && String(q).trim() !== "") {
+      const rx = new RegExp(String(q).trim(), "i");
+      match.$or = [
+        { visitorName: rx },
+        { visitorEmail: rx },
+        { documento: rx },
+        { hostName: rx },
+        { empresa: rx },
+        { comment: rx },
+      ];
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [items, total] = await Promise.all([
+      VisitFeedback.find(match)
+        .sort({ answeredAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      VisitFeedback.countDocuments(match),
+    ]);
+
+    return res.json({
+      ok: true,
+      items,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (err) {
+    console.error("[visitas] listVisitFeedback", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
+/**
+ * GET /api/visitas/feedback/metrics
+ */
+export async function getVisitFeedbackMetrics(req, res) {
+  try {
+    const { from, to } = req.query || {};
+
+    const match = {};
+
+    if (from || to) {
+      match.answeredAt = {};
+      if (from) {
+        match.answeredAt.$gte = new Date(`${from}T00:00:00.000Z`);
+      }
+      if (to) {
+        match.answeredAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      }
+    }
+
+    const [totals] = await VisitFeedback.aggregate([
+      { $match: match },
+      {
+        $facet: {
+          totals: [
+            {
+              $group: {
+                _id: null,
+                totalResponses: { $sum: 1 },
+                averageRating: { $avg: "$rating" },
+                commentedCount: {
+                  $sum: {
+                    $cond: [
+                      { $gt: [{ $strLenCP: { $ifNull: ["$comment", ""] } }, 0] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                acceptedCount: {
+                  $sum: {
+                    $cond: [{ $gte: ["$rating", 4] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ],
+          distribution: [
+            {
+              $group: {
+                _id: "$rating",
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+          recommendation: [
+            {
+              $group: {
+                _id: "$wouldRecommend",
+                count: { $sum: 1 },
+              },
+            },
+          ],
+          byMonth: [
+            {
+              $group: {
+                _id: {
+                  year: { $year: "$answeredAt" },
+                  month: { $month: "$answeredAt" },
+                },
+                count: { $sum: 1 },
+                averageRating: { $avg: "$rating" },
+              },
+            },
+            {
+              $sort: {
+                "_id.year": 1,
+                "_id.month": 1,
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const summary = totals?.totals?.[0] || {
+      totalResponses: 0,
+      averageRating: 0,
+      commentedCount: 0,
+      acceptedCount: 0,
+    };
+
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const item of totals?.distribution || []) {
+      distribution[item._id] = item.count;
+    }
+
+    const recommendation = { yes: 0, maybe: 0, no: 0 };
+    for (const item of totals?.recommendation || []) {
+      if (item._id && recommendation[item._id] !== undefined) {
+        recommendation[item._id] = item.count;
+      }
+    }
+
+    const totalResponses = summary.totalResponses || 0;
+    const acceptanceRate = totalResponses
+      ? Math.round((summary.acceptedCount / totalResponses) * 100)
+      : 0;
+
+    return res.json({
+      ok: true,
+      item: {
+        totalResponses,
+        averageRating: Number((summary.averageRating || 0).toFixed(2)),
+        commentedCount: summary.commentedCount || 0,
+        acceptedCount: summary.acceptedCount || 0,
+        acceptanceRate,
+        distribution,
+        recommendation,
+        byMonth: (totals?.byMonth || []).map((item) => ({
+          year: item._id.year,
+          month: item._id.month,
+          count: item.count,
+          averageRating: Number((item.averageRating || 0).toFixed(2)),
+        })),
+      },
+    });
+  } catch (err) {
+    console.error("[visitas] getVisitFeedbackMetrics", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+}
+
 export default {
   getVisitas,
   createVisita,
@@ -1483,4 +1909,8 @@ export default {
   updateCitaEstado,
   scanQrCita,
   listVehiculosVisitasEnSitio,
+  getMyPendingVisitFeedback,
+  submitVisitFeedback,
+  listVisitFeedback,
+  getVisitFeedbackMetrics,
 };
