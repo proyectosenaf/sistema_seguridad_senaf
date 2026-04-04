@@ -169,6 +169,18 @@ function runCommand(command, args = []) {
   });
 }
 
+function resolveBackupDate(stats) {
+  const mtimeMs = Number(stats?.mtimeMs || 0);
+  const ctimeMs = Number(stats?.ctimeMs || 0);
+  const birthtimeMs = Number(stats?.birthtimeMs || 0);
+
+  if (mtimeMs > 0) return new Date(mtimeMs).toISOString();
+  if (ctimeMs > 0) return new Date(ctimeMs).toISOString();
+  if (birthtimeMs > 0) return new Date(birthtimeMs).toISOString();
+
+  return null;
+}
+
 export async function createBackup() {
   if (!isBackupRestoreEnabled()) {
     throw makeError(
@@ -205,7 +217,7 @@ export async function createBackup() {
     name,
     path: fullPath,
     size: stats.size,
-    createdAt: stats.birthtime || stats.mtime,
+    createdAt: resolveBackupDate(stats),
   };
 }
 
@@ -222,10 +234,14 @@ export function listBackups() {
       return {
         name: entry.name,
         size: stats.size,
-        createdAt: stats.birthtime || stats.mtime,
+        createdAt: resolveBackupDate(stats),
       };
     })
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort((a, b) => {
+      const da = new Date(a.createdAt || 0).getTime();
+      const db = new Date(b.createdAt || 0).getTime();
+      return db - da;
+    });
 }
 
 export function getBackupFilePath(name) {
