@@ -11,6 +11,37 @@ import DeleteConfirmModal from "./components/DeleteConfirmModal";
 
 const DEFAULT_VISIBLE_ROWS = 5;
 
+function normalizeModulo(value) {
+  const k = String(value || "").trim().toLowerCase();
+
+  if (k === "control de acceso" || k === "accesos" || k === "acceso") {
+    return "Control de Acceso";
+  }
+
+  if (
+    k === "rondas de vigilancia" ||
+    k === "rondas" ||
+    k === "rondas qr" ||
+    k === "rondasqr"
+  ) {
+    return "Rondas de Vigilancia";
+  }
+
+  if (k === "control de visitas" || k === "visitas" || k === "visitantes") {
+    return "Control de Visitas";
+  }
+
+  if (
+    k === "gestión de incidentes" ||
+    k === "gestion de incidentes" ||
+    k === "incidentes"
+  ) {
+    return "Gestión de Incidentes";
+  }
+
+  return String(value || "").trim();
+}
+
 export default function Bitacora() {
   const { t } = useTranslation();
   const [tab, setTab] = useState("bitacora");
@@ -48,6 +79,13 @@ export default function Bitacora() {
     modulo: "Todos",
   });
 
+  const normalizedRows = useMemo(() => {
+    return rows.map((r) => ({
+      ...r,
+      modulo: normalizeModulo(r?.modulo),
+    }));
+  }, [rows]);
+
   const hasActiveFilters = useMemo(() => {
     return (
       filters.desde !== "" ||
@@ -82,15 +120,15 @@ export default function Bitacora() {
   const turnos = useMemo(() => {
     return [
       "Todos",
-      ...Array.from(new Set(rows.map((r) => r.turno).filter(Boolean))).sort(),
+      ...Array.from(
+        new Set(normalizedRows.map((r) => r.turno).filter(Boolean))
+      ).sort(),
     ];
-  }, [rows]);
+  }, [normalizedRows]);
 
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
+    return normalizedRows.filter((r) => {
       if (!r) return false;
-
-      if (!MODULES.includes(r.modulo)) return false;
 
       if (
         filters.desde &&
@@ -108,22 +146,21 @@ export default function Bitacora() {
 
       if (
         filters.agente &&
-        !(
-          `${r.agente || ""} ${r.nombre || ""} ${r.actorEmail || ""}`
-            .toLowerCase()
-            .includes(filters.agente.toLowerCase())
-        )
+        !`${r.agente || ""} ${r.nombre || ""} ${r.actorEmail || ""}`
+          .toLowerCase()
+          .includes(filters.agente.toLowerCase())
       ) {
         return false;
       }
 
       if (filters.turno !== "Todos" && r.turno !== filters.turno) return false;
       if (filters.tipo !== "Todos" && r.tipo !== filters.tipo) return false;
-      if (filters.modulo !== "Todos" && r.modulo !== filters.modulo) return false;
+      if (filters.modulo !== "Todos" && r.modulo !== filters.modulo)
+        return false;
 
       return true;
     });
-  }, [rows, filters]);
+  }, [normalizedRows, filters]);
 
   const visibleRows = useMemo(() => {
     if (showAllRows || hasActiveFilters) return filtered;
@@ -152,14 +189,14 @@ export default function Bitacora() {
   useEffect(() => {
     if (!confirmRow) return;
 
-    const stillExists = rows.some(
+    const stillExists = normalizedRows.some(
       (r) => String(r._id || r.id) === String(confirmRow._id || confirmRow.id)
     );
 
     if (!stillExists) {
       setConfirmRow(null);
     }
-  }, [rows, confirmRow]);
+  }, [normalizedRows, confirmRow]);
 
   const handleView = async (row) => {
     if (!row) return;
@@ -179,6 +216,7 @@ export default function Bitacora() {
           return {
             ...prev,
             ...detail,
+            modulo: normalizeModulo(detail.modulo || prev?.modulo),
             id: detail.id || detail._id || rowId,
             _id: detail._id || row._id,
           };
@@ -357,7 +395,7 @@ export default function Bitacora() {
         </>
       )}
 
-      {tab === "analitica" && <BitacoraAnalytics rows={rows} />}
+      {tab === "analitica" && <BitacoraAnalytics rows={filtered} />}
 
       <EventDetailModal
         view={view}
